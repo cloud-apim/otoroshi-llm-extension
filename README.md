@@ -2,6 +2,8 @@
 
 A set of Otoroshi plugins to interact with LLMs
 
+to know more about it, go to [documentation](https://cloud-apim.github.io/otoroshi-llm-extension/)
+
 ## Supported providers
 
 * OpenAI
