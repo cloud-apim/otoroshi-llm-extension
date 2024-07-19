@@ -63,18 +63,18 @@ class AiExtension(val env: Env) extends AdminExtension {
 
   lazy val states = new AiGatewayExtensionState(env)
 
-  val logger = Logger("cloud-apim-ai-gateway-extension")
+  val logger = Logger("cloud-apim-llm-extension")
 
-  override def id: AdminExtensionId = AdminExtensionId("cloud-apim.extensions.AiGateway")
+  override def id: AdminExtensionId = AdminExtensionId("cloud-apim.extensions.LlmExtension")
 
-  override def name: String = "AI Gateway"
+  override def name: String = "LLM Extension"
 
-  override def description: Option[String] = "This extensions provides several plugins and connector to enhance your experience using AI apis through Otoroshi".some
+  override def description: Option[String] = "This extensions provides several plugins and connector to enhance your experience using LLM apis through Otoroshi".some
 
   override def enabled: Boolean = env.isDev || configuration.getOptional[Boolean]("enabled").getOrElse(false)
 
   override def start(): Unit = {
-    logger.info("the 'AI Extension' is enabled !")
+    logger.info("the 'LLM Extension' is enabled !")
   }
 
   override def stop(): Unit = {
