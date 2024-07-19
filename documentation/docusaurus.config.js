@@ -55,7 +55,7 @@ const config = {
       // Replace with your project's social card
       image: 'img/otoroshi-llm-extension-logo.png',
       navbar: {
-        title: 'otoroshi-llm-extension',
+        title: 'Otoroshi LLM Extension',
         logo: {
           alt: 'otoroshi-llm-extension Logo',
           src: 'img/otoroshi-llm-extension-logo.png',
