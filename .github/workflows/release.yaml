@@ -1,0 +1,39 @@
+name: release-otoroshi-llm-extension
+
+on: 
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number"
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: setup jdk11
+        uses: actions/setup-java@v1
+        with:
+          java-version: 11
+      - uses: coursier/cache-action@v5
+      - name: change version
+        run: |
+          echo 'ThisBuild / version := "${{ inputs.version }}"' > version.sbt
+      - name: build-libs
+        id: build-libs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sbt ';compile;package;assembly'
+          rm ./target/scala-2.12/otoroshi-llm-extension_2.12-${{ inputs.version }}.jar 
+          mv ./target/scala-2.12/otoroshi-llm-extension-assembly_2.12-dev.jar ./target/scala-2.12/otoroshi-llm-extension_2.12-${{ inputs.version }}.jar
+      - name: Generate SHA-256
+        run: |
+          shasum -a 256 ./target/scala-2.12/otoroshi-llm-extension_2.12-${{ inputs.version }}.jar | cut -d ' ' -f 1 > ./target/scala-2.12/otoroshi-llm-extension_2.12-${{ inputs.version }}.jar.sha256
+      - name: Release binary and SHA-256 checksum to GitHub
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ inputs.version }}
+          files: |
+            ./target/scala-2.12/otoroshi-llm-extension_2.12-${{ inputs.version }}.jar
+            ./target/scala-2.12/otoroshi-llm-extension_2.12-${{ inputs.version }}.jar.sha256

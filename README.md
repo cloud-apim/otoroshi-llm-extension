@@ -1,5 +1,17 @@
-# otoroshi-llm-extension
+# Cloud APIM AI gateway extension
 
-Set of Otoroshi plugins to interact with LLMs
+A set of Otoroshi plugins to interact with LLMs
 
-this project is not open-source yet, be patient ;)
+## Supported providers
+
+* OpenAI
+* Azure OpenAI
+* Ollama
+* Mistral
+* Anthropic
+
+## Coming soon providers ...
+
+* Vertex AI gemini
+* Amazon bedrocks
+* Hugging face
