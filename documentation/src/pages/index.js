@@ -33,7 +33,7 @@ export default function Home() {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title={`otoroshi-llm-extension`}
+      title={`Otoroshi LLM Extension`}
       description="A set of Otoroshi plugins to interact with LLMs">
       <HomepageHeader />
       <main>
