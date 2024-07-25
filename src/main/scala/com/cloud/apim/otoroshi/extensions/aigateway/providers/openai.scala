@@ -32,7 +32,8 @@ object OpenAiApi {
 class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
-    println(s"calling ${method} ${baseUrl}${path}: ${body}")
+    // println(s"calling ${method} ${baseUrl}${path}: ${body}")
+    println("calling openai")
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -47,7 +48,7 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
       .withRequestTimeout(timeout)
       .execute()
       .map { resp =>
-        println(s"resp: ${resp.status} - ${resp.body}")
+        // println(s"resp: ${resp.status} - ${resp.body}")
         OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
       }
   }

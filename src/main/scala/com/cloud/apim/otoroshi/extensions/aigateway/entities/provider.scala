@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
-import com.cloud.apim.otoroshi.extensions.aigateway.ChatClient
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatClientWithValidation}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
 import otoroshi.env.Env
@@ -27,6 +27,10 @@ case class AiProvider(
                        provider: String,
                        connection: JsObject,
                        options: JsObject,
+                       allow: Seq[String] = Seq.empty,
+                       deny: Seq[String] = Seq.empty,
+                       validatorRef: Option[String] = None,
+                       validatorPrompt: Option[String] = None,
                      ) extends EntityLocationSupport {
   override def internalId: String               = id
   override def json: JsValue                    = AiProvider.format.writes(this)
@@ -42,7 +46,7 @@ case class AiProvider(
       case "openai" => {
         val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
-        new OpenAiChatClient(api, opts, id).some
+        new ChatClientWithValidation(this, new OpenAiChatClient(api, opts, id)).some
       }
       case "azure-openai" => {
         val resourceName = connection.select("resource_name").as[String]
@@ -50,22 +54,22 @@ case class AiProvider(
         val apikey = connection.select("api_key").as[String]
         val api = new AzureOpenAiApi(resourceName, deploymentId, apikey, timeout.getOrElse(10.seconds), env = env)
         val opts = AzureOpenAiChatClientOptions.fromJson(options)
-        new AzureOpenAiChatClient(api, opts, id).some
+        new ChatClientWithValidation(this, new AzureOpenAiChatClient(api, opts, id)).some
       }
       case "mistral" => {
         val api = new MistralAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = MistralAiChatClientOptions.fromJson(options)
-        new MistralAiChatClient(api, opts, id).some
+        new ChatClientWithValidation(this, new MistralAiChatClient(api, opts, id)).some
       }
       case "ollama" => {
         val api = new OllamaAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(10.seconds), env = env)
         val opts = OllamaAiChatClientOptions.fromJson(options)
-        new OllamaAiChatClient(api, opts, id).some
+        new ChatClientWithValidation(this, new OllamaAiChatClient(api, opts, id)).some
       }
       case "anthropic" => {
         val api = new AnthropicApi(baseUrl.getOrElse(AnthropicApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = AnthropicChatClientOptions.fromJson(options)
-        new AnthropicChatClient(api, opts, id).some
+        new ChatClientWithValidation(this, new AnthropicChatClient(api, opts, id)).some
       }
       case _ => None
     }
@@ -75,14 +79,18 @@ case class AiProvider(
 object AiProvider {
   val format = new Format[AiProvider] {
     override def writes(o: AiProvider): JsValue             = o.location.jsonWithKey ++ Json.obj(
-      "id"          -> o.id,
-      "name"        -> o.name,
-      "description" -> o.description,
-      "metadata"    -> o.metadata,
-      "tags"        -> JsArray(o.tags.map(JsString.apply)),
-      "provider"    -> o.provider,
-      "connection"  -> o.connection,
-      "options"     -> o.options,
+      "id"               -> o.id,
+      "name"             -> o.name,
+      "description"      -> o.description,
+      "metadata"         -> o.metadata,
+      "tags"             -> JsArray(o.tags.map(JsString.apply)),
+      "provider"         -> o.provider,
+      "connection"       -> o.connection,
+      "options"          -> o.options,
+      "allow"            -> o.allow,
+      "deny"             -> o.deny,
+      "validator_ref"    -> o.validatorRef,
+      "validator_prompt" -> o.validatorPrompt,
     )
     override def reads(json: JsValue): JsResult[AiProvider] = Try {
       AiProvider(
@@ -95,6 +103,10 @@ object AiProvider {
         provider = (json \ "provider").as[String],
         connection = (json \ "connection").asOpt[JsObject].getOrElse(Json.obj()),
         options = (json \ "options").asOpt[JsObject].getOrElse(Json.obj()),
+        allow = (json \ "allow").asOpt[Seq[String]].getOrElse(Seq.empty),
+        deny = (json \ "deny").asOpt[Seq[String]].getOrElse(Seq.empty),
+        validatorRef = (json \ "validator_ref").asOpt[String],
+        validatorPrompt = (json \ "validator_prompt").asOpt[String],
       )
     } match {
       case Failure(ex)    => JsError(ex.getMessage)

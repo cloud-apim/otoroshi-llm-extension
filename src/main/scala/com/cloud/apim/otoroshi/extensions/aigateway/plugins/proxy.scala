@@ -80,11 +80,8 @@ class AiLlmProxy extends NgBackendCall {
             AiLlmProxy.applyTemplate(template, context)
           }
         }
-        println(s"requestMessages: ${requestMessages}")
         if (validate(requestMessages, ctx)) {
           val (preContextMessages, postContextMessages) = ctx.attrs.get(AiPluginsKeys.PromptContextKey).getOrElse((Seq.empty, Seq.empty))
-          println(s"preContextMessages: ${preContextMessages}")
-          println(s"postContextMessages: ${postContextMessages}")
           val messages = (preContextMessages ++ requestMessages ++ postContextMessages).map { obj =>
             val role = obj.select("role").asOpt[String].getOrElse("user")
             val content = obj.select("content").asOpt[String].getOrElse("")

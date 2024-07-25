@@ -22,6 +22,7 @@ object OllamaAiApi {
 class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], timeout: FiniteDuration = 10.seconds, env: Env) {
 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
+    println("calling ollama")
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
