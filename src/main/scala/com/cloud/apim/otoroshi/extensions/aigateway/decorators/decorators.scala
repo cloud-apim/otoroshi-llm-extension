@@ -10,7 +10,6 @@ object ChatClientDecorators {
     ChatClientWithLlmValidation.applyIfPossible,
     ChatClientWithSimpleCache.applyIfPossible,
     ChatClientWithSemanticCache.applyIfPossible,
-    ChatClientWithSemanticCache.applyIfPossible,
     ChatClientWithHttpValidation.applyIfPossible,
     ChatClientWithProviderFallback.applyIfPossible
   )

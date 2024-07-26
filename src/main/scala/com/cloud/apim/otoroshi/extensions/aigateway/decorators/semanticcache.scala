@@ -59,7 +59,7 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, chatClient: Chat
     val key = query.sha512
     ChatClientWithSemanticCache.cache.getIfPresent(key) match {
       case Some((_, response)) =>
-        // println("using semantic cached response")
+        println("using semantic cached response")
         response.rightf
       case None => {
         val embeddingModel = ChatClientWithSemanticCache.embeddingModel
@@ -67,17 +67,18 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, chatClient: Chat
           new InMemoryEmbeddingStore[TextSegment]()
         }
         val queryEmbedding = embeddingModel.embed(query).content()
-        val relevant = embeddingStore.search(EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding).maxResults(1).minScore(0.7).build())
+        val relevant = embeddingStore.search(EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding).maxResults(1).minScore(0.7).build()) // TODO: settings
         val matches = relevant.matches().asScala
         if (matches.nonEmpty) {
           val resp = matches.head
           val text = resp.embedded().text()
-          // val score = resp.score()
-          // println(s"using semantic response: ${score}")
+          val score = resp.score()
+          println(s"using semantic response: ${score}")
           val chatResponse = ChatResponse(Seq(ChatGeneration(ChatMessage("assistant", text))), ChatResponseMetadata.empty)
           ChatClientWithSemanticCache.cache.put(key, (ttl, chatResponse))
           chatResponse.rightf
         } else {
+          println("not in semantic cache")
           chatClient.call(originalPrompt, attrs).map {
             case Left(err) => err.left
             case Right(resp) => {
