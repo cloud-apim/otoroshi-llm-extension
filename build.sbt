@@ -5,17 +5,22 @@ ThisBuild / version          := "1.0.0-dev"
 ThisBuild / organization     := "com.cloud-apim"
 ThisBuild / organizationName := "Cloud-APIM"
 
-lazy val springAiVersion = "0.8.1-SNAPSHOT"
-
 lazy val jackson = Seq(
   ExclusionRule("com.fasterxml.jackson.core", "jackson-databind"),
   ExclusionRule("io.opentelemetry"),
+)
+
+lazy val slf4j = Seq(
+  ExclusionRule("org.slf4j"),
+  ExclusionRule("ch.qos.logback")
 )
 
 lazy val netty = Seq(
   ExclusionRule("io.netty", "netty-transport-native-epoll"),
   ExclusionRule("io.netty", "netty-transport-native-kqueue"),
 )
+
+lazy val all = jackson ++ slf4j
 
 lazy val root = (project in file("."))
   .settings(
@@ -27,6 +32,9 @@ lazy val root = (project in file("."))
     ),
     libraryDependencies ++= Seq(
       "fr.maif" %% "otoroshi" % "16.18.4" % "provided" excludeAll (netty: _*),
+      "dev.langchain4j" % "langchain4j" % "0.33.0" excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j-embeddings" % "0.33.0" excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j-embeddings-all-minilm-l6-v2" % "0.33.0" excludeAll(all: _*),
       "io.netty" % "netty-transport-native-kqueue" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       "io.netty" % "netty-transport-native-epoll" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       munit % Test

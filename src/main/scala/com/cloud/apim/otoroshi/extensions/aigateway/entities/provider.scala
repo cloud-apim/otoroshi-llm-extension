@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ChatClientDecorators
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatClientWithValidation}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
@@ -31,6 +32,8 @@ case class AiProvider(
                        deny: Seq[String] = Seq.empty,
                        validatorRef: Option[String] = None,
                        validatorPrompt: Option[String] = None,
+                       cacheStrategy: Option[String],// = None,
+                       ttl: Option[FiniteDuration],// = None,
                      ) extends EntityLocationSupport {
   override def internalId: String               = id
   override def json: JsValue                    = AiProvider.format.writes(this)
@@ -42,11 +45,11 @@ case class AiProvider(
     val baseUrl = connection.select("base_url").asOpt[String]
     val token = connection.select("token").asOpt[String].getOrElse("xxx")
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
-    provider.toLowerCase() match {
+    val rawClient = provider.toLowerCase() match {
       case "openai" => {
         val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
-        new ChatClientWithValidation(this, new OpenAiChatClient(api, opts, id)).some
+        new OpenAiChatClient(api, opts, id).some
       }
       case "azure-openai" => {
         val resourceName = connection.select("resource_name").as[String]
@@ -54,25 +57,26 @@ case class AiProvider(
         val apikey = connection.select("api_key").as[String]
         val api = new AzureOpenAiApi(resourceName, deploymentId, apikey, timeout.getOrElse(10.seconds), env = env)
         val opts = AzureOpenAiChatClientOptions.fromJson(options)
-        new ChatClientWithValidation(this, new AzureOpenAiChatClient(api, opts, id)).some
+        new AzureOpenAiChatClient(api, opts, id).some
       }
       case "mistral" => {
         val api = new MistralAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = MistralAiChatClientOptions.fromJson(options)
-        new ChatClientWithValidation(this, new MistralAiChatClient(api, opts, id)).some
+        new MistralAiChatClient(api, opts, id).some
       }
       case "ollama" => {
         val api = new OllamaAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(10.seconds), env = env)
         val opts = OllamaAiChatClientOptions.fromJson(options)
-        new ChatClientWithValidation(this, new OllamaAiChatClient(api, opts, id)).some
+        new OllamaAiChatClient(api, opts, id).some
       }
       case "anthropic" => {
         val api = new AnthropicApi(baseUrl.getOrElse(AnthropicApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = AnthropicChatClientOptions.fromJson(options)
-        new ChatClientWithValidation(this, new AnthropicChatClient(api, opts, id)).some
+        new AnthropicChatClient(api, opts, id).some
       }
       case _ => None
     }
+    rawClient.map(c => ChatClientDecorators(this, c))
   }
 }
 

@@ -45,6 +45,7 @@ case class ChatResponse(
 }
 
 case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage) {
+  val empty: ChatResponseMetadata = ChatResponseMetadata(ChatResponseMetadataRateLimit.empty, ChatResponseMetadataUsage.empty)
   def json: JsValue = Json.obj(
     "rate_limit" -> rateLimit.json,
     "usage" -> usage.json,
@@ -88,72 +89,4 @@ trait ChatClient {
 
 object ChatClient {
   val ApiUsageKey = TypedKey[ChatResponseMetadata]("otoroshi-extensions.cloud-apim.ai.llm.ApiUsage")
-}
-
-class ChatClientWithValidation(originalProvider: AiProvider, chatClient: ChatClient) extends ChatClient {
-
-  private val allow = originalProvider.allow
-  private val deny = originalProvider.deny
-
-  private def validate(content: String): Boolean = {
-    val allowed = if (allow.isEmpty) true else allow.exists(al => RegexPool.regex(al).matches(content))
-    val denied = if (deny.isEmpty) false else deny.exists(dn => RegexPool.regex(dn).matches(content))
-    !denied && allowed
-  }
-
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-
-    def pass(): Future[Either[JsValue, ChatResponse]] = chatClient.call(originalPrompt, attrs)
-    def fail(idx: Int): Future[Either[JsValue, ChatResponse]] = Left(Json.obj("error" -> "bad_request", "error_description" -> s"request content did not pass validation request (${idx})")).vfuture
-
-    val contents = originalPrompt.messages.map(_.content)
-    if (!contents.forall(content => validate(content))) {
-      fail(1)
-    } else {
-      originalProvider.validatorRef match {
-        case None => pass()
-        case Some(ref) if ref == originalProvider.id => pass()
-        case Some(ref) => {
-          originalProvider.validatorPrompt match {
-            case None => pass()
-            case Some(pref) => env.adminExtensions.extension[AiExtension].flatMap(_.states.prompt(pref)) match {
-              case None => Left(Json.obj("error" -> "validation prompt not found")).vfuture
-              case Some(prompt) => {
-                env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(ref).flatMap(_.getChatClient())) match {
-                  case None => Left(Json.obj("error" -> "validation provider not found")).vfuture
-                  case Some(validationClient) => {
-                    validationClient.call(ChatPrompt(Seq(
-                      ChatMessage("system", prompt.prompt)
-                    ) ++ originalPrompt.messages), attrs).flatMap {
-                      case Left(err) => fail(2)
-                      case Right(resp) => {
-                        val content = resp.generations.head.message.content.toLowerCase().trim.replace("\n", " ")
-                        println(s"content: '${content}'")
-                        if (content == "true") {
-                          pass()
-                        } else if (content == "false") {
-                          fail(3)
-                        } else if (content.startsWith("{") && content.endsWith("}")) {
-                          if (Json.parse(content).select("result").asOpt[Boolean].getOrElse(false)) {
-                            pass()
-                          } else {
-                            fail(4)
-                          }
-                        } else {
-                          content.split(" ").headOption match {
-                            case Some("true") => pass()
-                            case _ => fail(5)
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
 }
