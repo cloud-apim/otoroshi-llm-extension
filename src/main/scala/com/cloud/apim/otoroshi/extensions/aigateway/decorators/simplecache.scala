@@ -21,7 +21,7 @@ object ChatClientWithSimpleCache {
     .maximumSize(5000)
     .build[String, (FiniteDuration, ChatResponse)]()
   def applyIfPossible(tuple: (AiProvider, ChatClient)): ChatClient = {
-    if (tuple._1.cacheStrategy.contains("simple")) {
+    if (tuple._1.cache.strategy.contains("simple")) {
       new ChatClientWithSimpleCache(tuple._1, tuple._2)
     } else {
       tuple._2
@@ -31,13 +31,13 @@ object ChatClientWithSimpleCache {
 
 class ChatClientWithSimpleCache(originalProvider: AiProvider, chatClient: ChatClient) extends ChatClient {
 
-  private val ttl = originalProvider.ttl.getOrElse(24.hours)
+  private val ttl = originalProvider.cache.ttl
 
   override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
     ChatClientWithSimpleCache.cache.getIfPresent(key) match {
       case Some((_, response)) =>
-        println("using simple cache response")
+        // println("using simple cache response")
         response.rightf
       case None => {
         chatClient.call(originalPrompt, attrs).map {

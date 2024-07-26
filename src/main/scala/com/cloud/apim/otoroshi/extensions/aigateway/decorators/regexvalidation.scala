@@ -11,7 +11,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 object ChatClientWithRegexValidation {
   def applyIfPossible(tuple: (AiProvider, ChatClient)): ChatClient = {
-    if (tuple._1.allow.nonEmpty || tuple._1.deny.nonEmpty) {
+    if (tuple._1.regexValidation.allow.nonEmpty || tuple._1.regexValidation.deny.nonEmpty) {
       new ChatClientWithRegexValidation(tuple._1, tuple._2)
     } else {
       tuple._2
@@ -21,8 +21,8 @@ object ChatClientWithRegexValidation {
 
 class ChatClientWithRegexValidation(originalProvider: AiProvider, chatClient: ChatClient) extends ChatClient {
 
-  private val allow = originalProvider.allow
-  private val deny = originalProvider.deny
+  private val allow = originalProvider.regexValidation.allow
+  private val deny = originalProvider.regexValidation.deny
 
   private def validate(content: String): Boolean = {
     val allowed = if (allow.isEmpty) true else allow.exists(al => RegexPool.regex(al).matches(content))

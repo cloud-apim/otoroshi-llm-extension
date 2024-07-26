@@ -45,7 +45,6 @@ case class ChatResponse(
 }
 
 case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage) {
-  val empty: ChatResponseMetadata = ChatResponseMetadata(ChatResponseMetadataRateLimit.empty, ChatResponseMetadataUsage.empty)
   def json: JsValue = Json.obj(
     "rate_limit" -> rateLimit.json,
     "usage" -> usage.json,

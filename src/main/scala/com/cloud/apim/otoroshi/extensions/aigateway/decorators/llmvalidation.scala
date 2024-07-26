@@ -12,7 +12,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 object ChatClientWithLlmValidation {
   def applyIfPossible(tuple: (AiProvider, ChatClient)): ChatClient = {
-    if (tuple._1.validatorRef.isDefined && tuple._1.validatorPrompt.isDefined) {
+    if (tuple._1.llmValidation.provider.isDefined && tuple._1.llmValidation.prompt.isDefined) {
       new ChatClientWithLlmValidation(tuple._1, tuple._2)
     } else {
       tuple._2
@@ -28,11 +28,11 @@ class ChatClientWithLlmValidation(originalProvider: AiProvider, chatClient: Chat
 
     def fail(idx: Int): Future[Either[JsValue, ChatResponse]] = Left(Json.obj("error" -> "bad_request", "error_description" -> s"request content did not pass llm validation (${idx})")).vfuture
 
-    originalProvider.validatorRef match {
+    originalProvider.llmValidation.provider match {
       case None => pass()
       case Some(ref) if ref == originalProvider.id => pass()
       case Some(ref) => {
-        originalProvider.validatorPrompt match {
+        originalProvider.llmValidation.prompt match {
           case None => pass()
           case Some(pref) => env.adminExtensions.extension[AiExtension].flatMap(_.states.prompt(pref)) match {
             case None => Left(Json.obj("error" -> "validation prompt not found")).vfuture

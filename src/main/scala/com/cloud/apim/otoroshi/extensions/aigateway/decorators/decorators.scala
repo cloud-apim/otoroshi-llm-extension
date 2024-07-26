@@ -8,6 +8,10 @@ object ChatClientDecorators {
   val possibleDecorators: Seq[Function[(AiProvider, ChatClient), ChatClient]] = Seq(
     ChatClientWithRegexValidation.applyIfPossible,
     ChatClientWithLlmValidation.applyIfPossible,
+    ChatClientWithSimpleCache.applyIfPossible,
+    ChatClientWithSemanticCache.applyIfPossible,
+    ChatClientWithSemanticCache.applyIfPossible,
+    ChatClientWithHttpValidation.applyIfPossible,
   )
 
   def apply(provider: AiProvider, client: ChatClient): ChatClient = {
