@@ -42,8 +42,8 @@ case class AtomicAverage(count: AtomicLong, sum: AtomicLong) {
 
 object BestResponseTime extends LoadBalancing {
 
-  private[models] val random        = new scala.util.Random
-  private[models] val responseTimes = new UnboundedTrieMap[String, AtomicAverage]()
+  private val random        = new scala.util.Random
+  private val responseTimes = new UnboundedTrieMap[String, AtomicAverage]()
 
   def incrementAverage(desc: AiProvider, responseTime: Long): Unit = {
     val key = desc.id
@@ -93,9 +93,10 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
       provider.getChatClient() match {
         case None => Json.obj("error" -> "no client found").leftf
         case Some(client) => {
-          val start = System.console()
+          val start = System.currentTimeMillis()
           client.call(prompt, attrs).map { resp =>
-            BestResponseTime.incrementAverage(provider, System.currentTimeMillis() - start)
+            val duration: Long = System.currentTimeMillis() - start
+            BestResponseTime.incrementAverage(provider, duration)
             resp
           }
         }
