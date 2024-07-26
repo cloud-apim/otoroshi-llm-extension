@@ -49,6 +49,7 @@ case class AiProvider(
                        provider: String,
                        connection: JsObject,
                        options: JsObject,
+                       providerFallback: Option[String] = None,
                        regexValidation: RegexValidationSettings = RegexValidationSettings(),
                        llmValidation: LlmValidationSettings = LlmValidationSettings(),
                        httpValidation: HttpValidationSettings = HttpValidationSettings(),
@@ -110,6 +111,7 @@ object AiProvider {
       "provider"         -> o.provider,
       "connection"       -> o.connection,
       "options"          -> o.options,
+      "provider_fallback" -> o.providerFallback.map(_.json).getOrElse(JsNull).asValue,
       "regex_validation" -> Json.obj(
         "allow" -> o.regexValidation.allow,
         "deny" -> o.regexValidation.deny,
@@ -139,6 +141,7 @@ object AiProvider {
         provider = (json \ "provider").as[String],
         connection = (json \ "connection").asOpt[JsObject].getOrElse(Json.obj()),
         options = (json \ "options").asOpt[JsObject].getOrElse(Json.obj()),
+        providerFallback = (json \ "provider_fallback").asOpt[String],
         regexValidation = RegexValidationSettings(
           allow = (json \ "regex_validation" \ "allow").asOpt[Seq[String]].getOrElse(Seq.empty),
           deny = (json \ "regex_validation" \ "deny").asOpt[Seq[String]].getOrElse(Seq.empty),

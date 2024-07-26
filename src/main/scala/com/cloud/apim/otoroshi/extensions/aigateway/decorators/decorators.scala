@@ -12,6 +12,7 @@ object ChatClientDecorators {
     ChatClientWithSemanticCache.applyIfPossible,
     ChatClientWithSemanticCache.applyIfPossible,
     ChatClientWithHttpValidation.applyIfPossible,
+    ChatClientWithProviderFallback.applyIfPossible
   )
 
   def apply(provider: AiProvider, client: ChatClient): ChatClient = {

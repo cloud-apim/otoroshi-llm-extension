@@ -269,6 +269,20 @@ class AiProvidersPage extends Component {
       props: {
         label: 'Validator provider',
         placeholder: 'Select a validator provider',
+        isClearable: true,
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
+      }
+    },
+    'provider_fallback': {
+      type: 'select',
+      props: {
+        label: 'Provider fallback provider',
+        placeholder: 'Select a fallback',
+        isClearable: true,
         valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
         transformer: (a) => ({
           value: a.id,
@@ -281,6 +295,7 @@ class AiProvidersPage extends Component {
       props: {
         label: 'Validator prompt',
         placeholder: 'Select a validator prompt',
+        isClearable: true,
         valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/prompts',
         transformer: (a) => ({
           value: a.id,
@@ -308,6 +323,8 @@ class AiProvidersPage extends Component {
         'description',
         '<<<Provider',
         'provider',
+        '>>>Provider fallback',
+        'provider_fallback',
         '>>>Cache',
         'cache.strategy',
         'cache.ttl',
@@ -348,6 +365,8 @@ class AiProvidersPage extends Component {
         'options.num_gpu',
         'options.num_gqa',
         'options.num_ctx',
+        '>>>Provider fallback',
+        'provider_fallback',
         '>>>Cache',
         'cache.strategy',
         'cache.ttl',
@@ -384,6 +403,8 @@ class AiProvidersPage extends Component {
         'options.safe_prompt',
         'options.temperature',
         'options.top_p',
+        '>>>Provider fallback',
+        'provider_fallback',
         '>>>Cache',
         'cache.strategy',
         'cache.ttl',
@@ -419,6 +440,8 @@ class AiProvidersPage extends Component {
         'options.temperature',
         'options.top_p',
         'options.top_k',
+        '>>>Provider fallback',
+        'provider_fallback',
         '>>>Cache',
         'cache.strategy',
         'cache.ttl',
@@ -454,6 +477,8 @@ class AiProvidersPage extends Component {
         'options.n',
         'options.temperature',
         'options.topP',
+        '>>>Provider fallback',
+        'provider_fallback',
         '>>>Cache',
         'cache.strategy',
         'cache.ttl',
@@ -488,6 +513,8 @@ class AiProvidersPage extends Component {
       'options.n',
       'options.temperature',
       'options.topP',
+      '>>>Provider fallback',
+      'provider_fallback',
       '>>>Cache',
       'cache.strategy',
       'cache.ttl',
