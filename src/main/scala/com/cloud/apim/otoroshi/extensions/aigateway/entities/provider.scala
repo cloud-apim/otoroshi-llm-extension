@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatClient
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ChatClientDecorators
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientDecorators, LoadBalancerChatClient}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
 import otoroshi.env.Env
@@ -94,6 +94,7 @@ case class AiProvider(
         val opts = AnthropicChatClientOptions.fromJson(options)
         new AnthropicChatClient(api, opts, id).some
       }
+      case "loadbalancer" => new LoadBalancerChatClient(this).some
       case _ => None
     }
     rawClient.map(c => ChatClientDecorators(this, c))

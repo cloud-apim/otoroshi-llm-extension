@@ -127,6 +127,7 @@ class AiProvidersPage extends Component {
           { 'label': 'Mistral', value: 'mistral' },
           { 'label': 'Ollama', value: 'ollama' },
           { 'label': 'Anthropic', value: 'anthropic' },
+          { 'label': 'Loadbalancer', value: 'loadbalancer' },
         ] }
     },
     'connection.resource_name': {
@@ -264,6 +265,21 @@ class AiProvidersPage extends Component {
           { label: 'Semantic', value: 'semantic' },
       ] },
     },
+    'options.loadbalancing': {
+      type: 'select',
+      props: {
+        label: 'Load Balancing strategy',
+        possibleValues: [
+          { label: 'Round robin', value: 'round_robin' },
+          { label: 'Random', value: 'random' },
+          { label: 'Best response time', value: 'best_response_time' },
+        ]
+      },
+    },
+    'options.ratio': {
+      type: 'number',
+      props: { label: 'TTL', suffix: 'millis.' },
+    },
     'llm_validation.provider': {
       type: 'select',
       props: {
@@ -342,6 +358,21 @@ class AiProvidersPage extends Component {
         'tags',
         'metadata',
       ]
+    }
+    if (state.provider === "loadbalancer") {
+      return [
+        '_loc', 'id', 'name', 'description',
+        '<<<Provider',
+        'provider',
+        '<<<Load balancing',
+        'options.loadbalancing',
+        'options.ratio',
+        '>>>Tester',
+        'tester',
+        '>>>Metadata and tags',
+        'tags',
+        'metadata',
+      ];
     }
     if (state.provider === "ollama") {
       return [
