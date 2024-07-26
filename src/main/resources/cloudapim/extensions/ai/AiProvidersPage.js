@@ -280,6 +280,18 @@ class AiProvidersPage extends Component {
       type: 'number',
       props: { label: 'TTL', suffix: 'millis.' },
     },
+    'options.refs': {
+      type: 'array',
+      props: {
+        label: 'Providers',
+        placeholder: 'Select a provider',
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
+      }
+    },
     'llm_validation.provider': {
       type: 'select',
       props: {
@@ -364,6 +376,8 @@ class AiProvidersPage extends Component {
         '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
+        '<<<Providers',
+        'options.refs',
         '<<<Load balancing',
         'options.loadbalancing',
         'options.ratio',
