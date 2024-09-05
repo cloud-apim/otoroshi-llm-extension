@@ -347,6 +347,7 @@ class AiProvidersPage extends Component {
   ];
 
   formFlow = (state) => {
+    state.cache = state.cache || 'none'
     if (!state.provider) {
       return [
         '_loc',
@@ -617,6 +618,11 @@ class AiProvidersPage extends Component {
               timeout: 10000,
             },
             options: ClientOptions.openai,
+            cache: {
+              strategy: 'none',
+              ttl: 5 * 60 * 1000,
+              score: 0.8
+            }
           }
         },
         itemName: "Provider",
