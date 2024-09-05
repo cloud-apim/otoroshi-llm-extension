@@ -36,7 +36,8 @@ case class HttpValidationSettings(
 
 case class CacheSettings(
   strategy: String = "none",
-  ttl: FiniteDuration = 24.hours
+  ttl: FiniteDuration = 24.hours,
+  score: Double = 0.8
 )
 
 case class AiProvider(
@@ -129,6 +130,7 @@ object AiProvider {
       "cache" -> Json.obj(
         "strategy" -> o.cache.strategy,
         "ttl" -> o.cache.ttl.toMillis,
+        "score" -> o.cache.score
       )
     )
     override def reads(json: JsValue): JsResult[AiProvider] = Try {
@@ -159,6 +161,7 @@ object AiProvider {
         cache = CacheSettings(
           strategy = (json \ "cache" \ "strategy").asOpt[String].getOrElse("none"),
           ttl = (json \ "cache" \ "ttl").asOpt[Long].map(v => FiniteDuration(v, TimeUnit.MILLISECONDS)).getOrElse(24.hours),
+          score = (json \ "cache" \ "score").asOpt[Double].getOrElse(0.8),
         )
       )
     } match {
