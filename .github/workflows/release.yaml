@@ -23,6 +23,7 @@ jobs:
         id: build-libs
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SBT_OPTS: -XX:MaxPermSize=8G -Xmx8G -Xss32M
         run: |
           sbt ';compile;package;assembly'
           rm ./target/scala-2.12/otoroshi-llm-extension_2.12-${{ inputs.version }}.jar 
