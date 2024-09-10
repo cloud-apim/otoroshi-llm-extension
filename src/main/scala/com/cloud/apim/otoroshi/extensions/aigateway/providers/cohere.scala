@@ -105,7 +105,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
       )
       val duration: Long = resp.headers.getIgnoreCase("CohereAi-processing-ms").map(_.toLong).getOrElse(0L)
       val slug = Json.obj(
-        "provider_kind" -> "CohereAi",
+        "provider_kind" -> "cohere",
         "provider" -> id,
         "duration" -> duration,
         "model" -> options.model.json,

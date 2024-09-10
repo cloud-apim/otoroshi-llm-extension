@@ -478,6 +478,46 @@ class AiProvidersPage extends Component {
         'metadata',
       ];
     }
+    if (state.provider === "cohere") {
+      return [
+        '_loc', 'id', 'name', 'description',
+        '<<<Provider',
+        'provider',
+        '<<<API Connection',
+        'connection.base_url',
+        'connection.token',
+        'connection.timeout',
+        '<<<Connection options',
+        'options.model',
+        'options.max_tokens',
+        'options.random_seed',
+        'options.safe_prompt',
+        'options.temperature',
+        'options.k',
+        'options.p',
+        '>>>Provider fallback',
+        'provider_fallback',
+        '>>>Cache',
+        'cache.strategy',
+        'cache.ttl',
+        state.cache.strategy === 'semantic' ? 'cache.score' : null,
+        '>>>Regex validation',
+        'regex_validation.allow',
+        'regex_validation.deny',
+        '>>>LLM Based validation',
+        'llm_validation.provider',
+        'llm_validation.prompt',
+        '>>>External validation',
+        'http_validation.url',
+        'http_validation.headers',
+        'http_validation.ttl',
+        '>>>Tester',
+        'tester',
+        '>>>Metadata and tags',
+        'tags',
+        'metadata',
+      ];
+    }
     if (state.provider === "anthropic") {
       return [
         '_loc', 'id', 'name', 'description',
@@ -689,6 +729,21 @@ class AiProvidersPage extends Component {
                   timeout: 10000,
                 },
                 options: ClientOptions.mistral,
+              });
+            }else if (state.provider === 'cohere') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'cohere',
+                connection: {
+                  base_url: BaseUrls.cohere,
+                  token: 'xxx',
+                  timeout: 10000,
+                },
+                options: ClientOptions.cohere,
               });
             } else if (state.provider === 'openai') {
               update({
