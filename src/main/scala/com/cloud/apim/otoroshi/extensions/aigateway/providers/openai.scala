@@ -26,6 +26,8 @@ object OpenAiModels {
   val GPT_4_TURBO_PREVIEW = "gpt-4-turbo-preview"
   val GPT_4_VISION_PREVIEW = "gpt-4-vision-preview"
   val GPT_4 = "gpt-4"
+  val GPT_4_O = "gpt-4o"
+  val GPT_4_O_MINI = "gpt-4o-mini"
   val GPT_4_32K = "gpt-4-32k"
   val GPT_3_5_TURBO = "gpt-3.5-turbo"
   val GPT_3_5_TURBO_0125 = "gpt-3.5-turbo-0125"
@@ -62,7 +64,7 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
 object OpenAiChatClientOptions {
   def fromJson(json: JsValue): OpenAiChatClientOptions = {
     OpenAiChatClientOptions(
-      model = json.select("model").asOpt[String].getOrElse(OpenAiModels.GPT_3_5_TURBO),
+      model = json.select("model").asOpt[String].getOrElse(OpenAiModels.GPT_4_O_MINI),
       max_tokens = json.select("max_tokens").asOpt[Int],
       n = json.select("n").asOpt[Int],
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
@@ -72,7 +74,7 @@ object OpenAiChatClientOptions {
 }
 
 case class OpenAiChatClientOptions(
-  model: String = OpenAiModels.GPT_3_5_TURBO,
+  model: String = OpenAiModels.GPT_4_O_MINI,
   frequency_penalty: Option[Double] = None,
   logit_bias: Option[Map[String, Int]] = None,
   logprobs: Option[Boolean] = None,
