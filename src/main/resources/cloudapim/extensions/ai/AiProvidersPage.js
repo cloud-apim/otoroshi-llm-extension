@@ -127,6 +127,7 @@ class AiProvidersPage extends Component {
           { 'label': 'Mistral', value: 'mistral' },
           { 'label': 'Ollama', value: 'ollama' },
           { 'label': 'Anthropic', value: 'anthropic' },
+          { 'label': 'Groq', value: 'groq' },
           { 'label': 'Loadbalancer', value: 'loadbalancer' },
         ] }
     },
@@ -516,6 +517,43 @@ class AiProvidersPage extends Component {
         'metadata',
       ];
     }
+    if (state.provider === "groq") {
+      return [
+        '_loc', 'id', 'name', 'description',
+        '<<<Provider',
+        'provider',
+        '<<<API Connection',
+        'connection.base_url',
+        'connection.token',
+        'connection.timeout',
+        '<<<Connection options',
+        'options.model',
+        'options.max_tokens',
+        'options.temperature',
+        'options.top_p',
+        '>>>Provider fallback',
+        'provider_fallback',
+        '>>>Cache',
+        'cache.strategy',
+        'cache.ttl',
+        state.cache.strategy === 'semantic' ? 'cache.score' : null,
+        '>>>Regex validation',
+        'regex_validation.allow',
+        'regex_validation.deny',
+        '>>>LLM Based validation',
+        'llm_validation.provider',
+        'llm_validation.prompt',
+        '>>>External validation',
+        'http_validation.url',
+        'http_validation.headers',
+        'http_validation.ttl',
+        '>>>Tester',
+        'tester',
+        '>>>Metadata and tags',
+        'tags',
+        'metadata',
+      ];
+    }
     if (state.provider === "azure-openai") {
       return [
         '_loc', 'id', 'name', 'description',
@@ -674,6 +712,20 @@ class AiProvidersPage extends Component {
                   timeout: 30000,
                 },
                 options: ClientOptions.anthropic,
+              });
+            } else if (state.provider === 'groq') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'groq',
+                connection: {
+                  base_url: BaseUrls.groq,
+                  timeout: 30000,
+                },
+                options: ClientOptions.groq,
               });
             } else if (state.provider === 'mistral') {
               update({
