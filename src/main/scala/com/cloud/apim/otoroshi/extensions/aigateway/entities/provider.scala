@@ -95,6 +95,11 @@ case class AiProvider(
         val opts = AnthropicChatClientOptions.fromJson(options)
         new AnthropicChatClient(api, opts, id).some
       }
+      case "groq" => {
+        val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val opts = GroqChatClientOptions.fromJson(options)
+        new GroqChatClient(api, opts, id).some
+      }
       case "loadbalancer" => new LoadBalancerChatClient(this).some
       case _ => None
     }
