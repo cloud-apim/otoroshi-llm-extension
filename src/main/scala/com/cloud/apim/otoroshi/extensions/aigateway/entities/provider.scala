@@ -90,6 +90,11 @@ case class AiProvider(
         val opts = OllamaAiChatClientOptions.fromJson(options)
         new OllamaAiChatClient(api, opts, id).some
       }
+      case "cohere" => {
+        val api = new CohereAiApi(baseUrl.getOrElse(CohereAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val opts = CohereAiChatClientOptions.fromJson(options)
+        new CohereAiChatClient(api, opts, id).some
+      }
       case "anthropic" => {
         val api = new AnthropicApi(baseUrl.getOrElse(AnthropicApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = AnthropicChatClientOptions.fromJson(options)
