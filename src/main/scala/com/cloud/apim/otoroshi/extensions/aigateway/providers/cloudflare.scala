@@ -25,7 +25,7 @@ object CloudflareApi {
     s"https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${modelName}"
   }
 }
-class CloudflareApi(baseUrl: String = CloudflareApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
+class CloudflareApi(val accountId: String, val modelName: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[CloudflareApiResponse] = {
     env.Ws
@@ -102,7 +102,7 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
       )
       val duration: Long = resp.headers.getIgnoreCase("Cloudflare-processing-ms").map(_.toLong).getOrElse(0L)
       val slug = Json.obj(
-        "provider_kind" -> "Cloudflare",
+        "provider_kind" -> "cloudflare",
         "provider" -> id,
         "duration" -> duration,
         "account_id" -> api.accountId,

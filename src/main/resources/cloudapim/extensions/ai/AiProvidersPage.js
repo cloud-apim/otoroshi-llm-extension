@@ -745,7 +745,7 @@ class AiProvidersPage extends Component {
         'metadata',
       ];
     }
-    if (state.provider === "ovh-ai-endpoints") {
+    if (state.provider === "cloudflare") {
       return [
         '_loc', 'id', 'name', 'description',
         '<<<Provider',
@@ -753,10 +753,14 @@ class AiProvidersPage extends Component {
         '<<<API Connection',
         'connection.token',
         'connection.timeout',
+        '<<<Cloudflare options',
+        'connection.account_id',
+        'connection.model_name',
         '<<<Connection options',
-        'options.model',
         'options.max_tokens',
         'options.temperature',
+        'options.topK',
+        'options.topP',
         '>>>Provider fallback',
         'provider_fallback',
         '>>>Cache',
@@ -1003,6 +1007,22 @@ class AiProvidersPage extends Component {
                   resource_name: "resource name",
                   deployment_id: "model id",
                   api_key: 'xxx',
+                  timeout: 10000,
+                },
+                options: ClientOptions.azureOpenai,
+              });
+            } else if (state.provider === 'cloudflare') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'cloudflare',
+                connection: {
+                  account_id: "YOUR ACCOUNT ID",
+                  model_name: "@cf/meta/llama-3.1-8b-instruct-fp8",
+                  token: 'xxx',
                   timeout: 10000,
                 },
                 options: ClientOptions.azureOpenai,

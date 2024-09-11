@@ -85,6 +85,13 @@ case class AiProvider(
         val opts = AzureOpenAiChatClientOptions.fromJson(options)
         new AzureOpenAiChatClient(api, opts, id).some
       }
+      case "cloudflare" => {
+        val accountId = connection.select("account_id").as[String]
+        val modelName = connection.select("model_name").as[String]
+        val api = new CloudflareApi(accountId, modelName, token, timeout.getOrElse(10.seconds), env = env)
+        val opts = CloudflareChatClientOptions.fromJson(options)
+        new CloudflareChatClient(api, opts, id).some
+      }
       case "mistral" => {
         val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = MistralAiChatClientOptions.fromJson(options)
