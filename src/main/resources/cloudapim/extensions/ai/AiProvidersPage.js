@@ -531,6 +531,7 @@ class AiProvidersPage extends Component {
         'options.max_tokens',
         'options.temperature',
         'options.top_p',
+        'options.n',
         '>>>Provider fallback',
         'provider_fallback',
         '>>>Cache',
