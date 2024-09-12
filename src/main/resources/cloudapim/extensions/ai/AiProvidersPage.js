@@ -204,6 +204,14 @@ class AiProvidersPage extends Component {
           { 'label': 'Loadbalancer', value: 'loadbalancer' },
         ] }
     },
+    'connection.model_name': {
+      type: 'string',
+      props: { label: 'Model name' },
+    },
+    'connection.account_id': {
+      type: 'string',
+      props: { label: 'Account ID' },
+    },
     'connection.resource_name': {
       type: 'string',
       props: { label: 'Resource name' },
