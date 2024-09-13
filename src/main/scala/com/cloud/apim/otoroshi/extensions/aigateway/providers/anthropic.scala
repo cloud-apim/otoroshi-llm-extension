@@ -17,6 +17,7 @@ case class AnthropicApiResponse(status: Int, headers: Map[String, String], body:
   )
 }
 object AnthropicModels {
+  val CLAUDE_3_5_SONNET = "claude-3-5-sonnet-20240620"
   val CLAUDE_3_OPUS = "claude-3-opus-20240229"
   val CLAUDE_3_SONNET = "claude-3-sonnet-20240229"
   val CLAUDE_3_HAIKU = "claude-3-haiku-20240307"

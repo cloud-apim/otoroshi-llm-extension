@@ -101,7 +101,72 @@ class AiProviderTester extends Component {
 
 class AiProvidersPage extends Component {
 
-  formSchema = {
+  state = {}
+
+  providerModels = (provider) => {
+    if (provider === "openai") {
+      return {
+        'type': 'select',
+        props: { label: 'Description', possibleValues: [
+            { label: 'gpt-4o', value: 'gpt-4o' },
+            { label: 'gpt-4o-mini', value: 'gpt-4o-mini' },
+            { label: 'gpt-4-turbo-preview', value: 'gpt-4-turbo-preview' },
+            { label: 'gpt-4-turbo', value: 'gpt-4-turbo' },
+            { label: 'gpt-4', value: 'gpt-4' },
+            { label: 'gpt-3.5-turbo', value: 'gpt-3.5-turbo' },
+            { label: 'o1-preview', value: 'o1-preview' },
+            { label: 'o1-mini', value: 'o1-mini' },
+          ] }
+      }
+    } else if (provider === "anthropic") {
+      return {
+        'type': 'select',
+        props: { label: 'Description', possibleValues: [
+            { label: "claude-3-5-sonnet-20240620", value: "claude-3-5-sonnet-20240620" },
+            { label: "claude-3-opus-20240229", value: "claude-3-opus-20240229" },
+            { label: "claude-3-sonnet-20240229", value: "claude-3-sonnet-20240229" },
+            { label: "claude-3-haiku-20240307", value: "claude-3-haiku-20240307" },
+          ] }
+      }
+    } else if (provider === "mistral") {
+      return {
+        'type': 'select',
+        props: { label: 'Description', possibleValues: [
+            { label: "open-mistral-7b", value: "open-mistral-7b" },
+            { label: "open-mixtral-8x7b", value: "open-mixtral-8x7b" },
+            { label: "open-mixtral-8x22b", value: "open-mixtral-8x22b" },
+            { label: "open-codestral-mamba", value: "open-codestral-mamba" },
+            { label: "mistral-embed", value: "mistral-embed" },
+            { label: "codestral-latest", value: "codestral-latest" },
+            { label: "open-mistral-nemo", value: "open-mistral-nemo" },
+            { label: "mistral-large-latest", value: "mistral-large-latest" },
+            { label: "mistral-small-latest", value: "mistral-small-latest" },
+            { label: "mistral-medium-latest", value: "mistral-medium-latest" },
+            { label: "mistral-large-latest", value: "mistral-large-latest" },
+          ] }
+      }
+    } else if (provider === "ovh-ai-endpoints") {
+      return {
+        'type': 'select',
+        props: { label: 'Description', possibleValues: [
+            { 'label': "CodeLlama-13b-Instruct-hf", value: 'CodeLlama-13b-Instruct-hf' },
+            { 'label': "Mixtral-8x7B-Instruct-v0.1", value: 'Mixtral-8x7B-Instruct-v0.1' },
+            { 'label': "Meta-Llama-3-70B-Instruct", value: 'Meta-Llama-3-70B-Instruct' },
+            { 'label': "Llama-2-13b-chat-hf", value: 'Llama-2-13b-chat-hf' },
+            { 'label': "Mixtral-8x22B-Instruct-v0.1", value: 'Mixtral-8x22B-Instruct-v0.1' },
+            { 'label': "Mistral-7B-Instruct-v0.2", value: 'Mistral-7B-Instruct-v0.2' },
+            { 'label': "Meta-Llama-3-8B-Instruct", value: 'Meta-Llama-3-8B-Instruct' },
+          ] }
+      }
+    } else {
+      return {
+        type: 'string',
+        props: { label: 'Model' },
+      }
+    }
+  }
+
+  formSchema = (state) => ({
     _loc: {
       type: 'location',
       props: {},
@@ -127,6 +192,7 @@ class AiProvidersPage extends Component {
           { 'label': 'Mistral', value: 'mistral' },
           { 'label': 'Ollama', value: 'ollama' },
           { 'label': 'Anthropic', value: 'anthropic' },
+          { 'label': 'OVH AI Endpoints', value: 'ovh-ai-endpoints' },
           { 'label': 'Loadbalancer', value: 'loadbalancer' },
         ] }
     },
@@ -146,6 +212,10 @@ class AiProvidersPage extends Component {
       type: 'string',
       props: { label: 'Base URL' },
     },
+    'connection.base_domain': {
+      type: 'string',
+      props: { label: 'Base domain' },
+    },
     'connection.token': {
       type: 'string',
       props: { label: 'API Token' },
@@ -154,10 +224,7 @@ class AiProvidersPage extends Component {
       type: 'number',
       props: { label: 'Timeout', suffix: 'ms.' },
     },
-    'options.model': {
-      type: 'string',
-      props: { label: 'Model' },
-    },
+    'options.model': this.providerModels(state.provider || 'none'),
     'options.max_tokens': {
       type: 'string',
       props: { label: 'Max. tokens' },
@@ -335,7 +402,7 @@ class AiProvidersPage extends Component {
         }),
       }
     }
-  };
+  });
 
   columns = [
     {
@@ -554,6 +621,44 @@ class AiProvidersPage extends Component {
         'metadata',
       ];
     }
+    if (state.provider === "ovh-ai-endpoints") {
+      return [
+        '_loc', 'id', 'name', 'description',
+        '<<<Provider',
+        'provider',
+        '<<<API Connection',
+        'connection.base_domain',
+        'connection.token',
+        'connection.timeout',
+        '<<<Connection options',
+        'options.model',
+        'options.max_tokens',
+        'options.temperature',
+        'options.topP',
+        'options.seed',
+        '>>>Provider fallback',
+        'provider_fallback',
+        '>>>Cache',
+        'cache.strategy',
+        'cache.ttl',
+        state.cache.strategy === 'semantic' ? 'cache.score' : null,
+        '>>>Regex validation',
+        'regex_validation.allow',
+        'regex_validation.deny',
+        '>>>LLM Based validation',
+        'llm_validation.provider',
+        'llm_validation.prompt',
+        '>>>External validation',
+        'http_validation.url',
+        'http_validation.headers',
+        'http_validation.ttl',
+        '>>>Tester',
+        'tester',
+        '>>>Metadata and tags',
+        'tags',
+        'metadata',
+      ];
+    }
     return [
       '_loc', 'id', 'name', 'description',
       '<<<Provider',
@@ -599,6 +704,7 @@ class AiProvidersPage extends Component {
   client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'providers');
 
   render() {
+    const formSchema = this.formSchema(this.state || {})
     return (
       React.createElement(Table, {
         parentProps: this.props,
@@ -626,7 +732,7 @@ class AiProvidersPage extends Component {
           }
         },
         itemName: "Provider",
-        formSchema: this.formSchema,
+        formSchema: formSchema,
         formFlow: this.formFlow,
         columns: this.columns,
         stayAfterSave: true,
@@ -645,6 +751,7 @@ class AiProvidersPage extends Component {
         export: true,
         kubernetesKind: "Provider",
         onStateChange: (state, oldState, update) => {
+          this.setState(state)
           if (!_.isEqual(state.provider, oldState.provider)) {
             console.log("set default value")
             if (state.provider === 'ollama') {
@@ -704,6 +811,21 @@ class AiProvidersPage extends Component {
                   timeout: 10000,
                 },
                 options: ClientOptions.openai,
+              });
+            } else if (state.provider === 'ovh-ai-endpoints') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'ovh-ai-endpoints',
+                connection: {
+                  base_domain: BaseUrls.ovh,
+                  token: 'xxx',
+                  timeout: 10000,
+                },
+                options: ClientOptions.ovh,
               });
             } else if (state.provider === 'azure-openai') {
               update({

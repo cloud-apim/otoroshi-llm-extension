@@ -72,6 +72,11 @@ case class AiProvider(
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id).some
       }
+      case "ovh-ai-endpoints" => {
+        val api = new OVHAiEndpointsApi(baseUrl.getOrElse(OVHAiEndpointsApi.baseDomain), token, timeout.getOrElse(10.seconds), env = env)
+        val opts = OVHAiEndpointsChatClientOptions.fromJson(options)
+        new OVHAiEndpointsChatClient(api, opts, id).some
+      }
       case "azure-openai" => {
         val resourceName = connection.select("resource_name").as[String]
         val deploymentId = connection.select("deployment_id").as[String]
@@ -214,6 +219,21 @@ object AiProvider {
                 "timeout" -> 10000,
               ),
               options = MistralAiChatClientOptions().json
+            ).json
+            case Some("ovh-ai-endpoints") => AiProvider(
+              id = IdGenerator.namedId("provider", env),
+              name = "OVH AI Endpoints provider",
+              description = "An OVH AI Endpoints LLM api provider",
+              metadata = Map.empty,
+              tags = Seq.empty,
+              location = EntityLocation.default,
+              provider = "ovh-ai-endpoints",
+              connection = Json.obj(
+                "base_domain" -> OVHAiEndpointsApi.baseDomain,
+                "token" -> "xxxxx",
+                "timeout" -> 10000,
+              ),
+              options = OVHAiEndpointsChatClientOptions().json
             ).json
             case _ => AiProvider(
               id = IdGenerator.namedId("provider", env),
