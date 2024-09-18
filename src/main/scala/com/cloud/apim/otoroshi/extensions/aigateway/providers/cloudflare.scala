@@ -16,9 +16,6 @@ case class CloudflareApiResponse(status: Int, headers: Map[String, String], body
     "body" -> body,
   )
 }
-object CloudflareModels {
-  val LLAMA_3_1 = "@cf/meta/llama-3.1-8b-instruct"
-}
 object CloudflareApi {
   // POST https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model_name}
   def url(accountId: String, modelName: String): String = {
@@ -27,7 +24,7 @@ object CloudflareApi {
 }
 class CloudflareApi(val accountId: String, val modelName: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[CloudflareApiResponse] = {
+  def call(method: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[CloudflareApiResponse] = {
     env.Ws
       .url(s"${CloudflareApi.url(accountId, modelName)}")
       .withHttpHeaders(
@@ -50,10 +47,14 @@ class CloudflareApi(val accountId: String, val modelName: String, token: String,
 object CloudflareChatClientOptions {
   def fromJson(json: JsValue): CloudflareChatClientOptions = {
     CloudflareChatClientOptions(
-      max_tokens = json.select("max_tokens").asOpt[Int].getOrElse(256),
+      frequency_penalty = json.select("frequency_penalty").asOpt[Float],
+      max_tokens = json.select("max_tokens").asOpt[Int],
+      prompt = json.select("prompt").as[String],
+      seed = json.select("seed").asOpt[Int],
+      stream = json.select("stream").asOpt[Boolean],
       temperature = json.select("temperature").asOpt[Float].getOrElse(0.6f),
-      topK = json.select("topK").asOpt[Float].getOrElse(1.0f),
-      topP = json.select("topP").asOpt[Float].getOrElse(0.0f),
+      topK = json.select("topK").asOpt[Int].getOrElse(1),
+      topP = json.select("topP").asOpt[Float].getOrElse(0f),
     )
   }
 }
@@ -61,19 +62,17 @@ object CloudflareChatClientOptions {
 case class CloudflareChatClientOptions(
   frequency_penalty: Option[Float] = Some(0.0f),
   max_tokens: Option[Int] = Some(256),
-  presence_penalty: Option[Float] = Some(0.0f),
-  prompt: Option[String] = None,
-  seed: Option[Int] = 1,
+  prompt: String = "",
+  seed: Option[Int] = Some(1),
   stream: Option[Boolean] = Some(false),
   temperature: Float = 0.6f,
-  topK: Option[Int] = 1,
-  topP: Option[Float] = 0,
+  topK: Int = 1,
+  topP: Float = 0,
 ) extends ChatOptions {
 
   override def json: JsObject = Json.obj(
     "frequency_penalty" -> frequency_penalty,
     "max_tokens" -> max_tokens,
-    "presence_penalty" -> presence_penalty,
     "prompt" -> prompt,
     "seed" -> seed,
     "stream" -> stream,
@@ -87,7 +86,7 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
-    api.call("POST", "/", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
+    api.call("POST", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-requests-limit").map(_.toLong).getOrElse(-1L),
