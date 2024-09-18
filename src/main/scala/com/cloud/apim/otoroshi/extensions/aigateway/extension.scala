@@ -329,6 +329,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      mistral: ${MistralAiChatClientOptions().json.stringify},
             |      ollama: ${OllamaAiChatClientOptions().json.stringify},
             |      groq: ${GroqChatClientOptions().json.stringify},
+            |      gemini: ${GeminiChatClientOptions().json.stringify},
             |      'azure-openai': ${AzureOpenAiChatClientOptions().json.stringify},
             |      'cohere': ${CohereAiChatClientOptions().json.stringify},
             |      ovh: ${OVHAiEndpointsChatClientOptions().json.stringify},

@@ -24,18 +24,18 @@ case class GeminiApiResponse(status: Int, headers: Map[String, String], body: Js
 object GeminiModels {
   val GEMINI_1_5_FLASH = "gemini-1.5-flash"
 }
+
 object GeminiApi {
-  val baseUrl = "https://generativelanguage.googleapis.com"
+  def url(model: String, token: String): String = {
+    s"https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${token}"
+  }
 }
-class GeminiApi(baseUrl: String = GeminiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
+
+class GeminiApi(model: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
   def call(method: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[GeminiApiResponse] = {
-
-    val model = body.orJsNull.select("model").asOpt[String].getOrElse(GeminiModels.GEMINI_1_5_FLASH)
-    val finalGeminiUrl = s"${baseUrl}/v1beta/models/${model}:generateContent?key=${token}"
-
     env.Ws
-      .url(finalGeminiUrl)
+      .url(s"${GeminiApi.url(model, token)}")
       .withHttpHeaders(
         "Accept" -> "application/json",
       ).applyOnWithOpt(body) {
@@ -55,7 +55,6 @@ class GeminiApi(baseUrl: String = GeminiApi.baseUrl, token: String, timeout: Fin
 object GeminiChatClientOptions {
   def fromJson(json: JsValue): GeminiChatClientOptions = {
     GeminiChatClientOptions(
-      model = json.select("model").asOpt[String].getOrElse(GeminiModels.GEMINI_1_5_FLASH),
       maxOutputTokens = json.select("maxOutputTokens").asOpt[Int],
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
       topP = json.select("topP").asOpt[Float].getOrElse(0.95f),
@@ -66,7 +65,6 @@ object GeminiChatClientOptions {
 }
 
 case class GeminiChatClientOptions(
-  model: String = GeminiModels.GEMINI_1_5_FLASH,
   maxOutputTokens: Option[Int] = None,
   temperature: Float = 1,
   topP: Float = 0.95f,
@@ -74,7 +72,6 @@ case class GeminiChatClientOptions(
   stopSequences: Option[Array[String]] = None
 ) extends ChatOptions {
   override def json: JsObject = Json.obj(
-    "model" -> model,
     "maxOutputTokens" -> maxOutputTokens,
     "temperature" -> temperature,
     "topP" -> topP,
@@ -92,15 +89,10 @@ class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: Str
       "generationConfig" -> options.json
     ))).map { resp =>
       val usage = ChatResponseMetadata(
-        ChatResponseMetadataRateLimit(
-          requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
-          requestsRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
-          tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
-          tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
-        ),
+        ChatResponseMetadataRateLimit.empty,
         ChatResponseMetadataUsage(
-          promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
-          generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+          promptTokens = resp.body.select("usageMetadata").select("promptTokenCount").asOpt[Long].getOrElse(-1L),
+          generationTokens = resp.body.select("usageMetadata").select("totalTokenCount").asOpt[Long].getOrElse(-1L),
         ),
       )
       val duration: Long = resp.headers.getIgnoreCase("gemini-processing-ms").map(_.toLong).getOrElse(0L)
@@ -108,7 +100,6 @@ class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: Str
         "provider_kind" -> "gemini",
         "provider" -> id,
         "duration" -> duration,
-        "model" -> options.model.json,
         "rate_limit" -> usage.rateLimit.json,
         "usage" -> usage.usage.json
       )
@@ -122,9 +113,9 @@ class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: Str
         case Some(other) => other
         case None => Json.obj("ai" -> Seq(slug))
       }
-      val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
-        val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
-        val content = obj.select("message").select("content").asOpt[String].getOrElse("")
+      val messages = resp.body.select("candidates").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
+        val role = obj.select("content").select("role").asOpt[String].getOrElse("user")
+        val content = obj.select("content").select("parts").asOpt[Seq[String]].getOrElse(Seq.empty).mkString(" ")
         ChatGeneration(ChatMessage(role, content))
       }
       Right(ChatResponse(messages, usage))
