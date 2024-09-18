@@ -317,6 +317,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      openai: '${OpenAiApi.baseUrl}',
             |      mistral: '${MistralAiApi.baseUrl}',
             |      ollama: '${OllamaAiApi.baseUrl}',
+            |      groq: '${GroqApi.baseUrl}',
             |      anthropic: '${AnthropicApi.baseUrl}',
             |    };
             |    const ClientOptions = {
@@ -324,6 +325,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      openai: ${OpenAiChatClientOptions().json.stringify},
             |      mistral: ${MistralAiChatClientOptions().json.stringify},
             |      ollama: ${OllamaAiChatClientOptions().json.stringify},
+            |      groq: ${GroqChatClientOptions().json.stringify},
             |      'azure-openai': ${AzureOpenAiChatClientOptions().json.stringify},
             |    };
             |

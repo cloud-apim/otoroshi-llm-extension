@@ -83,6 +83,8 @@ case class GroqChatClientOptions(
     "tool_choice" -> tool_choice,
     "n" -> n,
   )
+
+  override def topK: Int = 0
 }
 
 class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) extends ChatClient {
