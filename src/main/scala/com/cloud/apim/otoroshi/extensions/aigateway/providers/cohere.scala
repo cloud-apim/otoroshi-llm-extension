@@ -1,18 +1,13 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 import com.cloud.apim.otoroshi.extensions.aigateway._
-import dev.langchain4j.data.segment.TextSegment
-import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json.{JsObject, JsValue, Json}
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
-import scala.jdk.CollectionConverters.asScalaBufferConverter
 
 case class CohereAiApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
   def json: JsValue = Json.obj(
@@ -30,7 +25,6 @@ object CohereAiApi {
 class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[CohereAiApiResponse] = {
-    println("calling CohereAi")
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -56,9 +50,10 @@ object CohereAiChatClientOptions {
       model = json.select("model").asOpt[String].getOrElse(CohereAiModels.DEFAULT_COHERE_MODEL),
       max_tokens = json.select("max_tokens").asOpt[Int],
       max_input_tokens = json.select("max_input_tokens").asOpt[Int],
-      k = json.select("k").asOpt[Int].getOrElse(0),
-      p = json.select("p").asOpt[Double].getOrElse(0.75f),
-      temperature = json.select("temperature").asOpt[Float].getOrElse(0.3f)
+      k = json.select("k").asOpt[Int],
+      p = json.select("p").asOpt[Double],
+      temperature = json.select("temperature").asOpt[Float].getOrElse(0.3f),
+      seed = json.select("seed").asOpt[Int]
     )
   }
 }
@@ -72,6 +67,7 @@ case class CohereAiChatClientOptions(
   k: Option[Int] = Some(0),
   p: Option[Double] = Some(1.0),
   frequency_penalty: Option[Double] = None,
+  seed: Option[Int] = None,
 ) extends ChatOptions {
 
   override def json: JsObject = Json.obj(
@@ -83,7 +79,12 @@ case class CohereAiChatClientOptions(
     "k" -> k.getOrElse(0).json,
     "p" -> p.getOrElse(0.75f).json,
     "frequency_penalty" -> frequency_penalty,
+    "seed" -> seed,
   )
+
+  override def topP: Float = ???
+
+  override def topK: Int = ???
 }
 
 class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, id: String) extends ChatClient {
