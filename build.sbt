@@ -52,6 +52,7 @@ lazy val root = (project in file("."))
       case PathList(ps @ _*) if ps.last == "spring-configuration-metadata.json" => MergeStrategy.first
       case PathList(ps @ _*) if ps.last == "aot.factories" => MergeStrategy.first
       case PathList(ps @ _*) if ps.last == "spring.factories" => MergeStrategy.first
+      case PathList(ps @ _*) if ps.last == "okio.kotlin_module" => MergeStrategy.first
       case PathList(ps @ _*) if ps.last == "org.springframework.boot.autoconfigure.AutoConfiguration.imports" => MergeStrategy.first
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value

@@ -333,7 +333,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      'azure-openai': ${AzureOpenAiChatClientOptions().json.stringify},
             |      'cohere': ${CohereAiChatClientOptions().json.stringify},
             |      ovh: ${OVHAiEndpointsChatClientOptions().json.stringify},
-            |      hugging: ${HuggingFaceChatClientOptions().json.stringify},
+            |      hugging: ${HuggingFaceLangchainChatClientOptions().json.stringify},
             |      huggingface: ${HuggingfaceChatClientOptions().json.stringify},
             |    };
             |

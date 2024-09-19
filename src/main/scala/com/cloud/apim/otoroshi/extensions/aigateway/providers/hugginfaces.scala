@@ -10,11 +10,11 @@ import play.api.libs.json.{JsObject, JsValue, Json}
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
 
-class HuggingFaceApi(val token: String, val timeout: FiniteDuration = 10.seconds, env: Env)
+class HuggingFaceLangchainApi(val token: String, val timeout: FiniteDuration = 10.seconds, env: Env)
 
-object HuggingFaceChatClientOptions {
-  def fromJson(json: JsValue): HuggingFaceChatClientOptions = {
-    HuggingFaceChatClientOptions(
+object HuggingFaceLangchainChatClientOptions {
+  def fromJson(json: JsValue): HuggingFaceLangchainChatClientOptions = {
+    HuggingFaceLangchainChatClientOptions(
       model = json.select("model").asOpt[String].getOrElse(HuggingFaceModelName.TII_UAE_FALCON_7B_INSTRUCT),
       max_tokens = json.select("max_tokens").asOpt[Int],
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
@@ -24,7 +24,7 @@ object HuggingFaceChatClientOptions {
   }
 }
 
-case class HuggingFaceChatClientOptions(
+case class HuggingFaceLangchainChatClientOptions(
   model: String = HuggingFaceModelName.TII_UAE_FALCON_7B_INSTRUCT,
   max_tokens: Option[Int] = None,
   temperature: Float = 1,
@@ -40,7 +40,7 @@ case class HuggingFaceChatClientOptions(
   )
 }
 
-class HuggingFaceChatClient(api: HuggingFaceApi, options: HuggingFaceChatClientOptions, id: String) extends ChatClient {
+class HuggingFaceLangchainChatClient(api: HuggingFaceLangchainApi, options: HuggingFaceLangchainChatClientOptions, id: String) extends ChatClient {
 
   private val maxTokens: Int = options.max_tokens.getOrElse(0)
   private val model = HuggingFaceChatModel.builder()
