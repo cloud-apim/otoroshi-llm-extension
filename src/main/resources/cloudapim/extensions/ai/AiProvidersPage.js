@@ -250,10 +250,6 @@ class AiProvidersPage extends Component {
       type: 'string',
       props: { label: 'API Token' },
     },
-    'connection.model_name': {
-      type: 'string',
-      props: { label: 'ID of your model' },
-    },
     'connection.timeout': {
       type: 'number',
       props: { label: 'Timeout', suffix: 'ms.' },
@@ -809,17 +805,12 @@ class AiProvidersPage extends Component {
         'metadata',
       ];
     }
-<<<<<<< HEAD
     if (state.provider === "cloudflare") {
-=======
-    if (state.provider === "huggingface") {
->>>>>>> 44c18d3 (Add huggingface to LLM providers)
       return [
         '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
-<<<<<<< HEAD
         'connection.token',
         'connection.timeout',
         '<<<Cloudflare options',
@@ -830,7 +821,35 @@ class AiProvidersPage extends Component {
         'options.temperature',
         'options.topK',
         'options.topP',
-=======
+        '>>>Provider fallback',
+        'provider_fallback',
+        '>>>Cache',
+        'cache.strategy',
+        'cache.ttl',
+        state.cache.strategy === 'semantic' ? 'cache.score' : null,
+        '>>>Regex validation',
+        'regex_validation.allow',
+        'regex_validation.deny',
+        '>>>LLM Based validation',
+        'llm_validation.provider',
+        'llm_validation.prompt',
+        '>>>External validation',
+        'http_validation.url',
+        'http_validation.headers',
+        'http_validation.ttl',
+        '>>>Tester',
+        'tester',
+        '>>>Metadata and tags',
+        'tags',
+        'metadata',
+      ];
+    }
+    if (state.provider === "huggingface") {
+      return [
+        '_loc', 'id', 'name', 'description',
+        '<<<Provider',
+        'provider',
+        '<<<API Connection',
         'connection.model_name',
         'connection.token',
         'connection.timeout',
@@ -839,7 +858,6 @@ class AiProvidersPage extends Component {
         'options.temperature',
         'options.top_p',
         'options.seed',
->>>>>>> 44c18d3 (Add huggingface to LLM providers)
         '>>>Provider fallback',
         'provider_fallback',
         '>>>Cache',
