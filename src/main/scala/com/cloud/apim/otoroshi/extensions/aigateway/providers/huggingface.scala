@@ -54,7 +54,6 @@ object HuggingfaceChatClientOptions {
       max_tokens = json.select("max_tokens").asOpt[Int],
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
       topP = json.select("top_p").asOpt[Float].getOrElse(1.0f),
-      topK = json.select("top_k").asOpt[Int].getOrElse(0),
     )
   }
 }
@@ -67,7 +66,6 @@ case class HuggingfaceChatClientOptions(
   stop: Option[Seq[String]] = None,
   temperature: Float = 1,
   topP: Float = 1,
-  topK: Int = 0,
 ) extends ChatOptions {
 
   override def json: JsObject = Json.obj(
@@ -78,9 +76,9 @@ case class HuggingfaceChatClientOptions(
     "stop" -> stop,
     "temperature" -> temperature,
     "top_p" -> topP,
-    "top_k" -> topK,
-
   )
+
+  override def topK: Int = ???
 }
 
 class HuggingfaceChatClient(api: HuggingfaceApi, options: HuggingfaceChatClientOptions, id: String) extends ChatClient {

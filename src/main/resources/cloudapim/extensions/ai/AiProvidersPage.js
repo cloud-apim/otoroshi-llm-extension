@@ -838,7 +838,6 @@ class AiProvidersPage extends Component {
         'options.max_tokens',
         'options.temperature',
         'options.top_p',
-        'options.top_k',
         'options.seed',
 >>>>>>> 44c18d3 (Add huggingface to LLM providers)
         '>>>Provider fallback',
