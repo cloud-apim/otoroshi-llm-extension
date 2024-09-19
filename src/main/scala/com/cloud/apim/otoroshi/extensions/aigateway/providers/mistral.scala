@@ -19,7 +19,13 @@ case class MistralAiApiResponse(status: Int, headers: Map[String, String], body:
 }
 object MistralAiModels {
   val TINY = "open-mistral-7b"
-  val MIXTRAL = "open-mixtral-8x7b"
+  val MIXTRAL_7B = "open-mixtral-8x7b"
+  val MIXTRAL_22B = "open-mixtral-8x22b"
+  val CODESTRAL_MAMBA = "open-codestral-mamba"
+  val MISTRAL_EMBED = "mistral-embed"
+  val CODESTRAL_LATEST = "codestral-latest"
+  val OPEN_MISTRAL_NEMO = "open-mistral-nemo"
+  val MIXTRAL = "mistral-large-latest"
   val SMALL = "mistral-small-latest"
   val MEDIUM = "mistral-medium-latest"
   val LARGE = "mistral-large-latest"
