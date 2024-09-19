@@ -158,6 +158,13 @@ class AiProvidersPage extends Component {
             { 'label': "Meta-Llama-3-8B-Instruct", value: 'Meta-Llama-3-8B-Instruct' },
           ] }
       }
+    } else if (provider === "hugging-face") {
+      return {
+        'type': 'select',
+        props: { label: 'Description', possibleValues: [
+            { 'label': "tiiuae/falcon-7b-instruct", value: 'tiiuae/falcon-7b-instruct' },
+          ] }
+      }
     } else {
       return {
         type: 'string',
@@ -659,6 +666,41 @@ class AiProvidersPage extends Component {
         'metadata',
       ];
     }
+    if (state.provider === "ovh-ai-endpoints") {
+      return [
+        '_loc', 'id', 'name', 'description',
+        '<<<Provider',
+        'provider',
+        '<<<API Connection',
+        'connection.token',
+        'connection.timeout',
+        '<<<Connection options',
+        'options.model',
+        'options.max_tokens',
+        'options.temperature',
+        '>>>Provider fallback',
+        'provider_fallback',
+        '>>>Cache',
+        'cache.strategy',
+        'cache.ttl',
+        state.cache.strategy === 'semantic' ? 'cache.score' : null,
+        '>>>Regex validation',
+        'regex_validation.allow',
+        'regex_validation.deny',
+        '>>>LLM Based validation',
+        'llm_validation.provider',
+        'llm_validation.prompt',
+        '>>>External validation',
+        'http_validation.url',
+        'http_validation.headers',
+        'http_validation.ttl',
+        '>>>Tester',
+        'tester',
+        '>>>Metadata and tags',
+        'tags',
+        'metadata',
+      ];
+    }
     return [
       '_loc', 'id', 'name', 'description',
       '<<<Provider',
@@ -826,6 +868,20 @@ class AiProvidersPage extends Component {
                   timeout: 10000,
                 },
                 options: ClientOptions.ovh,
+              });
+            } else if (state.provider === 'hugging-face') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'hugging-face',
+                connection: {
+                  token: 'xxx',
+                  timeout: 10000,
+                },
+                options: ClientOptions.hugging,
               });
             } else if (state.provider === 'azure-openai') {
               update({
