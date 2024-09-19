@@ -122,13 +122,25 @@ class AiProvidersPage extends Component {
       return {
         'type': 'select',
         props: { label: 'Description', possibleValues: [
-            { label: "claude-3-5-sonnet-20240620", value: "claude-3-5-sonnet-20240620" },
-            { label: "claude-3-opus-20240229", value: "claude-3-opus-20240229" },
-            { label: "claude-3-sonnet-20240229", value: "claude-3-sonnet-20240229" },
-            { label: "claude-3-haiku-20240307", value: "claude-3-haiku-20240307" },
+            { label: "google/gemma-2-2b-it", value: "google/gemma-2-2b-it" },
+            { label: "bigcode/starcoder", value: "bigcode/starcoder" },
+            { label: "meta-llama/Meta-Llama-3.1-8B-Instruct", value: "meta-llama/Meta-Llama-3.1-8B-Instruct" },
+            { label: "microsoft/Phi-3-mini-4k-instruct", value: "microsoft/Phi-3-mini-4k-instruct" },
+            { label: "HuggingFaceH4/starchat2-15b-v0.1", value: "HuggingFaceH4/starchat2-15b-v0.1" },
+            { label: "mistralai/Mistral-Nemo-Instruct-2407", value: "mistralai/Mistral-Nemo-Instruct-2407" },
           ] }
       }
-    } else if (provider === "mistral") {
+    } else if (provider === "huggingface") {
+       return {
+         'type': 'select',
+         props: { label: 'Description', possibleValues: [
+             { label: "claude-3-5-sonnet-20240620", value: "claude-3-5-sonnet-20240620" },
+             { label: "claude-3-opus-20240229", value: "claude-3-opus-20240229" },
+             { label: "claude-3-sonnet-20240229", value: "claude-3-sonnet-20240229" },
+             { label: "claude-3-haiku-20240307", value: "claude-3-haiku-20240307" },
+           ] }
+       }
+     } else if (provider === "mistral") {
       return {
         'type': 'select',
         props: { label: 'Description', possibleValues: [
@@ -202,6 +214,7 @@ class AiProvidersPage extends Component {
           { 'label': 'Groq', value: 'groq' },
           { 'label': 'Hugging Face', value: 'hugging-face' },
           { 'label': 'OVH AI Endpoints', value: 'ovh-ai-endpoints' },
+          { 'label': 'Huggingface', value: 'huggingface' },
           { 'label': 'Loadbalancer', value: 'loadbalancer' },
         ] }
     },
@@ -236,6 +249,10 @@ class AiProvidersPage extends Component {
     'connection.token': {
       type: 'string',
       props: { label: 'API Token' },
+    },
+    'connection.model_name': {
+      type: 'string',
+      props: { label: 'ID of your model' },
     },
     'connection.timeout': {
       type: 'number',
@@ -792,12 +809,17 @@ class AiProvidersPage extends Component {
         'metadata',
       ];
     }
+<<<<<<< HEAD
     if (state.provider === "cloudflare") {
+=======
+    if (state.provider === "huggingface") {
+>>>>>>> 44c18d3 (Add huggingface to LLM providers)
       return [
         '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
+<<<<<<< HEAD
         'connection.token',
         'connection.timeout',
         '<<<Cloudflare options',
@@ -808,6 +830,17 @@ class AiProvidersPage extends Component {
         'options.temperature',
         'options.topK',
         'options.topP',
+=======
+        'connection.model_name',
+        'connection.token',
+        'connection.timeout',
+        '<<<Connection options',
+        'options.max_tokens',
+        'options.temperature',
+        'options.top_p',
+        'options.top_k',
+        'options.seed',
+>>>>>>> 44c18d3 (Add huggingface to LLM providers)
         '>>>Provider fallback',
         'provider_fallback',
         '>>>Cache',
@@ -1089,6 +1122,22 @@ class AiProvidersPage extends Component {
                   timeout: 10000,
                 },
                 options: ClientOptions.azureOpenai,
+              });
+            }
+            else if (state.provider === 'huggingface') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'huggingface',
+                connection: {
+                  model_name: "google/gemma-2-2b-it:",
+                  token: 'xxx',
+                  timeout: 10000,
+                },
+                options: ClientOptions.huggingface,
               });
             }
           }

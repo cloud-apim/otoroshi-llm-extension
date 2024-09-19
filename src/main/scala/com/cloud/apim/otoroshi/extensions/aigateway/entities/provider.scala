@@ -98,6 +98,12 @@ case class AiProvider(
         val opts = GeminiChatClientOptions.fromJson(options)
         new GeminiChatClient(api, opts, id).some
       }
+      case "huggingface" => {
+        val modelName = connection.select("model_name").as[String]
+        val api = new HuggingfaceApi(modelName, token, timeout.getOrElse(10.seconds), env = env)
+        val opts = HuggingfaceChatClientOptions.fromJson(options)
+        new HuggingfaceChatClient(api, opts, id).some
+      }
       case "mistral" => {
         val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = MistralAiChatClientOptions.fromJson(options)
@@ -291,6 +297,21 @@ object AiProvider {
                 "timeout" -> 10000,
               ),
               options = MistralAiChatClientOptions().json
+            ).json
+            case Some("huggingface") => AiProvider(
+              id = IdGenerator.namedId("provider", env),
+              name = "Huggingface inference Endpoints provider",
+              description = "An huggingface Endpoints LLM api provider",
+              metadata = Map.empty,
+              tags = Seq.empty,
+              location = EntityLocation.default,
+              provider = "huggingface",
+              connection = Json.obj(
+                "model" -> HuggingfaceModels.GOOGLE_GEMMA_2_2B,
+                "token" -> "xxxxx",
+                "timeout" -> 10000,
+              ),
+              options = OVHAiEndpointsChatClientOptions().json
             ).json
             case _ => AiProvider(
               id = IdGenerator.namedId("provider", env),
