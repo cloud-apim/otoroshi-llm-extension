@@ -23,7 +23,7 @@ object HuggingfaceModels {
 object HuggingfaceApi {
   // POST https://api-inference.huggingface.co/models/google/gemma-2-2b-it
   def url(modelName: String): String = {
-    s"https://api-inference.huggingface.co/models/${modelName}"
+    s"https://api-inference.huggingface.co/models/${modelName}/v1/chat/completions"
   }
 }
 class HuggingfaceApi(val modelName: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
