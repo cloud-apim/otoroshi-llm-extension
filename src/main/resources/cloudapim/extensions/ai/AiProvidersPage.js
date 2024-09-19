@@ -200,6 +200,7 @@ class AiProvidersPage extends Component {
           { 'label': 'Ollama', value: 'ollama' },
           { 'label': 'Anthropic', value: 'anthropic' },
           { 'label': 'Groq', value: 'groq' },
+          { 'label': 'Hugging Face', value: 'hugging-face' },
           { 'label': 'OVH AI Endpoints', value: 'ovh-ai-endpoints' },
           { 'label': 'Loadbalancer', value: 'loadbalancer' },
         ] }
