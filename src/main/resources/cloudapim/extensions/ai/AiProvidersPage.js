@@ -677,6 +677,44 @@ class AiProvidersPage extends Component {
         'metadata',
       ];
     }
+    if (state.provider === "gemini") {
+      return [
+        '_loc', 'id', 'name', 'description',
+        '<<<Provider',
+        'provider',
+        '<<<API Connection',
+        'connection.model',
+        'connection.token',
+        'connection.timeout',
+        '<<<Connection options',
+        'options.maxOutputTokens',
+        'options.temperature',
+        'options.topP',
+        'options.topK',
+        'options.stopSequences',
+        '>>>Provider fallback',
+        'provider_fallback',
+        '>>>Cache',
+        'cache.strategy',
+        'cache.ttl',
+        state.cache.strategy === 'semantic' ? 'cache.score' : null,
+        '>>>Regex validation',
+        'regex_validation.allow',
+        'regex_validation.deny',
+        '>>>LLM Based validation',
+        'llm_validation.provider',
+        'llm_validation.prompt',
+        '>>>External validation',
+        'http_validation.url',
+        'http_validation.headers',
+        'http_validation.ttl',
+        '>>>Tester',
+        'tester',
+        '>>>Metadata and tags',
+        'tags',
+        'metadata',
+      ];
+    }
     if (state.provider === "azure-openai") {
       return [
         '_loc', 'id', 'name', 'description',
@@ -1002,6 +1040,22 @@ class AiProvidersPage extends Component {
                   timeout: 10000,
                 },
                 options: ClientOptions.hugging,
+              });
+            } else if (state.provider === 'gemini') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'gemini',
+                connection: {
+                  base_url: BaseUrls.gemini,
+                  model: 'model name',
+                  token: 'xxx',
+                  timeout: 10000,
+                },
+                options: ClientOptions.gemini,
               });
             } else if (state.provider === 'azure-openai') {
               update({

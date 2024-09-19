@@ -92,6 +92,12 @@ case class AiProvider(
         val opts = CloudflareChatClientOptions.fromJson(options)
         new CloudflareChatClient(api, opts, id).some
       }
+      case "gemini" => {
+        val model = connection.select("model").as[String]
+        val api = new GeminiApi(model, token, timeout.getOrElse(10.seconds), env = env)
+        val opts = GeminiChatClientOptions.fromJson(options)
+        new GeminiChatClient(api, opts, id).some
+      }
       case "mistral" => {
         val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = MistralAiChatClientOptions.fromJson(options)
@@ -270,6 +276,21 @@ object AiProvider {
                 "timeout" -> 10000,
               ),
               options = HuggingFaceChatClientOptions().json
+            ).json
+            case Some("gemini") => AiProvider(
+              id = IdGenerator.namedId("provider", env),
+              name = "Gemini provider",
+              description = "A Gemini LLM api provider",
+              metadata = Map.empty,
+              tags = Seq.empty,
+              location = EntityLocation.default,
+              provider = "gemini",
+              connection = Json.obj(
+                "model" -> GeminiModels.GEMINI_1_5_FLASH,
+                "token" -> "xxxxx",
+                "timeout" -> 10000,
+              ),
+              options = MistralAiChatClientOptions().json
             ).json
             case _ => AiProvider(
               id = IdGenerator.namedId("provider", env),
