@@ -63,7 +63,7 @@ case class AiProvider(
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
   def getChatClient()(implicit env: Env): Option[ChatClient] = {
-    val baseUrl = connection.select("base_url").asOpt[String]
+    val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val token = connection.select("token").asOpt[String].getOrElse("xxx")
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     val rawClient = provider.toLowerCase() match {
@@ -71,6 +71,11 @@ case class AiProvider(
         val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id).some
+      }
+      case "ovh-ai-endpoints" => {
+        val api = new OVHAiEndpointsApi(baseUrl.getOrElse(OVHAiEndpointsApi.baseDomain), token, timeout.getOrElse(10.seconds), env = env)
+        val opts = OVHAiEndpointsChatClientOptions.fromJson(options)
+        new OVHAiEndpointsChatClient(api, opts, id).some
       }
       case "azure-openai" => {
         val resourceName = connection.select("resource_name").as[String]
@@ -81,7 +86,7 @@ case class AiProvider(
         new AzureOpenAiChatClient(api, opts, id).some
       }
       case "mistral" => {
-        val api = new MistralAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = MistralAiChatClientOptions.fromJson(options)
         new MistralAiChatClient(api, opts, id).some
       }
@@ -99,6 +104,11 @@ case class AiProvider(
         val api = new AnthropicApi(baseUrl.getOrElse(AnthropicApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = AnthropicChatClientOptions.fromJson(options)
         new AnthropicChatClient(api, opts, id).some
+      }
+      case "hugging-face" => {
+        val api = new HuggingFaceApi(token, timeout.getOrElse(10.seconds), env = env)
+        val opts = HuggingFaceChatClientOptions.fromJson(options)
+        new HuggingFaceChatClient(api, opts, id).some
       }
       case "loadbalancer" => new LoadBalancerChatClient(this).some
       case _ => None
@@ -219,6 +229,35 @@ object AiProvider {
                 "timeout" -> 10000,
               ),
               options = MistralAiChatClientOptions().json
+            ).json
+            case Some("ovh-ai-endpoints") => AiProvider(
+              id = IdGenerator.namedId("provider", env),
+              name = "OVH AI Endpoints provider",
+              description = "An OVH AI Endpoints LLM api provider",
+              metadata = Map.empty,
+              tags = Seq.empty,
+              location = EntityLocation.default,
+              provider = "ovh-ai-endpoints",
+              connection = Json.obj(
+                "base_domain" -> OVHAiEndpointsApi.baseDomain,
+                "token" -> "xxxxx",
+                "timeout" -> 10000,
+              ),
+              options = OVHAiEndpointsChatClientOptions().json
+            ).json
+            case Some("hugging-face") => AiProvider(
+              id = IdGenerator.namedId("provider", env),
+              name = "Hugging Face provider",
+              description = "An Hugging Face LLM api provider",
+              metadata = Map.empty,
+              tags = Seq.empty,
+              location = EntityLocation.default,
+              provider = "hugging-face",
+              connection = Json.obj(
+                "token" -> "xxxxx",
+                "timeout" -> 10000,
+              ),
+              options = HuggingFaceChatClientOptions().json
             ).json
             case _ => AiProvider(
               id = IdGenerator.namedId("provider", env),

@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway
 
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import dev.langchain4j.data.message.AiMessage
 import otoroshi.env.Env
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.utils.syntax.implicits._
@@ -28,6 +29,15 @@ case class ChatMessage(role: String, content: String) {
     "role" -> role,
     "content" -> content,
   )
+  def asLangchain4j: dev.langchain4j.data.message.ChatMessage = {
+    role match {
+      case "user" => new dev.langchain4j.data.message.UserMessage(content)
+      case "assistant" => new dev.langchain4j.data.message.AiMessage(content)
+      case "ai" => new dev.langchain4j.data.message.AiMessage(content)
+      case "system" => new dev.langchain4j.data.message.SystemMessage(content)
+      case _ => new dev.langchain4j.data.message.UserMessage(content)
+    }
+  }
 }
 case class ChatGeneration(message: ChatMessage) {
   def json: JsValue = Json.obj(

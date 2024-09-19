@@ -5,6 +5,7 @@ ThisBuild / version          := "1.0.0-dev"
 ThisBuild / organization     := "com.cloud-apim"
 ThisBuild / organizationName := "Cloud-APIM"
 
+lazy val langchain4jVersion = "0.34.0"
 lazy val jackson = Seq(
   ExclusionRule("com.fasterxml.jackson.core", "jackson-databind"),
   ExclusionRule("io.opentelemetry"),
@@ -31,10 +32,11 @@ lazy val root = (project in file("."))
       "spring-snapshots" at "https://repo.spring.io/snapshot"  
     ),
     libraryDependencies ++= Seq(
-      "fr.maif" %% "otoroshi" % "16.18.4" % "provided" excludeAll (netty: _*),
-      "dev.langchain4j" % "langchain4j" % "0.33.0" excludeAll(all: _*),
-      "dev.langchain4j" % "langchain4j-embeddings" % "0.33.0" excludeAll(all: _*),
-      "dev.langchain4j" % "langchain4j-embeddings-all-minilm-l6-v2" % "0.33.0" excludeAll(all: _*),
+      "fr.maif" %% "otoroshi" % "16.19.0" % "provided" excludeAll (netty: _*),
+      "dev.langchain4j" % "langchain4j" % langchain4jVersion excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j-hugging-face" % langchain4jVersion excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j-embeddings" % langchain4jVersion excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j-embeddings-all-minilm-l6-v2" % langchain4jVersion excludeAll(all: _*),
       "io.netty" % "netty-transport-native-kqueue" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       "io.netty" % "netty-transport-native-epoll" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       munit % Test
