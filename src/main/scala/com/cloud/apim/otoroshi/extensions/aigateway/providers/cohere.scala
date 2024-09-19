@@ -76,15 +76,14 @@ case class CohereAiChatClientOptions(
     "max_input_tokens" -> max_input_tokens,
     "stream" -> stream,
     "temperature" -> temperature,
-    "k" -> k.getOrElse(0).json,
-    "p" -> p.getOrElse(0.75f).json,
+    "k" -> topK,
+    "p" -> topP,
     "frequency_penalty" -> frequency_penalty,
     "seed" -> seed,
   )
 
-  override def topP: Float = ???
-
-  override def topK: Int = ???
+  override def topP: Float = p.map(_.toFloat).getOrElse(0.75f)
+  override def topK: Int = k.getOrElse(0)
 }
 
 class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, id: String) extends ChatClient {
