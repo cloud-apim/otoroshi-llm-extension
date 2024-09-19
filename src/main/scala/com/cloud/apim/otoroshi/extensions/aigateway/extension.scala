@@ -334,6 +334,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      'cohere': ${CohereAiChatClientOptions().json.stringify},
             |      ovh: ${OVHAiEndpointsChatClientOptions().json.stringify},
             |      hugging: ${HuggingFaceChatClientOptions().json.stringify},
+            |      huggingface: ${HuggingfaceChatClientOptions().json.stringify},
             |    };
             |
             |    ${promptPageCode}
