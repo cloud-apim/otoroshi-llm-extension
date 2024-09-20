@@ -63,7 +63,6 @@ class AiLlmProxy extends NgBackendCall {
   }
 
   def call(jsonBody: JsValue, config: AiPluginRefConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    // TODO: add analytics
     env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref).flatMap(_.getChatClient())) match {
       case None => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "provider not found")))).vfuture // TODO: rewrite error
       case Some(client) => {

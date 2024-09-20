@@ -3,6 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import otoroshi.env.Env
+import otoroshi.events.AuditEvent
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._

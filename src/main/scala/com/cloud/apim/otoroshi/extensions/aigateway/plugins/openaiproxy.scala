@@ -11,7 +11,7 @@ import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsObject, JsValue, Json}
+import play.api.libs.json.{JsNull, JsObject, JsValue, Json}
 import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -40,7 +40,12 @@ class OpenAiCompatProxy extends NgBackendCall {
   }
 
   def call(jsonBody: JsValue, config: AiPluginRefConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    // TODO: add analytics
+    // println(s"\n\nreq: ${ctx.request.json.prettify}\n\n")
+    // println(s"\n\nctx: ${Json.obj(
+    //   "user" -> ctx.user.map(_.json).getOrElse(JsNull).asValue,
+    //   "apikey" -> ctx.apikey.map(_.json).getOrElse(JsNull).asValue,
+    // ).prettify}\n\n")
+    // println(s"\n\nbody: ${jsonBody.prettify}\n\n")
     val provider: Option[AiProvider] = jsonBody.select("model").asOpt[String].flatMap { r =>
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
     }.orElse(
