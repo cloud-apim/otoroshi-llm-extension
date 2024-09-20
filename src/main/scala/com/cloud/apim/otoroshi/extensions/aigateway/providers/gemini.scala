@@ -31,7 +31,7 @@ object GeminiApi {
   }
 }
 
-class GeminiApi(model: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
+class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
   def call(method: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[GeminiApiResponse] = {
     env.Ws
@@ -81,6 +81,8 @@ case class GeminiChatClientOptions(
 }
 
 class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: String) extends ChatClient {
+
+  override def model: Option[String] = api.model.some
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))

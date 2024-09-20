@@ -106,6 +106,9 @@ case class OllamaAiChatClientOptions(
 }
 
 class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, id: String) extends ChatClient {
+
+  override def model: Option[String] = options.model.some
+
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj())).applyOn(_ - "model")
     api.call("POST", "/api/chat", Some(Json.obj(

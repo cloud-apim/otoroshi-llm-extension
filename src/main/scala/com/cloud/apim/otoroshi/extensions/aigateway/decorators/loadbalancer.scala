@@ -77,6 +77,8 @@ object LoadBalancerChatClient {
 
 class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
 
+  override def model: Option[String] = None
+
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val refs = provider.options.select("refs").asOpt[Seq[String]].getOrElse(Seq.empty)
     val loadBalancing: LoadBalancing = provider.options.select("loadbalancing").asOpt[String].map(_.toLowerCase()).getOrElse("round_robin") match {

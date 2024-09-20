@@ -83,6 +83,8 @@ case class HuggingfaceChatClientOptions(
 
 class HuggingfaceChatClient(api: HuggingfaceApi, options: HuggingfaceChatClientOptions, id: String) extends ChatClient {
 
+  override def model: Option[String] = api.modelName.some
+
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
     api.call("POST", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>

@@ -22,6 +22,8 @@ object ChatClientWithLlmValidation {
 
 class ChatClientWithLlmValidation(originalProvider: AiProvider, chatClient: ChatClient) extends ChatClient {
 
+  override def model: Option[String] = chatClient.model
+
   override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
 
     def pass(): Future[Either[JsValue, ChatResponse]] = chatClient.call(originalPrompt, attrs)

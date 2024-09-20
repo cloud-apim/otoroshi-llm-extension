@@ -55,6 +55,8 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, chatClient: Chat
   private val ttl = originalProvider.cache.ttl
   private val searchInPrompts = true
 
+  override def model: Option[String] = chatClient.model
+
   private def notInCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val embeddingModel = ChatClientWithSemanticCache.embeddingModel
     val embeddingStore = ChatClientWithSemanticCache.embeddingStores.getOrUpdate(originalProvider.id) {

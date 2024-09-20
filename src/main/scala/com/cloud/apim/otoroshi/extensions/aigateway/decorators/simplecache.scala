@@ -33,6 +33,8 @@ class ChatClientWithSimpleCache(originalProvider: AiProvider, chatClient: ChatCl
 
   private val ttl = originalProvider.cache.ttl
 
+  override def model: Option[String] = chatClient.model
+
   override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
     ChatClientWithSimpleCache.cache.getIfPresent(key) match {

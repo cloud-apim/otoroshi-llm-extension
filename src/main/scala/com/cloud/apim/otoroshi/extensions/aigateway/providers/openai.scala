@@ -39,7 +39,7 @@ object OpenAiApi {
 class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
-    // println(s"calling ${method} ${baseUrl}${path}: ${body}")
+    println(s"calling ${method} ${baseUrl}${path}: ${body}")
     println("calling openai")
     env.Ws
       .url(s"${baseUrl}${path}")
@@ -116,6 +116,8 @@ case class OpenAiChatClientOptions(
 }
 
 class OpenAiChatClient(api: OpenAiApi, options: OpenAiChatClientOptions, id: String) extends ChatClient {
+
+  override def model: Option[String] = options.model.some
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))

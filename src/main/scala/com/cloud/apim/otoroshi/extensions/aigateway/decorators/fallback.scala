@@ -22,6 +22,8 @@ object ChatClientWithProviderFallback {
 
 class ChatClientWithProviderFallback(originalProvider: AiProvider, chatClient: ChatClient) extends ChatClient {
 
+  override def model: Option[String] = chatClient.model
+
   override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     chatClient.call(originalPrompt, attrs).flatMap {
       case Left(err) => {

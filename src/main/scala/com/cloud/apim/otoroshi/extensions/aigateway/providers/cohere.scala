@@ -88,6 +88,8 @@ case class CohereAiChatClientOptions(
 
 class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, id: String) extends ChatClient {
 
+  override def model: Option[String] = options.model.some
+
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
     api.call("POST", "/v1/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>

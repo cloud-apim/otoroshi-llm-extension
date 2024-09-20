@@ -33,6 +33,7 @@ class ChatClientWithHttpValidation(originalProvider: AiProvider, chatClient: Cha
 
   private val ttl = originalProvider.httpValidation.ttl
 
+  override def model: Option[String] = chatClient.model
 
   override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
 

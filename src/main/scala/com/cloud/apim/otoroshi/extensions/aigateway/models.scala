@@ -1,18 +1,14 @@
 package com.cloud.apim.otoroshi.extensions.aigateway
 
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import dev.langchain4j.data.message.AiMessage
+import akka.stream.scaladsl.Source
+import akka.util.ByteString
 import otoroshi.env.Env
-import otoroshi.next.proxy.NgProxyEngineError
+import otoroshi.security.IdGenerator
+import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
-import otoroshi.utils.{RegexPool, TypedMap}
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
+import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
-import play.api.mvc.Results
 
-import java.util.regex.{MatchResult, Matcher, Pattern}
-import java.util.regex.Pattern.CASE_INSENSITIVE
 import scala.concurrent.{ExecutionContext, Future}
 
 trait ChatOptions {
@@ -43,6 +39,12 @@ case class ChatGeneration(message: ChatMessage) {
   def json: JsValue = Json.obj(
     "message" -> message.json
   )
+  def openaiJson(idx: Int): JsValue = Json.obj(
+    "index" -> idx,
+    "message" -> message.json,
+    "logprobs" -> JsNull,
+    "finish_reason" -> "stop",
+  )
 }
 case class ChatResponse(
   generations: Seq[ChatGeneration],
@@ -52,6 +54,28 @@ case class ChatResponse(
     "generations" -> JsArray(generations.map(_.json)),
     "metadata" -> metadata.json,
   )
+  def openaiJson(model: String): JsValue = Json.obj(
+    "id" -> s"chatcmpl-${IdGenerator.token(32)}",
+    "object" -> "chat.completion",
+    "created" -> (System.currentTimeMillis() / 1000).toLong,
+    "model" -> model,
+    "system_fingerprint" -> s"fp-${IdGenerator.token(32)}",
+    "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiJson(t._2))),
+    "usage" -> metadata.usage.openaiJson,
+  )
+  def toSource(model: String): Source[ChatResponseChunk, _] = {
+    val id = s"chatgen-${IdGenerator.token(32)}"
+    Source(generations.toList)
+      .flatMapConcat { gen =>
+        gen.message.content.chunks(5)
+      }
+      .map { chunk =>
+        ChatResponseChunk(id, System.currentTimeMillis() / 1000, model, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(chunk.some), None)))
+      }
+      .concat(Source.single(
+        ChatResponseChunk(id, System.currentTimeMillis() / 1000, model, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(None), Some("stop"))))
+      ))
+  }
 }
 
 case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage) {
@@ -90,10 +114,69 @@ case class ChatResponseMetadataUsage(promptTokens: Long, generationTokens: Long)
     "prompt_tokens" -> promptTokens,
     "generation_tokens" -> generationTokens,
   )
+  def openaiJson: JsValue = Json.obj(
+    "prompt_tokens" -> promptTokens,
+    "completion_tokens" -> generationTokens,
+    "total_tokens" -> (promptTokens + generationTokens),
+    "completion_tokens_details" -> Json.obj()
+  )
+}
+
+case class ChatResponseChunkChoiceDelta(content: Option[String]) {
+  def json: JsValue = content match {
+    case None => Json.obj()
+    case Some(content) => Json.obj("content" -> content)
+  }
+}
+
+case class ChatResponseChunkChoice(index: Int, delta: ChatResponseChunkChoiceDelta, finishReason: Option[String]) {
+  def json: JsValue = Json.obj(
+    "index" -> index,
+    "delta" -> delta.json,
+    "finish_reason" -> finishReason.map(_.json).getOrElse(JsNull).asValue
+  )
+  def openaiJson: JsValue = Json.obj(
+    "index" -> index,
+    "delta" -> delta.json,
+    "logprobs" -> JsNull,
+    "finish_reason" -> finishReason.map(_.json).getOrElse(JsNull).asValue
+  )
+}
+
+case class ChatResponseChunk(id: String, created: Long, model: String, choices: Seq[ChatResponseChunkChoice]) {
+  def json: JsValue = Json.obj(
+    "id" -> id,
+    "created" -> created,
+    "model" -> model,
+    "choices" -> JsArray(choices.map(_.json))
+  )
+  def openaiJson: JsValue = Json.obj(
+    "id" -> id,
+    "object" -> "chat.completion.chunk",
+    "created" -> created,
+    "model" -> model,
+    "system_fingerprint" -> JsNull,
+    "choices" -> JsArray(choices.map(_.openaiJson))
+  )
+  def eventSource: ByteString = s"data: ${json.stringify}\n\n".byteString
+  def openaiEventSource: ByteString = s"data: ${openaiJson.stringify}\n\n".byteString
 }
 
 trait ChatClient {
+  def streaming: Boolean = false
+  def model: Option[String]
   def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]]
+  def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = Left(Json.obj("error" -> "streaming not supported")).future
+  def tryStream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    if (streaming) {
+      stream(prompt, attrs)
+    } else {
+      call(prompt, attrs).map {
+        case Left(err) => Left(err)
+        case Right(resp) => Right(resp.toSource(model.getOrElse("none")))
+      }
+    }
+  }
 }
 
 object ChatClient {

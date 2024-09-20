@@ -43,19 +43,21 @@ case class HuggingFaceLangchainChatClientOptions(
 class HuggingFaceLangchainChatClient(api: HuggingFaceLangchainApi, options: HuggingFaceLangchainChatClientOptions, id: String) extends ChatClient {
 
   private val maxTokens: Int = options.max_tokens.getOrElse(0)
-  private val model = HuggingFaceChatModel.builder()
+  private val hfmodel = HuggingFaceChatModel.builder()
     .accessToken(api.token)
     .modelId(options.model)
     .timeout(java.time.Duration.ofMillis(api.timeout.toMillis))
     .temperature(options.temperature)
     .maxNewTokens(maxTokens)
     .waitForModel(true)
-    .build();
+    .build()
+
+  override def model: Option[String] = options.model.some
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     // val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
     val start = System.currentTimeMillis()
-    val response = model.generate(prompt.messages.map(_.asLangchain4j): _*)
+    val response = hfmodel.generate(prompt.messages.map(_.asLangchain4j): _*)
     val usage = ChatResponseMetadata(
       ChatResponseMetadataRateLimit(
         requestsLimit = -1L,
@@ -91,4 +93,5 @@ class HuggingFaceLangchainChatClient(api: HuggingFaceLangchainApi, options: Hugg
     val messages = Seq(ChatGeneration(ChatMessage(role, response.content().text())))
     Right(ChatResponse(messages, usage)).future
   }
+
 }

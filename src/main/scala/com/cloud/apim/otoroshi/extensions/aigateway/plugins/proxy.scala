@@ -1,6 +1,7 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
+import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefConfig, AiPluginsKeys, PromptValidatorConfig}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
@@ -66,6 +67,7 @@ class AiLlmProxy extends NgBackendCall {
     env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref).flatMap(_.getChatClient())) match {
       case None => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "provider not found")))).vfuture // TODO: rewrite error
       case Some(client) => {
+        val stream = ctx.request.queryParam("stream").contains("true") || ctx.request.header("x-stream").contains("true") || jsonBody.select("stream").asOpt[Boolean].contains(true)
         val requestMessages = ctx.attrs.get(AiPluginsKeys.PromptTemplateKey) match {
           case None => jsonBody.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
           case Some(template) => {
@@ -87,9 +89,19 @@ class AiLlmProxy extends NgBackendCall {
             val content = obj.select("content").asOpt[String].getOrElse("")
             ChatMessage(role, content)
           }
-          client.call(ChatPrompt(messages), ctx.attrs).map {
-            case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
-            case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.json)), None))
+          if (stream) {
+            client.tryStream(ChatPrompt(messages), ctx.attrs).map {
+              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Right(source) => {
+                val finalSource = source.map(_.eventSource)
+                Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
+              }
+            }
+          } else {
+            client.call(ChatPrompt(messages), ctx.attrs).map {
+              case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
+              case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.json)), None))
+            }
           }
         } else {
           Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_description" -> "invalid request")))).vfuture // TODO: rewrite error

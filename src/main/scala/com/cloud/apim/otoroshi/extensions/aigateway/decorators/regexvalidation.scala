@@ -30,6 +30,8 @@ class ChatClientWithRegexValidation(originalProvider: AiProvider, chatClient: Ch
     !denied && allowed
   }
 
+  override def model: Option[String] = chatClient.model
+
   override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
 
     def pass(): Future[Either[JsValue, ChatResponse]] = chatClient.call(originalPrompt, attrs)
