@@ -3,10 +3,14 @@ class AiProviderTesterMessage extends Component {
     this.ref.scrollIntoView({ behavior: "smooth" })
   }
   render() {
+    let content = this.props.message.content;
+    if (!(typeof content === 'string' || content instanceof String)) {
+      content = JSON.stringify(content);
+    }
     return (
       React.createElement('div', { ref: (r) => this.ref = r, style: { display: 'flex', width: '100%', flexDirection: 'row', backgroundColor: '#616060', borderRadius: 3, marginBottom: 3, padding: 5 }},
         React.createElement('div', { style: { width: '20%', fontWeight: 'bold', color: this.props.message.error ? 'red' : 'white' }}, _.capitalize(this.props.message.role)),
-        React.createElement('p', { style: { width: '80%', marginBottom: 0 }}, this.props.message.content),
+        React.createElement('p', { style: { width: '80%', marginBottom: 0 }}, content),
       )
     );
   }

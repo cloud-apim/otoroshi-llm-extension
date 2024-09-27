@@ -41,11 +41,11 @@ object Items {
   val languageModerationPrompt = s"""If you encounter in the following messages any text of the following kind: ${moderationCategories.mkString(", ")}, please respond with the word "false". If not, please respond with the word "true". Do not add anything else"""
 }
 
-class GibberishFence extends HardCodedLLMFence(Items.gibberishPrompt)
-class PersonalInformationsFence extends HardCodedLLMFence(Items.personalInformationsPrompt)
-class LanguageModerationFence extends HardCodedLLMFence(Items.languageModerationPrompt)
+class GibberishFence extends HardCodedLLMFence(Items.gibberishPrompt) { def name: String = "gibberish" }
+class PersonalInformationsFence extends HardCodedLLMFence(Items.personalInformationsPrompt) { def name: String = "personal-information" }
+class LanguageModerationFence extends HardCodedLLMFence(Items.languageModerationPrompt) { def name: String = "langage-moderation" }
 
-class HardCodedLLMFence(systemPrompt: String) extends Fence {
+abstract class HardCodedLLMFence(systemPrompt: String) extends Fence {
 
   override def isBefore: Boolean = true
 
@@ -53,9 +53,14 @@ class HardCodedLLMFence(systemPrompt: String) extends Fence {
 
   override def manyMessages: Boolean = true
 
+  def name: String
+
   def pass(): Future[FenceResult] = FenceResult.FencePass.vfuture
 
-  def fail(idx: Int): Future[FenceResult] = FenceResult.FenceDenied(s"request content did not pass llm validation (${idx})").vfuture
+  def fail(idx: Int, config: JsObject): Future[FenceResult] = {
+    val msg = config.select("err_msg").asOpt[String].getOrElse(s"This message has been blocked by the '${name}' fence !")
+    FenceResult.FenceDenied(msg).vfuture
+  }
 
   override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[FenceResult] = {
     val llmValidation = LlmValidationSettings.format.reads(config).getOrElse(LlmValidationSettings())
@@ -69,24 +74,24 @@ class HardCodedLLMFence(systemPrompt: String) extends Fence {
             validationClient.call(ChatPrompt(Seq(
               ChatMessage("system", systemPrompt)
             ) ++ messages), attrs).flatMap {
-              case Left(err) => fail(2)
+              case Left(err) => FenceResult.FenceDenied(err.stringify).vfuture
               case Right(resp) => {
                 val content = resp.generations.head.message.content.toLowerCase().trim.replace("\n", " ")
-                println(s"content: '${content}'")
+                // println(s"content: '${content}'")
                 if (content == "true") {
                   pass()
                 } else if (content == "false") {
-                  fail(3)
+                  fail(3, config)
                 } else if (content.startsWith("{") && content.endsWith("}")) {
                   if (Json.parse(content).select("result").asOpt[Boolean].getOrElse(false)) {
                     pass()
                   } else {
-                    fail(4)
+                    fail(4, config)
                   }
                 } else {
                   content.split(" ").headOption match {
                     case Some("true") => pass()
-                    case _ => fail(5)
+                    case _ => fail(5, config)
                   }
                 }
               }

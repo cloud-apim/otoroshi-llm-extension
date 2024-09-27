@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt, ChatResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseMetadata}
 import com.cloud.apim.otoroshi.extensions.aigateway.fences._
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -36,7 +36,7 @@ object Fences {
     "pif" -> new PersonalInformationsFence(),
     "moderation" -> new LanguageModerationFence(),
   )
-  /*
+/*
 [
   {
     "enabled": true,
@@ -48,7 +48,7 @@ object Fences {
     }
   }
 ]
-   */
+*/
 }
 case class Fences(items: Seq[FenceItem]) {
 
@@ -70,20 +70,12 @@ case class Fences(items: Seq[FenceItem]) {
     def nextMessage(seq: Seq[ChatMessage], fence: Fence, config: JsObject): Future[FenceResult] = {
       if (seq.nonEmpty) {
         val head = seq.head
-        println("calling fences one message: " + config.stringify)
         fence.pass(Seq(head), config, originalProvider, chatClient, attrs).andThen {
-          case Success(FenceResult.FencePass) =>
-            println("next m")
-            nextMessage(seq.tail, fence, config)
-          case Success(FenceResult.FenceDenied(err)) =>
-            println("err1")
-            FenceResult.FenceDenied(err).vfuture
-          case Failure(e) =>
-            println("err2")
-            FenceResult.FenceDenied(e.getMessage).vfuture
+          case Success(FenceResult.FencePass) => nextMessage(seq.tail, fence, config)
+          case Success(FenceResult.FenceDenied(err)) => FenceResult.FenceDenied(err).vfuture
+          case Failure(e) => FenceResult.FenceDenied(e.getMessage).vfuture
         }
       } else {
-        println("done message")
         FenceResult.FencePass.vfuture
       }
     }
@@ -94,13 +86,15 @@ case class Fences(items: Seq[FenceItem]) {
         if (head._2.manyMessages) {
           head._2.pass(messages, head._1.config, originalProvider, chatClient, attrs).andThen {
             case Success(FenceResult.FencePass) => nextFence(seq.tail)
-            case Success(FenceResult.FenceDenied(err)) => FenceResult.FenceDenied(err).vfuture
+            case Success(FenceResult.FenceDenied(msg)) => FenceResult.FenceDenied(msg).vfuture
+            case Success(FenceResult.FenceError(err)) => FenceResult.FenceError(err).vfuture
             case Failure(e) => FenceResult.FenceDenied(e.getMessage).vfuture
           }
         } else {
           nextMessage(messages, head._2, head._1.config).andThen {
             case Success(FenceResult.FencePass) => nextFence(seq.tail)
-            case Success(FenceResult.FenceDenied(err)) => FenceResult.FenceDenied(err).vfuture
+            case Success(FenceResult.FenceError(err)) => FenceResult.FenceError(err).vfuture
+            case Success(FenceResult.FenceDenied(msg)) => FenceResult.FenceDenied(msg).vfuture
             case Failure(e) => FenceResult.FenceDenied(e.getMessage).vfuture
           }
         }
@@ -156,6 +150,7 @@ sealed trait FenceResult
 object FenceResult {
   case object FencePass extends FenceResult
   case class FenceDenied(message: String) extends FenceResult
+  case class FenceError(error: String) extends FenceResult
 }
 
 trait Fence {
@@ -171,13 +166,21 @@ class ChatClientWithFencesValidation(originalProvider: AiProvider, chatClient: C
 
   override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     originalProvider.fences.call(FencesCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
-      case FenceResult.FenceDenied(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
+      case FenceResult.FenceError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
+      case FenceResult.FenceDenied(msg) => Right(ChatResponse(
+        Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg))),
+        ChatResponseMetadata.empty,
+      )).vfuture
       case FenceResult.FencePass => {
         chatClient.call(originalPrompt, attrs).flatMap {
           case Left(err) => Left(err).vfuture
           case Right(r) => {
             originalProvider.fences.call(FencesCallPhase.After, r.generations.map(_.message), originalProvider, chatClient, attrs).flatMap {
-              case FenceResult.FenceDenied(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "after")).vfuture
+              case FenceResult.FenceError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "after")).vfuture
+              case FenceResult.FenceDenied(msg) => Right(ChatResponse(
+                Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg))),
+                ChatResponseMetadata.empty,
+              )).vfuture
               case FenceResult.FencePass => Right(r).vfuture
             }
           }
