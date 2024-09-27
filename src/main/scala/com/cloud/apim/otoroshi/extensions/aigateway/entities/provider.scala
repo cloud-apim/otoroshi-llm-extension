@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatClient
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientDecorators, LoadBalancerChatClient}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientDecorators, Fences, LoadBalancerChatClient}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
 import otoroshi.env.Env
@@ -25,13 +25,57 @@ case class RegexValidationSettings(
 case class LlmValidationSettings(
   provider: Option[String] = None,
   prompt: Option[String] = None,
-)
+) {
+  def json: JsValue = LlmValidationSettings.format.writes(this)
+}
+
+object LlmValidationSettings {
+  val format = new Format[LlmValidationSettings] {
+    override def reads(json: JsValue): JsResult[LlmValidationSettings] = Try {
+      LlmValidationSettings(
+        provider = (json \ "provider").asOpt[String],
+        prompt = (json \ "prompt").asOpt[String],
+      )
+    } match {
+      case Failure(ex)    => JsError(ex.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+    override def writes(o: LlmValidationSettings): JsValue = Json.obj(
+      "provider" -> o.provider,
+      "prompt" -> o.prompt,
+    )
+  }
+}
 
 case class HttpValidationSettings(
   url: Option[String] = None,
   headers: Map[String, String] = Map.empty,
   ttl: FiniteDuration = 5.minutes,
-)
+) {
+  def json: JsValue = HttpValidationSettings.format.writes(this)
+}
+
+object HttpValidationSettings {
+  val format = new Format[HttpValidationSettings] {
+
+    override def reads(json: JsValue): JsResult[HttpValidationSettings] = Try {
+       HttpValidationSettings(
+        url = (json \ "url").asOpt[String],
+        headers = (json \ "headers").asOpt[Map[String, String]].getOrElse(Map.empty),
+        ttl = (json \ "ttl").asOpt[Long].map(v => FiniteDuration(v, TimeUnit.MILLISECONDS)).getOrElse(5.minutes),
+      )
+    } match {
+      case Failure(ex)    => JsError(ex.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+
+    override def writes(o: HttpValidationSettings): JsValue = Json.obj(
+      "url" -> o.url,
+      "headers" -> o.headers,
+      "ttl" -> o.ttl.toMillis,
+    )
+  }
+}
 
 
 case class CacheSettings(
@@ -55,6 +99,7 @@ case class AiProvider(
                        llmValidation: LlmValidationSettings = LlmValidationSettings(),
                        httpValidation: HttpValidationSettings = HttpValidationSettings(),
                        cache: CacheSettings = CacheSettings(),
+                       fences: Fences = Fences.empty,
                      ) extends EntityLocationSupport {
   override def internalId: String               = id
   override def json: JsValue                    = AiProvider.format.writes(this)
@@ -157,15 +202,9 @@ object AiProvider {
         "allow" -> o.regexValidation.allow,
         "deny" -> o.regexValidation.deny,
       ),
-      "llm_validation" -> Json.obj(
-        "provider" -> o.llmValidation.provider,
-        "prompt" -> o.llmValidation.prompt,
-      ),
-      "http_validation" -> Json.obj(
-        "url" -> o.httpValidation.url,
-        "headers" -> o.httpValidation.headers,
-        "ttl" -> o.httpValidation.ttl.toMillis,
-      ),
+      "llm_validation" -> o.llmValidation.json,
+      "http_validation" -> o.httpValidation.json,
+      "fences" -> o.fences.json,
       "cache" -> Json.obj(
         "strategy" -> o.cache.strategy,
         "ttl" -> o.cache.ttl.toMillis,
@@ -188,15 +227,9 @@ object AiProvider {
           allow = (json \ "regex_validation" \ "allow").asOpt[Seq[String]].getOrElse(Seq.empty),
           deny = (json \ "regex_validation" \ "deny").asOpt[Seq[String]].getOrElse(Seq.empty),
         ),
-        llmValidation = LlmValidationSettings(
-          provider = (json \ "llm_validation" \ "provider").asOpt[String],
-          prompt = (json \ "llm_validation" \ "prompt").asOpt[String],
-        ),
-        httpValidation = HttpValidationSettings(
-          url = (json \ "http_validation" \ "url").asOpt[String],
-          headers = (json \ "http_validation" \ "headers").asOpt[Map[String, String]].getOrElse(Map.empty),
-          ttl = (json \ "http_validation" \ "ttl").asOpt[Long].map(v => FiniteDuration(v, TimeUnit.MILLISECONDS)).getOrElse(5.minutes),
-        ),
+        llmValidation = json.select("llm_validation").asOpt[JsObject].flatMap(o => LlmValidationSettings.format.reads(o).asOpt).getOrElse(LlmValidationSettings()),
+        httpValidation = json.select("http_validation").asOpt[JsObject].flatMap(o => HttpValidationSettings.format.reads(o).asOpt).getOrElse(HttpValidationSettings()),
+        fences = json.select("fences").asOpt[JsArray].flatMap(seq => Fences.format.reads(seq).asOpt).getOrElse(Fences.empty),
         cache = CacheSettings(
           strategy = (json \ "cache" \ "strategy").asOpt[String].getOrElse("none"),
           ttl = (json \ "cache" \ "ttl").asOpt[Long].map(v => FiniteDuration(v, TimeUnit.MILLISECONDS)).getOrElse(24.hours),

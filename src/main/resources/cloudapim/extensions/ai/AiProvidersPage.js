@@ -431,6 +431,10 @@ class AiProvidersPage extends Component {
           label: a.name,
         }),
       }
+    },
+    'fences': {
+      'type': 'jsonobjectcode',
+      props: { label: 'Fences config.' }
     }
   });
 
@@ -911,6 +915,8 @@ class AiProvidersPage extends Component {
       'http_validation.url',
       'http_validation.headers',
       'http_validation.ttl',
+      '>>>Fences validation',
+      'fences',
       '>>>Tester',
       'tester',
       '>>>Metadata and tags',

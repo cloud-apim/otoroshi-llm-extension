@@ -7,12 +7,13 @@ object ChatClientDecorators {
 
   val possibleDecorators: Seq[Function[(AiProvider, ChatClient), ChatClient]] = Seq(
     ChatClientWithAuditing.applyIfPossible,
-    ChatClientWithRegexValidation.applyIfPossible,
-    ChatClientWithLlmValidation.applyIfPossible,
+    ChatClientWithProviderFallback.applyIfPossible,
     ChatClientWithSimpleCache.applyIfPossible,
     ChatClientWithSemanticCache.applyIfPossible,
+    ChatClientWithRegexValidation.applyIfPossible,
+    ChatClientWithLlmValidation.applyIfPossible,
     ChatClientWithHttpValidation.applyIfPossible,
-    ChatClientWithProviderFallback.applyIfPossible
+    ChatClientWithFencesValidation.applyIfPossible
   )
 
   def apply(provider: AiProvider, client: ChatClient): ChatClient = {
