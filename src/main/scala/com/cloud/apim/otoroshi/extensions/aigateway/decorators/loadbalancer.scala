@@ -7,7 +7,7 @@ import otoroshi.utils.TypedMap
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsValue, Json}
+import play.api.libs.json.{JsObject, JsValue, Json}
 
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
 import scala.concurrent.{ExecutionContext, Future}
@@ -75,12 +75,26 @@ object LoadBalancerChatClient {
   val counter = new AtomicLong(0L)
 }
 
+case class LoadBalancingTarget(ref: String, weight: Int)
+
 class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
 
   override def model: Option[String] = None
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val refs = provider.options.select("refs").asOpt[Seq[String]].getOrElse(Seq.empty)
+    val refs: Seq[LoadBalancingTarget] = provider.options.select("refs")
+      .asOpt[Seq[String]].map { seq =>
+        seq.map(i => LoadBalancingTarget(i, 1))
+      }
+      .orElse(provider.options.select("refs").asOpt[Seq[JsObject]].map { seq =>
+        seq.map { obj =>
+          LoadBalancingTarget(
+            obj.select("ref").asString,
+            obj.select("weight").asOpt[Int].getOrElse(1),
+          )
+        }
+      })
+      .getOrElse(Seq.empty)
     val loadBalancing: LoadBalancing = provider.options.select("loadbalancing").asOpt[String].map(_.toLowerCase()).getOrElse("round_robin") match {
       case "random" => Random
       case "best_response_time" => BestResponseTime
@@ -89,7 +103,9 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
     if (refs.isEmpty) {
       Json.obj("error" -> "no provider configured").leftf
     } else {
-      val providers: Seq[AiProvider] = refs.flatMap(r => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r)))
+      val providers: Seq[AiProvider] = refs
+        .flatMap(r => if (r.weight <= 1) Seq(r) else (0 to r.weight).map(_ => r))
+        .flatMap(r => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r.ref)))
       // val index = LoadBalancerChatClient.counter.incrementAndGet() % (if (providers.nonEmpty) providers.size else 1)
       val provider = loadBalancing.select(LoadBalancerChatClient.counter.incrementAndGet().toString, providers)
       provider.getChatClient() match {
