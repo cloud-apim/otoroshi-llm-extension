@@ -17,7 +17,7 @@
   - **Prompt Fences**: Validate your prompts and prompts responses to avoid sensitive or personal informations leakage, irrelevant or unhelpful responses, gibberish content, etc
   - **Prompt engineering**: enhance your experience by providing contextual information to your prompts, storing them in a library for reusability, and using prompt templates for increased efficiency
 
-A set of Otoroshi plugins to interact with LLMs to know more about it, go to [documentation](https://cloud-apim.github.io/otoroshi-llm-extension/)
+Otoroshi LLM Extension is set of Otoroshi plugins and resources to interact with LLMs. To know more about it, go to [documentation](https://cloud-apim.github.io/otoroshi-llm-extension/)
 
 ## Supported LLM providers
 
