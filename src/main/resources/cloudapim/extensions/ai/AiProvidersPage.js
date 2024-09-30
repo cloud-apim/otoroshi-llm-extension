@@ -103,6 +103,83 @@ class AiProviderTester extends Component {
   }
 }
 
+class Fence extends Component {
+  render() {
+    return (
+      React.createElement(Form, {
+        flow: ['llm', 'gibberish', 'pif', 'moderation'].indexOf(this.props.itemValue.id) > -1 ? ['enabled', 'id', 'before', 'after', 'provider'] : ['enabled', 'id', 'before', 'after', 'config'],
+        schema: {
+          enabled: { type: 'bool', props: { label: 'Enabled' } },
+          before: { type: 'bool', props: { label: 'Apply before' } },
+          after: { type: 'bool', props: { label: 'Apply after' } },
+          provider: { type: 'select', props: {
+            label: 'LLM Provider',
+            valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+            transformer: i => ({ label: i.name, value: i.id }),
+            value: this.props.itemValue.config.provider,
+            overrideOnChange: (provider) => {
+              console.log('overrideOnChange', provider)
+              this.props.value[this.props.idx].config.provider = provider;
+              this.props.onChange(this.props.value)
+            },
+          } },
+          id: {
+            type: 'select',
+            props: {
+              label: 'Fence',
+              possibleValues: [
+                {label: 'Regex', value: 'regex'},
+                {label: 'Webhook', value: 'webhook'},
+                {label: 'LLM', value: 'llm'},
+                {label: 'No gibberish', value: 'gibberish'},
+                {label: 'No personal informations', value: 'pif'},
+                {label: 'Language moderation', value: 'moderation'},
+                {label: 'Sentences count', value: 'sentences'},
+                {label: 'Words count', value: 'words'},
+                {label: 'Characters count', value: 'characters'},
+                {label: 'Text contains', value: 'contains'},
+              ]
+            }
+          },
+          config: { type: 'jsonobjectcode', props: { label: 'Config.', height: '150px' } },
+        },
+        value: this.props.itemValue,
+        onChange: i => {
+          const oldId = this.props.value[this.props.idx].id;
+          this.props.value[this.props.idx] = i;
+          if (oldId !== i.id) {
+            if (i.id === 'regex') this.props.value[this.props.idx].config = { deny: [], allow: [] };
+            if (i.id === 'webhook') this.props.value[this.props.idx].config = { url: 'https://webhook.foo.bar/path', headers: {}, ttl: 10000 };
+            if (i.id === 'llm') this.props.value[this.props.idx].config = { provider: null, prompt: null };
+            if (i.id === 'gibberish') this.props.value[this.props.idx].config = { provider: null };
+            if (i.id === 'pif') this.props.value[this.props.idx].config = { provider: null };
+            if (i.id === 'moderation') this.props.value[this.props.idx].config = { provider: null };
+            if (['llm', 'gibberish', 'pif', 'moderation'].indexOf(i.id) > -1) {
+              fetch("/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers", {
+                "headers": {
+                  "accept": "application/json",
+                },
+                "method": "GET",
+                "credentials": "include"
+              }).then(r => r.json()).then(providers => {
+                if (providers.length > 1) {
+                  this.props.value[this.props.idx].config.provider = providers[0].id;
+                  this.props.onChange(this.props.value)
+                }
+              });
+            }
+            if (i.id === 'sentences') this.props.value[this.props.idx].config = { min: 1, max: 3 };
+            if (i.id === 'words') this.props.value[this.props.idx].config = { min: 10, max: 30 };
+            if (i.id === 'characters') this.props.value[this.props.idx].config = { min: 20, max: 300 };
+            if (i.id === 'contains') this.props.value[this.props.idx].config = { operation: 'contains_all', values: [] };
+          }
+          this.props.onChange(this.props.value)
+        }
+      }, null)
+    )
+  }
+}
+
 class AiProvidersPage extends Component {
 
   state = {}
@@ -436,9 +513,26 @@ class AiProvidersPage extends Component {
         }),
       }
     },
-    'fences': {
-      'type': 'jsonobjectcode',
+    _fences: {
+      type: 'jsonobjectcode',
       props: { label: 'Fences config.' }
+    },
+    fences: {
+      type: 'array',
+      props: {
+        label: '',
+        defaultValue: {
+          enabled: true,
+          before: true,
+          after: true,
+          id: 'regex',
+          config: {
+            allow: [],
+            deny: [],
+          }
+        },
+        component: Fence
+      }
     }
   });
 
