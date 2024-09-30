@@ -26,7 +26,25 @@ const FeatureList = [
     Svg: require('@site/static/img/undraw_hacker_mind_-6-y85.svg').default,
     description: (
       <>
-        Validate LLM payloads with ease. Secure access by providing fine grained apikeys with specific access rights. Monitor and limit usages of specific providers to avoid unexpected costs.
+        Secure access by providing fine grained apikeys with specific access rights. Monitor and limit usages of specific providers to avoid unexpected costs.
+      </>
+    ),
+  },
+  {
+    title: 'Unified interface',
+    Svg: require('@site/static/img/undraw_server_cluster_jwwq.svg').default,
+    description: (
+      <>
+        Simplify interactions and minimize integration hassles. Connect, setup, secure and seamlessly manage LLM models using an Universal/OpenAI compatible API
+      </>
+    ),
+  },
+  {
+    title: 'Prompt fences',
+    Svg: require('@site/static/img/undraw_security_on_re_e491.svg').default,
+    description: (
+      <>
+        Validate your prompts and prompts responses to avoid sensitive or personal informations leakage, irrelevant or unhelpful responses, gibberish content, etc
       </>
     ),
   },
