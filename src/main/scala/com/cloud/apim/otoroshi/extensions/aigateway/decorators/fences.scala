@@ -35,6 +35,10 @@ object Fences {
     "gibberish" -> new GibberishFence(),
     "pif" -> new PersonalInformationsFence(),
     "moderation" -> new LanguageModerationFence(),
+    "sentences" -> new SentencesCountFence(),
+    "words" -> new WordsCountFence(),
+    "characters" -> new CharactersCountFence(),
+    "contains" -> new ContainsFence(),
   )
 /*
 [
