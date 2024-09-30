@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.fences
 
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientWithHttpValidation, Fence, FenceResult}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Fence, FenceResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, HttpValidationSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage}
 import com.github.blemale.scaffeine.Scaffeine
@@ -46,11 +46,11 @@ class WebhookFence extends Fence {
               .withHttpHeaders(httpValidation.headers.toSeq: _*)
               .post(JsArray(messages.map(_.json))).flatMap { resp =>
                 if (resp.status != 200) {
-                  ChatClientWithHttpValidation.cache.put(key, (httpValidation.ttl, false))
+                  WebhookFence.cache.put(key, (httpValidation.ttl, false))
                   FenceResult.FenceDenied("request content did not pass http validation").vfuture
                 } else {
                   val value = resp.json.select("result").asOpt[Boolean].getOrElse(false)
-                  ChatClientWithHttpValidation.cache.put(key, (httpValidation.ttl, value))
+                  WebhookFence.cache.put(key, (httpValidation.ttl, value))
                   FenceResult.FencePass.vfuture
                 }
               }

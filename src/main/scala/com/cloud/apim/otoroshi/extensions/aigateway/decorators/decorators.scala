@@ -10,9 +10,9 @@ object ChatClientDecorators {
     ChatClientWithProviderFallback.applyIfPossible,
     ChatClientWithSimpleCache.applyIfPossible,
     ChatClientWithSemanticCache.applyIfPossible,
-    ChatClientWithRegexValidation.applyIfPossible,
-    ChatClientWithLlmValidation.applyIfPossible,
-    ChatClientWithHttpValidation.applyIfPossible,
+    // ChatClientWithRegexValidation.applyIfPossible,
+    // ChatClientWithLlmValidation.applyIfPossible,
+    // ChatClientWithHttpValidation.applyIfPossible,
     ChatClientWithFencesValidation.applyIfPossible
   )
 

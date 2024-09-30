@@ -1,5 +1,5 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
-
+/*
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt, ChatResponse}
 import otoroshi.env.Env
@@ -76,3 +76,4 @@ class ChatClientWithLlmValidation(originalProvider: AiProvider, chatClient: Chat
     }
   }
 }
+*/

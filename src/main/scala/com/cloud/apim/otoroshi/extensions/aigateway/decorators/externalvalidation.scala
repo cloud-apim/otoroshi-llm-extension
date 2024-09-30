@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
+/*
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.github.blemale.scaffeine.Scaffeine
@@ -63,3 +64,4 @@ class ChatClientWithHttpValidation(originalProvider: AiProvider, chatClient: Cha
     }
   }
 }
+*/

@@ -95,9 +95,9 @@ case class AiProvider(
                        connection: JsObject,
                        options: JsObject,
                        providerFallback: Option[String] = None,
-                       regexValidation: RegexValidationSettings = RegexValidationSettings(),
-                       llmValidation: LlmValidationSettings = LlmValidationSettings(),
-                       httpValidation: HttpValidationSettings = HttpValidationSettings(),
+                       //regexValidation: RegexValidationSettings = RegexValidationSettings(),
+                       //llmValidation: LlmValidationSettings = LlmValidationSettings(),
+                       //httpValidation: HttpValidationSettings = HttpValidationSettings(),
                        cache: CacheSettings = CacheSettings(),
                        fences: Fences = Fences.empty,
                      ) extends EntityLocationSupport {
@@ -198,12 +198,12 @@ object AiProvider {
       "connection"       -> o.connection,
       "options"          -> o.options,
       "provider_fallback" -> o.providerFallback.map(_.json).getOrElse(JsNull).asValue,
-      "regex_validation" -> Json.obj(
-        "allow" -> o.regexValidation.allow,
-        "deny" -> o.regexValidation.deny,
-      ),
-      "llm_validation" -> o.llmValidation.json,
-      "http_validation" -> o.httpValidation.json,
+      // "regex_validation" -> Json.obj(
+      //   "allow" -> o.regexValidation.allow,
+      //   "deny" -> o.regexValidation.deny,
+      // ),
+      // "llm_validation" -> o.llmValidation.json,
+      // "http_validation" -> o.httpValidation.json,
       "fences" -> o.fences.json,
       "cache" -> Json.obj(
         "strategy" -> o.cache.strategy,
@@ -223,12 +223,12 @@ object AiProvider {
         connection = (json \ "connection").asOpt[JsObject].getOrElse(Json.obj()),
         options = (json \ "options").asOpt[JsObject].getOrElse(Json.obj()),
         providerFallback = (json \ "provider_fallback").asOpt[String],
-        regexValidation = RegexValidationSettings(
-          allow = (json \ "regex_validation" \ "allow").asOpt[Seq[String]].getOrElse(Seq.empty),
-          deny = (json \ "regex_validation" \ "deny").asOpt[Seq[String]].getOrElse(Seq.empty),
-        ),
-        llmValidation = json.select("llm_validation").asOpt[JsObject].flatMap(o => LlmValidationSettings.format.reads(o).asOpt).getOrElse(LlmValidationSettings()),
-        httpValidation = json.select("http_validation").asOpt[JsObject].flatMap(o => HttpValidationSettings.format.reads(o).asOpt).getOrElse(HttpValidationSettings()),
+        // regexValidation = RegexValidationSettings(
+        //   allow = (json \ "regex_validation" \ "allow").asOpt[Seq[String]].getOrElse(Seq.empty),
+        //   deny = (json \ "regex_validation" \ "deny").asOpt[Seq[String]].getOrElse(Seq.empty),
+        // ),
+        // llmValidation = json.select("llm_validation").asOpt[JsObject].flatMap(o => LlmValidationSettings.format.reads(o).asOpt).getOrElse(LlmValidationSettings()),
+        // httpValidation = json.select("http_validation").asOpt[JsObject].flatMap(o => HttpValidationSettings.format.reads(o).asOpt).getOrElse(HttpValidationSettings()),
         fences = json.select("fences").asOpt[JsArray].flatMap(seq => Fences.format.reads(seq).asOpt).getOrElse(Fences.empty),
         cache = CacheSettings(
           strategy = (json \ "cache" \ "strategy").asOpt[String].getOrElse("none"),
