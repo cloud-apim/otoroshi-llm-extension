@@ -2,7 +2,7 @@
 
 [![Otoroshi LLM Extension introduction](https://img.youtube.com/vi/M8sA9xuE3gs/0.jpg)](https://www.youtube.com/watch?v=M8sA9xuE3gs "🚀 Cloud APIM - AI LLM Gateway : Unlocking the Power of AI in API Management 🤖✨")
 
-**Connect, setup, secure and seamlessly manage AI models using an Universal/OpenAI compatible API**
+**Connect, setup, secure and seamlessly manage LLM models using an Universal/OpenAI compatible API**
 
   - **Unified interface**: Simplify interactions and minimize integration hassles
   - **Use multiple providers**: 10+ LLM providers supported right now, a lot more coming
