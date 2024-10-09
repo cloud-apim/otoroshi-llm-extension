@@ -99,7 +99,7 @@ class AiLlmProxy extends NgBackendCall {
           } else {
             client.call(ChatPrompt(messages), ctx.attrs).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
-              case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.json)), None))
+              case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.json).withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
             }
           }
         } else {

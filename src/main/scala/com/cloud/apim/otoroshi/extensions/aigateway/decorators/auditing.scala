@@ -39,6 +39,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, chatClient: ChatClien
             "route" -> route.map(_.json).getOrElse(JsNull).asValue,
             "input_prompt" -> prompt.json,
             "output" -> JsNull,
+            "provider_details" -> originalProvider.json
             //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
           )
         }.toAnalytics()
@@ -53,6 +54,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, chatClient: ChatClien
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_prompt" -> prompt.json,
               "output" -> JsNull,
+              "provider_details" -> originalProvider.json
               //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
             )
           }.toAnalytics()
@@ -68,7 +70,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, chatClient: ChatClien
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_prompt" -> prompt.json,
               "output" -> value.json,
-              "provider_details" -> provider.map(_.json).getOrElse(JsNull).asValue,
+              "provider_details" -> originalProvider.json //provider.map(_.json).getOrElse(JsNull).asValue,
               //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
             )
           }.toAnalytics()

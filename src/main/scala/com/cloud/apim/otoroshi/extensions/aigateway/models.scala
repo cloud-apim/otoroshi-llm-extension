@@ -10,7 +10,9 @@ import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
 
+import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success, Try}
 
 trait ChatOptions {
   def temperature: Float
@@ -20,6 +22,22 @@ trait ChatOptions {
 }
 case class ChatPrompt(messages: Seq[ChatMessage], options: Option[ChatOptions] = None) {
   def json: JsValue = JsArray(messages.map(_.json))
+}
+object ChatMessage {
+  val format = new Format[ChatMessage] {
+
+    override def reads(json: JsValue): JsResult[ChatMessage] = Try {
+      ChatMessage(
+        role = json.select("role").asString,
+        content = json.select("content").asString,
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+
+    override def writes(o: ChatMessage): JsValue = o.json
+  }
 }
 case class ChatMessage(role: String, content: String) {
   def json: JsValue = Json.obj(
@@ -78,18 +96,48 @@ case class ChatResponse(
       ))
   }
 }
+sealed trait ChatResponseCacheStatus {
+  def name: String
+}
+object ChatResponseCacheStatus {
+  case object Hit extends ChatResponseCacheStatus { def name: String = "Hit" }
+  case object Miss extends ChatResponseCacheStatus { def name: String = "Miss" }
+  case object Refresh extends ChatResponseCacheStatus { def name: String = "Refresh" }
+  case object Bypass extends ChatResponseCacheStatus { def name: String = "Bypass" }
+}
+case class ChatResponseCache(status: ChatResponseCacheStatus, key: String, ttl: FiniteDuration, age: FiniteDuration) {
+  def json: JsValue = Json.obj(
+    "status" -> status.name, // Hit, Miss, Refresh, Bypass
+    "key" -> key,
+    "ttl" -> ttl.toSeconds,
+    "age" -> age.toSeconds,
+  )
+  def toHeaders(): Map[String, String] = Map(
+    "X-Cache-Status" -> status.name,
+    "X-Cache-Key" -> key,
+    "X-Cache-Ttl" -> ttl.toSeconds.toString,
+    "Age" -> age.toSeconds.toString,
+  )
+}
 
-case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage) {
+case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage, cache: Option[ChatResponseCache]) {
+  def cacheHeaders: Map[String, String] = cache match {
+    case None => Map.empty
+    case Some(cache) => cache.toHeaders()
+  }
   def json: JsValue = Json.obj(
     "rate_limit" -> rateLimit.json,
     "usage" -> usage.json,
-  )
+  ).applyOnWithOpt(cache) {
+    case(obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+  }
 }
 
 object ChatResponseMetadata {
   val empty: ChatResponseMetadata = ChatResponseMetadata(
     ChatResponseMetadataRateLimit.empty,
     ChatResponseMetadataUsage.empty,
+    None
   )
 }
 

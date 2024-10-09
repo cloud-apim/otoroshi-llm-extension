@@ -6,14 +6,11 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 object ChatClientDecorators {
 
   val possibleDecorators: Seq[Function[(AiProvider, ChatClient), ChatClient]] = Seq(
-    ChatClientWithAuditing.applyIfPossible,
     ChatClientWithProviderFallback.applyIfPossible,
-    ChatClientWithSimpleCache.applyIfPossible,
     ChatClientWithSemanticCache.applyIfPossible,
-    // ChatClientWithRegexValidation.applyIfPossible,
-    // ChatClientWithLlmValidation.applyIfPossible,
-    // ChatClientWithHttpValidation.applyIfPossible,
-    ChatClientWithFencesValidation.applyIfPossible
+    ChatClientWithSimpleCache.applyIfPossible,
+    ChatClientWithFencesValidation.applyIfPossible,
+    ChatClientWithAuditing.applyIfPossible,
   )
 
   def apply(provider: AiProvider, client: ChatClient): ChatClient = {

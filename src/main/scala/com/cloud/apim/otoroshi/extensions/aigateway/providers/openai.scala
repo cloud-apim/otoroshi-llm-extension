@@ -39,8 +39,10 @@ object OpenAiApi {
 class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
-    println(s"calling ${method} ${baseUrl}${path}: ${body}")
-    println("calling openai")
+    // println("\n\n================================\n")
+    // println(s"calling ${method} ${baseUrl}${path}: ${body}")
+    // println("calling openai")
+    // println("\n\n================================\n")
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -133,6 +135,7 @@ class OpenAiChatClient(api: OpenAiApi, options: OpenAiChatClientOptions, id: Str
           promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
         ),
+        None
       )
       val duration: Long = resp.headers.getIgnoreCase("openai-processing-ms").map(_.toLong).getOrElse(0L)
       val slug = Json.obj(
@@ -142,7 +145,9 @@ class OpenAiChatClient(api: OpenAiApi, options: OpenAiChatClientOptions, id: Str
         "model" -> options.model.json,
         "rate_limit" -> usage.rateLimit.json,
         "usage" -> usage.usage.json
-      )
+      ).applyOnWithOpt(usage.cache) {
+        case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+      }
       attrs.update(ChatClient.ApiUsageKey -> usage)
       attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
         case Some(obj@JsObject(_)) => {

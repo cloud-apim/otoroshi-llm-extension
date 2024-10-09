@@ -88,7 +88,8 @@ class OpenAiCompatProxy extends NgBackendCall {
           } else {
             client.call(ChatPrompt(messages), ctx.attrs).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
-              case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiJson(client.model.getOrElse("none")))), None))
+              case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiJson(client.model.getOrElse("none")))
+                .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
             }
           }
         } else {

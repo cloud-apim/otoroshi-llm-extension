@@ -107,6 +107,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
           promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
         ),
+        None
       )
       val duration: Long = resp.headers.getIgnoreCase("mistral-processing-ms").map(_.toLong).getOrElse(0L)
       val slug = Json.obj(
@@ -116,7 +117,9 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
         "model" -> options.model.json,
         "rate_limit" -> usage.rateLimit.json,
         "usage" -> usage.usage.json
-      )
+      ).applyOnWithOpt(usage.cache) {
+        case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+      }
       attrs.update(ChatClient.ApiUsageKey -> usage)
       attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
         case Some(obj @ JsObject(_)) => {

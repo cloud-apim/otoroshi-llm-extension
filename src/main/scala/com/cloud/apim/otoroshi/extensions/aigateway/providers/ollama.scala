@@ -128,6 +128,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
           promptTokens = resp.body.select("prompt_eval_count").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("eval_count").asOpt[Long].getOrElse(-1L),
         ),
+        None
       )
       val duration: Long = resp.body.select("total_duration").asOpt[Long].map(_ / 100000).getOrElse(-1L)
       val slug = Json.obj(
@@ -137,7 +138,9 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         "model" -> options.model.json,
         "rate_limit" -> usage.rateLimit.json,
         "usage" -> usage.usage.json
-      )
+      ).applyOnWithOpt(usage.cache) {
+        case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+      }
       attrs.update(ChatClient.ApiUsageKey -> usage)
       attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
         case Some(obj @ JsObject(_)) => {

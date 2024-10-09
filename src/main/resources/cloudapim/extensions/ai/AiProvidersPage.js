@@ -39,6 +39,7 @@ class AiProviderTester extends Component {
           role: 'user',
           content: input,
           edited: this.props.rawValue,
+          history: this.state.messages,
         })
       }).then(r => r.json()).then(r => {
         const messages = this.state.messages;
@@ -104,10 +105,34 @@ class AiProviderTester extends Component {
 }
 
 class Fence extends Component {
+  flow = (id) => {
+    const def = ['enabled', 'id', 'before', 'after'];
+    const tail = []; // ['config'];
+    if (id === 'regex') return [...def, 'config.deny', 'config.allow', ...tail];
+    if (id === 'webhook') return [...def, 'config.url', 'config.headers', 'config.ttl', ...tail];
+    if (id === 'llm') return [...def, 'config.provider', 'config.prompt', ...tail];
+    if (id === 'gibberish') return [...def, 'config.provider', ...tail];
+    if (id === 'pif') return [...def, 'config.provider', 'config.pif_items', ...tail];
+    if (id === 'moderation') return [...def, 'config.provider', 'config.moderation_items', ...tail];
+    if (id === 'secrets_leakage') return [...def, 'config.provider', 'config.secrets_leakage_items', ...tail];
+    if (id === 'auto_secrets_leakage') return [...def, 'config.provider', ...tail];
+    if (id === 'sentences') return [...def, 'config.min', 'config.max', ...tail];
+    if (id === 'words') return [...def, 'config.min', 'config.max', ...tail];
+    if (id === 'characters') return [...def, 'config.min', 'config.max', ...tail];
+    if (id === 'contains') return [...def, 'config.operation', 'config.values', ...tail];
+    if (id === 'toxic_language') return [...def, 'config.provider', ...tail];
+    if (id === 'racial_bias') return [...def, 'config.provider', ...tail];
+    if (id === 'gender_bias') return [...def, 'config.provider', ...tail];
+    if (id === 'personal_health_information') return [...def, 'config.provider', ...tail];
+    return [...def, ...tail];
+  }
   render() {
+    //console.log(this.props.value, this.props.idx, this.props.value[this.props.idx].id);
+    const flow = this.flow(this.props.value[this.props.idx].id);
+    //console.log(flow);
     return (
       React.createElement(Form, {
-        flow: ['llm', 'gibberish', 'pif', 'moderation'].indexOf(this.props.itemValue.id) > -1 ? ['enabled', 'id', 'before', 'after', 'provider'] : ['enabled', 'id', 'before', 'after', 'config'],
+        flow: flow, //['llm', 'gibberish', 'pif', 'moderation'].indexOf(this.props.itemValue.id) > -1 ? ['enabled', 'id', 'before', 'after', 'provider'] : ['enabled', 'id', 'before', 'after', 'config'],
         schema: {
           enabled: { type: 'bool', props: { label: 'Enabled' } },
           before: { type: 'bool', props: { label: 'Apply before' } },
@@ -131,9 +156,15 @@ class Fence extends Component {
                 {label: 'Regex', value: 'regex'},
                 {label: 'Webhook', value: 'webhook'},
                 {label: 'LLM', value: 'llm'},
+                {label: 'Secrets leakage', value: 'secrets_leakage'},
+                {label: 'Auto Secrets leakage', value: 'auto_secrets_leakage'},
                 {label: 'No gibberish', value: 'gibberish'},
-                {label: 'No personal informations', value: 'pif'},
+                {label: 'No personal information', value: 'pif'},
                 {label: 'Language moderation', value: 'moderation'},
+                {label: 'No toxic language', value: 'toxic_language'},
+                {label: 'No racial bias', value: 'racial_bias'},
+                {label: 'No gender bias', value: 'gender_bias'},
+                {label: 'No personal health information', value: 'personal_health_information'},
                 {label: 'Sentences count', value: 'sentences'},
                 {label: 'Words count', value: 'words'},
                 {label: 'Characters count', value: 'characters'},
@@ -142,6 +173,46 @@ class Fence extends Component {
             }
           },
           config: { type: 'jsonobjectcode', props: { label: 'Config.', height: '150px' } },
+          'config.min': { type: 'number', props: { label: 'Minimum' } },
+          'config.max': { type: 'number', props: { label: 'Maximum' } },
+          'config.deny': { type: 'array', props: { label: 'Denied expressions' } },
+          'config.allow': { type: 'array', props: { label: 'Allowed expressions' } },
+          'config.values': { type: 'string', props: { label: 'Possible values' } },
+          'config.url': { type: 'string', props: { label: 'URL' } },
+          'config.headers': { type: 'object', props: { label: 'Headers' } },
+          'config.ttl': { type: 'number', props: { label: 'TTL', suffix: 'millis.' } },
+          'config.operation': { type: 'select', props: { label: 'Operation', possibleValues: [
+            { label: "contains_all", value: 'contains_all' },
+            { label: "contains_none", value: 'contains_none' },
+            { label: "contains_any", value: 'contains_any' },
+          ] } },
+          'config.pif_items': { type: 'array', props: { label: 'Personal Informations types', possibleValues: FencesOptions.possiblePersonalInformations.map(i => ({
+                label: i, value: i
+          })) } },
+          'config.moderation_items': { type: 'array', props: { label: 'Moderation types', possibleValues: FencesOptions.possibleModerationCategories.map(i => ({
+              label: i, value: i
+            })) } },
+          'config.secrets_leakage_items': { type: 'array', props: { label: 'Secrets types', possibleValues: FencesOptions.possibleSecretLeakage.map(i => ({
+                label: i, value: i
+            })) } },
+          'config.provider': { type: 'select', props: {
+            label: 'LLM Provider',
+            placeholder: 'Select a LLM provider',
+            valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+            transformer: (a) => ({
+              value: a.id,
+              label: a.name,
+            }),
+           } },
+          'config.prompt': { type: 'select', props: {
+              label: 'LLM Prompt',
+              placeholder: 'Select a LLM Prompt',
+              valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/prompts',
+              transformer: (a) => ({
+                value: a.id,
+                label: a.name,
+              }),
+            } },
         },
         value: this.props.itemValue,
         onChange: i => {
@@ -152,8 +223,41 @@ class Fence extends Component {
             if (i.id === 'webhook') this.props.value[this.props.idx].config = { url: 'https://webhook.foo.bar/path', headers: {}, ttl: 10000 };
             if (i.id === 'llm') this.props.value[this.props.idx].config = { provider: null, prompt: null };
             if (i.id === 'gibberish') this.props.value[this.props.idx].config = { provider: null };
-            if (i.id === 'pif') this.props.value[this.props.idx].config = { provider: null };
-            if (i.id === 'moderation') this.props.value[this.props.idx].config = { provider: null };
+            if (i.id === 'toxic_language') this.props.value[this.props.idx].config = { provider: null };
+            if (i.id === 'racial_bias') this.props.value[this.props.idx].config = { provider: null };
+            if (i.id === 'gender_bias') this.props.value[this.props.idx].config = { provider: null };
+            if (i.id === 'personal_health_information') this.props.value[this.props.idx].config = { provider: null };
+            if (i.id === 'auto_secrets_leakage') this.props.value[this.props.idx].config = { provider: null };
+            if (i.id === 'pif') this.props.value[this.props.idx].config = { provider: null, pif_items: [
+                "EMAIL_ADDRESS",
+                "PHONE_NUMBER",
+                "LOCATION_ADDRESS",
+                "NAME",
+                "IP_ADDRESS",
+                "CREDIT_CARD",
+                "SSN",
+              ] };
+            if (i.id === 'moderation') this.props.value[this.props.idx].config = { provider: null, moderation_items: [
+                "hate",
+                "hate/threatening",
+                "harassment",
+                "harassment/threatening",
+                "self-harm",
+                "self-harm/intent",
+                "self-harm/instructions",
+                "sexual",
+                "sexual/minors",
+                "violence",
+                "violence/graphic",
+              ] };
+            if (i.id === 'secrets_leakage') this.props.value[this.props.idx].config = { provider: null, secrets_leakage_items: [
+                "APIKEYS",
+                "PASSWORDS",
+                "TOKENS",
+                "JWT_TOKENS",
+                "PRIVATE_KEYS",
+                "HUGE_RANDOM_VALUES",
+              ] };
             if (['llm', 'gibberish', 'pif', 'moderation'].indexOf(i.id) > -1) {
               fetch("/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers", {
                 "headers": {
@@ -251,13 +355,6 @@ class AiProvidersPage extends Component {
             { 'label': "Meta-Llama-3-8B-Instruct", value: 'Meta-Llama-3-8B-Instruct' },
           ] }
       }
-    } else if (provider === "hugging-face") {
-      return {
-        'type': 'select',
-        props: { label: 'Description', possibleValues: [
-            { 'label': "tiiuae/falcon-7b-instruct", value: 'tiiuae/falcon-7b-instruct' },
-          ] }
-      }
     } else {
       return {
         type: 'string',
@@ -293,9 +390,8 @@ class AiProvidersPage extends Component {
           { 'label': 'Ollama', value: 'ollama' },
           { 'label': 'Anthropic', value: 'anthropic' },
           { 'label': 'Groq', value: 'groq' },
-          { 'label': 'Hugging Face', value: 'hugging-face' },
           { 'label': 'OVH AI Endpoints', value: 'ovh-ai-endpoints' },
-          { 'label': 'Huggingface', value: 'huggingface' },
+          { 'label': 'HuggingFace', value: 'huggingface' },
           { 'label': 'Loadbalancer', value: 'loadbalancer' },
         ] }
     },
@@ -1203,20 +1299,6 @@ class AiProvidersPage extends Component {
                   timeout: 10000,
                 },
                 options: ClientOptions.ovh,
-              });
-            } else if (state.provider === 'hugging-face') {
-              update({
-                id: state.id,
-                name: state.name,
-                description: state.description,
-                tags: state.tags,
-                metadata: state.metadata,
-                provider: 'hugging-face',
-                connection: {
-                  token: 'xxx',
-                  timeout: 10000,
-                },
-                options: ClientOptions.hugging,
               });
             } else if (state.provider === 'gemini') {
               update({

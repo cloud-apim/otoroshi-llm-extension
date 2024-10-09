@@ -3,6 +3,7 @@ package otoroshi_plugins.com.cloud.apim.extensions.aigateway
 import akka.stream.scaladsl.{Source, StreamConverters}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities._
+import com.cloud.apim.otoroshi.extensions.aigateway.fences.LLMFencesHardcodedItems
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
 import otoroshi.env.Env
@@ -13,7 +14,7 @@ import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiLlmProxy
 import play.api.Logger
-import play.api.libs.json.{JsError, JsObject, JsSuccess, Json}
+import play.api.libs.json.{JsArray, JsError, JsObject, JsSuccess, Json}
 import play.api.mvc.{RequestHeader, Result, Results}
 
 import scala.concurrent.Future
@@ -124,7 +125,10 @@ class AiExtension(val env: Env) extends AdminExtension {
                       case Some(client) => {
                         val role = bodyJson.select("role").asOpt[String].getOrElse("user")
                         val content = bodyJson.select("content").asOpt[String].getOrElse("no input")
-                        client.call(ChatPrompt(Seq(ChatMessage(role, content))), TypedMap.empty).map {
+                        val lastMessage = ChatMessage(role, content)
+                        val historyMessages: Seq[ChatMessage] = bodyJson.select("history").asOpt[Seq[JsObject]].map(_.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
+                        val messages: Seq[ChatMessage] = historyMessages ++ Seq(lastMessage)
+                        client.call(ChatPrompt(messages), TypedMap.empty).map {
                           case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                           case Right(response) => {
                             Results.Ok(Json.obj("done" -> true, "response" -> response.generations.map(_.json)))
@@ -334,8 +338,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      'azure-openai': ${AzureOpenAiChatClientOptions().json.stringify},
             |      'cohere': ${CohereAiChatClientOptions().json.stringify},
             |      ovh: ${OVHAiEndpointsChatClientOptions().json.stringify},
-            |      hugging: ${HuggingFaceLangchainChatClientOptions().json.stringify},
             |      huggingface: ${HuggingfaceChatClientOptions().json.stringify},
+            |    };
+            |    const FencesOptions = {
+            |      possibleModerationCategories: ${JsArray(LLMFencesHardcodedItems.possibleModerationCategories.map(_.json)).stringify},
+            |      possiblePersonalInformations: ${JsArray(LLMFencesHardcodedItems.possiblePersonalInformations.map(_.json)).stringify},
+            |      possibleSecretLeakage: ${JsArray(LLMFencesHardcodedItems.possibleSecretLeakage.map(_.json)).stringify},
             |    };
             |
             |    ${promptPageCode}

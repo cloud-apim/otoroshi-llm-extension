@@ -174,11 +174,6 @@ case class AiProvider(
         val opts = GroqChatClientOptions.fromJson(options)
         new GroqChatClient(api, opts, id).some
       }
-      case "hugging-face" => {
-        val api = new HuggingFaceLangchainApi(token, timeout.getOrElse(10.seconds), env = env)
-        val opts = HuggingFaceLangchainChatClientOptions.fromJson(options)
-        new HuggingFaceLangchainChatClient(api, opts, id).some
-      }
       case "loadbalancer" => new LoadBalancerChatClient(this).some
       case _ => None
     }
@@ -301,20 +296,6 @@ object AiProvider {
                 "timeout" -> 10000,
               ),
               options = OVHAiEndpointsChatClientOptions().json
-            ).json
-            case Some("hugging-face") => AiProvider(
-              id = IdGenerator.namedId("provider", env),
-              name = "Hugging Face provider",
-              description = "An Hugging Face LLM api provider",
-              metadata = Map.empty,
-              tags = Seq.empty,
-              location = EntityLocation.default,
-              provider = "hugging-face",
-              connection = Json.obj(
-                "token" -> "xxxxx",
-                "timeout" -> 10000,
-              ),
-              options = HuggingFaceLangchainChatClientOptions().json
             ).json
             case Some("gemini") => AiProvider(
               id = IdGenerator.namedId("provider", env),
