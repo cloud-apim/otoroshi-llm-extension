@@ -2,6 +2,9 @@ class AiProviderTesterMessage extends Component {
   componentDidMount() {
     this.ref.scrollIntoView({ behavior: "smooth" })
   }
+  deleteMessage = () => {
+    this.props.deleteMessage();
+  }
   render() {
     let content = this.props.message.content;
     if (!(typeof content === 'string' || content instanceof String)) {
@@ -11,6 +14,16 @@ class AiProviderTesterMessage extends Component {
       React.createElement('div', { ref: (r) => this.ref = r, style: { display: 'flex', width: '100%', flexDirection: 'row', backgroundColor: '#616060', borderRadius: 3, marginBottom: 3, padding: 5 }},
         React.createElement('div', { style: { width: '20%', fontWeight: 'bold', color: this.props.message.error ? 'red' : 'white' }}, _.capitalize(this.props.message.role)),
         React.createElement('p', { style: { width: '80%', marginBottom: 0 }}, content),
+        React.createElement(
+          'button',
+          {
+            type: 'button',
+            disabled: this.props.message.role !== 'user',
+            className: 'btn btn-sm btn-danger',
+            onClick: this.deleteMessage,
+          },
+          React.createElement('i', { className: 'fas fa-trash' })
+        ),
       )
     );
   }
@@ -39,7 +52,7 @@ class AiProviderTester extends Component {
           role: 'user',
           content: input,
           edited: this.props.rawValue,
-          history: this.state.messages,
+          history: this.state.messages.slice(-64),
         })
       }).then(r => r.json()).then(r => {
         const messages = this.state.messages;
@@ -70,6 +83,10 @@ class AiProviderTester extends Component {
       this.send();
     }
   }
+  deleteMessage = (idx) => {
+    this.state.messages.splice(idx, 1);
+    this.setState({ messages: this.state.messages });
+  }
   render() {
     return [
       React.createElement('div', { className: 'row mb-3' },
@@ -88,7 +105,15 @@ class AiProviderTester extends Component {
                 height: 300,
                 overflowY: 'scroll'
               } },
-              this.state.messages.map(message => React.createElement(AiProviderTesterMessage, { key: message.date, message: message })),
+              this.state.messages.map((message, idx) => {
+                return React.createElement(AiProviderTesterMessage, {
+                  key: message.date,
+                  message: message,
+                  deleteMessage: () => {
+                    this.deleteMessage(idx)
+                  }
+                })
+              }),
             ),
             React.createElement('div', { style: { width: '100%' }, className: 'input-group'},
               React.createElement('input', { ref: (r) => this.ref = r, type: 'text', placeholder: 'Your prompt here', className: 'form-control', value: this.state.input, onKeyDown: this.keydown, onChange: (e) => this.setState({ input: e.target.value }) }),
