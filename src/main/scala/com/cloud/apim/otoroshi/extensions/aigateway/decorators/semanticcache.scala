@@ -98,6 +98,7 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, chatClient: Chat
       case Some((_, response, at)) =>
         // println("using semantic cached response")
         response.copy(metadata = response.metadata.copy(
+          usage = ChatResponseMetadataUsage.empty,
           cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, (System.currentTimeMillis() - at).millis))
         )).rightf
       case None => {
@@ -127,6 +128,7 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, chatClient: Chat
               case Some(cached) => {
                 val chatResponse = cached._2
                 chatResponse.copy(metadata = chatResponse.metadata.copy(
+                  usage = ChatResponseMetadataUsage.empty,
                   cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, (System.currentTimeMillis() - cached._3).millis))
                 )).rightf
               }

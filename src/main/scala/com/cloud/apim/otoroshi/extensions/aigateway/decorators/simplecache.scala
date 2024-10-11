@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseCache, ChatResponseCacheStatus}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseCache, ChatResponseCacheStatus, ChatResponseMetadataUsage}
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -42,6 +42,7 @@ class ChatClientWithSimpleCache(originalProvider: AiProvider, chatClient: ChatCl
         // println("using simple cache response")
         val age = (System.currentTimeMillis() - at).millis
         response.copy(metadata = response.metadata.copy(
+          usage = ChatResponseMetadataUsage.empty,
           cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, age))
         )).rightf
       case None => {
