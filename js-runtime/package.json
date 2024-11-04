@@ -1,0 +1,14 @@
+{
+  "name": "otoroshi-llm-extension-tool-function-runtime",
+  "version": "1.0.0",
+  "main": "src/runtime.js",
+  "author": "Mathieu ANCELIN",
+  "license": "Apache-2.0",
+  "private": false,
+  "scripts": {
+    "build": "node esbuild.js && extism-js dist/runtime.js -i src/runtime.d.ts -o dist/otoroshi-llm-extension-tool-function-runtime.wasm"
+  },
+  "dependencies": {
+    "esbuild": "0.20.0"
+  }
+}

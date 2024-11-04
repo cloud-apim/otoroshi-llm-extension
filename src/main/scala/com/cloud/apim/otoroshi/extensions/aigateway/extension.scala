@@ -25,6 +25,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val promptTemplatesDatastore: PromptTemplateDataStore = new KvPromptTemplateDataStore(extensionId, env.datastores.redis, env)
   val promptContextDataStore: PromptContextDataStore = new KvPromptContextDataStore(extensionId, env.datastores.redis, env)
   val promptsDataStore: PromptDataStore = new KvPromptDataStore(extensionId, env.datastores.redis, env)
+  val toolFunctionDataStore: WasmFunctionDataStore = new KvWasmFunctionDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
@@ -56,6 +57,13 @@ class AiGatewayExtensionState(env: Env) {
   def updatePrompts(values: Seq[Prompt]): Unit = {
     _prompts.addAll(values.map(v => (v.id, v))).remAll(_prompts.keySet.toSeq.diff(values.map(_.id)))
   }
+
+  private val _toolFunctions = new UnboundedTrieMap[String, WasmFunction]()
+  def toolFunction(id: String): Option[WasmFunction] = _toolFunctions.get(id)
+  def allToolFunctions(): Seq[WasmFunction]          = _toolFunctions.values.toSeq
+  def updateToolFunctions(values: Seq[WasmFunction]): Unit = {
+    _toolFunctions.addAll(values.map(v => (v.id, v))).remAll(_toolFunctions.keySet.toSeq.diff(values.map(_.id)))
+  }
 }
 
 class AiExtension(val env: Env) extends AdminExtension {
@@ -76,6 +84,19 @@ class AiExtension(val env: Env) extends AdminExtension {
 
   override def start(): Unit = {
     logger.info("the 'LLM Extension' is enabled !")
+    implicit val ev = env
+    implicit val ec = env.otoroshiExecutionContext
+    env.datastores.wasmPluginsDataStore.findById(WasmFunction.wasmPluginId).flatMap {
+      case Some(_) => ().vfuture
+      case None => {
+        env.datastores.wasmPluginsDataStore.set(WasmPlugin(
+          id = WasmFunction.wasmPluginId,
+          name = "Otoroshi LLM Extension - tool call runtime",
+          description = "This plugin provides the runtime for the wasm backed LLM tool calls",
+          config = WasmFunction.wasmConfig
+        )).map(_ => ())
+      }
+    }
   }
 
   override def stop(): Unit = {
@@ -96,6 +117,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   }
 
   lazy val promptPageCode = getResourceCode("cloudapim/extensions/ai/PromptPage.js")
+  lazy val toolFunctionPageCode = getResourceCode("cloudapim/extensions/ai/ToolFunctionsPage.js")
   lazy val promptTemplatesPageCode = getResourceCode("cloudapim/extensions/ai/PromptTemplatesPage.js")
   lazy val promptContextsPageCode = getResourceCode("cloudapim/extensions/ai/PromptContextsPage.js")
   lazy val aiProvidersPageCode = getResourceCode("cloudapim/extensions/ai/AiProvidersPage.js")
@@ -123,11 +145,11 @@ class AiExtension(val env: Env) extends AdminExtension {
                     provider.getChatClient() match {
                       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no client")).vfuture
                       case Some(client) => {
-                        val role = bodyJson.select("role").asOpt[String].getOrElse("user")
-                        val content = bodyJson.select("content").asOpt[String].getOrElse("no input")
-                        val lastMessage = ChatMessage(role, content)
+                        //val role = bodyJson.select("role").asOpt[String].getOrElse("user")
+                        //val content = bodyJson.select("content").asOpt[String].getOrElse("no input")
+                        //val lastMessage = ChatMessage(role, content)
                         val historyMessages: Seq[ChatMessage] = bodyJson.select("history").asOpt[Seq[JsObject]].map(_.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
-                        val messages: Seq[ChatMessage] = historyMessages ++ Seq(lastMessage)
+                        val messages: Seq[ChatMessage] = historyMessages // ++ Seq(lastMessage)
                         client.call(ChatPrompt(messages), TypedMap.empty).map {
                           case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                           case Right(response) => {
@@ -346,6 +368,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      possibleSecretLeakage: ${JsArray(LLMFencesHardcodedItems.possibleSecretLeakage.map(_.json)).stringify},
             |    };
             |
+            |    ${toolFunctionPageCode}
             |    ${promptPageCode}
             |    ${promptTemplatesPageCode}
             |    ${promptContextsPageCode}
@@ -389,6 +412,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            display: () => true,
             |            icon: () => 'fa-brain',
             |          },
+            |          {
+            |            title: 'LLM Tool Function',
+            |            description: 'All your LLM Tool functions',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/tool-functions',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          }
             |        ]
             |      }],
             |      features: [
@@ -424,6 +455,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          display: () => true,
             |          icon: () => 'fa-brain',
             |        },
+            |        {
+            |          title: 'LLM Tool Functions',
+            |          description: 'All your LLM Tool Functions',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/tool-functions',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        }
             |      ],
             |      sidebarItems: [
             |        {
@@ -448,6 +487,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'AI Prompts',
             |          text: 'All your AI Prompts',
             |          path: 'extensions/cloud-apim/ai-gateway/prompts',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'LLM Tool Function',
+            |          text: 'All your LLM Tool Functions',
+            |          path: 'extensions/cloud-apim/ai-gateway/tool-functions',
             |          icon: 'brain'
             |        }
             |      ],
@@ -483,6 +528,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'AI Prompts',
             |          value: 'prompts',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/tool-functions`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'LLM Tool Functions',
+            |          value: 'tool-functions',
             |        }
             |      ],
             |      routes: [
@@ -557,6 +610,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          component: (props) => {
             |            return React.createElement(PromptsPage, props, null)
             |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/tool-functions/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(ToolFunctionsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/tool-functions/:taction',
+            |          component: (props) => {
+            |            return React.createElement(ToolFunctionsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/tool-functions',
+            |          component: (props) => {
+            |            return React.createElement(ToolFunctionsPage, props, null)
+            |          }
             |        }
             |      ]
             |    }
@@ -575,11 +646,13 @@ class AiExtension(val env: Env) extends AdminExtension {
       templates <- datastores.promptTemplatesDatastore.findAllAndFillSecrets()
       contexts <- datastores.promptContextDataStore.findAllAndFillSecrets()
       prompts <- datastores.promptsDataStore.findAllAndFillSecrets()
+      toolFunctions <- datastores.toolFunctionDataStore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
       states.updateContexts(contexts)
       states.updatePrompts(prompts)
+      states.updateToolFunctions(toolFunctions)
       ()
     }
   }
@@ -590,6 +663,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(PromptContext.resource(env, datastores, states)),
       AdminExtensionEntity(Prompt.resource(env, datastores, states)),
       AdminExtensionEntity(PromptTemplate.resource(env, datastores, states)),
+      AdminExtensionEntity(WasmFunction.resource(env, datastores, states)),
     )
   }
 }

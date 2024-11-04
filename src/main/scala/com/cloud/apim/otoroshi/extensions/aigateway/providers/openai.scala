@@ -1,12 +1,13 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.WasmFunction
 import dev.langchain4j.data.segment.TextSegment
 import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
-import play.api.libs.json.{JsObject, JsValue, Json}
+import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
 import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest
 
@@ -14,7 +15,36 @@ import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters.asScalaBufferConverter
 
+case class OpenAiApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
+  lazy val name: String = raw.select("name").asString
+  lazy val arguments: String = raw.select("arguments").asString
+}
+
+case class OpenAiApiResponseChoiceMessageToolCall(raw: JsObject) {
+  lazy val id: String = raw.select("id").asString
+  lazy val function: OpenAiApiResponseChoiceMessageToolCallFunction = OpenAiApiResponseChoiceMessageToolCallFunction(raw.select("function").asObject)
+}
+
+case class OpenAiApiResponseChoiceMessage(raw: JsObject) {
+  lazy val role: String = raw.select("role").asString
+  lazy val content: Option[String] = raw.select("content").asOpt[String]
+  lazy val refusal: Option[String] = raw.select("refusal").asOpt[String]
+  lazy val toolCalls: Seq[OpenAiApiResponseChoiceMessageToolCall] = raw.select("tool_calls").asOpt[Seq[JsObject]].map(_.map(v => OpenAiApiResponseChoiceMessageToolCall(v))).getOrElse(Seq.empty)
+}
+
+case class OpenAiApiResponseChoice(raw: JsObject) {
+  lazy val index: Int = raw.select("index").asOpt[Int].getOrElse(-1)
+  lazy val finishReason: String = raw.select("finish_reason").asOpt[String].getOrElse("--")
+  lazy val finishBecauseOfToolCalls: Boolean = finishReason == "tool_calls"
+  lazy val message: OpenAiApiResponseChoiceMessage = raw.select("message").asOpt[JsObject].map(v => OpenAiApiResponseChoiceMessage(v)).get
+}
+
 case class OpenAiApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
+  lazy val finishBecauseOfToolCalls: Boolean = choices.exists(_.finishBecauseOfToolCalls)
+  lazy val toolCalls: Seq[OpenAiApiResponseChoiceMessageToolCall] = choices.map(_.message).flatMap(_.toolCalls)
+  lazy val choices: Seq[OpenAiApiResponseChoice] = {
+    body.select("choices").asOpt[Seq[JsObject]].map(_.map(v => OpenAiApiResponseChoice(v))).getOrElse(Seq.empty)
+  }
   def json: JsValue = Json.obj(
     "status" -> status,
     "headers" -> headers,
@@ -36,13 +66,14 @@ object OpenAiModels {
 object OpenAiApi {
   val baseUrl = "https://api.openai.com"
 }
-class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
+class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[OpenAiApiResponse] {
+
+  val supportsTools: Boolean = true
 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
     // println("\n\n================================\n")
-    // println(s"calling ${method} ${baseUrl}${path}: ${body}")
+    // println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
     // println("calling openai")
-    // println("\n\n================================\n")
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -58,8 +89,35 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
       .execute()
       .map { resp =>
         // println(s"resp: ${resp.status} - ${resp.body}")
+        // println("\n\n================================\n")
         OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
       }
+  }
+
+  def callWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
+    // TODO: accumulate consumptions ???
+    if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
+      call(method, path, body).flatMap {
+        case resp if resp.finishBecauseOfToolCalls => {
+          body match {
+            case None => resp.vfuture
+            case Some(body) => {
+              val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
+              val toolCalls = resp.toolCalls
+              WasmFunction.callTools(toolCalls)(ec, env)
+                .flatMap { callResps =>
+                  val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
+                  callWithToolSupport(method, path, newBody.some)
+                }
+            }
+          }
+        }
+        case resp => resp.vfuture
+      }
+    } else {
+      call(method, path, body)
+    }
   }
 }
 
@@ -71,6 +129,7 @@ object OpenAiChatClientOptions {
       n = json.select("n").asOpt[Int],
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
       topP = json.select("topP").asOpt[Float].getOrElse(1.0f),
+      wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
     )
   }
 }
@@ -93,6 +152,7 @@ case class OpenAiChatClientOptions(
   tools: Option[Seq[JsValue]] = None,
   tool_choice: Option[Seq[JsValue]] =  None,
   user: Option[String] = None,
+  wasmTools: Seq[String] = Seq.empty
 ) extends ChatOptions {
   override def topK: Int = 0
 
@@ -114,16 +174,25 @@ case class OpenAiChatClientOptions(
     "tools" -> tools,
     "tool_choice" -> tool_choice,
     "user" -> user,
+    "wasm_tools" -> JsArray(wasmTools.map(_.json))
   )
+
+  def jsonForCall: JsObject = json - "wasm_tools"
 }
 
-class OpenAiChatClient(api: OpenAiApi, options: OpenAiChatClientOptions, id: String) extends ChatClient {
+class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String) extends ChatClient {
 
   override def model: Option[String] = options.model.some
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
-    api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
+    val mergedOptions = options.jsonForCall.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+    val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
+      val tools = WasmFunction.tools(options.wasmTools)
+      api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
+    } else {
+      api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
+    }
+    callF.map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),

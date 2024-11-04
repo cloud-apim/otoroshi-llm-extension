@@ -634,6 +634,18 @@ class AiProvidersPage extends Component {
         }),
       }
     },
+    'options.wasm_tools': {
+      type: 'array',
+      props: {
+        label: 'Tool Function',
+        placeholder: 'Select a tool function',
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/tool-functions',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
+      }
+    },
     _fences: {
       type: 'jsonobjectcode',
       props: { label: 'Fences config.' }
@@ -1158,6 +1170,8 @@ class AiProvidersPage extends Component {
       // 'http_validation.ttl',
       '>>>Fences validation',
       'fences',
+      '>>>Tools',
+      'options.wasm_tools',
       '>>>Tester',
       'tester',
       '>>>Metadata and tags',
