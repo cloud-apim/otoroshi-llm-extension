@@ -5,6 +5,7 @@ import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json.{JsObject, JsValue, Json}
+import play.api.libs.ws.WSResponse
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
@@ -40,7 +41,7 @@ object OVHAiEndpointsApi {
 }
 class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
-  def call(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OVHAiEndpointsApiResponse] = {
+  def rawCall(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     // println(s"calling ${method} ${baseUrl}${path}: ${body}")
     val url = OVHAiEndpointsModels.modelUrls.get(model).getOrElse(s"${model.toLowerCase().replaceAll("\\.", "")}.${baseDomain}")
     env.Ws
@@ -56,6 +57,10 @@ class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
+  }
+
+  def call(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OVHAiEndpointsApiResponse] = {
+    rawCall(model, method, path, body)
       .map { resp =>
         // println(s"resp: ${resp.status} - ${resp.body}")
         OVHAiEndpointsApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
@@ -97,6 +102,16 @@ case class OVHAiEndpointsChatClientOptions(
 class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsChatClientOptions, id: String) extends ChatClient {
 
   override def model: Option[String] = options.model.some
+
+  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+    api.rawCall(options.model, "GET", "/api/openai_compat/v1/models", None).map { resp =>
+      if (resp.status == 200) {
+        Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
+      } else {
+        Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
+      }
+    }
+  }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))

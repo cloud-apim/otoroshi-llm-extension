@@ -5,6 +5,7 @@ import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json.{JsObject, JsValue, Json}
+import play.api.libs.ws.WSResponse
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
@@ -24,7 +25,7 @@ object CohereAiApi {
 }
 class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[CohereAiApiResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -38,6 +39,10 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
+  }
+
+  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[CohereAiApiResponse] = {
+    rawCall(method, path, body)
       .map { resp =>
         CohereAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
       }
@@ -89,6 +94,16 @@ case class CohereAiChatClientOptions(
 class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, id: String) extends ChatClient {
 
   override def model: Option[String] = options.model.some
+
+  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+    api.rawCall("GET", "/v1/models", None).map { resp =>
+      if (resp.status == 200) {
+        Right(resp.json.select("models").as[List[JsObject]].map(obj => obj.select("name").asString))
+      } else {
+        Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
+      }
+    }
+  }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))

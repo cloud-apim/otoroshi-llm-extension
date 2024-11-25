@@ -6,6 +6,7 @@ import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json.{JsObject, JsValue, Json}
+import play.api.libs.ws.WSResponse
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
@@ -36,7 +37,7 @@ object AzureOpenAiApi {
 }
 class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[AzureOpenAiApiResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     env.Ws
       .url(s"${AzureOpenAiApi.url(resourceName, deploymentId, path)}")
       .withHttpHeaders(
@@ -50,6 +51,10 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
+  }
+
+  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[AzureOpenAiApiResponse] = {
+    rawCall(method, path, body)
       .map { resp =>
         AzureOpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
       }
@@ -110,6 +115,16 @@ case class AzureOpenAiChatClientOptions(
 class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientOptions, id: String) extends ChatClient {
 
   override def model: Option[String] = s"${api.resourceName}-${api.deploymentId}".some
+
+  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+    api.rawCall("GET", "/v1/models", None).map { resp =>
+      if (resp.status == 200) {
+        Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
+      } else {
+        Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
+      }
+    }
+  }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))

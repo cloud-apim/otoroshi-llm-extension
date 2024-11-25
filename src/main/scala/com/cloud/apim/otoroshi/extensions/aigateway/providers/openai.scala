@@ -113,7 +113,7 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
   val supportsTools: Boolean = true
   val supportsStreaming: Boolean = true
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     // println("\n\n================================\n")
     // println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
     // println("calling openai")
@@ -133,8 +133,14 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
       .map { resp =>
         // println(s"resp: ${resp.status} - ${resp.body}")
         // println("\n\n================================\n")
-        OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+        resp
       }
+  }
+
+  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
+    rawCall(method, path, body).map { resp =>
+      OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+    }
   }
 
   def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
@@ -174,7 +180,7 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
       }
   }
 
-  def callWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
@@ -198,11 +204,6 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
     } else {
       call(method, path, body)
     }
-  }
-
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
-    // TODO: fix it
-    stream(method, path, body)
   }
 }
 
@@ -398,6 +399,16 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
         ChatGeneration(ChatMessage(role, content))
       }
       Right(ChatResponse(messages, usage))
+    }
+  }
+
+  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+    api.rawCall("GET", "/v1/models", None).map { resp =>
+      if (resp.status == 200) {
+        Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
+      } else {
+        Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
+      }
     }
   }
 }

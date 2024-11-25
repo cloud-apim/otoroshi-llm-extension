@@ -5,6 +5,7 @@ import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
+import play.api.libs.ws.WSResponse
 
 import scala.concurrent._
 import scala.concurrent.duration._
@@ -21,7 +22,7 @@ object OllamaAiApi {
 }
 class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], timeout: FiniteDuration = 10.seconds, env: Env) {
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     println("calling ollama")
     env.Ws
       .url(s"${baseUrl}${path}")
@@ -42,6 +43,10 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
+  }
+
+  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
+    rawCall(method, path, body)
       .map { resp =>
         OllamaAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
       }
@@ -108,6 +113,16 @@ case class OllamaAiChatClientOptions(
 class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, id: String) extends ChatClient {
 
   override def model: Option[String] = options.model.some
+
+  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+    api.rawCall("GET", "/api/tags", None).map { resp =>
+      if (resp.status == 200) {
+        Right(resp.json.select("models").as[List[JsObject]].map(obj => obj.select("name").asString))
+      } else {
+        Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
+      }
+    }
+  }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj())).applyOn(_ - "model")
