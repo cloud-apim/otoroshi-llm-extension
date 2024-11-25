@@ -362,7 +362,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      ovh: ${OVHAiEndpointsChatClientOptions().json.stringify},
             |      huggingface: ${HuggingfaceChatClientOptions().json.stringify},
             |    };
-            |    const GuardRailsOptions = {
+            |    const GuardrailsOptions = {
             |      possibleModerationCategories: ${JsArray(LLMGuardrailsHardcodedItems.possibleModerationCategories.map(_.json)).stringify},
             |      possiblePersonalInformations: ${JsArray(LLMGuardrailsHardcodedItems.possiblePersonalInformations.map(_.json)).stringify},
             |      possibleSecretLeakage: ${JsArray(LLMGuardrailsHardcodedItems.possibleSecretLeakage.map(_.json)).stringify},
