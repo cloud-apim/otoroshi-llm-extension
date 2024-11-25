@@ -1,19 +1,61 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import akka.stream.scaladsl.{Framing, Source}
+import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.WasmFunction
-import dev.langchain4j.data.segment.TextSegment
-import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest
+import play.api.libs.ws.{StandaloneWSResponse, WSResponse}
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
-import scala.jdk.CollectionConverters.asScalaBufferConverter
+
+case class OpenAiChatResponseChunkUsage(raw: JsValue) {
+  lazy val completion_tokens: Long = raw.select("completion_tokens").asLong
+  lazy val prompt_tokens: Long = raw.select("prompt_tokens").asLong
+  lazy val total_tokens: Long = raw.select("total_tokens").asLong
+}
+
+case class OpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw: JsValue) {
+  lazy val name: String = raw.select("name").asString
+  lazy val arguments: String = raw.select("arguments").asString
+}
+
+case class OpenAiChatResponseChunkChoiceDeltaToolCall(raw: JsValue) {
+  lazy val index: Long = raw.select("index").asInt
+  lazy val id: String = raw.select("id").asString
+  lazy val typ: String = raw.select("type").asString
+  lazy val function: OpenAiChatResponseChunkChoiceDeltaToolCallFunction = OpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw.select("function").asObject)
+}
+
+case class OpenAiChatResponseChunkChoiceDelta(raw: JsValue) {
+  lazy val content: Option[String] = raw.select("content").asOptString
+  lazy val role: String = raw.select("role").asString
+  lazy val refusal: Option[String] = raw.select("refusal").asOptString
+  lazy val tool_calls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = raw.select("tool_calls").asOpt[Seq[JsObject]].map(_.map(OpenAiChatResponseChunkChoiceDeltaToolCall.apply)).getOrElse(Seq.empty)
+}
+
+case class OpenAiChatResponseChunkChoice(raw: JsValue) {
+  lazy val finish_reason: Option[String] = raw.select("finish_reason").asOptString
+  lazy val index: Option[Int] = raw.select("finish_reason").asOptInt
+  lazy val delta: Option[OpenAiChatResponseChunkChoiceDelta] = raw.select("delta").asOpt[JsObject].map(OpenAiChatResponseChunkChoiceDelta.apply)
+}
+
+case class OpenAiChatResponseChunk(raw: JsValue) {
+  lazy val id: String = raw.select("id").asString
+  lazy val obj: String = raw.select("object").asString
+  lazy val created: Long = raw.select("created").asLong
+  lazy val model: String = raw.select("model").asString
+  lazy val system_fingerprint: String = raw.select("system_fingerprint").asString
+  lazy val service_tier: Option[String] = raw.select("service_tier").asOptString
+  lazy val usage: Option[OpenAiChatResponseChunkUsage] = raw.select("usage").asOpt[JsObject].map { obj =>
+    OpenAiChatResponseChunkUsage(obj)
+  }
+  lazy val choices: Seq[OpenAiChatResponseChunkChoice] = raw.select("choices").asOpt[Seq[JsObject]].map(_.map(i => OpenAiChatResponseChunkChoice(i))).getOrElse(Seq.empty)
+}
 
 case class OpenAiApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
   lazy val name: String = raw.select("name").asString
@@ -66,9 +108,10 @@ object OpenAiModels {
 object OpenAiApi {
   val baseUrl = "https://api.openai.com"
 }
-class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[OpenAiApiResponse] {
+class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[OpenAiApiResponse, OpenAiChatResponseChunk] {
 
   val supportsTools: Boolean = true
+  val supportsStreaming: Boolean = true
 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
     // println("\n\n================================\n")
@@ -91,6 +134,43 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
         // println(s"resp: ${resp.status} - ${resp.body}")
         // println("\n\n================================\n")
         OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+      }
+  }
+
+  def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
+    // println("\n\n================================\n")
+    // println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
+    // println("calling openai")
+    env.Ws
+      .url(s"${baseUrl}${path}")
+      .withHttpHeaders(
+        "Authorization" -> s"Bearer ${token}",
+        "Accept" -> "application/json",
+      ).applyOnWithOpt(body) {
+        case (builder, body) => builder
+          .addHttpHeaders("Content-Type" -> "application/json")
+          .withBody(body.asObject ++ Json.obj(
+            "stream" -> true,
+            "stream_options" -> Json.obj("include_usage" -> true)
+          ))
+      }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .stream()
+      .map { resp =>
+        (resp.bodyAsSource
+          .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
+          .map(_.utf8String)
+          .filter(_.startsWith("data: "))
+          .map(_.replaceFirst("data: ", "").trim())
+          .filter(_.nonEmpty)
+          // .map(s => {
+          //   println(s"chunk: ${s}")
+          //   s
+          // })
+          .takeWhile(_ != "[DONE]")
+          .map(str => Json.parse(str))
+          .map(json => OpenAiChatResponseChunk(json)), resp)
       }
   }
 
@@ -118,6 +198,11 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
     } else {
       call(method, path, body)
     }
+  }
+
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
+    // TODO: fix it
+    stream(method, path, body)
   }
 }
 
@@ -190,6 +275,79 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
   override def model: Option[String] = options.model.some
 
   override def supportsTools: Boolean = api.supportsTools
+
+  override def supportsStreaming: Boolean = api.supportsStreaming
+
+  override def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val mergedOptions = options.jsonForCall.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+    val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
+      val tools = WasmFunction.tools(options.wasmTools)
+      api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
+    } else {
+      api.stream("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
+    }
+    callF.map {
+      case (source, resp) =>
+        source
+          .filterNot { chunk =>
+            if (chunk.usage.nonEmpty) {
+              val usage = ChatResponseMetadata(
+                ChatResponseMetadataRateLimit(
+                  requestsLimit = resp.header("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+                  requestsRemaining = resp.header("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+                  tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+                  tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+                ),
+                ChatResponseMetadataUsage(
+                  promptTokens = chunk.usage.map(_.prompt_tokens).getOrElse(-1L),
+                  generationTokens = chunk.usage.map(_.completion_tokens).getOrElse(-1L),
+                ),
+                None
+              )
+              val duration: Long = resp.header("openai-processing-ms").map(_.toLong).getOrElse(0L)
+              val slug = Json.obj(
+                "provider_kind" -> "openai",
+                "provider" -> id,
+                "duration" -> duration,
+                "model" -> options.model.json,
+                "rate_limit" -> usage.rateLimit.json,
+                "usage" -> usage.usage.json
+              ).applyOnWithOpt(usage.cache) {
+                case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+              }
+              attrs.update(ChatClient.ApiUsageKey -> usage)
+              attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+                case Some(obj@JsObject(_)) => {
+                  val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                  val newArr = arr ++ Seq(slug)
+                  obj ++ Json.obj("ai" -> newArr)
+                }
+                case Some(other) => other
+                case None => Json.obj("ai" -> Seq(slug))
+              }
+              true
+            } else {
+              false
+            }
+          }
+          .map { chunk =>
+            ChatResponseChunk(
+              id = chunk.id,
+              created = chunk.created,
+              model = chunk.model,
+              choices = chunk.choices.map { choice =>
+                ChatResponseChunkChoice(
+                  index = choice.index.getOrElse(0),
+                  delta = ChatResponseChunkChoiceDelta(
+                    choice.delta.flatMap(_.content)
+                  ),
+                  finishReason = choice.finish_reason
+                )
+              }
+            )
+          }.right
+    }
+  }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.jsonForCall.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
