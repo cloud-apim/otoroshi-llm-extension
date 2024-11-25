@@ -1,0 +1,1 @@
+sbt assembly && date > /Users/mathieuancelin/projects/otoroshi/otoroshi/app/reload.diff

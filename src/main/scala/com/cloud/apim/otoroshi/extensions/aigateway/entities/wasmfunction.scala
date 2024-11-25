@@ -276,7 +276,7 @@ object WasmFunction {
         ext.states.toolFunction(fid) match {
           case None => (s"undefined function ${fid}", toolCall).some.vfuture
           case Some(function) => {
-            println(s"calling function ${function.name}")
+            println(s"calling function '${function.name}' with args: '${toolCall.function.arguments}'")
             function.call(toolCall.function.arguments).map { r =>
               (r, toolCall).some
             }

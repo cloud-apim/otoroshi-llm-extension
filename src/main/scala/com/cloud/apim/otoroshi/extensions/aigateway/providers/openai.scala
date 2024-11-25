@@ -137,13 +137,39 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
       }
   }
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
+  override def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
     rawCall(method, path, body).map { resp =>
       OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
     }
   }
 
-  def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
+    // TODO: accumulate consumptions ???
+    if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
+      call(method, path, body).flatMap {
+        case resp if resp.finishBecauseOfToolCalls => {
+          body match {
+            case None => resp.vfuture
+            case Some(body) => {
+              val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
+              val toolCalls = resp.toolCalls
+              WasmFunction.callTools(toolCalls)(ec, env)
+                .flatMap { callResps =>
+                  val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
+                  callWithToolSupport(method, path, newBody.some)
+                }
+            }
+          }
+        }
+        case resp => resp.vfuture
+      }
+    } else {
+      call(method, path, body)
+    }
+  }
+
+  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
     // println("\n\n================================\n")
     // println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
     // println("calling openai")
@@ -176,29 +202,66 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
       }
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
-    // TODO: accumulate consumptions ???
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
-      call(method, path, body).flatMap {
-        case resp if resp.finishBecauseOfToolCalls => {
-          body match {
-            case None => resp.vfuture
-            case Some(body) => {
-              val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
-              val toolCalls = resp.toolCalls
-              WasmFunction.callTools(toolCalls)(ec, env)
+      val messages = body.get.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
+      stream(method, path, body).flatMap {
+        case res => {
+          var isToolCall = false
+          var isToolCallEnded = false
+          var toolCall: OpenAiChatResponseChunkChoiceDeltaToolCall = null
+          var toolCallArgs = ""
+          var toolCallUsage: OpenAiChatResponseChunkUsage = null
+          val newSource = res._1.flatMapConcat { chunk =>
+            if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
+              println("in a tool_call")
+              isToolCall = true
+              toolCall = chunk.choices.head.delta.head.tool_calls.head
+              Source.empty
+            } else if (isToolCall && !isToolCallEnded) {
+              println(s"accumulate args: '${toolCallArgs}'")
+              if (chunk.choices.head.finish_reason.contains("tool_calls")) {
+                isToolCallEnded = true
+              } else {
+                toolCallArgs = toolCallArgs + chunk.choices.head.delta.head.tool_calls.head.function.arguments
+              }
+              Source.empty
+            } else if (isToolCall && isToolCallEnded) {
+              println("all ended")
+              toolCallUsage = chunk.usage.get
+              val call = OpenAiApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs))))
+              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = WasmFunction.callTools(Seq(call))(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
-                  val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some)
+                  val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
+                  streamWithToolSupport(method, path, newBody.some)
                 }
+              Source.future(a).flatMapConcat(a => a._1)
+            } else {
+              Source.single(chunk)
             }
           }
+          (newSource, res._2).vfuture
         }
-        case resp => resp.vfuture
+        // case resp if resp.finishBecauseOfToolCalls => {
+        //   body match {
+        //     case None => resp.vfuture
+        //     case Some(body) => {
+        //       val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
+        //       val toolCalls = resp.toolCalls
+        //       WasmFunction.callTools(toolCalls)(ec, env)
+        //         .flatMap { callResps =>
+        //           val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+        //           val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
+        //           callWithToolSupport(method, path, newBody.some)
+        //         }
+        //     }
+        //   }
+        // }
+        // case resp => resp.vfuture
       }
     } else {
-      call(method, path, body)
+      stream(method, path, body)
     }
   }
 }
