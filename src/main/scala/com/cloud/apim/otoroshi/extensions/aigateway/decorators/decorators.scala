@@ -9,7 +9,7 @@ object ChatClientDecorators {
     ChatClientWithProviderFallback.applyIfPossible,
     ChatClientWithSemanticCache.applyIfPossible,
     ChatClientWithSimpleCache.applyIfPossible,
-    ChatClientWithFencesValidation.applyIfPossible,
+    ChatClientWithGuardrailsValidation.applyIfPossible,
     ChatClientWithAuditing.applyIfPossible,
   )
 

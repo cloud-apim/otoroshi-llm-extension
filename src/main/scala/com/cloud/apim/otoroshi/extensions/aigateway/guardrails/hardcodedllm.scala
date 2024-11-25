@@ -1,7 +1,7 @@
-package com.cloud.apim.otoroshi.extensions.aigateway.fences
+package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt}
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Fence, FenceResult}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmValidationSettings}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -11,7 +11,7 @@ import play.api.libs.json.{JsObject, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
 
-object LLMFencesHardcodedItems {
+object LLMGuardrailsHardcodedItems {
 
   val possibleModerationCategories = Seq(
     "hate",
@@ -113,70 +113,70 @@ object LLMFencesHardcodedItems {
   // TODO: deny semantic match
 }
 
-class AutoSecretsLeakageFence extends HardCodedLLMFence {
+class AutoSecretsLeakageGuardrail extends HardCodedLLMGuardrail {
 
   def name: String = "auto-secrets-leakage"
 
-  override def systemPrompt(items: Seq[String]): String = LLMFencesHardcodedItems.alternativeSecretsLeakagePrompt()
+  override def systemPrompt(items: Seq[String]): String = LLMGuardrailsHardcodedItems.alternativeSecretsLeakagePrompt()
 }
 
-class ToxicLanguageFence extends HardCodedLLMFence {
+class ToxicLanguageGuardrail extends HardCodedLLMGuardrail {
 
   def name: String = "toxic-language"
 
-  override def systemPrompt(items: Seq[String]): String = LLMFencesHardcodedItems.toxicLanguageDetectionPrompt()
+  override def systemPrompt(items: Seq[String]): String = LLMGuardrailsHardcodedItems.toxicLanguageDetectionPrompt()
 }
 
-class RacialBiasFence extends HardCodedLLMFence {
+class RacialBiasGuardrail extends HardCodedLLMGuardrail {
 
   def name: String = "racial-bias"
 
-  override def systemPrompt(items: Seq[String]): String = LLMFencesHardcodedItems.racialBiasDetectionPrompt()
+  override def systemPrompt(items: Seq[String]): String = LLMGuardrailsHardcodedItems.racialBiasDetectionPrompt()
 }
 
-class GenderBiasFence extends HardCodedLLMFence {
+class GenderBiasGuardrail extends HardCodedLLMGuardrail {
 
   def name: String = "gender-bias"
 
-  override def systemPrompt(items: Seq[String]): String = LLMFencesHardcodedItems.genderBiasDetectionPrompt()
+  override def systemPrompt(items: Seq[String]): String = LLMGuardrailsHardcodedItems.genderBiasDetectionPrompt()
 }
 
-class PersonalHealthInformationFence extends HardCodedLLMFence {
+class PersonalHealthInformationGuardrail extends HardCodedLLMGuardrail {
 
   def name: String = "personal-health-information"
 
-  override def systemPrompt(items: Seq[String]): String = LLMFencesHardcodedItems.personalHealthInformationPrompt()
+  override def systemPrompt(items: Seq[String]): String = LLMGuardrailsHardcodedItems.personalHealthInformationPrompt()
 }
 
-class GibberishFence extends HardCodedLLMFence {
+class GibberishGuardrail extends HardCodedLLMGuardrail {
 
   def name: String = "gibberish"
 
-  override def systemPrompt(items: Seq[String]): String = LLMFencesHardcodedItems.gibberishPrompt()
+  override def systemPrompt(items: Seq[String]): String = LLMGuardrailsHardcodedItems.gibberishPrompt()
 }
 
-class PersonalInformationsFence extends HardCodedLLMFence {
+class PersonalInformationsGuardrail extends HardCodedLLMGuardrail {
 
   def name: String = "personal-information"
 
-  override def systemPrompt(items: Seq[String]): String = LLMFencesHardcodedItems.personalInformationsPrompt(items)
+  override def systemPrompt(items: Seq[String]): String = LLMGuardrailsHardcodedItems.personalInformationsPrompt(items)
 }
 
-class LanguageModerationFence extends HardCodedLLMFence {
+class LanguageModerationGuardrail extends HardCodedLLMGuardrail {
 
   def name: String = "language-moderation"
 
-  override def systemPrompt(items: Seq[String]): String = LLMFencesHardcodedItems.languageModerationPrompt(items)
+  override def systemPrompt(items: Seq[String]): String = LLMGuardrailsHardcodedItems.languageModerationPrompt(items)
 }
 
-class SecretsLeakageFence extends HardCodedLLMFence {
+class SecretsLeakageGuardrail extends HardCodedLLMGuardrail {
 
   def name: String = "secrets-leakage"
 
-  override def systemPrompt(items: Seq[String]): String = LLMFencesHardcodedItems.secretsLeakagePrompt(items)
+  override def systemPrompt(items: Seq[String]): String = LLMGuardrailsHardcodedItems.secretsLeakagePrompt(items)
 }
 
-abstract class HardCodedLLMFence extends Fence {
+abstract class HardCodedLLMGuardrail extends Guardrail {
 
   override def isBefore: Boolean = true
 
@@ -188,21 +188,21 @@ abstract class HardCodedLLMFence extends Fence {
 
   def name: String
 
-  def pass(): Future[FenceResult] = FenceResult.FencePass.vfuture
+  def pass(): Future[GuardrailResult] = GuardrailResult.GuardrailPass.vfuture
 
-  def fail(idx: Int, config: JsObject): Future[FenceResult] = {
-    val msg = config.select("err_msg").asOpt[String].getOrElse(s"This message has been blocked by the '${name}' fence !")
-    FenceResult.FenceDenied(msg).vfuture
+  def fail(idx: Int, config: JsObject): Future[GuardrailResult] = {
+    val msg = config.select("err_msg").asOpt[String].getOrElse(s"This message has been blocked by the '${name}' guardrail !")
+    GuardrailResult.GuardrailDenied(msg).vfuture
   }
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[FenceResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val llmValidation = LlmValidationSettings.format.reads(config).getOrElse(LlmValidationSettings())
     llmValidation.provider match {
       case None => pass()
       case Some(ref) if ref == provider.id => pass()
       case Some(ref) => {
         env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(ref).flatMap(_.getChatClient())) match {
-          case None => FenceResult.FenceDenied("validation provider not found").vfuture
+          case None => GuardrailResult.GuardrailDenied("validation provider not found").vfuture
           case Some(validationClient) => {
             validationClient.call(ChatPrompt(Seq(
               ChatMessage("system", systemPrompt(
@@ -212,7 +212,7 @@ abstract class HardCodedLLMFence extends Fence {
                   .orElse(config.select("secrets_leakage_items").asOpt[Seq[String]])
                   .getOrElse(Seq.empty)))
             ) ++ messages), attrs).flatMap {
-              case Left(err) => FenceResult.FenceDenied(err.stringify).vfuture
+              case Left(err) => GuardrailResult.GuardrailDenied(err.stringify).vfuture
               case Right(resp) => {
                 val content = resp.generations.head.message.content.toLowerCase().trim.replace("\n", " ")
                 // println(s"content: '${content}'")

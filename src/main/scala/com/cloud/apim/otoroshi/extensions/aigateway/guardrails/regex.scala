@@ -1,7 +1,7 @@
-package com.cloud.apim.otoroshi.extensions.aigateway.fences
+package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage}
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Fence, FenceResult}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
 import otoroshi.utils.syntax.implicits._
@@ -10,7 +10,7 @@ import play.api.libs.json.JsObject
 
 import scala.concurrent.{ExecutionContext, Future}
 
-class RegexFence extends Fence {
+class RegexGuardrail extends Guardrail {
 
   override def isBefore: Boolean = true
 
@@ -24,14 +24,14 @@ class RegexFence extends Fence {
     !denied && allowed
   }
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[FenceResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val allow = config.select("allow").asOpt[Seq[String]].getOrElse(Seq.empty)
     val deny = config.select("deny").asOpt[Seq[String]].getOrElse(Seq.empty)
 
     if (validate(messages.head.content, allow, deny)) {
-      FenceResult.FencePass.vfuture
+      GuardrailResult.GuardrailPass.vfuture
     } else {
-      FenceResult.FenceDenied("message does not match regex").vfuture
+      GuardrailResult.GuardrailDenied("message does not match regex").vfuture
     }
   }
 }

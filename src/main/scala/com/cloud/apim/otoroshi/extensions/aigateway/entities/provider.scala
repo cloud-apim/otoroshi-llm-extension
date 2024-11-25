@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatClient
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientDecorators, Fences, LoadBalancerChatClient}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientDecorators, Guardrails, LoadBalancerChatClient}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
 import otoroshi.env.Env
@@ -99,7 +99,7 @@ case class AiProvider(
                        //llmValidation: LlmValidationSettings = LlmValidationSettings(),
                        //httpValidation: HttpValidationSettings = HttpValidationSettings(),
                        cache: CacheSettings = CacheSettings(),
-                       fences: Fences = Fences.empty,
+                       guardrails: Guardrails = Guardrails.empty,
                      ) extends EntityLocationSupport {
   override def internalId: String               = id
   override def json: JsValue                    = AiProvider.format.writes(this)
@@ -199,7 +199,7 @@ object AiProvider {
       // ),
       // "llm_validation" -> o.llmValidation.json,
       // "http_validation" -> o.httpValidation.json,
-      "fences" -> o.fences.json,
+      "guardrails" -> o.guardrails.json,
       "cache" -> Json.obj(
         "strategy" -> o.cache.strategy,
         "ttl" -> o.cache.ttl.toMillis,
@@ -224,7 +224,7 @@ object AiProvider {
         // ),
         // llmValidation = json.select("llm_validation").asOpt[JsObject].flatMap(o => LlmValidationSettings.format.reads(o).asOpt).getOrElse(LlmValidationSettings()),
         // httpValidation = json.select("http_validation").asOpt[JsObject].flatMap(o => HttpValidationSettings.format.reads(o).asOpt).getOrElse(HttpValidationSettings()),
-        fences = json.select("fences").asOpt[JsArray].flatMap(seq => Fences.format.reads(seq).asOpt).getOrElse(Fences.empty),
+        guardrails = json.select("guardrails").asOpt[JsArray].orElse(json.select("fences").asOpt[JsArray]).flatMap(seq => Guardrails.format.reads(seq).asOpt).getOrElse(Guardrails.empty),
         cache = CacheSettings(
           strategy = (json \ "cache" \ "strategy").asOpt[String].getOrElse("none"),
           ttl = (json \ "cache" \ "ttl").asOpt[Long].map(v => FiniteDuration(v, TimeUnit.MILLISECONDS)).getOrElse(24.hours),

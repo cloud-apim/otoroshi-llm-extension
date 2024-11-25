@@ -1,6 +1,6 @@
-package com.cloud.apim.otoroshi.extensions.aigateway.fences
+package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Fence, FenceResult}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmValidationSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt}
 import otoroshi.env.Env
@@ -11,7 +11,7 @@ import play.api.libs.json.{JsObject, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
 
-class LLMFence extends Fence {
+class LLMGuardrail extends Guardrail {
 
   override def isBefore: Boolean = true
 
@@ -19,11 +19,11 @@ class LLMFence extends Fence {
 
   override def manyMessages: Boolean = true
 
-  def pass(): Future[FenceResult] = FenceResult.FencePass.vfuture
+  def pass(): Future[GuardrailResult] = GuardrailResult.GuardrailPass.vfuture
 
-  def fail(idx: Int): Future[FenceResult] = FenceResult.FenceDenied(s"request content did not pass llm validation (${idx})").vfuture
+  def fail(idx: Int): Future[GuardrailResult] = GuardrailResult.GuardrailDenied(s"request content did not pass llm validation (${idx})").vfuture
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[FenceResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val llmValidation = LlmValidationSettings.format.reads(config).getOrElse(LlmValidationSettings())
     llmValidation.provider match {
       case None => pass()
@@ -32,10 +32,10 @@ class LLMFence extends Fence {
         llmValidation.prompt match {
           case None => pass()
           case Some(pref) => env.adminExtensions.extension[AiExtension].flatMap(_.states.prompt(pref)) match {
-            case None => FenceResult.FenceDenied("validation prompt not found").vfuture
+            case None => GuardrailResult.GuardrailDenied("validation prompt not found").vfuture
             case Some(prompt) => {
               env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(ref).flatMap(_.getChatClient())) match {
-                case None => FenceResult.FenceDenied("validation provider not found").vfuture
+                case None => GuardrailResult.GuardrailDenied("validation provider not found").vfuture
                 case Some(validationClient) => {
                   validationClient.call(ChatPrompt(Seq(
                     ChatMessage("system", prompt.prompt)

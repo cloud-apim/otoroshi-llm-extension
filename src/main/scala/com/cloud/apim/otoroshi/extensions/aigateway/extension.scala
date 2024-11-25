@@ -3,7 +3,7 @@ package otoroshi_plugins.com.cloud.apim.extensions.aigateway
 import akka.stream.scaladsl.{Source, StreamConverters}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities._
-import com.cloud.apim.otoroshi.extensions.aigateway.fences.LLMFencesHardcodedItems
+import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHardcodedItems
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
 import otoroshi.env.Env
@@ -362,10 +362,10 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      ovh: ${OVHAiEndpointsChatClientOptions().json.stringify},
             |      huggingface: ${HuggingfaceChatClientOptions().json.stringify},
             |    };
-            |    const FencesOptions = {
-            |      possibleModerationCategories: ${JsArray(LLMFencesHardcodedItems.possibleModerationCategories.map(_.json)).stringify},
-            |      possiblePersonalInformations: ${JsArray(LLMFencesHardcodedItems.possiblePersonalInformations.map(_.json)).stringify},
-            |      possibleSecretLeakage: ${JsArray(LLMFencesHardcodedItems.possibleSecretLeakage.map(_.json)).stringify},
+            |    const GuardRailsOptions = {
+            |      possibleModerationCategories: ${JsArray(LLMGuardrailsHardcodedItems.possibleModerationCategories.map(_.json)).stringify},
+            |      possiblePersonalInformations: ${JsArray(LLMGuardrailsHardcodedItems.possiblePersonalInformations.map(_.json)).stringify},
+            |      possibleSecretLeakage: ${JsArray(LLMGuardrailsHardcodedItems.possibleSecretLeakage.map(_.json)).stringify},
             |    };
             |
             |    ${toolFunctionPageCode}

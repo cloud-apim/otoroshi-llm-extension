@@ -1,6 +1,6 @@
-package com.cloud.apim.otoroshi.extensions.aigateway.fences
+package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Fence, FenceResult}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, HttpValidationSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage}
 import com.github.blemale.scaffeine.Scaffeine
@@ -12,7 +12,7 @@ import play.api.libs.json.{JsArray, JsObject}
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ExecutionContext, Future}
 
-object WebhookFence {
+object WebhookGuardrail {
   val cache = Scaffeine()
     .expireAfter[String, (FiniteDuration, Boolean)](
       create = (key, value) => value._1,
@@ -23,7 +23,7 @@ object WebhookFence {
     .build[String, (FiniteDuration, Boolean)]()
 }
 
-class WebhookFence extends Fence {
+class WebhookGuardrail extends Guardrail {
 
   override def isBefore: Boolean = true
 
@@ -31,27 +31,27 @@ class WebhookFence extends Fence {
 
   override def manyMessages: Boolean = true
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[FenceResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val key = messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
     val httpValidation = HttpValidationSettings.format.reads(config).getOrElse(HttpValidationSettings())
     httpValidation.url match {
-      case None => FenceResult.FencePass.vfuture
+      case None => GuardrailResult.GuardrailPass.vfuture
       case _ => {
-        WebhookFence.cache.getIfPresent(key) match {
-          case Some((_, true)) => FenceResult.FencePass.vfuture
-          case Some((_, false)) => FenceResult.FenceDenied("request content did not pass http validation").vfuture
+        WebhookGuardrail.cache.getIfPresent(key) match {
+          case Some((_, true)) => GuardrailResult.GuardrailPass.vfuture
+          case Some((_, false)) => GuardrailResult.GuardrailDenied("request content did not pass http validation").vfuture
           case None => {
             env.Ws
               .url(httpValidation.url.get)
               .withHttpHeaders(httpValidation.headers.toSeq: _*)
               .post(JsArray(messages.map(_.json))).flatMap { resp =>
                 if (resp.status != 200) {
-                  WebhookFence.cache.put(key, (httpValidation.ttl, false))
-                  FenceResult.FenceDenied("request content did not pass http validation").vfuture
+                  WebhookGuardrail.cache.put(key, (httpValidation.ttl, false))
+                  GuardrailResult.GuardrailDenied("request content did not pass http validation").vfuture
                 } else {
                   val value = resp.json.select("result").asOpt[Boolean].getOrElse(false)
-                  WebhookFence.cache.put(key, (httpValidation.ttl, value))
-                  FenceResult.FencePass.vfuture
+                  WebhookGuardrail.cache.put(key, (httpValidation.ttl, value))
+                  GuardrailResult.GuardrailPass.vfuture
                 }
               }
           }

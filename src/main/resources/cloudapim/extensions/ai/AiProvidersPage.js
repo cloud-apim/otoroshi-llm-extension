@@ -129,7 +129,7 @@ class AiProviderTester extends Component {
   }
 }
 
-class Fence extends Component {
+class Guardrail extends Component {
   flow = (id) => {
     const def = ['enabled', 'id', 'before', 'after'];
     const tail = []; // ['config'];
@@ -176,7 +176,7 @@ class Fence extends Component {
           id: {
             type: 'select',
             props: {
-              label: 'Fence',
+              label: 'Guardrail',
               possibleValues: [
                 {label: 'Regex', value: 'regex'},
                 {label: 'Webhook', value: 'webhook'},
@@ -211,13 +211,13 @@ class Fence extends Component {
             { label: "contains_none", value: 'contains_none' },
             { label: "contains_any", value: 'contains_any' },
           ] } },
-          'config.pif_items': { type: 'array', props: { label: 'Personal Informations types', possibleValues: FencesOptions.possiblePersonalInformations.map(i => ({
+          'config.pif_items': { type: 'array', props: { label: 'Personal Informations types', possibleValues: GuardrailsOptions.possiblePersonalInformations.map(i => ({
                 label: i, value: i
           })) } },
-          'config.moderation_items': { type: 'array', props: { label: 'Moderation types', possibleValues: FencesOptions.possibleModerationCategories.map(i => ({
+          'config.moderation_items': { type: 'array', props: { label: 'Moderation types', possibleValues: GuardrailsOptions.possibleModerationCategories.map(i => ({
               label: i, value: i
             })) } },
-          'config.secrets_leakage_items': { type: 'array', props: { label: 'Secrets types', possibleValues: FencesOptions.possibleSecretLeakage.map(i => ({
+          'config.secrets_leakage_items': { type: 'array', props: { label: 'Secrets types', possibleValues: GuardrailsOptions.possibleSecretLeakage.map(i => ({
                 label: i, value: i
             })) } },
           'config.provider': { type: 'select', props: {
@@ -646,11 +646,11 @@ class AiProvidersPage extends Component {
         }),
       }
     },
-    _fences: {
+    _guardrails: {
       type: 'jsonobjectcode',
-      props: { label: 'Fences config.' }
+      props: { label: 'Guardrails config.' }
     },
-    fences: {
+    guardrails: {
       type: 'array',
       props: {
         label: '',
@@ -664,7 +664,7 @@ class AiProvidersPage extends Component {
             deny: [],
           }
         },
-        component: Fence
+        component: Guardrail
       }
     }
   });
@@ -704,8 +704,8 @@ class AiProvidersPage extends Component {
         // 'http_validation.url',
         // 'http_validation.headers',
         // 'http_validation.ttl',
-        '>>>Fences validation',
-        'fences',
+        '>>>Guardrails validation',
+        'guardrails',
         '>>>Metadata and tags',
         'tags',
         'metadata',
@@ -766,8 +766,8 @@ class AiProvidersPage extends Component {
         // 'http_validation.url',
         // 'http_validation.headers',
         // 'http_validation.ttl',
-        '>>>Fences validation',
-        'fences',
+        '>>>Guardrails validation',
+        'guardrails',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -807,8 +807,8 @@ class AiProvidersPage extends Component {
         // 'http_validation.url',
         // 'http_validation.headers',
         // 'http_validation.ttl',
-        '>>>Fences validation',
-        'fences',
+        '>>>Guardrails validation',
+        'guardrails',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -849,8 +849,8 @@ class AiProvidersPage extends Component {
         // 'http_validation.url',
         // 'http_validation.headers',
         // 'http_validation.ttl',
-        '>>>Fences validation',
-        'fences',
+        '>>>Guardrails validation',
+        'guardrails',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -889,8 +889,8 @@ class AiProvidersPage extends Component {
         // 'http_validation.url',
         // 'http_validation.headers',
         // 'http_validation.ttl',
-        '>>>Fences validation',
-        'fences',
+        '>>>Guardrails validation',
+        'guardrails',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -929,8 +929,8 @@ class AiProvidersPage extends Component {
         // 'http_validation.url',
         // 'http_validation.headers',
         // 'http_validation.ttl',
-        '>>>Fences validation',
-        'fences',
+        '>>>Guardrails validation',
+        'guardrails',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -969,8 +969,8 @@ class AiProvidersPage extends Component {
         // 'http_validation.url',
         // 'http_validation.headers',
         // 'http_validation.ttl',
-        '>>>Fences validation',
-        'fences',
+        '>>>Guardrails validation',
+        'guardrails',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1009,8 +1009,8 @@ class AiProvidersPage extends Component {
         // 'http_validation.url',
         // 'http_validation.headers',
         // 'http_validation.ttl',
-        '>>>Fences validation',
-        'fences',
+        '>>>Guardrails validation',
+        'guardrails',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1049,8 +1049,8 @@ class AiProvidersPage extends Component {
         // 'http_validation.url',
         // 'http_validation.headers',
         // 'http_validation.ttl',
-        '>>>Fences validation',
-        'fences',
+        '>>>Guardrails validation',
+        'guardrails',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1090,8 +1090,8 @@ class AiProvidersPage extends Component {
         // 'http_validation.url',
         // 'http_validation.headers',
         // 'http_validation.ttl',
-        '>>>Fences validation',
-        'fences',
+        '>>>Guardrails validation',
+        'guardrails',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1129,8 +1129,8 @@ class AiProvidersPage extends Component {
         // 'http_validation.url',
         // 'http_validation.headers',
         // 'http_validation.ttl',
-        '>>>Fences validation',
-        'fences',
+        '>>>Guardrails validation',
+        'guardrails',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1168,8 +1168,8 @@ class AiProvidersPage extends Component {
       // 'http_validation.url',
       // 'http_validation.headers',
       // 'http_validation.ttl',
-      '>>>Fences validation',
-      'fences',
+      '>>>Guardrails validation',
+      'guardrails',
       '>>>Tools',
       'options.wasm_tools',
       '>>>Tester',
