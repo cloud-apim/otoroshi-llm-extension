@@ -170,10 +170,6 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
           .filter(_.startsWith("data: "))
           .map(_.replaceFirst("data: ", "").trim())
           .filter(_.nonEmpty)
-          // .map(s => {
-          //   println(s"chunk: ${s}")
-          //   s
-          // })
           .takeWhile(_ != "[DONE]")
           .map(str => Json.parse(str))
           .map(json => OpenAiChatResponseChunk(json)), resp)
