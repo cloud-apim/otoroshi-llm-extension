@@ -64,7 +64,7 @@ object MistralAiChatClientOptions {
       safe_prompt = json.select("safe_prompt").asOpt[Boolean],
       random_seed = json.select("random_seed").asOpt[Int],
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
-      topP = json.select("topP").asOpt[Float].getOrElse(1.0f),
+      topP = json.select("topP").asOpt[Float].orElse(json.select("top_p").asOpt[Float]).getOrElse(1.0f),
     )
   }
 }

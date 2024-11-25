@@ -18,9 +18,7 @@ object ChatClientWithAuditing {
   }
 }
 
-class ChatClientWithAuditing(originalProvider: AiProvider, chatClient: ChatClient) extends ChatClient {
-
-  override def model: Option[String] = chatClient.model
+class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)

@@ -29,11 +29,9 @@ object ChatClientWithSimpleCache {
   }
 }
 
-class ChatClientWithSimpleCache(originalProvider: AiProvider, chatClient: ChatClient) extends ChatClient {
+class ChatClientWithSimpleCache(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
   private val ttl = originalProvider.cache.ttl
-
-  override def model: Option[String] = chatClient.model
 
   override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512

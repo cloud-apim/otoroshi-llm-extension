@@ -19,3 +19,9 @@ object ChatClientDecorators {
     }
   }
 }
+
+trait DecoratorChatClient extends ChatClient {
+  def chatClient: ChatClient
+  override def supportsStreaming: Boolean = chatClient.supportsStreaming
+  override def model: Option[String] = chatClient.model
+}

@@ -212,12 +212,20 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
 }
 
 trait ChatClient {
-  def streaming: Boolean = false
+
+  def supportsStreaming: Boolean = false
+  def supportsTools: Boolean = false
+
   def model: Option[String]
+
   def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]]
-  def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = Left(Json.obj("error" -> "streaming not supported")).future
+
+  def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    Left(Json.obj("error" -> "streaming not supported")).future
+  }
+
   def tryStream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    if (streaming) {
+    if (supportsStreaming) {
       stream(prompt, attrs)
     } else {
       call(prompt, attrs).map {

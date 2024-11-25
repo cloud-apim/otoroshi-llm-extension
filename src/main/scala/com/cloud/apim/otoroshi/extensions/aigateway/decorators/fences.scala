@@ -170,9 +170,7 @@ trait Fence {
   def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[FenceResult]
 }
 
-class ChatClientWithFencesValidation(originalProvider: AiProvider, chatClient: ChatClient) extends ChatClient {
-
-  override def model: Option[String] = chatClient.model
+class ChatClientWithFencesValidation(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
   override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     originalProvider.fences.call(FencesCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {

@@ -128,8 +128,13 @@ object OpenAiChatClientOptions {
       max_tokens = json.select("max_tokens").asOpt[Int],
       n = json.select("n").asOpt[Int],
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
-      topP = json.select("topP").asOpt[Float].getOrElse(1.0f),
+      topP = json.select("topP").asOpt[Float].orElse(json.select("top_p").asOpt[Float]).getOrElse(1.0f),
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      frequency_penalty = json.select("frequency_penalty").asOpt[Double],
+      logprobs = json.select("logprobs").asOpt[Boolean],
+      top_logprobs = json.select("top_logprobs").asOpt[Int],
+      seed = json.select("seed").asOpt[Int],
+      presence_penalty = json.select("presence_penalty").asOpt[Double],
     )
   }
 }
@@ -183,6 +188,8 @@ case class OpenAiChatClientOptions(
 class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String) extends ChatClient {
 
   override def model: Option[String] = options.model.some
+
+  override def supportsTools: Boolean = api.supportsTools
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.jsonForCall.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))

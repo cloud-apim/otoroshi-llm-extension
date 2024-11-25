@@ -20,9 +20,7 @@ object ChatClientWithProviderFallback {
   }
 }
 
-class ChatClientWithProviderFallback(originalProvider: AiProvider, chatClient: ChatClient) extends ChatClient {
-
-  override def model: Option[String] = chatClient.model
+class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
   override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     chatClient.call(originalPrompt, attrs).flatMap {
