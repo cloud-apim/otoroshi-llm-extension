@@ -397,7 +397,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
               model = chunk.model,
               choices = chunk.choices.map { choice =>
                 ChatResponseChunkChoice(
-                  index = choice.index.getOrElse(0),
+                  index = choice.index.map(_.toLong).getOrElse(0L),
                   delta = ChatResponseChunkChoiceDelta(
                     choice.delta.flatMap(_.content)
                   ),

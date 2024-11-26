@@ -178,7 +178,7 @@ case class ChatResponseChunkChoiceDelta(content: Option[String]) {
   }
 }
 
-case class ChatResponseChunkChoice(index: Int, delta: ChatResponseChunkChoiceDelta, finishReason: Option[String]) {
+case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDelta, finishReason: Option[String]) {
   def json: JsValue = Json.obj(
     "index" -> index,
     "delta" -> delta.json,

@@ -1,6 +1,9 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import akka.stream.scaladsl.{Framing, Source}
+import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.joda.time.DateTime
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -17,10 +20,33 @@ case class OllamaAiApiResponse(status: Int, headers: Map[String, String], body: 
     "body" -> body,
   )
 }
+
+case class OllamaAiChatResponseChunkMessage(raw: JsValue) {
+  lazy val role: String = raw.select("role").asOpt[String].getOrElse("assistant")
+  lazy val content: String = raw.select("content").asOpt[String].getOrElse("")
+}
+
+case class OllamaAiChatResponseChunk(raw: JsValue) {
+  lazy val model: String = raw.select("model").asString
+  lazy val done: Boolean = raw.select("done").asOptBoolean.getOrElse(false)
+  lazy val created_at: String = raw.select("created_at").asString
+  lazy val created_at_datetime: DateTime = DateTime.parse(created_at)
+  lazy val message: OllamaAiChatResponseChunkMessage = OllamaAiChatResponseChunkMessage(raw.select("message").asObject)
+  lazy val total_duration: Option[Long] = raw.select("total_duration").asOpt[Long]
+  lazy val load_duration: Option[Long] = raw.select("load_duration").asOpt[Long]
+  lazy val prompt_eval_count: Option[Long] = raw.select("prompt_eval_count").asOpt[Long]
+  lazy val prompt_eval_duration: Option[Long] = raw.select("prompt_eval_duration").asOpt[Long]
+  lazy val eval_count: Option[Long] = raw.select("eval_count").asOpt[Long]
+  lazy val eval_duration: Option[Long] = raw.select("eval_duration").asOpt[Long]
+}
+
 object OllamaAiApi {
   val baseUrl = "http://localhost:11434"
 }
-class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], timeout: FiniteDuration = 10.seconds, env: Env) {
+class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[OllamaAiApiResponse, OllamaAiChatResponseChunk] {
+
+  override def supportsTools: Boolean = false
+  override def supportsStreaming: Boolean = true
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     println("calling ollama")
@@ -49,6 +75,40 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
     rawCall(method, path, body)
       .map { resp =>
         OllamaAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+      }
+  }
+
+  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OllamaAiChatResponseChunk, _], WSResponse)] = {
+    println(s"streaming ollama: ${body.map(_.prettify).getOrElse("")}")
+    env.Ws
+      .url(s"${baseUrl}${path}")
+      .withHttpHeaders(
+        "Accept" -> "application/json",
+      )
+      .applyOnWithOpt(token) {
+        case (builder, token) => builder
+          .addHttpHeaders(
+            "Authorization" -> s"Bearer ${token}",
+          )
+      }
+      .applyOnWithOpt(body) {
+        case (builder, body) => builder
+          .addHttpHeaders("Content-Type" -> "application/json")
+          .withBody(body)
+      }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .stream()
+      .map { resp =>
+        (resp.bodyAsSource
+          .via(Framing.delimiter(ByteString("\n"), Int.MaxValue, false))
+          .map(_.utf8String)
+          .filter(_.nonEmpty)
+          .map(str => Json.parse(str))
+          .map(json => OllamaAiChatResponseChunk(json))
+          .takeWhile(!_.done, inclusive = true)
+        , resp)
+
       }
   }
 }
@@ -113,6 +173,8 @@ case class OllamaAiChatClientOptions(
 class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, id: String) extends ChatClient {
 
   override def model: Option[String] = options.model.some
+  override def supportsStreaming: Boolean = api.supportsStreaming
+  override def supportsTools: Boolean = api.supportsTools
 
   override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/api/tags", None).map { resp =>
@@ -170,6 +232,76 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
       val content = resp.body.select("message").select("content").asOpt[String].getOrElse("")
       val message = ChatGeneration(ChatMessage(role, content))
       Right(ChatResponse(Seq(message), usage))
+    }
+  }
+
+  override def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj())).applyOn(_ - "model")
+    api.stream("POST", "/api/chat", Some(Json.obj(
+      "model" -> options.model,
+      "stream" -> true,
+      "messages" -> prompt.json,
+      "options" -> mergedOptions
+    ))).map {
+      case (source, resp) =>
+        source
+          .filterNot { chunk =>
+            if (chunk.eval_count.nonEmpty) {
+              val usage = ChatResponseMetadata(
+                ChatResponseMetadataRateLimit(
+                  requestsLimit = resp.header("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+                  requestsRemaining = resp.header("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+                  tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+                  tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+                ),
+                ChatResponseMetadataUsage(
+                  promptTokens = chunk.prompt_eval_count.getOrElse(-1L),
+                  generationTokens = chunk.eval_count.getOrElse(-1L),
+                ),
+                None
+              )
+              val duration: Long = chunk.total_duration.getOrElse(0L)
+              val slug = Json.obj(
+                "provider_kind" -> "ollama",
+                "provider" -> id,
+                "duration" -> duration,
+                "model" -> options.model.json,
+                "rate_limit" -> usage.rateLimit.json,
+                "usage" -> usage.usage.json
+              ).applyOnWithOpt(usage.cache) {
+                case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+              }
+              attrs.update(ChatClient.ApiUsageKey -> usage)
+              attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+                case Some(obj@JsObject(_)) => {
+                  val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                  val newArr = arr ++ Seq(slug)
+                  obj ++ Json.obj("ai" -> newArr)
+                }
+                case Some(other) => other
+                case None => Json.obj("ai" -> Seq(slug))
+              }
+              true
+            } else {
+              false
+            }
+          }
+          .zipWithIndex
+          .map {
+            case (chunk, idx) =>
+              ChatResponseChunk(
+                id = chunk.created_at.sha256,
+                created = chunk.created_at_datetime.toDate.getTime / 1000,
+                model = chunk.model,
+                choices = Seq(ChatResponseChunkChoice(
+                  index = idx,
+                  delta = ChatResponseChunkChoiceDelta(
+                    chunk.message.content.some
+                  ),
+                  finishReason = if (chunk.done) Some("stop") else None
+                ))
+              )
+          }.right
     }
   }
 }
