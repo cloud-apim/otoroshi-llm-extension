@@ -1,6 +1,7 @@
-package com.cloud.apim.otoroshi.extensions.aigateway.plugins
+package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
+import com.cloud.apim.otoroshi.extensions.aigateway.plugins._
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
