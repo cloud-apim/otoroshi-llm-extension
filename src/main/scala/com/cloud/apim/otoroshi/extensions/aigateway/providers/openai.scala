@@ -155,7 +155,7 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              WasmFunction.callTools(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
+              WasmFunction.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -242,7 +242,7 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = WasmFunction.callTools(calls)(ec, env)
+              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = WasmFunction.callToolsOpenai(calls)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))

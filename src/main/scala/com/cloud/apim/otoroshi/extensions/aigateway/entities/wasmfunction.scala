@@ -286,7 +286,7 @@ object WasmFunction {
     )
   }
 
-  def callTools(functions: Seq[GenericApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  private def call(functions: Seq[GenericApiResponseChoiceMessageToolCall])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
         val fid = toolCall.function.name
@@ -305,14 +305,28 @@ object WasmFunction {
         case Some(t) => t
       }
       .flatMapConcat {
-        case (resp, tc) =>
-        Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
-          "role" -> "tool",
-          "content" -> resp,
-          "tool_call_id" -> tc.id
-        )))
+        case (resp, tc) => f(resp, tc)
       }
       .runWith(Sink.seq)(env.otoroshiMaterializer)
+  }
+
+  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    call(functions) { (resp, tc) =>
+      Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
+        "role" -> "tool",
+        "content" -> resp,
+        "tool_call_id" -> tc.id
+      )))
+    }
+  }
+
+  def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    call(functions) { (resp, tc) =>
+      Source(List(Json.obj("role" -> "assistant", "content" -> "", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
+        "role" -> "tool",
+        "content" -> resp,
+      )))
+    }
   }
 
   val format = new Format[WasmFunction] {

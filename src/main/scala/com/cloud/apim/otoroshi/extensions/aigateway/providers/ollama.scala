@@ -8,6 +8,7 @@ import org.joda.time.DateTime
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
+import play.api.Logger
 import play.api.libs.json._
 import play.api.libs.ws.WSResponse
 
@@ -64,6 +65,7 @@ case class OllamaAiChatResponseChunk(raw: JsValue) {
 
 object OllamaAiApi {
   val baseUrl = "http://localhost:11434"
+  val logger = Logger("ollama-logger")
 }
 class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[OllamaAiApiResponse, OllamaAiChatResponseChunk] {
 
@@ -71,7 +73,7 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
   override def supportsStreaming: Boolean = true
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
-    println(s"calling ollama: ${body.get.prettify}")
+    OllamaAiApi.logger.debug(s"calling ollama: ${body.get.prettify}")
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -96,13 +98,12 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
     rawCall(method, path, body)
       .map { resp =>
-        resp.json.prettify.debugPrintln
         OllamaAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json, resp)
       }
   }
 
   override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OllamaAiChatResponseChunk, _], WSResponse)] = {
-    println(s"streaming ollama: ${body.map(_.prettify).getOrElse("")}")
+    OllamaAiApi.logger.debug(s"streaming ollama: ${body.map(_.prettify).getOrElse("")}")
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -136,7 +137,6 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
 
   override def callWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
     // TODO: accumulate consumptions ???
-    println("calling ollama with tools")
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
         case resp if resp.finishBecauseOfToolCalls => {
@@ -145,16 +145,9 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              WasmFunction.callTools(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
+              WasmFunction.callToolsOllama(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
                 .flatMap { callResps =>
-                  val newMessages: Seq[JsValue] = messages.map(_.json) ++ (callResps.map(jsv => {
-                    if (jsv.select("tool_call_id").isDefined) {
-                      val name = jsv.select("tool_call_id").asString
-                      jsv.asObject - "tool_call_id" ++ Json.obj("name" -> name)
-                    } else {
-                      jsv
-                    }
-                  }))
+                  val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   callWithToolSupport(method, path, newBody.some)
                 }

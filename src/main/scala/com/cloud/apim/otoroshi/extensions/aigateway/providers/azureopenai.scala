@@ -154,7 +154,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              WasmFunction.callTools(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
+              WasmFunction.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -241,7 +241,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[(Source[AzureOpenAiChatResponseChunk, _], WSResponse)] = WasmFunction.callTools(calls)(ec, env)
+              val a: Future[(Source[AzureOpenAiChatResponseChunk, _], WSResponse)] = WasmFunction.callToolsOpenai(calls)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
