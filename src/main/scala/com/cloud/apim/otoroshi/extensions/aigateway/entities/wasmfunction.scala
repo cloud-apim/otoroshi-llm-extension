@@ -236,11 +236,17 @@ case class WasmFunction(
 
 case class GenericApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
   lazy val name: String = raw.select("name").asString
-  lazy val arguments: String = raw.select("arguments").asString
+  lazy val arguments: String = {
+    raw.select("arguments").asValue match {
+      case JsString(str) => str
+      case obj @ JsObject(_) => obj.stringify
+      case v => v.toString()
+    }
+  }
 }
 
 case class GenericApiResponseChoiceMessageToolCall(raw: JsObject) {
-  lazy val id: String = raw.select("id").asString
+  lazy val id: String = raw.select("id").asOpt[String].getOrElse(raw.select("function").select("name").asString)
   lazy val function: GenericApiResponseChoiceMessageToolCallFunction = GenericApiResponseChoiceMessageToolCallFunction(raw.select("function").asObject)
 }
 

@@ -67,11 +67,11 @@ object OllamaAiApi {
 }
 class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[OllamaAiApiResponse, OllamaAiChatResponseChunk] {
 
-  override def supportsTools: Boolean = false
+  override def supportsTools: Boolean = true
   override def supportsStreaming: Boolean = true
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
-    println("calling ollama")
+    println(s"calling ollama: ${body.get.prettify}")
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -96,6 +96,7 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
     rawCall(method, path, body)
       .map { resp =>
+        resp.json.prettify.debugPrintln
         OllamaAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json, resp)
       }
   }
@@ -135,6 +136,7 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
 
   override def callWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
     // TODO: accumulate consumptions ???
+    println("calling ollama with tools")
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
         case resp if resp.finishBecauseOfToolCalls => {
@@ -145,7 +147,14 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
               val toolCalls = resp.toolCalls
               WasmFunction.callTools(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
                 .flatMap { callResps =>
-                  val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  val newMessages: Seq[JsValue] = messages.map(_.json) ++ (callResps.map(jsv => {
+                    if (jsv.select("tool_call_id").isDefined) {
+                      val name = jsv.select("tool_call_id").asString
+                      jsv.asObject - "tool_call_id" ++ Json.obj("name" -> name)
+                    } else {
+                      jsv
+                    }
+                  }))
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   callWithToolSupport(method, path, newBody.some)
                 }
@@ -233,6 +242,8 @@ case class OllamaAiChatClientOptions(
     "num_ctx" -> num_ctx,
     "wasm_tools" -> JsArray(wasmTools.map(_.json))
   )
+
+  def jsonForCall: JsObject = json - "wasm_tools"
 }
 
 class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, id: String) extends ChatClient {
@@ -252,13 +263,24 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
   }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj())).applyOn(_ - "model")
-    api.call("POST", "/api/chat", Some(Json.obj(
-      "model" -> options.model,
-      "stream" -> false,
-      "messages" -> prompt.json,
-      "options" -> mergedOptions
-    ))).map { resp =>
+    val mergedOptions = options.jsonForCall.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj())).applyOn(_ - "model")
+    val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
+      val tools = WasmFunction.tools(options.wasmTools)
+      api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(
+        "model" -> options.model,
+        "stream" -> false,
+        "messages" -> prompt.json,
+        "options" -> mergedOptions,
+      ) ++ tools))
+    } else {
+      api.call("POST", "/api/chat", Some(Json.obj(
+        "model" -> options.model,
+        "stream" -> false,
+        "messages" -> prompt.json,
+        "options" -> mergedOptions
+      )))
+    }
+    callF.map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
