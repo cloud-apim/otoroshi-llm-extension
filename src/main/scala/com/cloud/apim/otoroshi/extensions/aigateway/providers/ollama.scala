@@ -3,6 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, WasmFunction}
 import org.joda.time.DateTime
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -13,7 +14,28 @@ import play.api.libs.ws.WSResponse
 import scala.concurrent._
 import scala.concurrent.duration._
 
-case class OllamaAiApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
+case class OllamaAiApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
+  lazy val name: String = raw.select("name").asString
+  lazy val arguments: JsObject = raw.select("arguments").asObject
+}
+
+case class OllamaAiApiResponseChoiceMessageToolCall(raw: JsObject) {
+  lazy val id: String = raw.select("id").asString
+  lazy val function: OllamaAiApiResponseChoiceMessageToolCallFunction = OllamaAiApiResponseChoiceMessageToolCallFunction(raw.select("function").asObject)
+}
+
+case class OllamaAiApiResponseMessage(raw: JsValue) {
+  lazy val role: String = raw.select("role").asOpt[String].getOrElse("assistant")
+  lazy val content: Option[String] = raw.select("content").asOpt[String]
+  lazy val toolCalls: Seq[OllamaAiApiResponseChoiceMessageToolCall] = raw.select("tool_calls").asOpt[Seq[JsObject]].map(_.map(v => OllamaAiApiResponseChoiceMessageToolCall(v))).getOrElse(Seq.empty)
+  lazy val hasToolCalls: Boolean = toolCalls.nonEmpty
+}
+
+case class OllamaAiApiResponse(status: Int, headers: Map[String, String], body: JsValue, response: WSResponse) {
+  lazy val finishBecauseOfToolCalls: Boolean = doneReason == "stop" && message.hasToolCalls
+  lazy val message: OllamaAiApiResponseMessage = OllamaAiApiResponseMessage(body.select("message").asObject)
+  lazy val doneReason: String = body.select("done_reason").asOpt[String].getOrElse("")
+  def toolCalls: Seq[OllamaAiApiResponseChoiceMessageToolCall] = message.toolCalls
   def json: JsValue = Json.obj(
     "status" -> status,
     "headers" -> headers,
@@ -74,7 +96,7 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
     rawCall(method, path, body)
       .map { resp =>
-        OllamaAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+        OllamaAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json, resp)
       }
   }
 
@@ -108,15 +130,55 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
           .map(json => OllamaAiChatResponseChunk(json))
           .takeWhile(!_.done, inclusive = true)
         , resp)
-
       }
+  }
+
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
+    // TODO: accumulate consumptions ???
+    if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
+      call(method, path, body).flatMap {
+        case resp if resp.finishBecauseOfToolCalls => {
+          body match {
+            case None => resp.vfuture
+            case Some(body) => {
+              val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
+              val toolCalls = resp.toolCalls
+              WasmFunction.callTools(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
+                .flatMap { callResps =>
+                  val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
+                  callWithToolSupport(method, path, newBody.some)
+                }
+            }
+          }
+        }
+        case resp => resp.vfuture
+      }
+    } else {
+      call(method, path, body)
+    }
+  }
+
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OllamaAiChatResponseChunk, _], WSResponse)] = {
+    callWithToolSupport(method, path, body).map { resp =>
+      val source = resp.message.content.get.chunks(5).map { str =>
+        OllamaAiChatResponseChunk(resp.body.asObject.deepMerge(Json.obj(
+          "message" -> Json.obj("content" -> str),
+          "done" -> false,
+        )))
+      }.concat(Source.single(OllamaAiChatResponseChunk(resp.body.asObject.deepMerge(Json.obj(
+        "message" -> Json.obj("content" -> ""),
+        "done" -> true
+      )))))
+      (source, resp.response)
+    }
   }
 }
 
 object OllamaAiChatClientOptions {
   def fromJson(json: JsValue): OllamaAiChatClientOptions = {
     OllamaAiChatClientOptions(
-      model = json.select("model").asOpt[String].getOrElse("llama2"),
+      model = json.select("model").asOpt[String].getOrElse("llama3.2"),
       num_predict = json.select("num_predict").asOpt[Int],
       tfs_z = json.select("tfs_z").asOpt[Double],
       seed = json.select("seed").asOpt[Int],
@@ -129,13 +191,14 @@ object OllamaAiChatClientOptions {
       num_gpu = json.select("num_gpu").asOpt[Int],
       num_gqa = json.select("num_gqa").asOpt[Int],
       num_ctx = json.select("num_ctx").asOpt[Int],
+      wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
     )
   }
 }
 
 // https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values
 case class OllamaAiChatClientOptions(
-   model: String = "llama2",
+   model: String = "llama3.2",
    num_predict: Option[Int] = None,
    tfs_z: Option[Double] = None,
    seed: Option[Int] = None,
@@ -148,7 +211,8 @@ case class OllamaAiChatClientOptions(
    num_gpu: Option[Int] = None,
    num_gqa: Option[Int] = None,
    num_ctx: Option[Int] = None,
- ) extends ChatOptions {
+   wasmTools: Seq[String] = Seq.empty
+) extends ChatOptions {
 
   def temperature: Float = temper.toFloat
   def topP: Float = top_p.toFloat
@@ -167,6 +231,7 @@ case class OllamaAiChatClientOptions(
     "num_gpu" -> num_gpu,
     "num_gqa" -> num_gqa,
     "num_ctx" -> num_ctx,
+    "wasm_tools" -> JsArray(wasmTools.map(_.json))
   )
 }
 

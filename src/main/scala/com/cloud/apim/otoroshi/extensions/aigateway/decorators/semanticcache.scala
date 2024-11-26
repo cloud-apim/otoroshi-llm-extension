@@ -5,9 +5,6 @@ import com.cloud.apim.otoroshi.extensions.aigateway._
 import com.github.benmanes.caffeine.cache.RemovalCause
 import com.github.blemale.scaffeine.Scaffeine
 import dev.langchain4j.data.segment.TextSegment
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest
-import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -19,9 +16,9 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
 
 object ChatClientWithSemanticCache {
-  val embeddingStores = new TrieMap[String, InMemoryEmbeddingStore[TextSegment]]()
-  val embeddingModel = new AllMiniLmL6V2EmbeddingModel()
-  val cache = Scaffeine()
+  lazy val embeddingStores = new TrieMap[String, dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]]()
+  lazy val embeddingModel = new dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel()
+  lazy val cache = Scaffeine()
     .expireAfter[String, (FiniteDuration, ChatResponse, Long)](
       create = (key, value) => value._1,
       update = (key, value, currentDuration) => currentDuration,
@@ -29,8 +26,7 @@ object ChatClientWithSemanticCache {
     )
     .maximumSize(5000) // TODO: custom ?
     .build[String, (FiniteDuration, ChatResponse, Long)]()
-
-  val cacheEmbeddingCleanup = Scaffeine()
+  lazy val cacheEmbeddingCleanup = Scaffeine()
     .expireAfter[String, (FiniteDuration, Function[String, Unit])](
       create = (key, value) => value._1,
       update = (key, value, currentDuration) => currentDuration,
@@ -58,7 +54,7 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, val chatClient: 
   private def notInCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val embeddingModel = ChatClientWithSemanticCache.embeddingModel
     val embeddingStore = ChatClientWithSemanticCache.embeddingStores.getOrUpdate(originalProvider.id) {
-      new InMemoryEmbeddingStore[TextSegment]()
+      new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
     }
     chatClient.call(originalPrompt, attrs).map {
       case Left(err) => err.left
@@ -102,11 +98,11 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, val chatClient: 
       case None => {
         val embeddingModel = ChatClientWithSemanticCache.embeddingModel
         val embeddingStore = ChatClientWithSemanticCache.embeddingStores.getOrUpdate(originalProvider.id) {
-          new InMemoryEmbeddingStore[TextSegment]()
+          new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
         }
         val queryEmbedding = embeddingModel.embed(query).content()
         // println(s"searching query: ${query}")
-        val relevant = embeddingStore.search(EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding).maxResults(1).minScore(originalProvider.cache.score).build())
+        val relevant = embeddingStore.search(dev.langchain4j.store.embedding.EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding).maxResults(1).minScore(originalProvider.cache.score).build())
         val matches = relevant.matches().asScala
         // println(s"cache: ${matches.length}")
         if (matches.nonEmpty) {

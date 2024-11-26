@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.WasmFunction
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, WasmFunction}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -21,6 +21,8 @@ case class OpenAiChatResponseChunkUsage(raw: JsValue) {
 
 case class OpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw: JsValue) {
   lazy val name: String = raw.select("name").asString
+  lazy val nameOpt: Option[String] = raw.select("name").asOptString
+  lazy val hasName: Boolean = nameOpt.isDefined
   lazy val arguments: String = raw.select("arguments").asString
 }
 
@@ -153,7 +155,7 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              WasmFunction.callTools(toolCalls)(ec, env)
+              WasmFunction.callTools(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -209,28 +211,38 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
         case res => {
           var isToolCall = false
           var isToolCallEnded = false
-          var toolCall: OpenAiChatResponseChunkChoiceDeltaToolCall = null
-          var toolCallArgs = ""
+          var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
+          var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
           var toolCallUsage: OpenAiChatResponseChunkUsage = null
           val newSource = res._1.flatMapConcat { chunk =>
             if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
-              println("in a tool_call")
               isToolCall = true
-              toolCall = chunk.choices.head.delta.head.tool_calls.head
+              toolCalls = chunk.choices.head.delta.head.tool_calls
+              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => ""): _*)
               Source.empty
             } else if (isToolCall && !isToolCallEnded) {
-              println(s"accumulate args: '${toolCallArgs}'")
               if (chunk.choices.head.finish_reason.contains("tool_calls")) {
                 isToolCallEnded = true
               } else {
-                toolCallArgs = toolCallArgs + chunk.choices.head.delta.head.tool_calls.head.function.arguments
-              }
+                chunk.choices.head.delta.head.tool_calls.foreach { tc =>
+                  val index = tc.index.toInt
+                  val arg = tc.function.arguments
+                  if (index >= toolCallArgs.size) {
+                    toolCallArgs = toolCallArgs :+ ""
+                  }
+                  if (tc.function.hasName && !toolCalls.exists(t => t.function.hasName && t.function.name == tc.function.name)) {
+                    toolCalls = toolCalls :+ tc
+                  }
+                  toolCallArgs.update(index, toolCallArgs.apply(index) + arg)
+                }}
               Source.empty
             } else if (isToolCall && isToolCallEnded) {
-              println("all ended")
               toolCallUsage = chunk.usage.get
-              val call = OpenAiApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs))))
-              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = WasmFunction.callTools(Seq(call))(ec, env)
+              val calls = toolCalls.zipWithIndex.map {
+                case (toolCall, idx) =>
+                  GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
+              }
+              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = WasmFunction.callTools(calls)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -243,22 +255,6 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
           }
           (newSource, res._2).vfuture
         }
-        // case resp if resp.finishBecauseOfToolCalls => {
-        //   body match {
-        //     case None => resp.vfuture
-        //     case Some(body) => {
-        //       val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
-        //       val toolCalls = resp.toolCalls
-        //       WasmFunction.callTools(toolCalls)(ec, env)
-        //         .flatMap { callResps =>
-        //           val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
-        //           val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-        //           callWithToolSupport(method, path, newBody.some)
-        //         }
-        //     }
-        //   }
-        // }
-        // case resp => resp.vfuture
       }
     } else {
       stream(method, path, body)

@@ -213,7 +213,9 @@ case class WasmFunction(
               err.prettify.debugPrintln
               err.stringify
             case Right(output) =>
-              output._1.debugPrintln
+              val out = output._1.debugPrintln
+              println(s"the function output is: '${out}'")
+              out
           }.andThen {
             case _ => vm.release()
           }
@@ -230,6 +232,16 @@ case class WasmFunction(
       case (None, None) => "error, nothing to call".vfuture
     }
   }
+}
+
+case class GenericApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
+  lazy val name: String = raw.select("name").asString
+  lazy val arguments: String = raw.select("arguments").asString
+}
+
+case class GenericApiResponseChoiceMessageToolCall(raw: JsObject) {
+  lazy val id: String = raw.select("id").asString
+  lazy val function: GenericApiResponseChoiceMessageToolCallFunction = GenericApiResponseChoiceMessageToolCallFunction(raw.select("function").asObject)
 }
 
 object WasmFunction {
@@ -268,7 +280,7 @@ object WasmFunction {
     )
   }
 
-  def callTools(functions: Seq[OpenAiApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callTools(functions: Seq[GenericApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
         val fid = toolCall.function.name

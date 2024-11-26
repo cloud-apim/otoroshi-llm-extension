@@ -1,19 +1,14 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 import com.cloud.apim.otoroshi.extensions.aigateway._
-import dev.langchain4j.data.segment.TextSegment
-import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json.{JsObject, JsValue, Json}
-import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel
-import dev.langchain4j.store.embedding.EmbeddingSearchRequest
 import play.api.libs.ws.WSResponse
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
-import scala.jdk.CollectionConverters.asScalaBufferConverter
 
 case class GeminiApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
   def json: JsValue = Json.obj(
