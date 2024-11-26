@@ -96,6 +96,9 @@ case class GeminiChatClientOptions(
 
 class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: String) extends ChatClient {
 
+  // supports tools: true
+  // supports streaming: true
+
   override def model: Option[String] = api.model.some
 
   override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {

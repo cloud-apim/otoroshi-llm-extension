@@ -83,6 +83,10 @@ case class HuggingfaceChatClientOptions(
 
 class HuggingfaceChatClient(api: HuggingfaceApi, options: HuggingfaceChatClientOptions, id: String) extends ChatClient {
 
+  // openai compat: false
+  // supports tools: false
+  // supports streaming: true
+
   override def model: Option[String] = api.modelName.some
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {

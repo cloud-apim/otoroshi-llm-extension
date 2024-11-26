@@ -94,6 +94,10 @@ case class GroqChatClientOptions(
 
 class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) extends ChatClient {
 
+  // openai compat: true
+  // supports tools: true
+  // supports streaming: true
+
   override def model: Option[String] = options.model.some
 
   override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {

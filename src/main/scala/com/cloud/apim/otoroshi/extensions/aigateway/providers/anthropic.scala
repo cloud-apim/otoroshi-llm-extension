@@ -96,6 +96,9 @@ case class AnthropicChatClientOptions(
 
 class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions, id: String) extends ChatClient {
 
+  // supports tools: true
+  // supports streaming: true
+
   override def model: Option[String] = options.model.some
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {

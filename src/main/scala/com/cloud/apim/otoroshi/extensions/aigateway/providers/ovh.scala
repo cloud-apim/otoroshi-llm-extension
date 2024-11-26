@@ -101,6 +101,9 @@ case class OVHAiEndpointsChatClientOptions(
 
 class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsChatClientOptions, id: String) extends ChatClient {
 
+  // supports tools: false
+  // supports streaming: true
+
   override def model: Option[String] = options.model.some
 
   override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
