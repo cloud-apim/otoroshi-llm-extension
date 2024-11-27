@@ -1,5 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import akka.stream.scaladsl.{Framing, Source}
+import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -41,6 +43,10 @@ object OVHAiEndpointsApi {
 }
 class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
+  val supportsTools: Boolean = false
+
+  val supportsStreaming: Boolean = true
+
   def rawCall(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     // println(s"calling ${method} ${baseUrl}${path}: ${body}")
     val url = OVHAiEndpointsModels.modelUrls.get(model).getOrElse(s"${model.toLowerCase().replaceAll("\\.", "")}.${baseDomain}")
@@ -64,6 +70,38 @@ class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token
       .map { resp =>
         // println(s"resp: ${resp.status} - ${resp.body}")
         OVHAiEndpointsApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+      }
+  }
+
+  def stream(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
+    // println("streaming ovh")
+    val url = OVHAiEndpointsModels.modelUrls.get(model).getOrElse(s"${model.toLowerCase().replaceAll("\\.", "")}.${baseDomain}")
+    env.Ws
+      .url(s"https://${url}${path}")
+      .withHttpHeaders(
+        "Authorization" -> s"Bearer ${token}",
+        "Accept" -> "application/json",
+      ).applyOnWithOpt(body) {
+        case (builder, body) => builder
+          .addHttpHeaders("Content-Type" -> "application/json")
+          .withBody(body.asObject ++ Json.obj(
+            "stream" -> true,
+            "stream_options" -> Json.obj("include_usage" -> true)
+          ))
+      }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .stream()
+      .map { resp =>
+        (resp.bodyAsSource
+          .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
+          .map(_.utf8String)
+          .filter(_.startsWith("data: "))
+          .map(_.replaceFirst("data: ", "").trim())
+          .filter(_.nonEmpty)
+          .takeWhile(_ != "[DONE]")
+          .map(str => Json.parse(str))
+          .map(json => OpenAiChatResponseChunk(json)), resp)
       }
   }
 }
@@ -103,6 +141,10 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
 
   // supports tools: false
   // supports streaming: true
+
+  override def supportsTools: Boolean = api.supportsTools
+
+  override def supportsStreaming: Boolean = api.supportsStreaming
 
   override def model: Option[String] = options.model.some
 
@@ -161,6 +203,71 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
         ChatGeneration(ChatMessage(role, content))
       }
       Right(ChatResponse(messages, usage))
+    }
+  }
+
+  override def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+    api.stream(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
+      case (source, resp) =>
+        source
+          .filterNot { chunk =>
+            if (chunk.usage.nonEmpty) {
+              val usage = ChatResponseMetadata(
+                ChatResponseMetadataRateLimit(
+                  requestsLimit = resp.header("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+                  requestsRemaining = resp.header("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+                  tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+                  tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+                ),
+                ChatResponseMetadataUsage(
+                  promptTokens = chunk.usage.map(_.prompt_tokens).getOrElse(-1L),
+                  generationTokens = chunk.usage.map(_.completion_tokens).getOrElse(-1L),
+                ),
+                None
+              )
+              val duration: Long = resp.header("X-Kong-Proxy-Latency").map(_.toLong).getOrElse(0L)
+              val slug = Json.obj(
+                "provider_kind" -> "ovh-ai-endpoints",
+                "provider" -> id,
+                "duration" -> duration,
+                "model" -> options.model.json,
+                "rate_limit" -> usage.rateLimit.json,
+                "usage" -> usage.usage.json
+              ).applyOnWithOpt(usage.cache) {
+                case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+              }
+              attrs.update(ChatClient.ApiUsageKey -> usage)
+              attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+                case Some(obj@JsObject(_)) => {
+                  val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                  val newArr = arr ++ Seq(slug)
+                  obj ++ Json.obj("ai" -> newArr)
+                }
+                case Some(other) => other
+                case None => Json.obj("ai" -> Seq(slug))
+              }
+              true
+            } else {
+              false
+            }
+          }
+          .map { chunk =>
+            ChatResponseChunk(
+              id = chunk.id,
+              created = chunk.created,
+              model = chunk.model,
+              choices = chunk.choices.map { choice =>
+                ChatResponseChunkChoice(
+                  index = choice.index.map(_.toLong).getOrElse(0L),
+                  delta = ChatResponseChunkChoiceDelta(
+                    choice.delta.flatMap(_.content)
+                  ),
+                  finishReason = choice.finish_reason
+                )
+              }
+            )
+          }.right
     }
   }
 }

@@ -78,7 +78,7 @@ case class HuggingfaceChatClientOptions(
     "top_p" -> topP,
   )
 
-  override def topK: Int = ???
+  override def topK: Int = 0
 }
 
 class HuggingfaceChatClient(api: HuggingfaceApi, options: HuggingfaceChatClientOptions, id: String) extends ChatClient {

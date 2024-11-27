@@ -89,6 +89,7 @@ case class OpenAiApiResponse(status: Int, headers: Map[String, String], body: Js
   lazy val choices: Seq[OpenAiApiResponseChoice] = {
     body.select("choices").asOpt[Seq[JsObject]].map(_.map(v => OpenAiApiResponseChoice(v))).getOrElse(Seq.empty)
   }
+  def toMistral: MistralAiApiResponse = MistralAiApiResponse(status, headers, body)
   def json: JsValue = Json.obj(
     "status" -> status,
     "headers" -> headers,
