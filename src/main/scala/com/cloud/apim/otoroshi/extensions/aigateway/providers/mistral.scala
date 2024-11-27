@@ -227,10 +227,6 @@ case class MistralAiChatClientOptions(
 
 class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions, id: String) extends ChatClient {
 
-  // openai compat: true
-  // supports tools: true
-  // supports streaming: true
-
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def model: Option[String] = options.model.some

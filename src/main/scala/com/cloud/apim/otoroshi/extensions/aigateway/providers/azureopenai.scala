@@ -325,9 +325,7 @@ case class AzureOpenAiChatClientOptions(
 class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientOptions, id: String) extends ChatClient {
 
   override def model: Option[String] = s"${api.resourceName}-${api.deploymentId}".some
-
   override def supportsTools: Boolean = api.supportsTools
-
   override def supportsStreaming: Boolean = api.supportsStreaming
 
   override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {

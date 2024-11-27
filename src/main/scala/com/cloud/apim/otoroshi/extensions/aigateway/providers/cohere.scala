@@ -110,7 +110,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
 
   override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
-    api.call("POST", "/v1/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
+    api.call("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
@@ -119,8 +119,8 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
           tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
         ),
         ChatResponseMetadataUsage(
-          promptTokens = resp.body.select("meta").select("tokens").select("input_tokens").asOpt[Long].getOrElse(-1L),
-          generationTokens = resp.body.select("meta").select("tokens").select("output_tokens").asOpt[Long].getOrElse(-1L),
+          promptTokens = resp.body.select("usage").select("tokens").select("input_tokens").asOpt[Long].getOrElse(-1L),
+          generationTokens = resp.body.select("usage").select("tokens").select("output_tokens").asOpt[Long].getOrElse(-1L),
         ),
         None
       )
@@ -145,8 +145,8 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
         case Some(other) => other
         case None => Json.obj("ai" -> Seq(slug))
       }
-      val messages = resp.body.select("chat_history").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
-        val role = obj.select("role").asOpt[String].getOrElse("CHATBOT")
+      val messages = resp.body.select("message").select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
+        val role = obj.select("role").asOpt[String].getOrElse("assistant")
         val content = obj.select("message").asOpt[String].getOrElse("")
         ChatGeneration(ChatMessage(role, content))
       }

@@ -90,6 +90,7 @@ case class OpenAiApiResponse(status: Int, headers: Map[String, String], body: Js
     body.select("choices").asOpt[Seq[JsObject]].map(_.map(v => OpenAiApiResponseChoice(v))).getOrElse(Seq.empty)
   }
   def toMistral: MistralAiApiResponse = MistralAiApiResponse(status, headers, body)
+  def toGroq: GroqApiResponse = GroqApiResponse(status, headers, body)
   def json: JsValue = Json.obj(
     "status" -> status,
     "headers" -> headers,
@@ -277,6 +278,8 @@ object OpenAiChatClientOptions {
       top_logprobs = json.select("top_logprobs").asOpt[Int],
       seed = json.select("seed").asOpt[Int],
       presence_penalty = json.select("presence_penalty").asOpt[Double],
+      tools = json.select("tools").asOpt[Seq[JsValue]],
+      tool_choice = json.select("tools").asOpt[Seq[JsValue]],
     )
   }
 }
@@ -296,10 +299,10 @@ case class OpenAiChatClientOptions(
   stop: Option[String] = None,
   temperature: Float = 1,
   topP: Float = 1,
+  user: Option[String] = None,
   tools: Option[Seq[JsValue]] = None,
   tool_choice: Option[Seq[JsValue]] =  None,
-  user: Option[String] = None,
-  wasmTools: Seq[String] = Seq.empty
+  wasmTools: Seq[String] = Seq.empty,
 ) extends ChatOptions {
   override def topK: Int = 0
 
@@ -330,9 +333,7 @@ case class OpenAiChatClientOptions(
 class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String) extends ChatClient {
 
   override def model: Option[String] = options.model.some
-
   override def supportsTools: Boolean = api.supportsTools
-
   override def supportsStreaming: Boolean = api.supportsStreaming
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
