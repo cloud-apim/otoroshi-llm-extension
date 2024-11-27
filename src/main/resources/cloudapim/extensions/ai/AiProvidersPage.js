@@ -206,7 +206,7 @@ class Guardrail extends Component {
           'config.deny': { type: 'array', props: { label: 'Denied expressions' } },
           'config.allow': { type: 'array', props: { label: 'Allowed expressions' } },
           'config.values': { type: 'array', props: { label: 'Possible values' } },
-          'config.score': { type: 'string', props: { label: 'Match score' } },
+          'config.score': { type: 'number', props: { label: 'Match score' } },
           'config.url': { type: 'string', props: { label: 'URL' } },
           'config.headers': { type: 'object', props: { label: 'Headers' } },
           'config.ttl': { type: 'number', props: { label: 'TTL', suffix: 'millis.' } },
