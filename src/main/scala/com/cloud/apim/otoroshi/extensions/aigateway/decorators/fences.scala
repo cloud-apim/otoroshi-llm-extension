@@ -45,6 +45,7 @@ object Guardrails {
     "words" -> new WordsCountGuardrail(),
     "characters" -> new CharactersCountGuardrail(),
     "contains" -> new ContainsGuardrail(),
+    "semantic_contains" -> new SemanticContainsGuardrail(),
   )
 /*
 [

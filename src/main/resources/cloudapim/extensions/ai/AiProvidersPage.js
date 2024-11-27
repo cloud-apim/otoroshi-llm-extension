@@ -28,6 +28,7 @@ class AiProviderTesterMessage extends Component {
     );
   }
 }
+
 class AiProviderTester extends Component {
   state = {
     calling: false,
@@ -145,6 +146,7 @@ class Guardrail extends Component {
     if (id === 'words') return [...def, 'config.min', 'config.max', ...tail];
     if (id === 'characters') return [...def, 'config.min', 'config.max', ...tail];
     if (id === 'contains') return [...def, 'config.operation', 'config.values', ...tail];
+    if (id === 'semantic_contains') return [...def, 'config.operation', 'config.values', 'config.score', ...tail];
     if (id === 'toxic_language') return [...def, 'config.provider', ...tail];
     if (id === 'racial_bias') return [...def, 'config.provider', ...tail];
     if (id === 'gender_bias') return [...def, 'config.provider', ...tail];
@@ -194,6 +196,7 @@ class Guardrail extends Component {
                 {label: 'Words count', value: 'words'},
                 {label: 'Characters count', value: 'characters'},
                 {label: 'Text contains', value: 'contains'},
+                {label: 'Semantic contains', value: 'semantic_contains'},
               ]
             }
           },
@@ -202,7 +205,8 @@ class Guardrail extends Component {
           'config.max': { type: 'number', props: { label: 'Maximum' } },
           'config.deny': { type: 'array', props: { label: 'Denied expressions' } },
           'config.allow': { type: 'array', props: { label: 'Allowed expressions' } },
-          'config.values': { type: 'string', props: { label: 'Possible values' } },
+          'config.values': { type: 'array', props: { label: 'Possible values' } },
+          'config.score': { type: 'string', props: { label: 'Match score' } },
           'config.url': { type: 'string', props: { label: 'URL' } },
           'config.headers': { type: 'object', props: { label: 'Headers' } },
           'config.ttl': { type: 'number', props: { label: 'TTL', suffix: 'millis.' } },
@@ -301,6 +305,7 @@ class Guardrail extends Component {
             if (i.id === 'words') this.props.value[this.props.idx].config = { min: 10, max: 30 };
             if (i.id === 'characters') this.props.value[this.props.idx].config = { min: 20, max: 300 };
             if (i.id === 'contains') this.props.value[this.props.idx].config = { operation: 'contains_all', values: [] };
+            if (i.id === 'semantic_contains') this.props.value[this.props.idx].config = { operation: 'contains_all', values: [], score: 0.8 };
           }
           this.props.onChange(this.props.value)
         }
