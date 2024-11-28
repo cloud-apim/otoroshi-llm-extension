@@ -118,9 +118,9 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
   val supportsStreaming: Boolean = true
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
-    println("\n\n================================\n")
-    println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
-    println("calling openai")
+    // println("\n\n================================\n")
+    // println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
+    // println("calling openai")
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -135,8 +135,8 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
       .withRequestTimeout(timeout)
       .execute()
       .map { resp =>
-        println(s"resp: ${resp.status} - ${resp.body}")
-        println("\n\n================================\n")
+        // println(s"resp: ${resp.status} - ${resp.body}")
+        // println("\n\n================================\n")
         resp
       }
   }
