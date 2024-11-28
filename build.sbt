@@ -37,10 +37,10 @@ lazy val root = (project in file("."))
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       // for rapid dev purposes, the following 2 are marked as provided. needs to be not "provided" for release ////////
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-      "dev.langchain4j" % "langchain4j-embeddings" % langchain4jVersion % "provided" excludeAll(all: _*),
-      "dev.langchain4j" % "langchain4j-embeddings-all-minilm-l6-v2" % langchain4jVersion % "provided" excludeAll(all: _*),
-      // "dev.langchain4j" % "langchain4j-embeddings" % langchain4jVersion excludeAll(all: _*),
-      // "dev.langchain4j" % "langchain4j-embeddings-all-minilm-l6-v2" % langchain4jVersion excludeAll(all: _*),
+      // "dev.langchain4j" % "langchain4j-embeddings" % langchain4jVersion % "provided" excludeAll(all: _*),
+      // "dev.langchain4j" % "langchain4j-embeddings-all-minilm-l6-v2" % langchain4jVersion % "provided" excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j-embeddings" % langchain4jVersion excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j-embeddings-all-minilm-l6-v2" % langchain4jVersion excludeAll(all: _*),
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       "io.netty" % "netty-transport-native-kqueue" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       "io.netty" % "netty-transport-native-epoll" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
