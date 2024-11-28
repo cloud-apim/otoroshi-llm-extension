@@ -61,23 +61,25 @@ object AnthropicChatClientOptions {
       topP = json.select("top_p").asOpt[Float].getOrElse(1.0f),
       topK = json.select("top_k").asOpt[Int].getOrElse(0),
       system = json.select("system").asOpt[String],
+      allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
 }
 
 case class AnthropicChatClientOptions(
-                                    model: String = AnthropicModels.CLAUDE_3_HAIKU,
-                                    max_tokens: Option[Int] = None,
-                                    metadata: Option[JsObject] = None,
-                                    stop_sequences: Option[Seq[String]] = None,
-                                    stream: Option[Boolean] = Some(false),
-                                    system: Option[String] = None,
-                                    temperature: Float = 1,
-                                    tools: Option[Seq[JsValue]] = None,
-                                    tool_choice: Option[Seq[JsValue]] =  None,
-                                    topK: Int = 0,
-                                    topP: Float = 1,
-                                  ) extends ChatOptions {
+  model: String = AnthropicModels.CLAUDE_3_HAIKU,
+  max_tokens: Option[Int] = None,
+  metadata: Option[JsObject] = None,
+  stop_sequences: Option[Seq[String]] = None,
+  stream: Option[Boolean] = Some(false),
+  system: Option[String] = None,
+  temperature: Float = 1,
+  tools: Option[Seq[JsValue]] = None,
+  tool_choice: Option[Seq[JsValue]] =  None,
+  topK: Int = 0,
+  topP: Float = 1,
+  allowConfigOverride: Boolean = true,
+) extends ChatOptions {
 
   override def json: JsObject = Json.obj(
     "model" -> model,
@@ -91,7 +93,10 @@ case class AnthropicChatClientOptions(
     "tool_choice" -> tool_choice,
     "metadata" -> metadata,
     "stop_sequences" -> stop_sequences,
+    "allow_config_override" -> allowConfigOverride,
   )
+
+  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
 }
 
 class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions, id: String) extends ChatClient {
@@ -101,8 +106,9 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
 
   override def model: Option[String] = options.model.some
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     api.call("POST", "/v1/messages", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(

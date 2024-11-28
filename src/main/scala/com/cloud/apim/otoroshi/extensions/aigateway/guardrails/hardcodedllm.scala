@@ -211,7 +211,7 @@ abstract class HardCodedLLMGuardrail extends Guardrail {
                   .orElse(config.select("moderation_items").asOpt[Seq[String]])
                   .orElse(config.select("secrets_leakage_items").asOpt[Seq[String]])
                   .getOrElse(Seq.empty)))
-            ) ++ messages), attrs).flatMap {
+            ) ++ messages), attrs, Json.obj()).flatMap {
               case Left(err) => GuardrailResult.GuardrailDenied(err.stringify).vfuture
               case Right(resp) => {
                 val content = resp.generations.head.message.content.toLowerCase().trim.replace("\n", " ")

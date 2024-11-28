@@ -81,7 +81,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
 
   override def model: Option[String] = None
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val refs: Seq[LoadBalancingTarget] = provider.options.select("refs")
       .asOpt[Seq[String]].map { seq =>
         seq.map(i => LoadBalancingTarget(i, 1))
@@ -112,7 +112,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
         case None => Json.obj("error" -> "no client found").leftf
         case Some(client) => {
           val start = System.currentTimeMillis()
-          client.call(prompt, attrs).map { resp =>
+          client.call(prompt, attrs, originalBody).map { resp =>
             val duration: Long = System.currentTimeMillis() - start
             BestResponseTime.incrementAverage(provider, duration)
             resp

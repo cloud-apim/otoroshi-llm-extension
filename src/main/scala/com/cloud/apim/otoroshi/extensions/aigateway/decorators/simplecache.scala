@@ -33,7 +33,7 @@ class ChatClientWithSimpleCache(originalProvider: AiProvider, val chatClient: Ch
 
   private val ttl = originalProvider.cache.ttl
 
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
     ChatClientWithSimpleCache.cache.getIfPresent(key) match {
       case Some((_, response, at)) =>
@@ -44,7 +44,7 @@ class ChatClientWithSimpleCache(originalProvider: AiProvider, val chatClient: Ch
           cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, age))
         )).rightf
       case None => {
-        chatClient.call(originalPrompt, attrs).map {
+        chatClient.call(originalPrompt, attrs, originalBody).map {
           case Left(err) => err.left
           case Right(resp) => {
             ChatClientWithSimpleCache.cache.put(key, (ttl, resp, System.currentTimeMillis()))

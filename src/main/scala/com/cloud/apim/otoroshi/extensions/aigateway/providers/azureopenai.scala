@@ -274,29 +274,31 @@ object AzureOpenAiChatClientOptions {
       top_logprobs = json.select("top_logprobs").asOpt[Int],
       seed = json.select("seed").asOpt[Int],
       presence_penalty = json.select("presence_penalty").asOpt[Double],
+      allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
 }
 
 case class AzureOpenAiChatClientOptions(
-                                    frequency_penalty: Option[Double] = None,
-                                    logit_bias: Option[Map[String, Int]] = None,
-                                    logprobs: Option[Boolean] = None,
-                                    stream: Option[Boolean] = Some(false),
-                                    top_logprobs: Option[Int] = None,
-                                    max_tokens: Option[Int] = None,
-                                    n: Option[Int] = Some(1),
-                                    seed: Option[Int] = None,
-                                    presence_penalty: Option[Double] = None,
-                                    response_format: Option[String] = None,
-                                    stop: Option[String] = None,
-                                    temperature: Float = 1,
-                                    topP: Float = 1,
-                                    tools: Option[Seq[JsValue]] = None,
-                                    tool_choice: Option[Seq[JsValue]] =  None,
-                                    user: Option[String] = None,
-                                    wasmTools: Seq[String] = Seq.empty
-                                 ) extends ChatOptions {
+  frequency_penalty: Option[Double] = None,
+  logit_bias: Option[Map[String, Int]] = None,
+  logprobs: Option[Boolean] = None,
+  stream: Option[Boolean] = Some(false),
+  top_logprobs: Option[Int] = None,
+  max_tokens: Option[Int] = None,
+  n: Option[Int] = Some(1),
+  seed: Option[Int] = None,
+  presence_penalty: Option[Double] = None,
+  response_format: Option[String] = None,
+  stop: Option[String] = None,
+  temperature: Float = 1,
+  topP: Float = 1,
+  tools: Option[Seq[JsValue]] = None,
+  tool_choice: Option[Seq[JsValue]] =  None,
+  user: Option[String] = None,
+  wasmTools: Seq[String] = Seq.empty,
+  allowConfigOverride: Boolean = true,
+) extends ChatOptions {
   override def topK: Int = 0
 
   override def json: JsObject = Json.obj(
@@ -316,10 +318,11 @@ case class AzureOpenAiChatClientOptions(
     "tools" -> tools,
     "tool_choice" -> tool_choice,
     "user" -> user,
-    "wasm_tools" -> JsArray(wasmTools.map(_.json))
+    "wasm_tools" -> JsArray(wasmTools.map(_.json)),
+    "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools"
+  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
 }
 
 class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientOptions, id: String) extends ChatClient {
@@ -338,8 +341,9 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.jsonForCall.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = WasmFunction.tools(options.wasmTools)
       api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
@@ -391,8 +395,9 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val mergedOptions = options.jsonForCall.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = WasmFunction.tools(options.wasmTools)
       api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))

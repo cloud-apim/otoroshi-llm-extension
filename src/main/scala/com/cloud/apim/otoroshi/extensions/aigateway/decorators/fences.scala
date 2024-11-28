@@ -173,7 +173,7 @@ trait Guardrail {
 
 class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
       case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
       case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
@@ -181,7 +181,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
         ChatResponseMetadata.empty,
       )).vfuture
       case GuardrailResult.GuardrailPass => {
-        chatClient.call(originalPrompt, attrs).flatMap {
+        chatClient.call(originalPrompt, attrs, originalBody).flatMap {
           case Left(err) => Left(err).vfuture
           case Right(r) => {
             originalProvider.guardrails.call(GuardrailsCallPhase.After, r.generations.map(_.message), originalProvider, chatClient, attrs).flatMap {

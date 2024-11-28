@@ -54,7 +54,7 @@ class AiRequestBodyModifier extends NgRequestTransformer {
               client.call(ChatPrompt(config.preChatMessages ++ Seq(
                 ChatMessage("system", config.prompt),
                 ChatMessage("user", bodyRaw.utf8String),
-              ) ++ config.postChatMessages), ctx.attrs).map {
+              ) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
                 case Left(err) => promise.trySuccess(Source.single(err.stringify.byteString))
                 case Right(resp) => {
                   config.extractor match {

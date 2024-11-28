@@ -74,6 +74,7 @@ object GeminiChatClientOptions {
       topP = json.select("topP").asOpt[Float].getOrElse(0.95f),
       topK = json.select("top_k").asOpt[Int].getOrElse(40),
       stopSequences = json.select("stopSequences").asOpt[Array[String]],
+      allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
 }
@@ -83,15 +84,18 @@ case class GeminiChatClientOptions(
   temperature: Float = 1,
   topP: Float = 0.95f,
   topK: Int = 1,
-  stopSequences: Option[Array[String]] = None
+  stopSequences: Option[Array[String]] = None,
+  allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
   override def json: JsObject = Json.obj(
     "maxOutputTokens" -> maxOutputTokens,
     "temperature" -> temperature,
     "topP" -> topP,
     "topK" -> topK,
-    "stopSequences" -> stopSequences
+    "stopSequences" -> stopSequences,
+    "allow_config_override" -> allowConfigOverride,
   )
+  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
 }
 
 class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: String) extends ChatClient {
@@ -111,8 +115,9 @@ class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: Str
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     api.call("POST", Some(mergedOptions ++ Json.obj(
       "contents" -> Json.obj("parts" -> prompt.json),
       "generationConfig" -> options.json

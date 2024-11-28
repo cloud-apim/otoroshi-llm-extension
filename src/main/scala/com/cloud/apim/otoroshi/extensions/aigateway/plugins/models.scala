@@ -1,6 +1,7 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins._
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
@@ -22,10 +23,10 @@ class OpenAiCompatModels extends NgBackendCall {
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
   override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
   override def useDelegates: Boolean = false
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefConfig.default)
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefsConfig.default)
   override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = AiPluginRefConfig.configFlow
-  override def configSchema: Option[JsObject] = AiPluginRefConfig.configSchema("LLM provider", "providers")
+  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow
+  override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers")
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
@@ -35,8 +36,14 @@ class OpenAiCompatModels extends NgBackendCall {
   }
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val config = ctx.cachedConfig(internalName)(AiPluginRefConfig.format).getOrElse(AiPluginRefConfig.default)
-    val provider = env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref))
+    val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
+    val provider: Option[AiProvider] = ctx.request.queryParam("provider").filter(v => config.refs.contains(v)).flatMap { r =>
+      env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
+    }.orElse(
+      config.refs.headOption.flatMap { r =>
+        env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
+      }
+    )
     provider match {
       case None => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.InternalServerError(Json.obj("error" -> "provider not found"))), None)).vfuture
       case Some(provider) => {

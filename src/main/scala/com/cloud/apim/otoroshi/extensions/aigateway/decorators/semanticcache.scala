@@ -51,12 +51,12 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, val chatClient: 
   private val ttl = originalProvider.cache.ttl
   private val searchInPrompts = true
 
-  private def notInCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  private def notInCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val embeddingModel = ChatClientWithSemanticCache.embeddingModel
     val embeddingStore = ChatClientWithSemanticCache.embeddingStores.getOrUpdate(originalProvider.id) {
       new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
     }
-    chatClient.call(originalPrompt, attrs).map {
+    chatClient.call(originalPrompt, attrs, originalBody).map {
       case Left(err) => err.left
       case Right(resp) => {
         if (searchInPrompts) {
@@ -85,7 +85,7 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, val chatClient: 
     }
   }
 
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
     val key = query.sha512
     ChatClientWithSemanticCache.cache.getIfPresent(key) match {
@@ -118,7 +118,7 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, val chatClient: 
             val score = resp.score()
             // println(s"using semantic prompt with score: ${score} with prompt: ${prompt} and id: ${id}")
             ChatClientWithSemanticCache.cache.getIfPresent(id) match {
-              case None => notInCache(key, originalPrompt, attrs) // TODO: key or id ???
+              case None => notInCache(key, originalPrompt, attrs, originalBody) // TODO: key or id ???
               case Some(cached) => {
                 val chatResponse = cached._2
                 chatResponse.copy(metadata = chatResponse.metadata.copy(
@@ -140,7 +140,7 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, val chatClient: 
           }
         } else {
           // println("not in semantic cache")
-          notInCache(key, originalPrompt, attrs)
+          notInCache(key, originalPrompt, attrs, originalBody)
         }
       }
     }

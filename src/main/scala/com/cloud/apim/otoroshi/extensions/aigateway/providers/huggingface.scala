@@ -54,6 +54,7 @@ object HuggingfaceChatClientOptions {
       max_tokens = json.select("max_tokens").asOpt[Int],
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
       topP = json.select("top_p").asOpt[Float].getOrElse(1.0f),
+      allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
 }
@@ -66,6 +67,7 @@ case class HuggingfaceChatClientOptions(
   stop: Option[Seq[String]] = None,
   temperature: Float = 1,
   topP: Float = 1,
+  allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
 
   override def json: JsObject = Json.obj(
@@ -76,7 +78,10 @@ case class HuggingfaceChatClientOptions(
     "stop" -> stop,
     "temperature" -> temperature,
     "top_p" -> topP,
+    "allow_config_override" -> allowConfigOverride,
   )
+
+  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
 
   override def topK: Int = 0
 }
@@ -89,8 +94,9 @@ class HuggingfaceChatClient(api: HuggingfaceApi, options: HuggingfaceChatClientO
 
   override def model: Option[String] = api.modelName.some
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     api.call("POST", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(

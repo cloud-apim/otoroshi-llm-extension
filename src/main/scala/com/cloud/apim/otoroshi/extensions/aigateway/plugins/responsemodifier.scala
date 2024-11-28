@@ -167,7 +167,7 @@ class AiResponseBodyModifier extends NgRequestTransformer {
             client.call(ChatPrompt(config.preChatMessages ++ Seq(
               ChatMessage("system", config.prompt),
               ChatMessage("user", bodyRaw.utf8String),
-            ) ++ config.postChatMessages), ctx.attrs).flatMap {
+            ) ++ config.postChatMessages), ctx.attrs, Json.obj()).flatMap {
               case Left(err) => Left(Results.InternalServerError(Json.obj("error" -> err))).vfuture // TODO: rewrite error
               case Right(resp) => {
                 config.extractor match {

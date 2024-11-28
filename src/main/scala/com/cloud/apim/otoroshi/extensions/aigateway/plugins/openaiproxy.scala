@@ -4,14 +4,14 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefConfig, AiPluginsKeys}
+import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsNull, JsObject, JsValue, Json}
+import play.api.libs.json.{JsObject, JsValue, Json}
 import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -26,11 +26,11 @@ class OpenAiCompatProxy extends NgBackendCall {
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
   override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
   override def useDelegates: Boolean = false
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefConfig.default)
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefsConfig.default)
 
   override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = AiPluginRefConfig.configFlow
-  override def configSchema: Option[JsObject] = AiPluginRefConfig.configSchema("LLM provider", "providers")
+  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow
+  override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers")
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
@@ -39,17 +39,19 @@ class OpenAiCompatProxy extends NgBackendCall {
     ().vfuture
   }
 
-  def call(jsonBody: JsValue, config: AiPluginRefConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def call(jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     // println(s"\n\nreq: ${ctx.request.json.prettify}\n\n")
     // println(s"\n\nctx: ${Json.obj(
     //   "user" -> ctx.user.map(_.json).getOrElse(JsNull).asValue,
     //   "apikey" -> ctx.apikey.map(_.json).getOrElse(JsNull).asValue,
     // ).prettify}\n\n")
     // println(s"\n\nbody: ${jsonBody.prettify}\n\n")
-    val provider: Option[AiProvider] = jsonBody.select("model").asOpt[String].flatMap { r =>
+    val provider: Option[AiProvider] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
     }.orElse(
-      env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref))
+      config.refs.headOption.flatMap { r =>
+        env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
+      }
     )
     provider.flatMap(_.getChatClient()) match {
       case None => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "provider not found")))).vfuture // TODO: rewrite error
@@ -78,7 +80,7 @@ class OpenAiCompatProxy extends NgBackendCall {
             ChatMessage(role, content)
           }
           if (stream) {
-            client.tryStream(ChatPrompt(messages), ctx.attrs).map {
+            client.tryStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(source) => {
                 val finalSource = source.map(_.openaiEventSource).concat(Source.single("data: [DONE]\n\n".byteString))
@@ -86,7 +88,7 @@ class OpenAiCompatProxy extends NgBackendCall {
               }
             }
           } else {
-            client.call(ChatPrompt(messages), ctx.attrs).map {
+            client.call(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiJson(client.model.getOrElse("none")))
                 .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
@@ -113,11 +115,11 @@ class OpenAiCompatProxy extends NgBackendCall {
     if (ctx.request.hasBody) {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         val jsonBody = bodyRaw.utf8String.parseJson
-        val config = ctx.cachedConfig(internalName)(AiPluginRefConfig.format).getOrElse(AiPluginRefConfig.default)
+        val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
         call(jsonBody, config, ctx)
       }
     } else {
-      val config = ctx.cachedConfig(internalName)(AiPluginRefConfig.format).getOrElse(AiPluginRefConfig.default)
+      val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
       call(Json.obj(), config, ctx)
     }
   }

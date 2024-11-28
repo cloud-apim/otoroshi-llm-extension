@@ -193,6 +193,7 @@ object MistralAiChatClientOptions {
       tools = json.select("tools").asOpt[Seq[JsValue]],
       tool_choice = json.select("tool_choice").asOpt[Seq[JsValue]],
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
 }
@@ -206,7 +207,8 @@ case class MistralAiChatClientOptions(
   topP: Float = 1,
   tools: Option[Seq[JsValue]] = None,
   tool_choice: Option[Seq[JsValue]] =  None,
-  wasmTools: Seq[String] = Seq.empty
+  wasmTools: Seq[String] = Seq.empty,
+  allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
   override def topK: Int = 0
 
@@ -219,10 +221,11 @@ case class MistralAiChatClientOptions(
     "top_p" -> topP,
     "tools" -> tools,
     "tool_choice" -> tool_choice,
-    "wasm_tools" -> JsArray(wasmTools.map(_.json))
+    "wasm_tools" -> JsArray(wasmTools.map(_.json)),
+    "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools"
+  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
 }
 
 class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions, id: String) extends ChatClient {
@@ -241,8 +244,9 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = WasmFunction.tools(options.wasmTools)
       api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
@@ -294,8 +298,9 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val mergedOptions = options.jsonForCall.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = WasmFunction.tools(options.wasmTools)
       api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))

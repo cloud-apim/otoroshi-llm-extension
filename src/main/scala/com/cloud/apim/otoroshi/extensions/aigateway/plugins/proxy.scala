@@ -3,7 +3,8 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 import akka.stream.Materializer
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefConfig, AiPluginsKeys, PromptValidatorConfig}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefConfig, AiPluginRefsConfig, AiPluginsKeys, PromptValidatorConfig}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
@@ -49,11 +50,11 @@ class AiLlmProxy extends NgBackendCall {
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
   override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
   override def useDelegates: Boolean = false
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefConfig.default)
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefsConfig.default)
 
   override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = AiPluginRefConfig.configFlow
-  override def configSchema: Option[JsObject] = AiPluginRefConfig.configSchema("LLM provider", "providers")
+  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow
+  override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers")
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
@@ -62,8 +63,15 @@ class AiLlmProxy extends NgBackendCall {
     ().vfuture
   }
 
-  def call(jsonBody: JsValue, config: AiPluginRefConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref).flatMap(_.getChatClient())) match {
+  def call(jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val provider: Option[AiProvider] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
+      env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
+    }.orElse(
+      config.refs.headOption.flatMap { r =>
+        env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
+      }
+    )
+    provider.flatMap(_.getChatClient()) match {
       case None => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "provider not found")))).vfuture // TODO: rewrite error
       case Some(client) => {
         val stream = ctx.request.queryParam("stream").contains("true") || ctx.request.header("x-stream").contains("true") || jsonBody.select("stream").asOpt[Boolean].contains(true)
@@ -89,7 +97,7 @@ class AiLlmProxy extends NgBackendCall {
             ChatMessage(role, content)
           }
           if (stream) {
-            client.tryStream(ChatPrompt(messages), ctx.attrs).map {
+            client.tryStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(source) => {
                 val finalSource = source.map(_.eventSource)
@@ -97,7 +105,7 @@ class AiLlmProxy extends NgBackendCall {
               }
             }
           } else {
-            client.call(ChatPrompt(messages), ctx.attrs).map {
+            client.call(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.json).withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
             }
@@ -123,11 +131,11 @@ class AiLlmProxy extends NgBackendCall {
     if (ctx.request.hasBody) {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         val jsonBody = bodyRaw.utf8String.parseJson
-        val config = ctx.cachedConfig(internalName)(AiPluginRefConfig.format).getOrElse(AiPluginRefConfig.default)
+        val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
         call(jsonBody, config, ctx)
       }
     } else {
-      val config = ctx.cachedConfig(internalName)(AiPluginRefConfig.format).getOrElse(AiPluginRefConfig.default)
+      val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
       call(Json.obj(), config, ctx)
     }
   }

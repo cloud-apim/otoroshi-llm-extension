@@ -114,17 +114,19 @@ object OVHAiEndpointsChatClientOptions {
       seed = json.select("seed").asOpt[Int],
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
       topP = json.select("topP").asOpt[Float].getOrElse(1.0f),
+      allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
 }
 
 case class OVHAiEndpointsChatClientOptions(
-                                    model: String = OVHAiEndpointsModels.mixtral_8x22b_instruct_v01,
-                                    max_tokens: Option[Int] = None,
-                                    seed: Option[Int] = None,
-                                    temperature: Float = 1,
-                                    topP: Float = 1,
-                                  ) extends ChatOptions {
+  model: String = OVHAiEndpointsModels.mixtral_8x22b_instruct_v01,
+  max_tokens: Option[Int] = None,
+  seed: Option[Int] = None,
+  temperature: Float = 1,
+  topP: Float = 1,
+  allowConfigOverride: Boolean = true,
+) extends ChatOptions {
   override def topK: Int = 0
 
   override def json: JsObject = Json.obj(
@@ -134,7 +136,10 @@ case class OVHAiEndpointsChatClientOptions(
     "stream" -> false,
     "temperature" -> temperature,
     "top_p" -> topP,
+    "allow_config_override" -> allowConfigOverride,
   )
+
+  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
 }
 
 class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsChatClientOptions, id: String) extends ChatClient {
@@ -153,8 +158,9 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val body = mergedOptions ++ Json.obj("messages" -> prompt.json)
     api.call(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(body)).map { resp =>
       val usage = ChatResponseMetadata(
@@ -201,8 +207,9 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     api.stream(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
       case (source, resp) =>
         source

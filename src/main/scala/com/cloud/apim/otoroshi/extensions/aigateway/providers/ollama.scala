@@ -194,6 +194,7 @@ object OllamaAiChatClientOptions {
       num_gqa = json.select("num_gqa").asOpt[Int],
       num_ctx = json.select("num_ctx").asOpt[Int],
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
 }
@@ -213,7 +214,8 @@ case class OllamaAiChatClientOptions(
    num_gpu: Option[Int] = None,
    num_gqa: Option[Int] = None,
    num_ctx: Option[Int] = None,
-   wasmTools: Seq[String] = Seq.empty
+   wasmTools: Seq[String] = Seq.empty,
+   allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
 
   def temperature: Float = temper.toFloat
@@ -233,10 +235,11 @@ case class OllamaAiChatClientOptions(
     "num_gpu" -> num_gpu,
     "num_gqa" -> num_gqa,
     "num_ctx" -> num_ctx,
-    "wasm_tools" -> JsArray(wasmTools.map(_.json))
+    "wasm_tools" -> JsArray(wasmTools.map(_.json)),
+    "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools"
+  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
 }
 
 class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, id: String) extends ChatClient {
@@ -255,12 +258,13 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.jsonForCall.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj())).applyOn(_ - "model")
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json) - "model"
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = WasmFunction.tools(options.wasmTools)
       api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(
-        "model" -> options.model,
+        "model" -> mergedOptions.select("model").asOptString.getOrElse(options.model).asInstanceOf[String],
         "stream" -> false,
         "messages" -> prompt.json,
         "options" -> mergedOptions,
@@ -315,10 +319,11 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj())).applyOn(_ - "model")
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json) - "model"
     api.stream("POST", "/api/chat", Some(Json.obj(
-      "model" -> options.model,
+      "model" -> mergedOptions.select("model").asOptString.getOrElse(options.model).asInstanceOf[String],
       "stream" -> true,
       "messages" -> prompt.json,
       "options" -> mergedOptions

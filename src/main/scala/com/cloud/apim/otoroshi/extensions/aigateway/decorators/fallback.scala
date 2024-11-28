@@ -22,14 +22,14 @@ object ChatClientWithProviderFallback {
 
 class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    chatClient.call(originalPrompt, attrs).flatMap {
+  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    chatClient.call(originalPrompt, attrs, originalBody).flatMap {
       case Left(err) => {
         env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(originalProvider.providerFallback.get)) match {
           case None => err.leftf
           case Some(provider) => provider.getChatClient() match {
             case None => err.leftf
-            case Some(fallbackClient) => fallbackClient.call(originalPrompt, attrs)
+            case Some(fallbackClient) => fallbackClient.call(originalPrompt, attrs, originalBody)
           }
         }
       }
@@ -40,7 +40,7 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
           case None => Json.obj("error" -> "fallback provider not found").leftf
           case Some(provider) => provider.getChatClient() match {
             case None => Json.obj("error" -> "fallback client not found").leftf
-            case Some(fallbackClient) => fallbackClient.call(originalPrompt, attrs)
+            case Some(fallbackClient) => fallbackClient.call(originalPrompt, attrs, originalBody)
           }
         }
       }

@@ -58,7 +58,8 @@ object CohereAiChatClientOptions {
       k = json.select("k").asOpt[Int],
       p = json.select("p").asOpt[Double],
       temperature = json.select("temperature").asOpt[Float].getOrElse(0.3f),
-      seed = json.select("seed").asOpt[Int]
+      seed = json.select("seed").asOpt[Int],
+      allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
 }
@@ -73,6 +74,7 @@ case class CohereAiChatClientOptions(
   p: Option[Double] = Some(1.0),
   frequency_penalty: Option[Double] = None,
   seed: Option[Int] = None,
+  allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
 
   override def json: JsObject = Json.obj(
@@ -85,7 +87,10 @@ case class CohereAiChatClientOptions(
     "p" -> topP,
     "frequency_penalty" -> frequency_penalty,
     "seed" -> seed,
+    "allow_config_override" -> allowConfigOverride,
   )
+
+  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
 
   override def topP: Float = p.map(_.toFloat).getOrElse(0.75f)
   override def topK: Int = k.getOrElse(0)
@@ -108,8 +113,9 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     api.call("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(

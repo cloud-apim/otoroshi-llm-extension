@@ -184,6 +184,7 @@ object GroqChatClientOptions {
       topP = json.select("top_p").asOpt[Float].getOrElse(1.0f),
       n = json.select("n").asOpt[Int].getOrElse(1),
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
 }
@@ -198,6 +199,7 @@ case class GroqChatClientOptions(
     topP: Float = 1,
     n: Int = 1,
     wasmTools: Seq[String] = Seq.empty,
+    allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
 
   override def json: JsObject = Json.obj(
@@ -209,10 +211,11 @@ case class GroqChatClientOptions(
     "tools" -> tools,
     "tool_choice" -> tool_choice,
     "n" -> n,
-    "wasm_tools" -> JsArray(wasmTools.map(_.json))
+    "wasm_tools" -> JsArray(wasmTools.map(_.json)),
+    "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools"
+  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
 
   override def topK: Int = 0
 }
@@ -233,8 +236,9 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.jsonForCall.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = WasmFunction.tools(options.wasmTools)
       api.callWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
@@ -285,8 +289,9 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val mergedOptions = options.jsonForCall.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = WasmFunction.tools(options.wasmTools)
       api.streamWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))

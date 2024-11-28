@@ -42,7 +42,7 @@ class AiContextValidator extends NgAccessValidator {
           client.call(ChatPrompt(config.preChatMessages ++ Seq(
             ChatMessage("system", config.prompt),
             ChatMessage("user", ctx.json.stringify),
-          ) ++ config.postChatMessages), ctx.attrs).map {
+          ) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
             case Left(err) => false // TODO: log it
             case Right(resp) => {
               val content = resp.generations.head.message.content

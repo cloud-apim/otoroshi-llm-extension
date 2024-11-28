@@ -187,3 +187,41 @@ object AiPluginRefConfig {
     }
   }
 }
+
+
+case class AiPluginRefsConfig(refs: Seq[String]) extends NgPluginConfig {
+  def json: JsValue = AiPluginRefsConfig.format.writes(this)
+}
+
+object AiPluginRefsConfig {
+  val configFlow: Seq[String] = Seq("refs")
+  def configSchema(what: String, name: String): Option[JsObject] = Some(Json.obj(
+    "refs" -> Json.obj(
+      "type" -> "select",
+      "array" -> true,
+      "label" -> s"AI ${what}",
+      "props" -> Json.obj(
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/${name}",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      ),
+    )
+  ))
+  val default = AiPluginRefsConfig(Seq.empty)
+  val format = new Format[AiPluginRefsConfig] {
+    override def writes(o: AiPluginRefsConfig): JsValue = Json.obj("refs" -> o.refs)
+    override def reads(json: JsValue): JsResult[AiPluginRefsConfig] = Try {
+      val singleRef = json.select("ref").asOpt[String].map(r => Seq(r)).getOrElse(Seq.empty)
+      val refs = json.select("refs").asOpt[Seq[String]].getOrElse(Seq.empty)
+      val allRefs = refs ++ singleRef
+      AiPluginRefsConfig(
+        refs = allRefs
+      )
+    } match {
+      case Failure(exception) => JsError(exception.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+  }
+}

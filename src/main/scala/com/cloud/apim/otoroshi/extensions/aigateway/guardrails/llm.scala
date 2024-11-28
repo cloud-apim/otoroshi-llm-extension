@@ -39,7 +39,7 @@ class LLMGuardrail extends Guardrail {
                 case Some(validationClient) => {
                   validationClient.call(ChatPrompt(Seq(
                     ChatMessage("system", prompt.prompt)
-                  ) ++ messages), attrs).flatMap {
+                  ) ++ messages), attrs, Json.obj()).flatMap {
                     case Left(err) => fail(2)
                     case Right(resp) => {
                       val content = resp.generations.head.message.content.toLowerCase().trim.replace("\n", " ")

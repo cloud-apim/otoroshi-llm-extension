@@ -55,6 +55,7 @@ object CloudflareChatClientOptions {
       temperature = json.select("temperature").asOpt[Float].getOrElse(0.6f),
       topK = json.select("topK").asOpt[Int].getOrElse(1),
       topP = json.select("topP").asOpt[Float].getOrElse(0f),
+      allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
 }
@@ -68,6 +69,7 @@ case class CloudflareChatClientOptions(
   temperature: Float = 0.6f,
   topK: Int = 1,
   topP: Float = 0,
+  allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
 
   override def json: JsObject = Json.obj(
@@ -79,7 +81,10 @@ case class CloudflareChatClientOptions(
     "temperature" -> temperature,
     "top_k" -> topK,
     "top_p" -> topP,
+    "allow_config_override" -> allowConfigOverride,
   )
+
+  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
 }
 
 class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOptions, id: String) extends ChatClient {
@@ -89,8 +94,9 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
 
   override def model: Option[String] = api.modelName.some
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val mergedOptions = options.json.deepMerge(prompt.options.map(_.json).getOrElse(Json.obj()))
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val obody = originalBody.asObject - "messages"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     api.call("POST", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(

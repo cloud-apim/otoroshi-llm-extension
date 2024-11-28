@@ -19,6 +19,8 @@ trait ChatOptions {
   def topP: Float
   def topK: Int
   def json: JsObject
+  def jsonForCall: JsObject
+  def allowConfigOverride: Boolean
 }
 case class ChatPrompt(messages: Seq[ChatMessage], options: Option[ChatOptions] = None) {
   def json: JsValue = JsArray(messages.map(_.json))
@@ -220,17 +222,17 @@ trait ChatClient {
 
   def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
 
-  def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]]
+  def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]]
 
-  def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     Left(Json.obj("error" -> "streaming not supported")).future
   }
 
-  def tryStream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  def tryStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     if (supportsStreaming) {
-      stream(prompt, attrs)
+      stream(prompt, attrs, originalBody)
     } else {
-      call(prompt, attrs).map {
+      call(prompt, attrs, originalBody).map {
         case Left(err) => Left(err)
         case Right(resp) => Right(resp.toSource(model.getOrElse("none")))
       }

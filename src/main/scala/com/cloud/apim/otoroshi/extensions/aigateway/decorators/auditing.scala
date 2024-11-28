@@ -21,12 +21,12 @@ object ChatClientWithAuditing {
 
 class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
     // val request = attrs.get(otoroshi.plugins.Keys.RequestKey)
-    chatClient.call(prompt, attrs).andThen {
+    chatClient.call(prompt, attrs, originalBody).andThen {
       case Failure(exception) => {
         AuditEvent.generic("LLMUsageAudit") {
           Json.obj(
@@ -78,12 +78,12 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
     // val request = attrs.get(otoroshi.plugins.Keys.RequestKey)
-    chatClient.stream(prompt, attrs).andThen {
+    chatClient.stream(prompt, attrs, originalBody).andThen {
       case Failure(exception) => {
         AuditEvent.generic("LLMUsageAudit") {
           Json.obj(

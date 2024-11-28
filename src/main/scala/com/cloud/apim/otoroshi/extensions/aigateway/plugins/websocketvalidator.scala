@@ -50,7 +50,7 @@ class AiWebsocketMessageValidator extends NgWebsocketValidatorPlugin {
               client.call(ChatPrompt(config.preChatMessages ++ Seq(
                 ChatMessage("system", config.prompt),
                 ChatMessage("user", str),
-              ) ++ config.postChatMessages), ctx.attrs).map {
+              ) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
                 case Left(err) => Left(NgWebsocketError(CloseCodes.UnexpectedCondition, s"error: ${err.stringify}"))
                 case Right(resp) => {
                   val content = resp.generations.head.message.content
