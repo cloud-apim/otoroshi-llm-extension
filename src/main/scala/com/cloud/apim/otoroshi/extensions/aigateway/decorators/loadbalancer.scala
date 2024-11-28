@@ -1,7 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
+import akka.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.cache.types.UnboundedTrieMap
@@ -81,7 +82,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
 
   override def model: Option[String] = None
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: ChatClient => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val refs: Seq[LoadBalancingTarget] = provider.options.select("refs")
       .asOpt[Seq[String]].map { seq =>
         seq.map(i => LoadBalancingTarget(i, 1))
@@ -110,14 +111,29 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
       val provider = loadBalancing.select(LoadBalancerChatClient.counter.incrementAndGet().toString, providers)
       provider.getChatClient() match {
         case None => Json.obj("error" -> "no client found").leftf
-        case Some(client) => {
-          val start = System.currentTimeMillis()
-          client.call(prompt, attrs, originalBody).map { resp =>
-            val duration: Long = System.currentTimeMillis() - start
-            BestResponseTime.incrementAverage(provider, duration)
-            resp
-          }
-        }
+        case Some(client) => f(client)
+      }
+    }
+  }
+
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    execute(prompt, attrs, originalBody) { client =>
+      val start = System.currentTimeMillis()
+      client.call(prompt, attrs, originalBody).map { resp =>
+        val duration: Long = System.currentTimeMillis() - start
+        BestResponseTime.incrementAverage(provider, duration)
+        resp
+      }
+    }
+  }
+
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    execute(prompt, attrs, originalBody) { client =>
+      val start = System.currentTimeMillis()
+      client.stream(prompt, attrs, originalBody).map { resp =>
+        val duration: Long = System.currentTimeMillis() - start
+        BestResponseTime.incrementAverage(provider, duration)
+        resp
       }
     }
   }

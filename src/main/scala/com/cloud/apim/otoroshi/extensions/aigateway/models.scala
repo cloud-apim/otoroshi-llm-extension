@@ -228,7 +228,7 @@ trait ChatClient {
     Left(Json.obj("error" -> "streaming not supported")).future
   }
 
-  def tryStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  final def tryStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     if (supportsStreaming) {
       stream(prompt, attrs, originalBody)
     } else {

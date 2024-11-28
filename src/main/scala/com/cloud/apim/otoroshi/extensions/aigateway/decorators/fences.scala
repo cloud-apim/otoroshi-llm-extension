@@ -1,7 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
+import akka.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseMetadata}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata}
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails._
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -193,6 +194,22 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
               case GuardrailResult.GuardrailPass => Right(r).vfuture
             }
           }
+        }
+      }
+    }
+  }
+
+  override def stream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
+      case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
+      case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
+        Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg))),
+        ChatResponseMetadata.empty,
+      ).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
+      case GuardrailResult.GuardrailPass => {
+        chatClient.stream(originalPrompt, attrs, originalBody).flatMap {
+          case Left(err) => Left(err).vfuture
+          case Right(r) => Right(r).vfuture
         }
       }
     }

@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
+import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway._
 import com.github.benmanes.caffeine.cache.RemovalCause
@@ -26,6 +27,14 @@ object ChatClientWithSemanticCache {
     )
     .maximumSize(5000) // TODO: custom ?
     .build[String, (FiniteDuration, ChatResponse, Long)]()
+  lazy val stream_cache = Scaffeine()
+    .expireAfter[String, (FiniteDuration, Seq[ChatResponseChunk], Long)](
+      create = (key, value) => value._1,
+      update = (key, value, currentDuration) => currentDuration,
+      read = (key, value, currentDuration) => currentDuration
+    )
+    .maximumSize(5000) // TODO: custom ?
+    .build[String, (FiniteDuration, Seq[ChatResponseChunk], Long)]()
   lazy val cacheEmbeddingCleanup = Scaffeine()
     .expireAfter[String, (FiniteDuration, Function[String, Unit])](
       create = (key, value) => value._1,
@@ -49,7 +58,6 @@ object ChatClientWithSemanticCache {
 class ChatClientWithSemanticCache(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
   private val ttl = originalProvider.cache.ttl
-  private val searchInPrompts = true
 
   private def notInCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val embeddingModel = ChatClientWithSemanticCache.embeddingModel
@@ -59,28 +67,46 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, val chatClient: 
     chatClient.call(originalPrompt, attrs, originalBody).map {
       case Left(err) => err.left
       case Right(resp) => {
-        if (searchInPrompts) {
-          val segment = TextSegment.from(originalPrompt.messages.map(_.content).mkString(". "))
-          val embedding = embeddingModel.embed(segment).content()
-          embeddingStore.add(key, embedding, segment)
-          // println(s"putting in cache for ${ttl.toMillis} - ${key} - ${segment.text()}")
-          ChatClientWithSemanticCache.cache.put(key, (ttl, resp, System.currentTimeMillis()))
-          ChatClientWithSemanticCache.cacheEmbeddingCleanup.put(key, (ttl, (key) => {
-            // println(s"removing ${segment.text()} - ${key}")
-            embeddingStore.remove(key)
-          }))
-        } else {
-          val segment = TextSegment.from(resp.generations.head.message.content)
-          val embedding = embeddingModel.embed(segment).content()
-          embeddingStore.add(key, embedding, segment)
-          ChatClientWithSemanticCache.cache.put(key, (ttl, resp, System.currentTimeMillis()))
-          ChatClientWithSemanticCache.cacheEmbeddingCleanup.put(key, (ttl, (key) => {
-            embeddingStore.remove(key)
-          }))
-        }
+        val segment = TextSegment.from(originalPrompt.messages.map(_.content).mkString(". "))
+        val embedding = embeddingModel.embed(segment).content()
+        embeddingStore.add(key, embedding, segment)
+        // println(s"putting in cache for ${ttl.toMillis} - ${key} - ${segment.text()}")
+        ChatClientWithSemanticCache.cache.put(key, (ttl, resp, System.currentTimeMillis()))
+        ChatClientWithSemanticCache.cacheEmbeddingCleanup.put(key, (ttl, (key) => {
+          // println(s"removing ${segment.text()} - ${key}")
+          embeddingStore.remove(key)
+        }))
         resp.copy(metadata = resp.metadata.copy(
           cache = Some(ChatResponseCache(ChatResponseCacheStatus.Miss, key, ttl, 0.millis))
         )).right
+      }
+    }
+  }
+
+  private def notInCacheStream(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val embeddingModel = ChatClientWithSemanticCache.embeddingModel
+    val embeddingStore = ChatClientWithSemanticCache.embeddingStores.getOrUpdate(originalProvider.id) {
+      new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
+    }
+    chatClient.stream(originalPrompt, attrs, originalBody).map {
+      case Left(err) => err.left
+      case Right(resp) => {
+        var chunks = Seq.empty[ChatResponseChunk]
+        resp
+          .alsoTo(Sink.foreach { chunk =>
+            chunks = chunks :+ chunk
+          })
+          .alsoTo(Sink.onComplete { _ =>
+            val segment = TextSegment.from(originalPrompt.messages.map(_.content).mkString(". "))
+            val embedding = embeddingModel.embed(segment).content()
+            embeddingStore.add(key, embedding, segment)
+            ChatClientWithSemanticCache.stream_cache.put(key, (ttl, chunks, System.currentTimeMillis()))
+            // println(s"putting in cache for ${ttl.toMillis} - ${key} - ${segment.text()}")
+            ChatClientWithSemanticCache.cacheEmbeddingCleanup.put(key, (ttl, (key) => {
+              // println(s"removing ${segment.text()} - ${key}")
+              embeddingStore.remove(key)
+            }))
+          }).right
       }
     }
   }
@@ -111,36 +137,67 @@ class ChatClientWithSemanticCache(originalProvider: AiProvider, val chatClient: 
           //   println(s" - ${it.score()} - ${it.embedded().text()}")
           // }
           val resp = matches.head
-          if (searchInPrompts) {
             // println("searching prompt")
-            val id = resp.embeddingId()
-            val prompt = resp.embedded().text()
-            val score = resp.score()
-            // println(s"using semantic prompt with score: ${score} with prompt: ${prompt} and id: ${id}")
-            ChatClientWithSemanticCache.cache.getIfPresent(id) match {
-              case None => notInCache(key, originalPrompt, attrs, originalBody) // TODO: key or id ???
-              case Some(cached) => {
-                val chatResponse = cached._2
-                chatResponse.copy(metadata = chatResponse.metadata.copy(
-                  usage = ChatResponseMetadataUsage.empty,
-                  cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, (System.currentTimeMillis() - cached._3).millis))
-                )).rightf
-              }
+          val id = resp.embeddingId()
+          val prompt = resp.embedded().text()
+          val score = resp.score()
+          // println(s"using semantic prompt with score: ${score} with prompt: ${prompt} and id: ${id}")
+          ChatClientWithSemanticCache.cache.getIfPresent(id) match {
+            case None => notInCache(key, originalPrompt, attrs, originalBody) // TODO: key or id ???
+            case Some(cached) => {
+              val chatResponse = cached._2
+              chatResponse.copy(metadata = chatResponse.metadata.copy(
+                usage = ChatResponseMetadataUsage.empty,
+                cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, (System.currentTimeMillis() - cached._3).millis))
+              )).rightf
             }
-          } else {
-            // println("searching responses")
-            val text = resp.embedded().text()
-            val score = resp.score()
-            // println(s"using semantic response: ${score} with text: ${text}")
-            val chatResponse = ChatResponse(Seq(ChatGeneration(ChatMessage("assistant", text))), ChatResponseMetadata.empty)
-            ChatClientWithSemanticCache.cache.put(key, (ttl, chatResponse, System.currentTimeMillis()))
-            chatResponse.copy(metadata = chatResponse.metadata.copy(
-              cache = Some(ChatResponseCache(ChatResponseCacheStatus.Miss, key, ttl, 0.millis))
-            )).rightf
           }
         } else {
           // println("not in semantic cache")
           notInCache(key, originalPrompt, attrs, originalBody)
+        }
+      }
+    }
+  }
+
+  override def stream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
+    val key = query.sha512
+    ChatClientWithSemanticCache.stream_cache.getIfPresent(key) match {
+      case Some((_, response, at)) =>
+        // println("using semantic cached response")
+        Source(response.toList).rightf
+      case None => {
+        val embeddingModel = ChatClientWithSemanticCache.embeddingModel
+        val embeddingStore = ChatClientWithSemanticCache.embeddingStores.getOrUpdate(originalProvider.id) {
+          new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
+        }
+        val queryEmbedding = embeddingModel.embed(query).content()
+        // println(s"searching query: ${query}")
+        val relevant = embeddingStore.search(dev.langchain4j.store.embedding.EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding).maxResults(1).minScore(originalProvider.cache.score).build())
+        val matches = relevant.matches().asScala
+        // println(s"cache: ${matches.length}")
+        if (matches.nonEmpty) {
+          // println(s"found ${matches.length} results")
+          // matches.foreach { it =>
+          //   println(s" - ${it.score()} - ${it.embedded().text()}")
+          // }
+          val resp = matches.head
+          // println("searching prompt")
+          val id = resp.embeddingId()
+          val prompt = resp.embedded().text()
+          val score = resp.score()
+          // println(s"using semantic prompt with score: ${score} with prompt: ${prompt} and id: ${id}")
+          ChatClientWithSemanticCache.stream_cache.getIfPresent(id) match {
+            case None => notInCacheStream(key, originalPrompt, attrs, originalBody) // TODO: key or id ???
+            case Some(cached) => {
+              val chatResponse = Source(cached._2.toList)
+              chatResponse.rightf
+            }
+          }
+        } else {
+          // println("not in semantic cache")
+          notInCacheStream(key, originalPrompt, attrs, originalBody)
         }
       }
     }
