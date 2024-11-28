@@ -116,7 +116,7 @@ class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: Str
   }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val obody = originalBody.asObject - "messages"
+    val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     api.call("POST", Some(mergedOptions ++ Json.obj(
       "contents" -> Json.obj("parts" -> prompt.json),

@@ -107,7 +107,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
   override def model: Option[String] = options.model.some
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val obody = originalBody.asObject - "messages"
+    val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     api.call("POST", "/v1/messages", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
       val usage = ChatResponseMetadata(
