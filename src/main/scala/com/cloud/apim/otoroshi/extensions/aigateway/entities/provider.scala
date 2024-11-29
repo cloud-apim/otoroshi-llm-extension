@@ -117,6 +117,11 @@ case class AiProvider(
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id).some
       }
+      case "x-ai" => {
+        val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val opts = XAiChatClientOptions.fromJson(options)
+        new XAiChatClient(api, opts, id).some
+      }
       case "ovh-ai-endpoints" => {
         val api = new OVHAiEndpointsApi(baseUrl.getOrElse(OVHAiEndpointsApi.baseDomain), token, timeout.getOrElse(10.seconds), env = env)
         val opts = OVHAiEndpointsChatClientOptions.fromJson(options)
@@ -266,6 +271,21 @@ object AiProvider {
                 "timeout" -> 10000,
               ),
               options = OpenAiChatClientOptions().json
+            ).json
+            case Some("x-ai") => AiProvider(
+              id = IdGenerator.namedId("provider", env),
+              name = "X.AI provider",
+              description = "An X.AI LLM api provider",
+              metadata = Map.empty,
+              tags = Seq.empty,
+              location = EntityLocation.default,
+              provider = "x-ai",
+              connection = Json.obj(
+                "base_url" -> XAiApi.baseUrl,
+                "token" -> "xxxxx",
+                "timeout" -> 30000,
+              ),
+              options = XAiChatClientOptions().json
             ).json
             case Some("mistral") => AiProvider(
               id = IdGenerator.namedId("provider", env),

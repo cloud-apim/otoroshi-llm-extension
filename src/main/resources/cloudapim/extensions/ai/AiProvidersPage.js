@@ -333,6 +333,13 @@ class AiProvidersPage extends Component {
             { label: 'o1-mini', value: 'o1-mini' },
           ] }
       }
+    } else if (provider === "x-ai") {
+      return {
+        'type': 'select',
+        props: { label: 'Description', possibleValues: [
+            { label: 'grok-beta', value: 'grok-beta' },
+          ] }
+      }
     } else if (provider === "anthropic") {
       return {
         'type': 'select',
@@ -420,6 +427,7 @@ class AiProvidersPage extends Component {
           { 'label': 'Ollama', value: 'ollama' },
           { 'label': 'Anthropic', value: 'anthropic' },
           { 'label': 'Groq', value: 'groq' },
+          { 'label': 'X.ai', value: 'x-ai' },
           { 'label': 'OVH AI Endpoints', value: 'ovh-ai-endpoints' },
           { 'label': 'HuggingFace', value: 'huggingface' },
           { 'label': 'Loadbalancer', value: 'loadbalancer' },
@@ -1347,6 +1355,21 @@ class AiProvidersPage extends Component {
                   timeout: 10000,
                 },
                 options: ClientOptions.openai,
+              });
+            } else if (state.provider === 'x-ai') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'x-ai',
+                connection: {
+                  base_url: BaseUrls.xai,
+                  token: 'xxx',
+                  timeout: 30000,
+                },
+                options: ClientOptions.xai,
               });
             } else if (state.provider === 'ovh-ai-endpoints') {
               update({

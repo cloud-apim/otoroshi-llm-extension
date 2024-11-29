@@ -342,6 +342,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    const BackOfficeServices = dependencies.BackOfficeServices;
             |    const BaseUrls = {
             |      openai: '${OpenAiApi.baseUrl}',
+            |      xai: '${XAiApi.baseUrl}',
             |      mistral: '${MistralAiApi.baseUrl}',
             |      ollama: '${OllamaAiApi.baseUrl}',
             |      groq: '${GroqApi.baseUrl}',
@@ -353,6 +354,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    const ClientOptions = {
             |      anthropic: ${AnthropicChatClientOptions().json.stringify},
             |      openai: ${OpenAiChatClientOptions().json.stringify},
+            |      xai: ${XAiChatClientOptions().json.stringify},
             |      mistral: ${MistralAiChatClientOptions().json.stringify},
             |      ollama: ${OllamaAiChatClientOptions().json.stringify},
             |      groq: ${GroqChatClientOptions().json.stringify},
