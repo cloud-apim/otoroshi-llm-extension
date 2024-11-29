@@ -106,6 +106,9 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
   }
 
   override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OllamaAiChatResponseChunk, _], WSResponse)] = {
+    println("\n\n================================\n")
+    println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
+    println("streaming ollama")
     OllamaAiApi.logger.debug(s"streaming ollama: ${body.map(_.prettify).getOrElse("")}")
     env.Ws
       .url(s"${baseUrl}${path}")
@@ -263,14 +266,15 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json) - "model"
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json)
+    val mergedOptionsWithoutModel = mergedOptions - "model"
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = WasmFunction.tools(options.wasmTools)
       api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(
         "model" -> mergedOptions.select("model").asOptString.getOrElse(options.model).asInstanceOf[String],
         "stream" -> false,
         "messages" -> prompt.json,
-        "options" -> mergedOptions,
+        "options" -> mergedOptionsWithoutModel,
       ) ++ tools))
     } else {
       api.call("POST", "/api/chat", Some(Json.obj(
@@ -324,12 +328,13 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json) - "model"
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json)
+    val mergedOptionsWithoutModel = mergedOptions - "model"
     api.stream("POST", "/api/chat", Some(Json.obj(
       "model" -> mergedOptions.select("model").asOptString.getOrElse(options.model).asInstanceOf[String],
       "stream" -> true,
       "messages" -> prompt.json,
-      "options" -> mergedOptions
+      "options" -> mergedOptionsWithoutModel
     ))).map {
       case (source, resp) =>
         source
