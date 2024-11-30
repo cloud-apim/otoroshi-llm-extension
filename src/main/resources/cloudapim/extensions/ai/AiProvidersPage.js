@@ -428,8 +428,12 @@ class AiProvidersPage extends Component {
           { 'label': 'Anthropic', value: 'anthropic' },
           { 'label': 'Groq', value: 'groq' },
           { 'label': 'X.ai', value: 'x-ai' },
+          { 'label': 'Scaleway', value: 'scaleway' },
           { 'label': 'OVH AI Endpoints', value: 'ovh-ai-endpoints' },
           { 'label': 'HuggingFace', value: 'huggingface' },
+          { 'label': 'Cloudflare', value: 'cloudflare' },
+          { 'label': 'Cohere', value: 'cohere' },
+          { 'label': 'Gemini', value: 'gemini' },
           { 'label': 'Loadbalancer', value: 'loadbalancer' },
         ] }
     },
@@ -1355,6 +1359,21 @@ class AiProvidersPage extends Component {
                   timeout: 10000,
                 },
                 options: ClientOptions.openai,
+              });
+            } else if (state.provider === 'scaleway') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'scaleway',
+                connection: {
+                  base_url: BaseUrls.scaleway,
+                  token: 'xxx',
+                  timeout: 30000,
+                },
+                options: ClientOptions.scaleway,
               });
             } else if (state.provider === 'x-ai') {
               update({

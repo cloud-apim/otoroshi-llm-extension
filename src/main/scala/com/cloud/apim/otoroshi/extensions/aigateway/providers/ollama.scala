@@ -74,7 +74,7 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     // println("\n\n================================\n")
-    // println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
+    // println(s"calling ${method} ${baseUrl}${path} ${token}: ${body.getOrElse(Json.obj()).prettify}")
     // println("calling ollama")
     OllamaAiApi.logger.debug(s"calling ollama: ${body.get.prettify}")
     env.Ws

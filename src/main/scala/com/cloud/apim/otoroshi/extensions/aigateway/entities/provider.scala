@@ -117,6 +117,11 @@ case class AiProvider(
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id).some
       }
+      case "scaleway" => {
+        val api = new OpenAiApi("https://api.scaleway.ai", token, timeout.getOrElse(10.seconds), env = env)
+        val opts = OpenAiChatClientOptions.fromJson(options)
+        new OpenAiChatClient(api, opts, id).some
+      }
       case "x-ai" => {
         val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = XAiChatClientOptions.fromJson(options)
@@ -272,6 +277,21 @@ object AiProvider {
               ),
               options = OpenAiChatClientOptions().json
             ).json
+            case Some("scaleway") => AiProvider(
+              id = IdGenerator.namedId("provider", env),
+              name = "Scaleway provider",
+              description = "An Scaleway LLM api provider",
+              metadata = Map.empty,
+              tags = Seq.empty,
+              location = EntityLocation.default,
+              provider = "scaleway",
+              connection = Json.obj(
+                "base_url" -> ScalewayApi.baseUrl,
+                "token" -> "xxxxx",
+                "timeout" -> 10000,
+              ),
+              options = OpenAiChatClientOptions().copy(model = "llama-3.1-8b-instruct").json
+            ).json
             case Some("x-ai") => AiProvider(
               id = IdGenerator.namedId("provider", env),
               name = "X.AI provider",
@@ -294,7 +314,7 @@ object AiProvider {
               metadata = Map.empty,
               tags = Seq.empty,
               location = EntityLocation.default,
-              provider = "openai",
+              provider = "mistral",
               connection = Json.obj(
                 "base_url" -> MistralAiApi.baseUrl,
                 "token" -> "xxxxx",
