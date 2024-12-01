@@ -8,7 +8,7 @@ import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
-import play.api.libs.ws.{StandaloneWSResponse, WSResponse}
+import play.api.libs.ws.WSResponse
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
@@ -468,7 +468,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
   override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/v1/models", None).map { resp =>
       if (resp.status == 200) {
-        Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
+        Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString).filter(v => v.toLowerCase.startsWith("gpt") || v.toLowerCase.startsWith("o1")))
       } else {
         Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
       }
