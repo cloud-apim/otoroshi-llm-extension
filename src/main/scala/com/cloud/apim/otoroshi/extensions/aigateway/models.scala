@@ -213,6 +213,17 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
   def openaiEventSource: ByteString = s"data: ${openaiJson.stringify}\n\n".byteString
 }
 
+case class Embedding(vector: Array[Float])
+case class EmbeddingResponseMetadata()
+case class EmbeddingResponse(
+  embeddings: Seq[Embedding],
+  metadata: EmbeddingResponseMetadata,
+)
+
+trait EmbeddingModelClient {
+  def embed(input: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]]
+}
+
 trait ChatClient {
 
   def supportsStreaming: Boolean = false

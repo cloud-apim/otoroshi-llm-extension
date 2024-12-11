@@ -165,7 +165,7 @@ case class AiProvider(
         new MistralAiChatClient(api, opts, id).some
       }
       case "ollama" => {
-        val api = new OllamaAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(10.seconds), env = env)
+        val api = new OllamaAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(10.seconds), env = env)
         val opts = OllamaAiChatClientOptions.fromJson(options)
         new OllamaAiChatClient(api, opts, id).some
       }

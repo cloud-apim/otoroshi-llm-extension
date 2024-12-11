@@ -398,3 +398,27 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     }
   }
 }
+
+case class OllamaEmbeddingModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("snowflake-arctic-embed:22m")
+}
+
+object OllamaEmbeddingModelClientOptions {
+  def fromJson(raw: JsObject): OllamaEmbeddingModelClientOptions = OllamaEmbeddingModelClientOptions(raw)
+}
+
+class OllamaEmbeddingModelClient(val api: OllamaAiApi, val options: OllamaEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
+
+  override def embed(input: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    api.rawCall("POST", "/api/embed", (options.raw ++ Json.obj("input" -> input)).some).map { resp =>
+      if (resp.status == 200) {
+        Right(EmbeddingResponse(
+          embeddings = resp.json.select("embeddings").as[Seq[JsArray]].map(o => Embedding(o.as[Array[Float]])),
+          metadata = EmbeddingResponseMetadata(),
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}

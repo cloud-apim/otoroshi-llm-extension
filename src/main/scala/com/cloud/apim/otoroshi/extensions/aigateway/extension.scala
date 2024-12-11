@@ -26,6 +26,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val promptContextDataStore: PromptContextDataStore = new KvPromptContextDataStore(extensionId, env.datastores.redis, env)
   val promptsDataStore: PromptDataStore = new KvPromptDataStore(extensionId, env.datastores.redis, env)
   val toolFunctionDataStore: WasmFunctionDataStore = new KvWasmFunctionDataStore(extensionId, env.datastores.redis, env)
+  val embeddingModelsDataStore: EmbeddingModelDataStore = new KvEmbeddingModelDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
@@ -63,6 +64,13 @@ class AiGatewayExtensionState(env: Env) {
   def allToolFunctions(): Seq[WasmFunction]          = _toolFunctions.values.toSeq
   def updateToolFunctions(values: Seq[WasmFunction]): Unit = {
     _toolFunctions.addAll(values.map(v => (v.id, v))).remAll(_toolFunctions.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _embeddingModels = new UnboundedTrieMap[String, EmbeddingModel]()
+  def embeddingModel(id: String): Option[EmbeddingModel] = _embeddingModels.get(id)
+  def allEmbeddingModels(): Seq[EmbeddingModel]          = _embeddingModels.values.toSeq
+  def updateEmbeddingModels(values: Seq[EmbeddingModel]): Unit = {
+    _embeddingModels.addAll(values.map(v => (v.id, v))).remAll(_embeddingModels.keySet.toSeq.diff(values.map(_.id)))
   }
 }
 
@@ -117,6 +125,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   }
 
   lazy val promptPageCode = getResourceCode("cloudapim/extensions/ai/PromptPage.js")
+  lazy val embeddingModelsPageCode = getResourceCode("cloudapim/extensions/ai/EmbeddingModelsPage.js")
   lazy val toolFunctionPageCode = getResourceCode("cloudapim/extensions/ai/ToolFunctionsPage.js")
   lazy val promptTemplatesPageCode = getResourceCode("cloudapim/extensions/ai/PromptTemplatesPage.js")
   lazy val promptContextsPageCode = getResourceCode("cloudapim/extensions/ai/PromptContextsPage.js")
@@ -372,6 +381,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      possibleSecretLeakage: ${JsArray(LLMGuardrailsHardcodedItems.possibleSecretLeakage.map(_.json)).stringify},
             |    };
             |
+            |    ${embeddingModelsPageCode}
             |    ${toolFunctionPageCode}
             |    ${promptPageCode}
             |    ${promptTemplatesPageCode}
@@ -423,6 +433,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            link: '/extensions/cloud-apim/ai-gateway/tool-functions',
             |            display: () => true,
             |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'Embedding models',
+            |            description: 'All your embedding models',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/embedding-models',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
             |          }
             |        ]
             |      }],
@@ -466,6 +484,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          link: '/extensions/cloud-apim/ai-gateway/tool-functions',
             |          display: () => true,
             |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'Embedding models',
+            |          description: 'All your embedding models',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/embedding-models',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
             |        }
             |      ],
             |      sidebarItems: [
@@ -497,6 +523,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'LLM Tool Function',
             |          text: 'All your LLM Tool Functions',
             |          path: 'extensions/cloud-apim/ai-gateway/tool-functions',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Embedding models',
+            |          text: 'All your embedding models',
+            |          path: 'extensions/cloud-apim/ai-gateway/embedding-models',
             |          icon: 'brain'
             |        }
             |      ],
@@ -540,6 +572,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'LLM Tool Functions',
             |          value: 'tool-functions',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/embedding-models`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Embedding models',
+            |          value: 'embedding-models',
             |        }
             |      ],
             |      routes: [
@@ -632,6 +672,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          component: (props) => {
             |            return React.createElement(ToolFunctionsPage, props, null)
             |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/embedding-models/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(EmbeddingModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/embedding-models/:taction',
+            |          component: (props) => {
+            |            return React.createElement(EmbeddingModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/embedding-models',
+            |          component: (props) => {
+            |            return React.createElement(EmbeddingModelsPage, props, null)
+            |          }
             |        }
             |      ]
             |    }
@@ -651,12 +709,14 @@ class AiExtension(val env: Env) extends AdminExtension {
       contexts <- datastores.promptContextDataStore.findAllAndFillSecrets()
       prompts <- datastores.promptsDataStore.findAllAndFillSecrets()
       toolFunctions <- datastores.toolFunctionDataStore.findAllAndFillSecrets()
+      embeddingModels <- datastores.embeddingModelsDataStore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
       states.updateContexts(contexts)
       states.updatePrompts(prompts)
       states.updateToolFunctions(toolFunctions)
+      states.updateEmbeddingModels(embeddingModels)
       ()
     }
   }
@@ -668,6 +728,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(Prompt.resource(env, datastores, states)),
       AdminExtensionEntity(PromptTemplate.resource(env, datastores, states)),
       AdminExtensionEntity(WasmFunction.resource(env, datastores, states)),
+      AdminExtensionEntity(EmbeddingModel.resource(env, datastores, states)),
     )
   }
 }

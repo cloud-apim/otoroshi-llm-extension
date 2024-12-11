@@ -475,3 +475,27 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     }
   }
 }
+
+case class OpenAiEmbeddingModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("text-embedding-3-small")
+}
+
+object OpenAiEmbeddingModelClientOptions {
+  def fromJson(raw: JsObject): OpenAiEmbeddingModelClientOptions = OpenAiEmbeddingModelClientOptions(raw)
+}
+
+class OpenAiEmbeddingModelClient(val api: OpenAiApi, val options: OpenAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
+
+  override def embed(input: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    api.rawCall("POST", "/v1/embeddings", (options.raw ++ Json.obj("input" -> input)).some).map { resp =>
+      if (resp.status == 200) {
+        Right(EmbeddingResponse(
+          embeddings = resp.json.select("data").as[Seq[JsObject]].map(o => Embedding(o.select("embedding").as[Array[Float]])),
+          metadata = EmbeddingResponseMetadata(),
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}
