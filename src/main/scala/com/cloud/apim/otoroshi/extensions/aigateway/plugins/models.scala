@@ -1,6 +1,7 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
+import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins._
 import otoroshi.env.Env
@@ -75,6 +76,67 @@ class OpenAiCompatModels extends NgBackendCall {
   }
 }
 
+class OpenAiCompatProvidersWithModels extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - LLM OpenAI Compat. Provider with Models list"
+  override def description: Option[String] = "Delegates call to LLM providers to retrieve supported models".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefsConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow
+  override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers")
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'LLM OpenAI Compat. Models list' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val now: Long = System.currentTimeMillis() / 1000
+    Source(config.refs.toList)
+      .map(ref => ext.states.provider(ref))
+      .collect {
+        case Some(provider) => provider
+      }
+      .map(p => (p, p.getChatClient()))
+      .collect {
+        case (provider, Some(client)) => (provider, client)
+      }
+      .mapAsync(1) {
+        case (provider, client) => client.listModels().map(e => (provider, e))
+      }
+      .collect {
+        case (provider, Right(list)) => list.map { model =>
+          Json.obj(
+            "id" -> model,
+            "combined_id" -> (if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"),
+            "object" -> "model",
+            "created" -> now,
+            "owned_by" -> provider.name,
+            "owned_by_with_model" -> s"${provider.name} / ${model}"
+          )
+        }
+      }
+      .flatMapConcat(list => Source(list))
+      .runWith(Sink.seq)
+      .map { list =>
+        Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
+          Results.Ok(Json.obj(
+            "object" -> "list",
+            "data" -> JsArray(list)
+          ))
+        ), None))
+      }
+  }
+}
 
 class LlmProviderModels extends NgBackendCall {
 
@@ -121,5 +183,56 @@ class LlmProviderModels extends NgBackendCall {
         }
       }
     }
+  }
+}
+
+class LlmProvidersWithModels extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - LLM Providers with Models list"
+  override def description: Option[String] = "Delegates call to LLM providers to retrieve supported models".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefsConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow
+  override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers")
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'LLM Provider with Models list' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
+    val ext = env.adminExtensions.extension[AiExtension].get
+    Source(config.refs.toList)
+      .map(ref => ext.states.provider(ref))
+      .collect {
+        case Some(provider) => provider
+      }
+      .map(p => (p, p.getChatClient()))
+      .collect {
+        case (provider, Some(client)) => (provider, client)
+      }
+      .mapAsync(1) {
+        case (provider, client) => client.listModels().map(e => (provider, e))
+      }
+      .collect {
+        case (provider, Right(list)) => list.map(model => (if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"))
+      }
+      .flatMapConcat(list => Source(list))
+      .runWith(Sink.seq)
+      .map { list =>
+        Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
+          Results.Ok(Json.obj(
+            "models" -> JsArray(list.map(_.json)),
+          ))
+        ), None))
+      }
   }
 }
