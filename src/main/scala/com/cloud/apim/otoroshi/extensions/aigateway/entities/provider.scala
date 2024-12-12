@@ -107,6 +107,7 @@ case class AiProvider(
   override def theDescription: String           = description
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
+  def slugName: String = metadata.getOrElse("endpoint_name", name).slugifyWithSlash.replaceAll("-+", "_")
   def getChatClient()(implicit env: Env): Option[ChatClient] = {
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val token = connection.select("token").asOpt[String].getOrElse("xxx")

@@ -59,6 +59,7 @@ class OpenAiCompatModels extends NgBackendCall {
                     "object" -> "list",
                     "data" -> JsArray(list.map(m => Json.obj(
                       "id" -> m,
+                      "pid" -> s"${provider.slugName}/${m}",
                       "object" -> "model",
                       "created" -> now,
                       "owned_by" -> "openai"
@@ -110,7 +111,8 @@ class LlmProviderModels extends NgBackendCall {
               case Right(list) => {
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
                   Results.Ok(Json.obj(
-                    "models" -> JsArray(list.map(_.json))
+                    "models" -> JsArray(list.map(_.json)),
+                    "provider_models" -> JsArray(list.map(v => s"${provider.slugName}/${v}".json)),
                   ))
                 ), None))
               }
