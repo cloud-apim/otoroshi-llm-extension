@@ -230,7 +230,7 @@ object AiPluginRefsConfig {
     val ext = env.adminExtensions.extension[AiExtension].get
     val providers = config.refs.flatMap(ref => ext.states.provider(ref))
     val providersByName = providers.map { provider =>
-      val name = provider.metadata.getOrElse("endpoint_name", provider.name).slugifyWithSlash
+      val name = provider.metadata.getOrElse("endpoint_name", provider.name).slugifyWithSlash.replaceAll("-+", "_")
       (name, provider)
     }.toMap
     val providersById = providers.map(p => (p.id, p)).toMap
