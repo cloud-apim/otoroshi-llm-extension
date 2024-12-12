@@ -39,13 +39,14 @@ class OpenAiCompatProxy extends NgBackendCall {
     ().vfuture
   }
 
-  def call(jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     // println(s"\n\nreq: ${ctx.request.json.prettify}\n\n")
     // println(s"\n\nctx: ${Json.obj(
     //   "user" -> ctx.user.map(_.json).getOrElse(JsNull).asValue,
     //   "apikey" -> ctx.apikey.map(_.json).getOrElse(JsNull).asValue,
     // ).prettify}\n\n")
     // println(s"\n\nbody: ${jsonBody.prettify}\n\n")
+    val jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config)
     val provider: Option[AiProvider] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
     }.orElse(

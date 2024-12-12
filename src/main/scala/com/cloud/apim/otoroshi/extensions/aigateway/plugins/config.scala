@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatMessage
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.NgPluginConfig
 import otoroshi.utils.RegexPool
@@ -9,6 +10,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
 
+import scala.concurrent.ExecutionContext
 import scala.util.{Failure, Success, Try}
 
 object AiPluginsKeys {
@@ -222,6 +224,52 @@ object AiPluginRefsConfig {
     } match {
       case Failure(exception) => JsError(exception.getMessage)
       case Success(value) => JsSuccess(value)
+    }
+  }
+  def getProvidersMap(config: AiPluginRefsConfig)(implicit ec: ExecutionContext, env: Env): (Map[String, AiProvider], Map[String, AiProvider]) = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val providers = config.refs.flatMap(ref => ext.states.provider(ref))
+    val providersByName = providers.map { provider =>
+      val name = provider.metadata.getOrElse("endpoint_name", provider.name).slugifyWithSlash
+      (name, provider)
+    }.toMap
+    val providersById = providers.map(p => (p.id, p)).toMap
+    (providersById, providersByName)
+  }
+
+  def extractProviderFromModelInBody(_jsonBody: JsValue, config: AiPluginRefsConfig)(implicit ec: ExecutionContext, env: Env): JsValue = {
+    _jsonBody.select("model").asOpt[String] match {
+      case Some(value) if value.contains("###") => {
+        val parts = value.split("###")
+        val name = parts(0)
+        val model = parts(1)
+        val (providersById, providersByName) = AiPluginRefsConfig.getProvidersMap(config)
+        providersById.get(name) match {
+          case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+          case None => {
+            providersByName.get(name) match {
+              case None => _jsonBody
+              case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+            }
+          }
+        }
+      }
+      case Some(value) if value.contains("/")=> {
+        val parts = value.split("/")
+        val name = parts(0)
+        val model = parts.tail.mkString("/")
+        val (providersById, providersByName) = AiPluginRefsConfig.getProvidersMap(config)
+        providersById.get(name) match {
+          case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+          case None => {
+            providersByName.get(name) match {
+              case None => _jsonBody
+              case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+            }
+          }
+        }
+      }
+      case _ => _jsonBody
     }
   }
 }
