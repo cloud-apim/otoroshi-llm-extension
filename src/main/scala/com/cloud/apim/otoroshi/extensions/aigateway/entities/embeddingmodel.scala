@@ -32,7 +32,7 @@ case class EmbeddingModel(
   override def theDescription: String           = description
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
-  def getChatClient()(implicit env: Env): Option[EmbeddingModelClient] = {
+  def getEmbeddingModelClient()(implicit env: Env): Option[EmbeddingModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
@@ -162,10 +162,10 @@ object EmbeddingModel {
   }
 }
 
-trait EmbeddingModelDataStore extends BasicStore[EmbeddingModel]
+trait EmbeddingModelsDataStore extends BasicStore[EmbeddingModel]
 
-class KvEmbeddingModelDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
-  extends EmbeddingModelDataStore
+class KvEmbeddingModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
+  extends EmbeddingModelsDataStore
     with RedisLikeStore[EmbeddingModel] {
   override def fmt: Format[EmbeddingModel]                  = EmbeddingModel.format
   override def redisLike(implicit env: Env): RedisLike = redisCli

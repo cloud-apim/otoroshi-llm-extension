@@ -1,5 +1,5 @@
 
-class EmbeddingModelsPage extends Component {
+class EmbeddingStoresPage extends Component {
 
   formSchema = {
     _loc: {
@@ -26,9 +26,7 @@ class EmbeddingModelsPage extends Component {
     provider: {
       'type': 'select',
       props: { label: 'Provider', possibleValues: [
-          { label: 'OpenAI', value: "openai" },
-          { label: 'Ollama', value: "ollama" },
-          { label: 'All MiniLM L6 V2 (embedded)', value: "all-minilm-l6-v2" },
+          { label: 'Local store (embedded)', value: "local" },
       ] }
     },
     config: {
@@ -59,33 +57,32 @@ class EmbeddingModelsPage extends Component {
     this.props.setTitle(`Embedding model`);
   }
 
-  client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'embedding-models');
+  client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'embedding-stores');
 
   render() {
     return (
       React.createElement(Table, {
         parentProps: this.props,
-        selfUrl: "extensions/cloud-apim/ai-gateway/embedding-models",
-        defaultTitle: "All Embedding models",
+        selfUrl: "extensions/cloud-apim/ai-gateway/embedding-stores",
+        defaultTitle: "All Embedding stores",
         defaultValue: () => ({
-          id: 'embedding-model_' + uuid(),
-          name: 'Embedding model',
-          description: 'An embedding model',
+          id: 'embedding-store_' + uuid(),
+          name: 'Embedding store',
+          description: 'An embedding store',
           tags: [],
           metadata: {},
-          provider: 'ollama',
+          provider: 'local',
           config:{
             connection: {
-              base_url: "http://localhost:11434",
-              token: 'xxxxxx',
-              timeout: 30000
+              name: "local",
             },
             options: {
-              model: 'snowflake-arctic-embed:22m'
+              max_results: 3,
+              min_score: 0.7
             }
           }
         }),
-        itemName: "Embedding Model",
+        itemName: "Embedding Store",
         formSchema: this.formSchema,
         formFlow: this.formFlow,
         columns: this.columns,
@@ -95,15 +92,15 @@ class EmbeddingModelsPage extends Component {
         deleteItem: this.client.delete,
         createItem: this.client.create,
         navigateTo: (item) => {
-          window.location = `/bo/dashboard/extensions/cloud-apim/ai-gateway/embedding-models/edit/${item.id}`
+          window.location = `/bo/dashboard/extensions/cloud-apim/ai-gateway/embedding-stores/edit/${item.id}`
         },
-        itemUrl: (item) => `/bo/dashboard/extensions/cloud-apim/ai-gateway/embedding-models/edit/${item.id}`,
+        itemUrl: (item) => `/bo/dashboard/extensions/cloud-apim/ai-gateway/embedding-stores/edit/${item.id}`,
         showActions: true,
         showLink: true,
         rowNavigation: true,
         extractKey: (item) => item.id,
         export: true,
-        kubernetesKind: "ai-gateway.extensions.cloud-apim.com/EmbeddingModel"
+        kubernetesKind: "ai-gateway.extensions.cloud-apim.com/EmbeddingStore"
       }, null)
     );
   }

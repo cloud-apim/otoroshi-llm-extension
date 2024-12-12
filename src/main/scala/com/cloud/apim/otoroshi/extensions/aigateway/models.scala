@@ -3,7 +3,6 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import otoroshi.env.Env
-import otoroshi.events.AuditEvent
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -222,6 +221,15 @@ case class EmbeddingResponse(
 
 trait EmbeddingModelClient {
   def embed(input: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]]
+}
+
+case class EmbeddingSearchMatch(score: Double, id: String, embedding: Embedding, embedded: String)
+case class EmbeddingSearchResponse(matches: Seq[EmbeddingSearchMatch])
+
+trait EmbeddingStoreClient {
+  def add(id: String, input: String, embedding: Embedding)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def remove(id: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def search(embedding: Embedding, maxResults: Int, minScore: Double)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]]
 }
 
 trait ChatClient {
