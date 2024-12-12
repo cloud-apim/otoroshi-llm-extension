@@ -120,8 +120,8 @@ class OpenAiCompatProvidersWithModels extends NgBackendCall {
             "combined_id" -> (if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"),
             "object" -> "model",
             "created" -> now,
-            "owned_by" -> provider.name,
-            "owned_by_with_model" -> s"${provider.name} / ${model}"
+            "owned_by" -> provider.computedName,
+            "owned_by_with_model" -> s"${provider.computedName} / ${model}"
           )
         }
       }
