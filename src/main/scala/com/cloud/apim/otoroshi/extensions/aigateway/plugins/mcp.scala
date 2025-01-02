@@ -82,7 +82,7 @@ class McpProxyEndpoint extends NgBackendCall {
 
     method match {
       case "tools/get" => {
-        val payload = JsObject(functionsMap.mapValues { wf =>
+        val payload = JsArray(functions.map { wf =>
           val required: JsArray = wf.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(wf.parameters.value.keySet.toSeq.map(_.json)))
           Json.obj(
             "name" -> wf.name,
