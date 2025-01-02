@@ -26,6 +26,10 @@ class ToolFunctionsPage extends Component {
       type: 'jsonobjectcode',
       props: { label: 'Parameters spec.', mode: 'javascript' },
     },
+    required: {
+      type: 'array',
+      props: { label: 'Required params.' },
+    },
     wasmPlugin: {
       type: 'select',
       props: {
@@ -61,7 +65,7 @@ class ToolFunctionsPage extends Component {
   ];
 
   formFlow = [
-    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'strict', 'wasmPlugin', 'jsPath', '---', 'parameters'];
+    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'strict', 'wasmPlugin', 'jsPath', '---', 'parameters', 'required'];
 
   componentDidMount() {
     this.props.setTitle(`LLM Tool Functions`);

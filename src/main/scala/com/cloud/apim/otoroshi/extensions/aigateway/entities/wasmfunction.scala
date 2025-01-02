@@ -39,6 +39,7 @@ case class WasmFunction(
                            metadata: Map[String, String],
                            strict: Boolean,
                            parameters: JsObject,
+                           required: Option[Seq[String]],
                            wasmPlugin: Option[String],
                            jsPath: Option[String],
                          ) extends EntityLocationSupport {
@@ -268,6 +269,7 @@ object WasmFunction {
   def tools(functions: Seq[String])(implicit env: Env): JsObject = {
     Json.obj(
       "tools" -> JsArray(functions.flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(ext => ext.states.toolFunction(id))).map { function =>
+        val required: JsArray = function.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(function.parameters.value.keySet.toSeq.map(_.json)))
         Json.obj(
           "type" -> "function",
           "function" -> Json.obj(
@@ -276,7 +278,7 @@ object WasmFunction {
             "strict" -> function.strict,
             "parameters" -> Json.obj(
               "type" -> "object",
-              "required" -> JsArray(function.parameters.value.keySet.toSeq.map(_.json)),
+              "required" -> required,
               "additionalProperties" -> false,
               "properties" -> function.parameters
             )
@@ -338,6 +340,7 @@ object WasmFunction {
       "tags"        -> JsArray(o.tags.map(JsString.apply)),
       "strict" -> o.strict,
       "parameters" -> o.parameters,
+      "required" -> o.required.map(v => JsArray(v.map(_.json))).getOrElse(JsNull).asValue,
       "wasmPlugin" -> o.wasmPlugin.map(_.json).getOrElse(JsNull).asValue,
       "jsPath" -> o.jsPath.map(_.json).getOrElse(JsNull).asValue,
     )
@@ -351,6 +354,7 @@ object WasmFunction {
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         strict = json.select("strict").asOpt[Boolean].getOrElse(true),
         parameters = json.select("parameters").asOpt[JsObject].getOrElse(Json.obj()),
+        required = json.select("required").asOpt[Seq[String]],
         wasmPlugin = json.select("wasmPlugin").asOpt[String].filter(_.trim.nonEmpty),
         jsPath = json.select("jsPath").asOpt[String].filter(_.trim.nonEmpty),
       )
@@ -385,6 +389,7 @@ object WasmFunction {
             location = EntityLocation.default,
             strict = true,
             parameters = Json.obj(),
+            required = None,
             wasmPlugin = None,
             jsPath = None
           ).json
