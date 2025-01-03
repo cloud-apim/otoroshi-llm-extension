@@ -28,6 +28,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val toolFunctionDataStore: WasmFunctionDataStore = new KvWasmFunctionDataStore(extensionId, env.datastores.redis, env)
   val embeddingModelsDataStore: EmbeddingModelsDataStore = new KvEmbeddingModelsDataStore(extensionId, env.datastores.redis, env)
   val embeddingStoresDataStore: EmbeddingStoresDataStore = new KvEmbeddingStoresDataStore(extensionId, env.datastores.redis, env)
+  val mcpConnectorsDatastore: McpConnectorsDataStore = new KvMcpConnectorsDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
@@ -79,6 +80,13 @@ class AiGatewayExtensionState(env: Env) {
   def allEmbeddingStores(): Seq[EmbeddingStore]          = _embeddingStores.values.toSeq
   def updateEmbeddingStores(values: Seq[EmbeddingStore]): Unit = {
     _embeddingStores.addAll(values.map(v => (v.id, v))).remAll(_embeddingStores.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _mcpConnectors = new UnboundedTrieMap[String, McpConnector]()
+  def mcpConnector(id: String): Option[McpConnector] = _mcpConnectors.get(id)
+  def allMcpConnectors(): Seq[McpConnector]          = _mcpConnectors.values.toSeq
+  def updateMcpConnectors(values: Seq[McpConnector]): Unit = {
+    _mcpConnectors.addAll(values.map(v => (v.id, v))).remAll(_mcpConnectors.keySet.toSeq.diff(values.map(_.id)))
   }
 }
 
@@ -133,6 +141,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   }
 
   lazy val promptPageCode = getResourceCode("cloudapim/extensions/ai/PromptPage.js")
+  lazy val mcpConnectorsPageCode = getResourceCode("cloudapim/extensions/ai/McpConnectorsPage.js")
   lazy val embeddingModelsPageCode = getResourceCode("cloudapim/extensions/ai/EmbeddingModelsPage.js")
   lazy val embeddingStoresPageCode = getResourceCode("cloudapim/extensions/ai/EmbeddingStoresPage.js")
   lazy val toolFunctionPageCode = getResourceCode("cloudapim/extensions/ai/ToolFunctionsPage.js")
@@ -390,6 +399,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      possibleSecretLeakage: ${JsArray(LLMGuardrailsHardcodedItems.possibleSecretLeakage.map(_.json)).stringify},
             |    };
             |
+            |    ${mcpConnectorsPageCode}
             |    ${embeddingModelsPageCode}
             |    ${embeddingStoresPageCode}
             |    ${toolFunctionPageCode}
@@ -459,6 +469,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            link: '/extensions/cloud-apim/ai-gateway/embedding-stores',
             |            display: () => true,
             |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'MCP Connectors',
+            |            description: 'All your MCP Connectors',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/mcp-connectors',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
             |          }
             |        ]
             |      }],
@@ -518,6 +536,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          link: '/extensions/cloud-apim/ai-gateway/embedding-stores',
             |          display: () => true,
             |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'MCP Connectors',
+            |          description: 'All your MCP Connexctors',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/mcp-connectors',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
             |        }
             |      ],
             |      sidebarItems: [
@@ -561,6 +587,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'Embedding stores',
             |          text: 'All your embedding stores',
             |          path: 'extensions/cloud-apim/ai-gateway/embedding-stores',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'MCP Connectors',
+            |          text: 'All your MCP Connectors',
+            |          path: 'extensions/cloud-apim/ai-gateway/mcp-connectors',
             |          icon: 'brain'
             |        }
             |      ],
@@ -620,6 +652,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'Embedding stores',
             |          value: 'embedding-stores',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/mcp-connectors`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'MCP Connectors',
+            |          value: 'mcp-connectors',
             |        }
             |      ],
             |      routes: [
@@ -748,6 +788,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          component: (props) => {
             |            return React.createElement(EmbeddingStoresPage, props, null)
             |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/mcp-connectors/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(McpConnectorsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/mcp-connectors/:taction',
+            |          component: (props) => {
+            |            return React.createElement(McpConnectorsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/mcp-connectors',
+            |          component: (props) => {
+            |            return React.createElement(McpConnectorsPage, props, null)
+            |          }
             |        }
             |      ]
             |    }
@@ -769,6 +827,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       toolFunctions <- datastores.toolFunctionDataStore.findAllAndFillSecrets()
       embeddingModels <- datastores.embeddingModelsDataStore.findAllAndFillSecrets()
       embeddingStores <- datastores.embeddingStoresDataStore.findAllAndFillSecrets()
+      mcpConnectors <- datastores.mcpConnectorsDatastore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
@@ -777,6 +836,11 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateToolFunctions(toolFunctions)
       states.updateEmbeddingModels(embeddingModels)
       states.updateEmbeddingStores(embeddingStores)
+      states.updateMcpConnectors(mcpConnectors)
+      Future {
+        McpSupport.restartConnectorsIfNeeded()
+        McpSupport.stopConnectorsIfNeeded()
+      }
       ()
     }
   }
@@ -790,6 +854,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(WasmFunction.resource(env, datastores, states)),
       AdminExtensionEntity(EmbeddingModel.resource(env, datastores, states)),
       AdminExtensionEntity(EmbeddingStore.resource(env, datastores, states)),
+      AdminExtensionEntity(McpConnector.resource(env, datastores, states)),
     )
   }
 }

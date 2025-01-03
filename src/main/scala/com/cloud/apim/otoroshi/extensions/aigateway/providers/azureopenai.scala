@@ -144,7 +144,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
       }
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[AzureOpenAiApiResponse] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[AzureOpenAiApiResponse] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
@@ -154,11 +154,11 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
+              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors)
                 }
             }
           }
@@ -203,7 +203,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
       }
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[AzureOpenAiChatResponseChunk, _], WSResponse)] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[(Source[AzureOpenAiChatResponseChunk, _], WSResponse)] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
       stream(method, path, body).flatMap {
@@ -241,11 +241,11 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[(Source[AzureOpenAiChatResponseChunk, _], WSResponse)] = LlmFunctions.callToolsOpenai(calls)(ec, env)
+              val a: Future[(Source[AzureOpenAiChatResponseChunk, _], WSResponse)] = LlmFunctions.callToolsOpenai(calls, mcpConnectors)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  streamWithToolSupport(method, path, newBody.some)
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors)
                 }
               Source.future(a).flatMapConcat(a => a._1)
             } else {
@@ -269,6 +269,7 @@ object AzureOpenAiChatClientOptions {
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
       topP = json.select("topP").asOpt[Float].orElse(json.select("top_p").asOpt[Float]).getOrElse(1.0f),
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       frequency_penalty = json.select("frequency_penalty").asOpt[Double],
       logprobs = json.select("logprobs").asOpt[Boolean],
       top_logprobs = json.select("top_logprobs").asOpt[Int],
@@ -297,7 +298,7 @@ case class AzureOpenAiChatClientOptions(
   tool_choice: Option[Seq[JsValue]] =  None,
   user: Option[String] = None,
   wasmTools: Seq[String] = Seq.empty,
-  mcpConnectors: Seq[String] = Seq("foo"),
+  mcpConnectors: Seq[String] = Seq.empty,
   allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
   override def topK: Int = 0
@@ -320,10 +321,11 @@ case class AzureOpenAiChatClientOptions(
     "tool_choice" -> tool_choice,
     "user" -> user,
     "wasm_tools" -> JsArray(wasmTools.map(_.json)),
+    "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
+  def jsonForCall: JsObject = json - "wasm_tools" - "mcp_connectors" - "allow_config_override"
 }
 
 class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientOptions, id: String) extends ChatClient {
@@ -347,7 +349,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
-      api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
+      api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors)
     } else {
       api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
     }
@@ -401,7 +403,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
-      api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
+      api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors)
     } else {
       api.stream("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
     }

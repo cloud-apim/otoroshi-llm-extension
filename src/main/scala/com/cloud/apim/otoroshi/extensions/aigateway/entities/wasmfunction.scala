@@ -240,6 +240,8 @@ case class GenericApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
   lazy val name: String = raw_name.replaceFirst("wasm___", "").replaceFirst("mcp___", "")
   lazy val isWasm: Boolean = raw_name.startsWith("wasm___")
   lazy val isMcp: Boolean = raw_name.startsWith("mcp___")
+  lazy val connectorId: Int = if (isMcp) raw_name.split("___")(1).toInt else 0
+  lazy val connectorFunctionName: String = if (isMcp) raw_name.split("___")(2) else name
   lazy val arguments: String = {
     raw.select("arguments").asValue match {
       case JsString(str) => str

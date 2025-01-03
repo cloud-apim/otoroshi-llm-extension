@@ -141,7 +141,7 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
       }
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
@@ -151,11 +151,11 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              LlmFunctions.callToolsOllama(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
+              LlmFunctions.callToolsOllama(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors)
                 }
             }
           }
@@ -167,8 +167,8 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
     }
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OllamaAiChatResponseChunk, _], WSResponse)] = {
-    callWithToolSupport(method, path, body).map { resp =>
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[(Source[OllamaAiChatResponseChunk, _], WSResponse)] = {
+    callWithToolSupport(method, path, body, mcpConnectors).map { resp =>
       val source = resp.message.content.get.chunks(5).map { str =>
         OllamaAiChatResponseChunk(resp.body.asObject.deepMerge(Json.obj(
           "message" -> Json.obj("content" -> str),
@@ -200,6 +200,7 @@ object OllamaAiChatClientOptions {
       num_gqa = json.select("num_gqa").asOpt[Int],
       num_ctx = json.select("num_ctx").asOpt[Int],
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
@@ -221,7 +222,7 @@ case class OllamaAiChatClientOptions(
    num_gqa: Option[Int] = None,
    num_ctx: Option[Int] = None,
    wasmTools: Seq[String] = Seq.empty,
-   mcpConnectors: Seq[String] = Seq("foo"),
+   mcpConnectors: Seq[String] = Seq.empty,
    allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
 
@@ -243,10 +244,11 @@ case class OllamaAiChatClientOptions(
     "num_gqa" -> num_gqa,
     "num_ctx" -> num_ctx,
     "wasm_tools" -> JsArray(wasmTools.map(_.json)),
+    "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
+  def jsonForCall: JsObject = json - "wasm_tools" - "mcp_connectors" - "allow_config_override"
 }
 
 class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, id: String) extends ChatClient {
@@ -276,7 +278,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         "stream" -> false,
         "messages" -> prompt.json,
         "options" -> mergedOptionsWithoutModel,
-      ) ++ tools))
+      ) ++ tools), options.mcpConnectors)
     } else {
       api.call("POST", "/api/chat", Some(Json.obj(
         "model" -> options.model,

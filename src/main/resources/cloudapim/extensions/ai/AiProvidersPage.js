@@ -667,6 +667,18 @@ class AiProvidersPage extends Component {
         }),
       }
     },
+    'options.mcp_connectors': {
+      type: 'array',
+      props: {
+        label: 'MCP Connectors',
+        placeholder: 'Select an MCP Connector',
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-connectors',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
+      }
+    },
     _guardrails: {
       type: 'jsonobjectcode',
       props: { label: 'Guardrails config.' }
@@ -792,6 +804,7 @@ class AiProvidersPage extends Component {
         'guardrails',
         '>>>Tools',
         'options.wasm_tools',
+        'options.mcp_connectors',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1043,6 +1056,7 @@ class AiProvidersPage extends Component {
         'guardrails',
         '>>>Tools',
         'options.wasm_tools',
+        'options.mcp_connectors',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1208,6 +1222,7 @@ class AiProvidersPage extends Component {
       'guardrails',
       '>>>Tools',
       'options.wasm_tools',
+      'options.mcp_connectors',
       '>>>Tester',
       'tester',
       '>>>Metadata and tags',
