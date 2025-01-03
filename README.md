@@ -21,15 +21,22 @@ Otoroshi LLM Extension is set of Otoroshi plugins and resources to interact with
 
 ## Supported LLM providers
 
-* OpenAI
-* Azure OpenAI
-* Ollama
-* Mistral
 * Anthropic
+* Azure OpenAI
+* Cloudflare
 * Cohere
 * Gemini
 * Groq
 * Huggingface
+* Mistral
+* Ollama
+* OpenAI
 * OVH AI Endpoints
+* Scaleway
+* X.ai
+
+## Requirements
+
+**Run it on JDK17+**
 
 
