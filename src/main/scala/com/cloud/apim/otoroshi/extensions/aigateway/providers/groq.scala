@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, WasmFunction}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions, WasmFunction}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -69,7 +69,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              WasmFunction.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
+              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -153,7 +153,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = WasmFunction.callToolsOpenai(calls)(ec, env)
+              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = LlmFunctions.callToolsOpenai(calls)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -199,6 +199,7 @@ case class GroqChatClientOptions(
     topP: Float = 1,
     n: Int = 1,
     wasmTools: Seq[String] = Seq.empty,
+    mcpConnectors: Seq[String] = Seq("foo"),
     allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
 
@@ -240,7 +241,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
-      val tools = WasmFunction.tools(options.wasmTools)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       api.callWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
     } else {
       api.call("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
@@ -293,7 +294,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
-      val tools = WasmFunction.tools(options.wasmTools)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       api.streamWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
     } else {
       api.stream("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))

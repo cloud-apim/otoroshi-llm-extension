@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, WasmFunction}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions, WasmFunction}
 import org.joda.time.DateTime
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -151,7 +151,7 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              WasmFunction.callToolsOllama(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
+              LlmFunctions.callToolsOllama(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -221,6 +221,7 @@ case class OllamaAiChatClientOptions(
    num_gqa: Option[Int] = None,
    num_ctx: Option[Int] = None,
    wasmTools: Seq[String] = Seq.empty,
+   mcpConnectors: Seq[String] = Seq("foo"),
    allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
 
@@ -269,7 +270,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json)
     val mergedOptionsWithoutModel = mergedOptions - "model"
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
-      val tools = WasmFunction.tools(options.wasmTools)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(
         "model" -> mergedOptions.select("model").asOptString.getOrElse(options.model).asInstanceOf[String],
         "stream" -> false,

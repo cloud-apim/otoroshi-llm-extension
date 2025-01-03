@@ -4,7 +4,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, WasmFunction}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions, WasmFunction}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -154,7 +154,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              WasmFunction.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
+              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -241,7 +241,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[(Source[AzureOpenAiChatResponseChunk, _], WSResponse)] = WasmFunction.callToolsOpenai(calls)(ec, env)
+              val a: Future[(Source[AzureOpenAiChatResponseChunk, _], WSResponse)] = LlmFunctions.callToolsOpenai(calls)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -297,6 +297,7 @@ case class AzureOpenAiChatClientOptions(
   tool_choice: Option[Seq[JsValue]] =  None,
   user: Option[String] = None,
   wasmTools: Seq[String] = Seq.empty,
+  mcpConnectors: Seq[String] = Seq("foo"),
   allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
   override def topK: Int = 0
@@ -345,7 +346,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
-      val tools = WasmFunction.tools(options.wasmTools)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
     } else {
       api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
@@ -399,7 +400,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
-      val tools = WasmFunction.tools(options.wasmTools)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
     } else {
       api.stream("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))

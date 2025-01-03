@@ -5,7 +5,8 @@ ThisBuild / version          := "1.0.0-dev"
 ThisBuild / organization     := "com.cloud-apim"
 ThisBuild / organizationName := "Cloud-APIM"
 
-lazy val langchain4jVersion = "0.34.0"
+lazy val langchain4jVersion = "1.0.0-alpha1" //"0.34.0"
+lazy val jacksonVersion = "2.15.3"
 lazy val jackson = Seq(
   ExclusionRule("com.fasterxml.jackson.core", "jackson-databind"),
   ExclusionRule("io.opentelemetry"),
@@ -33,7 +34,19 @@ lazy val root = (project in file("."))
     ),
     libraryDependencies ++= Seq(
       "fr.maif" %% "otoroshi" % "16.19.0" % "provided" excludeAll (netty: _*),
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
+      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-cbor" % jacksonVersion,
+      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % jacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
+      "com.fasterxml.jackson.module" % "jackson-module-parameter-names" % jacksonVersion,
+      "com.fasterxml.jackson.module" % "jackson-module-scala_2.12" % jacksonVersion,
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       "dev.langchain4j" % "langchain4j" % langchain4jVersion excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j-mcp" % langchain4jVersion excludeAll(all: _*),
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       // for rapid dev purposes, the following 2 are marked as provided. needs to be not "provided" for release ////////
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -236,7 +236,10 @@ case class WasmFunction(
 }
 
 case class GenericApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
-  lazy val name: String = raw.select("name").asString
+  lazy val raw_name: String = raw.select("name").asString
+  lazy val name: String = raw_name.replaceFirst("wasm___", "").replaceFirst("mcp___", "")
+  lazy val isWasm: Boolean = raw_name.startsWith("wasm___")
+  lazy val isMcp: Boolean = raw_name.startsWith("mcp___")
   lazy val arguments: String = {
     raw.select("arguments").asValue match {
       case JsString(str) => str
@@ -249,6 +252,8 @@ case class GenericApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
 case class GenericApiResponseChoiceMessageToolCall(raw: JsObject) {
   lazy val id: String = raw.select("id").asOpt[String].getOrElse(raw.select("function").select("name").asString)
   lazy val function: GenericApiResponseChoiceMessageToolCallFunction = GenericApiResponseChoiceMessageToolCallFunction(raw.select("function").asObject)
+  lazy val isWasm: Boolean = function.isWasm
+  lazy val isMcp: Boolean = function.isMcp
 }
 
 object WasmFunction {
@@ -266,14 +271,14 @@ object WasmFunction {
   private val modulesCache = Scaffeine().maximumSize(1000).expireAfterWrite(120.seconds).build[String, String]
   val logger = Logger("WasmFunction")
 
-  def tools(functions: Seq[String])(implicit env: Env): JsObject = {
-    Json.obj(
-      "tools" -> JsArray(functions.flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(ext => ext.states.toolFunction(id))).map { function =>
+  def _tools(functions: Seq[String])(implicit env: Env): Seq[JsObject] = {
+    /*Json.obj(
+      "tools" -> JsArray(*/functions.flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(ext => ext.states.toolFunction(id))).map { function =>
         val required: JsArray = function.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(function.parameters.value.keySet.toSeq.map(_.json)))
         Json.obj(
           "type" -> "function",
           "function" -> Json.obj(
-            "name" -> function.id, //function.name,
+            "name" -> s"wasm___${function.id}", //function.name,
             "description" -> function.description,
             "strict" -> function.strict,
             "parameters" -> Json.obj(
@@ -284,8 +289,8 @@ object WasmFunction {
             )
           )
         )
-      })
-    )
+      }/*)
+    )*/
   }
 
   private def call(functions: Seq[GenericApiResponseChoiceMessageToolCall])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
@@ -312,7 +317,7 @@ object WasmFunction {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
-  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def _callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     call(functions) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
         "role" -> "tool",
@@ -322,7 +327,7 @@ object WasmFunction {
     }
   }
 
-  def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def _callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     call(functions) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "content" -> "", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
         "role" -> "tool",

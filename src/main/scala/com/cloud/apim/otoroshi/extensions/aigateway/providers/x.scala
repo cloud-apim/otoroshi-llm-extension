@@ -62,7 +62,7 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              WasmFunction.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
+              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)))(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -149,7 +149,7 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = WasmFunction.callToolsOpenai(calls)(ec, env)
+              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = LlmFunctions.callToolsOpenai(calls)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -209,6 +209,7 @@ case class XAiChatClientOptions(
                                     tools: Option[Seq[JsValue]] = None,
                                     tool_choice: Option[Seq[JsValue]] =  None,
                                     wasmTools: Seq[String] = Seq.empty,
+                                    mcpConnectors: Seq[String] = Seq("foo"),
                                     allowConfigOverride: Boolean = true,
                                   ) extends ChatOptions {
 
@@ -249,7 +250,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
-      val tools = WasmFunction.tools(options.wasmTools)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
     } else {
       api.stream("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
@@ -320,7 +321,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.json
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
-      val tools = WasmFunction.tools(options.wasmTools)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)))
     } else {
       api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
