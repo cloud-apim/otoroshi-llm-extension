@@ -33,14 +33,16 @@ case class PromptContext(
     preMessages.map { message =>
       val role = message.select("role").asOpt[String].getOrElse("user")
       val content = message.select("content").asOpt[String].getOrElse("no input")
-      ChatMessage(role, content)
+      val prefix = message.select("prefix").asOptBoolean
+      ChatMessage(role, content, prefix)
     }
   }
   def postChatMessages(): Seq[ChatMessage] = {
     postMessages.map { message =>
       val role = message.select("role").asOpt[String].getOrElse("user")
       val content = message.select("content").asOpt[String].getOrElse("no input")
-      ChatMessage(role, content)
+      val prefix = message.select("prefix").asOptBoolean
+      ChatMessage(role, content, prefix)
     }
   }
 }

@@ -78,7 +78,8 @@ class OpenAiCompatProxy extends NgBackendCall {
           val messages = (preContextMessages ++ requestMessages ++ postContextMessages).map { obj =>
             val role = obj.select("role").asOpt[String].getOrElse("user")
             val content = obj.select("content").asOpt[String].getOrElse("")
-            ChatMessage(role, content)
+            val prefix = obj.select("prefix").asOptBoolean
+            ChatMessage(role, content, prefix)
           }
           if (stream) {
             client.tryStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {

@@ -165,8 +165,8 @@ class AiResponseBodyModifier extends NgRequestTransformer {
         case Some(client) => {
           ctx.otoroshiResponse.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
             client.call(ChatPrompt(config.preChatMessages ++ Seq(
-              ChatMessage("system", config.prompt),
-              ChatMessage("user", bodyRaw.utf8String),
+              ChatMessage("system", config.prompt, None),
+              ChatMessage("user", bodyRaw.utf8String, None),
             ) ++ config.postChatMessages), ctx.attrs, Json.obj()).flatMap {
               case Left(err) => Left(Results.InternalServerError(Json.obj("error" -> err))).vfuture // TODO: rewrite error
               case Right(resp) => {

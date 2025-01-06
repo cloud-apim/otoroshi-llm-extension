@@ -153,7 +153,7 @@ class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: Str
       val messages = resp.body.select("candidates").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
         val role = obj.select("content").select("role").asOpt[String].getOrElse("user")
         val content = obj.select("content").select("parts").asOpt[Seq[String]].getOrElse(Seq.empty).mkString(" ")
-        ChatGeneration(ChatMessage(role, content))
+        ChatGeneration(ChatMessage(role, content, None))
       }
       Right(ChatResponse(messages, usage))
     }

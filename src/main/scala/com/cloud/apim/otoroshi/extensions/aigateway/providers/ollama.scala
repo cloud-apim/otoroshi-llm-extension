@@ -324,7 +324,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
       }
       val role = resp.body.select("message").select("role").asOpt[String].getOrElse("user")
       val content = resp.body.select("message").select("content").asOpt[String].getOrElse("")
-      val message = ChatGeneration(ChatMessage(role, content))
+      val message = ChatGeneration(ChatMessage(role, content, None))
       Right(ChatResponse(Seq(message), usage))
     }
   }

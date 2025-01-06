@@ -31,6 +31,7 @@ object ChatMessage {
       ChatMessage(
         role = json.select("role").asString,
         content = json.select("content").asString,
+        prefix = json.select("prefix").asOptBoolean,
       )
     } match {
       case Failure(e) => JsError(e.getMessage)
@@ -40,11 +41,13 @@ object ChatMessage {
     override def writes(o: ChatMessage): JsValue = o.json
   }
 }
-case class ChatMessage(role: String, content: String) {
+case class ChatMessage(role: String, content: String, prefix: Option[Boolean]) {
   def json: JsValue = Json.obj(
     "role" -> role,
     "content" -> content,
-  )
+  ).applyOnWithOpt(prefix) {
+    case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
+  }
   def asLangchain4j: dev.langchain4j.data.message.ChatMessage = {
     role match {
       case "user" => new dev.langchain4j.data.message.UserMessage(content)

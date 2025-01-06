@@ -160,7 +160,7 @@ class LlmResponseEndpoint extends NgBackendCall {
             )
           }
           val prompt = applyEl(config.promptBeforeEl)
-          client.call(ChatPrompt(config.preChatMessages.map(pm => pm.copy(content = applyEl(pm.content))) ++ Seq(ChatMessage("user", prompt)) ++ config.postChatMessages.map(pm => pm.copy(content = applyEl(pm.content)))), ctx.attrs, Json.obj()).map {
+          client.call(ChatPrompt(config.preChatMessages.map(pm => pm.copy(content = applyEl(pm.content))) ++ Seq(ChatMessage("user", prompt, None)) ++ config.postChatMessages.map(pm => pm.copy(content = applyEl(pm.content)))), ctx.attrs, Json.obj()).map {
             case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> err)))) // TODO: rewrite error
             case Right(resp) => {
               Right(BackendCallResponse(NgPluginHttpResponse.fromResult(

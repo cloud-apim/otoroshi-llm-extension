@@ -38,7 +38,7 @@ class LLMGuardrail extends Guardrail {
                 case None => GuardrailResult.GuardrailDenied("validation provider not found").vfuture
                 case Some(validationClient) => {
                   validationClient.call(ChatPrompt(Seq(
-                    ChatMessage("system", prompt.prompt)
+                    ChatMessage("system", prompt.prompt, None)
                   ) ++ messages), attrs, Json.obj()).flatMap {
                     case Left(err) => fail(2)
                     case Right(resp) => {

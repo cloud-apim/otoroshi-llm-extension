@@ -219,7 +219,8 @@ class AiExtension(val env: Env) extends AdminExtension {
                   case Some(client) => {
                     val role = bodyJson.select("role").asOpt[String].getOrElse("user")
                     val content = bodyJson.select("content").asOpt[String].getOrElse("no input")
-                    client.call(ChatPrompt(messages.map(m => ChatMessage(m.select("role").asOpt[String].getOrElse("system"), m.select("content").asOpt[String].getOrElse(""))) ++ Seq(ChatMessage(role, content))), TypedMap.empty, Json.obj()).map {
+                    val prefix = bodyJson.select("prefix").asOptBoolean
+                    client.call(ChatPrompt(messages.map(m => ChatMessage(m.select("role").asOpt[String].getOrElse("system"), m.select("content").asOpt[String].getOrElse(""), m.select("prefix").asOptBoolean)) ++ Seq(ChatMessage(role, content, None))), TypedMap.empty, Json.obj()).map {
                       case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                       case Right(response) => {
                         Results.Ok(Json.obj("done" -> true, "response" -> response.generations.map(_.json)))
@@ -259,7 +260,7 @@ class AiExtension(val env: Env) extends AdminExtension {
                   case Some(client) => {
                     val context = bodyJson.select("ctx").asOpt[JsObject].getOrElse(Json.obj())
                     val messagesRaw = AiLlmProxy.applyTemplate(template, context)
-                    val messages = messagesRaw.map(m => ChatMessage(m.select("role").asOpt[String].getOrElse("system"), m.select("content").asOpt[String].getOrElse("")))
+                    val messages = messagesRaw.map(m => ChatMessage(m.select("role").asOpt[String].getOrElse("system"), m.select("content").asOpt[String].getOrElse(""), m.select("prefix").asOptBoolean))
                     client.call(ChatPrompt(messages), TypedMap.empty, Json.obj()).map {
                       case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                       case Right(response) => {
@@ -296,7 +297,7 @@ class AiExtension(val env: Env) extends AdminExtension {
               case None => Results.Ok(Json.obj("done" -> false, "error" -> "no client")).vfuture
               case Some(client) => {
                 val prompt = bodyJson.select("prompt").asOpt[String].getOrElse("")
-                val messages = Seq(ChatMessage("user", prompt))
+                val messages = Seq(ChatMessage("user", prompt, None))
                 client.call(ChatPrompt(messages), TypedMap.empty, Json.obj()).map {
                   case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                   case Right(response) => {
@@ -370,6 +371,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    const BaseUrls = {
             |      openai: '${OpenAiApi.baseUrl}',
             |      scaleway: '${ScalewayApi.baseUrl}',
+            |      deepseek: '${DeepSeekApi.baseUrl}',
             |      xai: '${XAiApi.baseUrl}',
             |      mistral: '${MistralAiApi.baseUrl}',
             |      ollama: '${OllamaAiApi.baseUrl}',
@@ -383,6 +385,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      anthropic: ${AnthropicChatClientOptions().json.stringify},
             |      openai: ${OpenAiChatClientOptions().json.stringify},
             |      scaleway: ${OpenAiChatClientOptions().copy(model = "llama-3.1-8b-instruct").json.stringify},
+            |      deepseek: ${OpenAiChatClientOptions().copy(model = "deepseek-chat").json.stringify},
             |      xai: ${XAiChatClientOptions().json.stringify},
             |      mistral: ${MistralAiChatClientOptions().json.stringify},
             |      ollama: ${OllamaAiChatClientOptions().json.stringify},

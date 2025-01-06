@@ -119,8 +119,8 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     // println("\n\n================================\n")
-    // println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
-    // println("calling openai")
+    println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
+    println("calling openai")
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -465,7 +465,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
         val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
         val content = obj.select("message").select("content").asOpt[String].getOrElse("")
-        ChatGeneration(ChatMessage(role, content))
+        ChatGeneration(ChatMessage(role, content, None))
       }
       Right(ChatResponse(messages, usage))
     }

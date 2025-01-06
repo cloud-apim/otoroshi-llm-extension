@@ -366,7 +366,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
         val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
         val content = obj.select("message").select("content").asOpt[String].getOrElse("")
-        ChatGeneration(ChatMessage(role, content))
+        ChatGeneration(ChatMessage(role, content, None))
       }
       Right(ChatResponse(messages, usage))
     }

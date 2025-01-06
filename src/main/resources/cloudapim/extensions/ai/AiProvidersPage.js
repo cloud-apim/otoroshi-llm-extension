@@ -392,6 +392,13 @@ class AiProvidersPage extends Component {
             { 'label': "Meta-Llama-3-8B-Instruct", value: 'Meta-Llama-3-8B-Instruct' },
           ] }
       }
+    } else if (provider === "deepseek") {
+      return {
+        'type': 'select',
+        props: { label: 'Description', possibleValues: [
+            { 'label': "deepseek-chat", value: 'deepseek-chat' },
+          ] }
+      }
     } else {
       return {
         type: 'string',
@@ -399,6 +406,24 @@ class AiProvidersPage extends Component {
       }
     }
   }
+
+  providerList = _.sortBy([
+    { 'label': 'OpenAI', value: 'openai' },
+    { 'label': 'Azure OpenAI', value: 'azure-openai' },
+    { 'label': 'Mistral', value: 'mistral' },
+    { 'label': 'Ollama', value: 'ollama' },
+    { 'label': 'Anthropic', value: 'anthropic' },
+    { 'label': 'Groq', value: 'groq' },
+    { 'label': 'X.ai', value: 'x-ai' },
+    { 'label': 'Scaleway', value: 'scaleway' },
+    { 'label': 'Deepseek', value: 'deepseek' },
+    { 'label': 'OVH AI Endpoints', value: 'ovh-ai-endpoints' },
+    { 'label': 'HuggingFace', value: 'huggingface' },
+    { 'label': 'Cloudflare', value: 'cloudflare' },
+    { 'label': 'Cohere', value: 'cohere' },
+    { 'label': 'Gemini', value: 'gemini' },
+    { 'label': 'Loadbalancer', value: 'loadbalancer' },
+  ], a => a.label)
 
   formSchema = (state) => ({
     _loc: {
@@ -420,22 +445,7 @@ class AiProvidersPage extends Component {
     },
     'provider': {
       'type': 'select',
-      props: { label: 'Description', possibleValues: [
-          { 'label': 'OpenAI', value: 'openai' },
-          { 'label': 'Azure OpenAI', value: 'azure-openai' },
-          { 'label': 'Mistral', value: 'mistral' },
-          { 'label': 'Ollama', value: 'ollama' },
-          { 'label': 'Anthropic', value: 'anthropic' },
-          { 'label': 'Groq', value: 'groq' },
-          { 'label': 'X.ai', value: 'x-ai' },
-          { 'label': 'Scaleway', value: 'scaleway' },
-          { 'label': 'OVH AI Endpoints', value: 'ovh-ai-endpoints' },
-          { 'label': 'HuggingFace', value: 'huggingface' },
-          { 'label': 'Cloudflare', value: 'cloudflare' },
-          { 'label': 'Cohere', value: 'cohere' },
-          { 'label': 'Gemini', value: 'gemini' },
-          { 'label': 'Loadbalancer', value: 'loadbalancer' },
-        ] }
+      props: { label: 'Description', possibleValues: this.providerList }
     },
     'connection.model_name': {
       type: 'string',
@@ -1255,7 +1265,7 @@ class AiProvidersPage extends Component {
             connection: {
               base_url: BaseUrls.openai,
               token: 'xxxx',
-              timeout: 10000,
+              timeout: 30000,
             },
             options: ClientOptions.openai,
             cache: {
@@ -1341,7 +1351,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.mistral,
                   token: 'xxx',
-                  timeout: 10000,
+                  timeout: 30000,
                 },
                 options: ClientOptions.mistral,
               });
@@ -1356,7 +1366,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.cohere,
                   token: 'xxx',
-                  timeout: 10000,
+                  timeout: 30000,
                 },
                 options: ClientOptions.cohere,
               });
@@ -1371,9 +1381,24 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.openai,
                   token: 'xxx',
-                  timeout: 10000,
+                  timeout: 30000,
                 },
                 options: ClientOptions.openai,
+              });
+            } else if (state.provider === 'deepseek') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'deepseek',
+                connection: {
+                  base_url: BaseUrls.deepseek,
+                  token: 'xxx',
+                  timeout: 30000,
+                },
+                options: ClientOptions.deepseek,
               });
             } else if (state.provider === 'scaleway') {
               update({
@@ -1416,7 +1441,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_domain: BaseUrls.ovh,
                   token: 'xxx',
-                  timeout: 10000,
+                  timeout: 30000,
                 },
                 options: ClientOptions.ovh,
               });
@@ -1432,7 +1457,7 @@ class AiProvidersPage extends Component {
                   base_url: BaseUrls.gemini,
                   model: 'model name',
                   token: 'xxx',
-                  timeout: 10000,
+                  timeout: 30000,
                 },
                 options: ClientOptions.gemini,
               });
@@ -1448,7 +1473,7 @@ class AiProvidersPage extends Component {
                   resource_name: "resource name",
                   deployment_id: "model id",
                   api_key: 'xxx',
-                  timeout: 10000,
+                  timeout: 30000,
                 },
                 options: ClientOptions.azureOpenai,
               });
@@ -1464,7 +1489,7 @@ class AiProvidersPage extends Component {
                   account_id: "YOUR ACCOUNT ID",
                   model_name: "@cf/meta/llama-3.1-8b-instruct-fp8",
                   token: 'xxx',
-                  timeout: 10000,
+                  timeout: 30000,
                 },
                 options: ClientOptions.azureOpenai,
               });
@@ -1480,7 +1505,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   model_name: "google/gemma-2-2b-it:",
                   token: 'xxx',
-                  timeout: 10000,
+                  timeout: 30000,
                 },
                 options: ClientOptions.huggingface,
               });

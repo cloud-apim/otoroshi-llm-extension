@@ -147,7 +147,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
       val role = resp.body.select("role").asOpt[String].getOrElse("assistant")
       val messages = resp.body.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
         val content = obj.select("text").asOpt[String].getOrElse("")
-        ChatGeneration(ChatMessage(role, content))
+        ChatGeneration(ChatMessage(role, content, None))
       }
       Right(ChatResponse(messages, usage))
     }

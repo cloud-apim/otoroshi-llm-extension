@@ -210,7 +210,7 @@ abstract class HardCodedLLMGuardrail extends Guardrail {
                   .orElse(config.select("pif_items").asOpt[Seq[String]])
                   .orElse(config.select("moderation_items").asOpt[Seq[String]])
                   .orElse(config.select("secrets_leakage_items").asOpt[Seq[String]])
-                  .getOrElse(Seq.empty)))
+                  .getOrElse(Seq.empty)), None)
             ) ++ messages), attrs, Json.obj()).flatMap {
               case Left(err) => GuardrailResult.GuardrailDenied(err.stringify).vfuture
               case Right(resp) => {
