@@ -137,4 +137,26 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
       }
     }
   }
+
+  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    execute(prompt, attrs, originalBody) { client =>
+      val start = System.currentTimeMillis()
+      client.completion(prompt, attrs, originalBody).map { resp =>
+        val duration: Long = System.currentTimeMillis() - start
+        BestResponseTime.incrementAverage(provider, duration)
+        resp
+      }
+    }
+  }
+
+  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    execute(prompt, attrs, originalBody) { client =>
+      val start = System.currentTimeMillis()
+      client.completionStream(prompt, attrs, originalBody).map { resp =>
+        val duration: Long = System.currentTimeMillis() - start
+        BestResponseTime.incrementAverage(provider, duration)
+        resp
+      }
+    }
+  }
 }

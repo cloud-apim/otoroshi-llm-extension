@@ -72,4 +72,54 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
       }
     }
   }
+
+  override def completion(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    chatClient.completion(originalPrompt, attrs, originalBody).flatMap {
+      case Left(err) => {
+        env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(originalProvider.providerFallback.get)) match {
+          case None => err.leftf
+          case Some(provider) => provider.getChatClient() match {
+            case None => err.leftf
+            case Some(fallbackClient) => fallbackClient.completion(originalPrompt, attrs, originalBody)
+          }
+        }
+      }
+      case Right(resp) => resp.rightf
+    }.recoverWith {
+      case t: Throwable => {
+        env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(originalProvider.providerFallback.get)) match {
+          case None => Json.obj("error" -> "fallback provider not found").leftf
+          case Some(provider) => provider.getChatClient() match {
+            case None => Json.obj("error" -> "fallback client not found").leftf
+            case Some(fallbackClient) => fallbackClient.completion(originalPrompt, attrs, originalBody)
+          }
+        }
+      }
+    }
+  }
+
+  override def completionStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    chatClient.completionStream(originalPrompt, attrs, originalBody).flatMap {
+      case Left(err) => {
+        env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(originalProvider.providerFallback.get)) match {
+          case None => err.leftf
+          case Some(provider) => provider.getChatClient() match {
+            case None => err.leftf
+            case Some(fallbackClient) => fallbackClient.completionStream(originalPrompt, attrs, originalBody)
+          }
+        }
+      }
+      case Right(resp) => resp.rightf
+    }.recoverWith {
+      case t: Throwable => {
+        env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(originalProvider.providerFallback.get)) match {
+          case None => Json.obj("error" -> "fallback provider not found").leftf
+          case Some(provider) => provider.getChatClient() match {
+            case None => Json.obj("error" -> "fallback client not found").leftf
+            case Some(fallbackClient) => fallbackClient.completionStream(originalPrompt, attrs, originalBody)
+          }
+        }
+      }
+    }
+  }
 }

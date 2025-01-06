@@ -214,4 +214,45 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
       }
     }
   }
+
+  override def completion(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
+      case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
+      case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
+        Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg, prefix = None))),
+        ChatResponseMetadata.empty,
+      )).vfuture
+      case GuardrailResult.GuardrailPass => {
+        chatClient.completion(originalPrompt, attrs, originalBody).flatMap {
+          case Left(err) => Left(err).vfuture
+          case Right(r) => {
+            originalProvider.guardrails.call(GuardrailsCallPhase.After, r.generations.map(_.message), originalProvider, chatClient, attrs).flatMap {
+              case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "after")).vfuture
+              case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
+                Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg, prefix = None))),
+                ChatResponseMetadata.empty,
+              )).vfuture
+              case GuardrailResult.GuardrailPass => Right(r).vfuture
+            }
+          }
+        }
+      }
+    }
+  }
+
+  override def completionStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
+      case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
+      case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
+        Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg, prefix = None))),
+        ChatResponseMetadata.empty,
+      ).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
+      case GuardrailResult.GuardrailPass => {
+        chatClient.completionStream(originalPrompt, attrs, originalBody).flatMap {
+          case Left(err) => Left(err).vfuture
+          case Right(r) => Right(r).vfuture
+        }
+      }
+    }
+  }
 }

@@ -91,4 +91,51 @@ class ChatClientWithSimpleCache(originalProvider: AiProvider, val chatClient: Ch
       }
     }
   }
+
+  override def completion(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
+    ChatClientWithSimpleCache.cache.getIfPresent(key) match {
+      case Some((_, response, at)) =>
+        // println("using simple cache response")
+        val age = (System.currentTimeMillis() - at).millis
+        response.copy(metadata = response.metadata.copy(
+          usage = ChatResponseMetadataUsage.empty,
+          cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, age))
+        )).rightf
+      case None => {
+        chatClient.completion(originalPrompt, attrs, originalBody).map {
+          case Left(err) => err.left
+          case Right(resp) => {
+            ChatClientWithSimpleCache.cache.put(key, (ttl, resp, System.currentTimeMillis()))
+            resp.copy(metadata = resp.metadata.copy(
+              cache = Some(ChatResponseCache(ChatResponseCacheStatus.Miss, key, ttl, 0.millis))
+            )).right
+          }
+        }
+      }
+    }
+  }
+
+  override def completionStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
+    ChatClientWithSimpleCache.stream_cache.getIfPresent(key) match {
+      case Some((_, response, at)) => Source(response.toList).rightf
+      case None => {
+        chatClient.completionStream(originalPrompt, attrs, originalBody).map {
+          case Left(err) => err.left
+          case Right(resp) => {
+            var chunks = Seq.empty[ChatResponseChunk]
+            resp
+              .alsoTo(Sink.foreach { chunk =>
+                chunks = chunks :+ chunk
+              })
+              .alsoTo(Sink.onComplete { _ =>
+                ChatClientWithSimpleCache.stream_cache.put(key, (ttl, chunks, System.currentTimeMillis()))
+              })
+            resp.right
+          }
+        }
+      }
+    }
+  }
 }
