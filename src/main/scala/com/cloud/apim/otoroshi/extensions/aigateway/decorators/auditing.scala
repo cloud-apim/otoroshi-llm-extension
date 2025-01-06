@@ -141,4 +141,14 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
       }
     }
   }
+
+  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    // TODO: support
+    chatClient.completion(prompt, attrs, originalBody)
+  }
+
+  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    // TODO: support
+    chatClient.completionStream(prompt, attrs, originalBody)
+  }
 }

@@ -117,17 +117,17 @@ case class AiProvider(
       case "openai" => {
         val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
-        new OpenAiChatClient(api, opts, id).some
+        new OpenAiChatClient(api, opts, id, "openai").some
       }
       case "scaleway" => {
         val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
-        new OpenAiChatClient(api, opts, id).some
+        new OpenAiChatClient(api, opts, id, "scaleway").some
       }
       case "deepseek" => {
         val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
-        new OpenAiChatClient(api, opts, id).some
+        new OpenAiChatClient(api, opts, id, "deepseek").some
       }
       case "x-ai" => {
         val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)

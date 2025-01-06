@@ -68,6 +68,12 @@ case class ChatGeneration(message: ChatMessage) {
     "logprobs" -> JsNull,
     "finish_reason" -> "stop",
   )
+  def openaiCompletionJson(idx: Int): JsValue = Json.obj(
+    "index" -> idx,
+    "text" -> message.content,
+    "logprobs" -> JsNull,
+    "finish_reason" -> "stop",
+  )
 }
 case class ChatResponse(
   generations: Seq[ChatGeneration],
@@ -84,6 +90,15 @@ case class ChatResponse(
     "model" -> model,
     "system_fingerprint" -> s"fp-${IdGenerator.token(32)}",
     "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiJson(t._2))),
+    "usage" -> metadata.usage.openaiJson,
+  )
+  def openaiCompletionJson(model: String, echo: Boolean, prompt: String): JsValue = Json.obj(
+    "id" -> s"cmpl-${IdGenerator.token(32)}",
+    "object" -> "text_completion",
+    "created" -> (System.currentTimeMillis() / 1000).toLong,
+    "model" -> model,
+    "system_fingerprint" -> s"fp_${IdGenerator.token(32)}",
+    "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiCompletionJson(t._2))),
     "usage" -> metadata.usage.openaiJson,
   )
   def toSource(model: String): Source[ChatResponseChunk, _] = {
@@ -194,6 +209,12 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
     "logprobs" -> JsNull,
     "finish_reason" -> finishReason.map(_.json).getOrElse(JsNull).asValue
   )
+  def openaiCompletionJson: JsValue = Json.obj(
+    "index" -> index,
+    "text" -> delta.content.map(_.json).getOrElse(JsNull).asValue,
+    "logprobs" -> JsNull,
+    "finish_reason" -> finishReason.map(_.json).getOrElse(JsNull).asValue
+  )
 }
 
 case class ChatResponseChunk(id: String, created: Long, model: String, choices: Seq[ChatResponseChunkChoice]) {
@@ -211,8 +232,17 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
     "system_fingerprint" -> JsNull,
     "choices" -> JsArray(choices.map(_.openaiJson))
   )
+  def openaiCompletionJson: JsValue = Json.obj(
+    "id" -> id,
+    "object" -> "text_completion",
+    "created" -> created,
+    "model" -> model,
+    "system_fingerprint" -> JsNull,
+    "choices" -> JsArray(choices.map(_.openaiCompletionJson))
+  )
   def eventSource: ByteString = s"data: ${json.stringify}\n\n".byteString
   def openaiEventSource: ByteString = s"data: ${openaiJson.stringify}\n\n".byteString
+  def openaiCompletionEventSource: ByteString = s"data: ${openaiCompletionJson.stringify}\n\n".byteString
 }
 
 case class Embedding(vector: Array[Float])
@@ -239,6 +269,7 @@ trait ChatClient {
 
   def supportsStreaming: Boolean = false
   def supportsTools: Boolean = false
+  def supportsCompletion: Boolean = false
 
   def model: Option[String]
 
@@ -246,7 +277,15 @@ trait ChatClient {
 
   def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]]
 
+  def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    Left(Json.obj("error" -> "completion not supported")).vfuture
+  }
+
   def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    Left(Json.obj("error" -> "streaming not supported")).future
+  }
+
+  def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     Left(Json.obj("error" -> "streaming not supported")).future
   }
 
@@ -255,6 +294,28 @@ trait ChatClient {
       stream(prompt, attrs, originalBody)
     } else {
       call(prompt, attrs, originalBody).map {
+        case Left(err) => Left(err)
+        case Right(resp) => Right(resp.toSource(model.getOrElse("none")))
+      }
+    }
+  }
+
+  def tryCompletion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    println(s"tryCompletion: ${getClass.getName} - ${supportsCompletion}")
+    if (supportsCompletion) {
+      completion(prompt, attrs, originalBody)
+    } else {
+      val cleanBody = originalBody.asObject - "prompt" - "suffix"
+      call(prompt, attrs, cleanBody)
+    }
+  }
+
+  final def tryCompletionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    if (supportsStreaming) {
+      completionStream(prompt, attrs, originalBody)
+    } else {
+      val cleanBody = originalBody.asObject - "prompt" - "suffix"
+      completion(prompt, attrs, cleanBody).map {
         case Left(err) => Left(err)
         case Right(resp) => Right(resp.toSource(model.getOrElse("none")))
       }

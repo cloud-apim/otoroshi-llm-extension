@@ -116,6 +116,7 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
 
   val supportsTools: Boolean = true
   val supportsStreaming: Boolean = true
+  val supportsCompletion: Boolean = true
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     // println("\n\n================================\n")
@@ -135,8 +136,8 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
       .withRequestTimeout(timeout)
       .execute()
       .map { resp =>
-        // println(s"resp: ${resp.status} - ${resp.body}")
-        // println("\n\n================================\n")
+        println(s"resp: ${resp.status} - ${resp.body}")
+        println("\n\n================================\n")
         resp
       }
   }
@@ -339,11 +340,12 @@ case class OpenAiChatClientOptions(
   def jsonForCall: JsObject = json - "wasm_tools" - "mcp_connectors" - "allow_config_override"
 }
 
-class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String) extends ChatClient {
+class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String) extends ChatClient {
 
   override def model: Option[String] = options.model.some
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
+  override def supportsCompletion: Boolean = api.supportsCompletion
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
@@ -374,7 +376,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
               )
               val duration: Long = resp.header("openai-processing-ms").map(_.toLong).getOrElse(0L)
               val slug = Json.obj(
-                "provider_kind" -> "openai",
+                "provider_kind" -> providerName,
                 "provider" -> id,
                 "duration" -> duration,
                 "model" -> options.model.json,
@@ -443,7 +445,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
       )
       val duration: Long = resp.headers.getIgnoreCase("openai-processing-ms").map(_.toLong).getOrElse(0L)
       val slug = Json.obj(
-        "provider_kind" -> "openai",
+        "provider_kind" -> providerName,
         "provider" -> id,
         "duration" -> duration,
         "model" -> options.model.json,
@@ -466,6 +468,54 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
         val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
         val content = obj.select("message").select("content").asOpt[String].getOrElse("")
         ChatGeneration(ChatMessage(role, content, None))
+      }
+      Right(ChatResponse(messages, usage))
+    }
+  }
+
+  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    println("completion")
+    val body = originalBody.asObject - "messages" - "provider" - "prompt"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.json
+    val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
+    callF.map { resp =>
+      val usage = ChatResponseMetadata(
+        ChatResponseMetadataRateLimit(
+          requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+          requestsRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+          tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+          tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+        ),
+        ChatResponseMetadataUsage(
+          promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
+          generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+        ),
+        None
+      )
+      val duration: Long = resp.headers.getIgnoreCase("openai-processing-ms").map(_.toLong).getOrElse(0L)
+      val slug = Json.obj(
+        "provider_kind" -> providerName,
+        "provider" -> id,
+        "duration" -> duration,
+        "model" -> options.model.json,
+        "rate_limit" -> usage.rateLimit.json,
+        "usage" -> usage.usage.json
+      ).applyOnWithOpt(usage.cache) {
+        case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+      }
+      attrs.update(ChatClient.ApiUsageKey -> usage)
+      attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+        case Some(obj@JsObject(_)) => {
+          val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+          val newArr = arr ++ Seq(slug)
+          obj ++ Json.obj("ai" -> newArr)
+        }
+        case Some(other) => other
+        case None => Json.obj("ai" -> Seq(slug))
+      }
+      val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
+        val content = obj.select("text").asString
+        ChatGeneration(ChatMessage("assistant", content, None))
       }
       Right(ChatResponse(messages, usage))
     }

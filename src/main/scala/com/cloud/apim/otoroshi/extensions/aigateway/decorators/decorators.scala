@@ -1,7 +1,10 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import com.cloud.apim.otoroshi.extensions.aigateway.ChatClient
+import akka.stream.scaladsl.Source
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import otoroshi.env.Env
+import otoroshi.utils.TypedMap
 import play.api.libs.json.JsValue
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -28,5 +31,8 @@ trait DecoratorChatClient extends ChatClient {
   override def model: Option[String] = chatClient.model
   override def supportsStreaming: Boolean = chatClient.supportsStreaming
   override def supportsTools: Boolean = chatClient.supportsTools
+  override def supportsCompletion: Boolean = chatClient.supportsCompletion
   override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = chatClient.listModels()
+  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.completion(prompt, attrs, originalBody)
+  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = chatClient.completionStream(prompt, attrs, originalBody)
 }
