@@ -21,6 +21,7 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
 
   val supportsTools: Boolean = true
   val supportsStreaming: Boolean = true
+  override def supportsCompletion: Boolean = false
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     // println("\n\n================================\n")
@@ -247,6 +248,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
   override def model: Option[String] = options.model.some
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
+  override def supportsCompletion: Boolean = true
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
@@ -379,6 +381,53 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
       } else {
         Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
       }
+    }
+  }
+
+  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val body = originalBody.asObject - "messages" - "provider" - "prompt"
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.json
+    val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
+    callF.map { resp =>
+      val usage = ChatResponseMetadata(
+        ChatResponseMetadataRateLimit(
+          requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+          requestsRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+          tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+          tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+        ),
+        ChatResponseMetadataUsage(
+          promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
+          generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+        ),
+        None
+      )
+      val duration: Long = resp.headers.getIgnoreCase("xai-processing-ms").map(_.toLong).getOrElse(0L)
+      val slug = Json.obj(
+        "provider_kind" -> "x.ai",
+        "provider" -> id,
+        "duration" -> duration,
+        "model" -> options.model.json,
+        "rate_limit" -> usage.rateLimit.json,
+        "usage" -> usage.usage.json
+      ).applyOnWithOpt(usage.cache) {
+        case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+      }
+      attrs.update(ChatClient.ApiUsageKey -> usage)
+      attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+        case Some(obj@JsObject(_)) => {
+          val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+          val newArr = arr ++ Seq(slug)
+          obj ++ Json.obj("ai" -> newArr)
+        }
+        case Some(other) => other
+        case None => Json.obj("ai" -> Seq(slug))
+      }
+      val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
+        val content = obj.select("text").asString
+        ChatGeneration(ChatMessage("assistant", content, None))
+      }
+      Right(ChatResponse(messages, usage))
     }
   }
 }

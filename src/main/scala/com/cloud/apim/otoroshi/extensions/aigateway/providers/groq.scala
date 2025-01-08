@@ -35,6 +35,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
 
   val supportsTools: Boolean = true
   val supportsStreaming: Boolean = true
+  override def supportsCompletion: Boolean = false
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     env.Ws

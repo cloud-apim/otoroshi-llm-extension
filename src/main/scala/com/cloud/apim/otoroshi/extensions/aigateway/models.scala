@@ -301,7 +301,6 @@ trait ChatClient {
   }
 
   def tryCompletion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    println(s"tryCompletion: ${getClass.getName} - ${supportsCompletion}")
     if (supportsCompletion) {
       completion(prompt, attrs, originalBody)
     } else {

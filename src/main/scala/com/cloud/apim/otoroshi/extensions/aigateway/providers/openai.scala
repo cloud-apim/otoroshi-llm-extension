@@ -109,9 +109,11 @@ object OpenAiModels {
   val GPT_3_5_TURBO_0125 = "gpt-3.5-turbo-0125"
   val GPT_3_5_TURBO_1106 = "gpt-3.5-turbo-1106"
 }
+
 object OpenAiApi {
   val baseUrl = "https://api.openai.com"
 }
+
 class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[OpenAiApiResponse, OpenAiChatResponseChunk] {
 
   val supportsTools: Boolean = true

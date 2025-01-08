@@ -92,6 +92,8 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
   // supports tools: false
   // supports streaming: false
 
+  override def supportsCompletion: Boolean = false
+
   override def model: Option[String] = api.modelName.some
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {

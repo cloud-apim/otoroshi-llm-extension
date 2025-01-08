@@ -10,6 +10,7 @@ trait ApiClient[Resp, Chunk] {
 
   def supportsTools: Boolean
   def supportsStreaming: Boolean
+  def supportsCompletion: Boolean
 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Resp]
   def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Resp] = {

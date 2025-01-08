@@ -100,7 +100,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
 
   // supports tools: true
   // supports streaming: true
-
+  override def supportsCompletion: Boolean = true
   override def model: Option[String] = options.model.some
 
   override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
