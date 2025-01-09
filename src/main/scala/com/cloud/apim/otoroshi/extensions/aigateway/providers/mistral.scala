@@ -45,6 +45,7 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
   override def supportsCompletion: Boolean = false
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+    // println(s"call mistral ${method} ${path} ${body.map(_.prettify).getOrElse("--")}")
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -63,6 +64,7 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[MistralAiApiResponse] = {
     rawCall(method, path, body)
       .map { resp =>
+        // println(s"mistral resp: ${resp.status} - ${resp.body}")
         MistralAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
       }
   }
@@ -222,12 +224,14 @@ case class MistralAiChatClientOptions(
     "safe_prompt" -> safe_prompt,
     "temperature" -> temperature,
     "top_p" -> topP,
-    "tools" -> tools,
-    "tool_choice" -> tool_choice,
     "wasm_tools" -> JsArray(wasmTools.map(_.json)),
     "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
-  )
+  ).applyOnWithOpt(tool_choice) {
+    case (obj, tc) => obj ++ Json.obj("tool_choice" -> tc)
+  }.applyOnWithOpt(tools) {
+    case (obj, tc) => obj ++ Json.obj("tools" -> tc)
+  }
 
   def jsonForCall: JsObject = json - "wasm_tools" - "mcp_connectors" - "allow_config_override"
 }
