@@ -252,7 +252,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.json
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors)
@@ -323,7 +323,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.json
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors)
@@ -386,7 +386,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
 
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.json
+    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
     callF.map { resp =>
       val usage = ChatResponseMetadata(
