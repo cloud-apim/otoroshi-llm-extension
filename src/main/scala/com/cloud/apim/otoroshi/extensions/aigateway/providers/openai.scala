@@ -10,6 +10,7 @@ import otoroshi.utils.syntax.implicits._
 import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
 import play.api.libs.ws.WSResponse
 
+import java.util.concurrent.atomic.AtomicLong
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -206,7 +207,8 @@ class OpenAiApi(baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fin
           .filter(_.nonEmpty)
           .takeWhile(_ != "[DONE]")
           .map(str => Json.parse(str))
-          .map(json => OpenAiChatResponseChunk(json)), resp)
+          .map(json => OpenAiChatResponseChunk(json))
+        , resp)
       })
   }
 
@@ -345,7 +347,7 @@ case class OpenAiChatClientOptions(
   def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override")
 }
 
-class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String, modelsPath: String = "/v1/models", completion: Boolean = true) extends ChatClient {
+class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String, modelsPath: String = "/v1/models", completion: Boolean = true, accumulateStreamConsumptions: Boolean = false) extends ChatClient {
 
   override def model: Option[String] = options.model.some
   override def supportsTools: Boolean = api.supportsTools
@@ -364,48 +366,95 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     callF.map {
       case Left(err) => err.left
       case Right((source, resp)) =>
+        val promptTokensCounter = new AtomicLong(0L)
+        val generationTokensCounter = new AtomicLong(0L)
         source
-          .filterNot { chunk =>
-            if (chunk.usage.nonEmpty) {
-              val usage = ChatResponseMetadata(
-                ChatResponseMetadataRateLimit(
-                  requestsLimit = resp.header("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
-                  requestsRemaining = resp.header("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
-                  tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
-                  tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
-                ),
-                ChatResponseMetadataUsage(
-                  promptTokens = chunk.usage.map(_.prompt_tokens).getOrElse(-1L),
-                  generationTokens = chunk.usage.map(_.completion_tokens).getOrElse(-1L),
-                ),
-                None
-              )
-              val duration: Long = resp.header("openai-processing-ms").map(_.toLong).getOrElse(0L)
-              val slug = Json.obj(
-                "provider_kind" -> providerName,
-                "provider" -> id,
-                "duration" -> duration,
-                "model" -> options.model.json,
-                "rate_limit" -> usage.rateLimit.json,
-                "usage" -> usage.usage.json
-              ).applyOnWithOpt(usage.cache) {
-                case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
-              }
-              attrs.update(ChatClient.ApiUsageKey -> usage)
-              attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-                case Some(obj@JsObject(_)) => {
-                  val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-                  val newArr = arr ++ Seq(slug)
-                  obj ++ Json.obj("ai" -> newArr)
+          .applyOnIf(accumulateStreamConsumptions)(
+            _.map { chunk =>
+              promptTokensCounter.addAndGet(chunk.usage.map(_.prompt_tokens).getOrElse(-1L))
+              generationTokensCounter.addAndGet(chunk.usage.map(_.completion_tokens).getOrElse(-1L))
+              if (chunk.choices.exists(_.finish_reason.contains("stop"))) {
+                val usage = ChatResponseMetadata(
+                  ChatResponseMetadataRateLimit(
+                    requestsLimit = resp.header("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+                    requestsRemaining = resp.header("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+                    tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+                    tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+                  ),
+                  ChatResponseMetadataUsage(
+                    promptTokens = promptTokensCounter.get(),
+                    generationTokens = generationTokensCounter.get(),
+                  ),
+                  None
+                )
+                val duration: Long = resp.header("openai-processing-ms").map(_.toLong).getOrElse(0L)
+                val slug = Json.obj(
+                  "provider_kind" -> providerName,
+                  "provider" -> id,
+                  "duration" -> duration,
+                  "model" -> options.model.json,
+                  "rate_limit" -> usage.rateLimit.json,
+                  "usage" -> usage.usage.json
+                ).applyOnWithOpt(usage.cache) {
+                  case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
                 }
-                case Some(other) => other
-                case None => Json.obj("ai" -> Seq(slug))
+                attrs.update(ChatClient.ApiUsageKey -> usage)
+                attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+                  case Some(obj@JsObject(_)) => {
+                    val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                    val newArr = arr ++ Seq(slug)
+                    obj ++ Json.obj("ai" -> newArr)
+                  }
+                  case Some(other) => other
+                  case None => Json.obj("ai" -> Seq(slug))
+                }
               }
-              true
-            } else {
-              false
+              chunk
             }
-          }
+          )
+          .applyOnIf(!accumulateStreamConsumptions)(
+            _.filterNot { chunk =>
+              if (chunk.usage.nonEmpty) {
+                val usage = ChatResponseMetadata(
+                  ChatResponseMetadataRateLimit(
+                    requestsLimit = resp.header("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+                    requestsRemaining = resp.header("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+                    tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+                    tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+                  ),
+                  ChatResponseMetadataUsage(
+                    promptTokens = chunk.usage.map(_.prompt_tokens).getOrElse(-1L),
+                    generationTokens = chunk.usage.map(_.completion_tokens).getOrElse(-1L),
+                  ),
+                  None
+                )
+                val duration: Long = resp.header("openai-processing-ms").map(_.toLong).getOrElse(0L)
+                val slug = Json.obj(
+                  "provider_kind" -> providerName,
+                  "provider" -> id,
+                  "duration" -> duration,
+                  "model" -> options.model.json,
+                  "rate_limit" -> usage.rateLimit.json,
+                  "usage" -> usage.usage.json
+                ).applyOnWithOpt(usage.cache) {
+                  case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+                }
+                attrs.update(ChatClient.ApiUsageKey -> usage)
+                attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+                  case Some(obj@JsObject(_)) => {
+                    val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                    val newArr = arr ++ Seq(slug)
+                    obj ++ Json.obj("ai" -> newArr)
+                  }
+                  case Some(other) => other
+                  case None => Json.obj("ai" -> Seq(slug))
+                }
+                true
+              } else {
+                false
+              }
+            }
+          )
           .map { chunk =>
             ChatResponseChunk(
               id = chunk.id,

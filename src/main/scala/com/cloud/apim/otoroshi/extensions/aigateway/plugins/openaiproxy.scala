@@ -85,7 +85,9 @@ class OpenAiCompatProxy extends NgBackendCall {
             client.tryStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(source) => {
-                val finalSource = source.map(_.openaiEventSource).concat(Source.single("data: [DONE]\n\n".byteString))
+                val finalSource = source
+                  .map(_.openaiEventSource)
+                  .concat(Source.single("data: [DONE]\n\n".byteString))
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
               }
             }

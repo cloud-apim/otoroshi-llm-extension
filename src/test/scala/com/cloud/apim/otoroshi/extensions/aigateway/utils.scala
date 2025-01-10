@@ -2,12 +2,12 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 
 import akka.actor.ActorSystem
 import akka.stream.Materializer
-import akka.stream.scaladsl.Source
+import akka.stream.scaladsl.{Framing, Sink, Source}
 import akka.util.ByteString
 import com.typesafe.config.ConfigFactory
 import otoroshi.api.Otoroshi
 import otoroshi.utils.syntax.implicits._
-import play.api.libs.json.JsValue
+import play.api.libs.json.{JsObject, JsValue}
 import play.api.{Configuration, Logger}
 import play.api.libs.ws.ahc.{AhcWSClient, AhcWSClientConfig}
 import play.api.libs.ws.{WSClient, WSClientConfig, WSConfigParser, WSResponse}
@@ -381,12 +381,42 @@ object Utils {
 
 }
 
+case class OtoroshiClientStreamedResponse(resp: WSResponse, chunks: Seq[JsValue]) {
+  def created: Boolean = resp.status == 201
+  def success: Boolean = resp.status > 199 && resp.status < 300
+  def status: Int = resp.status
+  def headers: Map[String, String] = resp.headers.mapValues(_.last)
+  def state: String = s"${status} - ${resp.body}"
+  lazy val message: String = chunks.map { chunk =>
+    val choices = chunk.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+    choices.map(_.select("delta").select("content").asOpt[String].getOrElse("")).mkString("")
+  }.mkString("")
+}
+
 case class OtoroshiClient(port: Int, client: WSClient, ec: ExecutionContext, mat: Materializer) {
 
   def call(method: String, url: String, headers: Map[String, String], body: Option[JsValue]): Future[WSResponse] = {
     client.url(url).withMethod(method).withHttpHeaders(headers.toSeq:_*).applyOnWithOpt(body){
       case (builder, body) => builder.withBody(body)
     }.execute()
+  }
+
+  def stream(method: String, url: String, headers: Map[String, String], body: Option[JsValue]): Future[OtoroshiClientStreamedResponse] = {
+    client.url(url).withMethod(method).withHttpHeaders(headers.toSeq:_*).applyOnWithOpt(body){
+      case (builder, body) => builder.withBody(body)
+    }.withRequestTimeout(60.seconds).stream().flatMap { resp =>
+      resp.bodyAsSource
+        .via(Framing.delimiter("\n\n".byteString, 50000, true))
+        .map(_.utf8String)
+        .filter(_.startsWith("data: "))
+        .map(_.replaceFirst("data: ", ""))
+        .filterNot(_.startsWith("[DONE]"))
+        .map(_.parseJson)
+        .runWith(Sink.seq)(mat)
+        .map { chunks =>
+          OtoroshiClientStreamedResponse(resp, chunks)
+        }(ec)
+    }(ec)
   }
 
   def forEntity(group: String, version: String, pluralName: String): OtoroshiEntityClient = {

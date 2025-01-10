@@ -8,7 +8,7 @@ import scala.concurrent.duration.DurationInt
 
 class ProvidersSuite extends munit.FunSuite {
 
-  def testProvider(providerName: String, tokenEnv: String, options: JsObject, baseUrl: Option[String] = None, testChat: Boolean = true, testCompletion: Boolean = true, testModels: Boolean = true): Unit = {
+  def testProvider(providerName: String, tokenEnv: String, options: JsObject, baseUrl: Option[String] = None, testChat: Boolean = true, testStreaming: Boolean = true, testCompletion: Boolean = true, testModels: Boolean = true): Unit = {
     val token = sys.env(tokenEnv)
     val port = Utils.freePort
     val otoroshi = Utils.startOtoroshi(port)
@@ -178,6 +178,26 @@ class ProvidersSuite extends munit.FunSuite {
       assert(pointer.get.asString.nonEmpty, s"[${providerName}] no message")
       println(s"[${providerName}] message: ${pointer.asString}")
     }
+    if (testStreaming) {
+      Utils.await(2.seconds)
+      val resp = client.stream("POST", s"http://${providerName}.oto.tools:${port}/chat?stream=true", Map.empty, Some(Json.parse(
+        s"""{
+           |  "messages": [
+           |    {
+           |      "role": "user",
+           |      "content": "hey, how are you ?"
+           |    }
+           |  ]
+           |}""".stripMargin))).awaitf(10.seconds)(otoroshi.executionContext)
+      if (resp.status != 200 && resp.status != 201) {
+        println(resp.chunks)
+      }
+      assertEquals(resp.status, 200, s"[${providerName}] chat route did not respond with 200")
+      // val pointer = resp.json.at("choices.0.message.content")
+      // assert(pointer.isDefined, s"[${providerName}] no message content")
+      assert(resp.message.nonEmpty, s"[${providerName}] no message")
+      println(s"[${providerName}] message: ${resp.message}")
+    }
     if (testCompletion) {
       Utils.await(2.seconds)
       val resp = client.call("POST", s"http://${providerName}.oto.tools:${port}/completion", Map.empty, Some(Json.parse(
@@ -207,10 +227,10 @@ class ProvidersSuite extends munit.FunSuite {
     otoroshi.stop()
   }
 
-  test("basic chat/completions/models with providers") {
+  test("basic chat/streaming/completions/models with providers") {
 
     testProvider("openai", "OPENAI_TOKEN", Json.obj("model" -> "gpt-4o-mini", "max_tokens" -> 128), testCompletion = false)
-    testProvider("openai", "OPENAI_TOKEN", Json.obj("model" -> "gpt-3.5-turbo-instruct", "max_tokens" -> 128), testChat = false)
+    testProvider("openai", "OPENAI_TOKEN", Json.obj("model" -> "gpt-3.5-turbo-instruct", "max_tokens" -> 128), testChat = false, testStreaming = false)
     testProvider("ollama", "OLLAMA_TOKEN", Json.obj("model" -> "llama3.2:latest", "num_predict" -> 128))
     testProvider("deepseek", "DEEPSEEK_TOKEN", Json.obj("model" -> "deepseek-chat", "max_tokens" -> 128), testCompletion = false)
     testProvider("mistral", "MISTRAL_TOKEN", Json.obj("model" -> "mistral-large-latest", "max_tokens" -> 128), testCompletion = false)

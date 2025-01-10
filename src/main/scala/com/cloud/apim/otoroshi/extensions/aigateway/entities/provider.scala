@@ -122,7 +122,7 @@ case class AiProvider(
       case "scaleway" => {
         val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Scaleway", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
-        new OpenAiChatClient(api, opts, id, "scaleway").some
+        new OpenAiChatClient(api, opts, id, "scaleway", accumulateStreamConsumptions = true).some
       }
       case "deepseek" => {
         val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Deepseek", env = env)

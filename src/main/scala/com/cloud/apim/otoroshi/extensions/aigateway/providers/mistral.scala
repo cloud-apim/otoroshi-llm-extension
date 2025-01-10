@@ -111,7 +111,7 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
           .addHttpHeaders("Content-Type" -> "application/json")
           .withBody(body.asObject ++ Json.obj(
             "stream" -> true,
-            "stream_options" -> Json.obj("include_usage" -> true)
+            // "stream_options" -> Json.obj("include_usage" -> true)
           ))
       }
       .withMethod(method)
