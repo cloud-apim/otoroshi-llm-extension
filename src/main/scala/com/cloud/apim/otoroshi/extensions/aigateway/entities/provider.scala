@@ -115,17 +115,17 @@ case class AiProvider(
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     val rawClient = provider.toLowerCase() match {
       case "openai" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "OpenAI", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "openai").some
       }
       case "scaleway" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Scaleway", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "scaleway").some
       }
       case "deepseek" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Deepseek", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "deepseek").some
       }

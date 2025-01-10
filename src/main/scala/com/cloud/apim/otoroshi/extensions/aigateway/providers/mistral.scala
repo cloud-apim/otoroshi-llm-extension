@@ -45,9 +45,10 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
   override def supportsCompletion: Boolean = false
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
-    // println(s"call mistral ${method} ${path} ${body.map(_.prettify).getOrElse("--")}")
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logCall("Mistral", method, url, body)(env)
     env.Ws
-      .url(s"${baseUrl}${path}")
+      .url(url)
       .withHttpHeaders(
         "Authorization" -> s"Bearer ${token}",
         "Accept" -> "application/json",
@@ -61,21 +62,22 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
       .execute()
   }
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[MistralAiApiResponse] = {
+  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, MistralAiApiResponse]] = {
     rawCall(method, path, body)
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapResponse("Mistral", r, env) { resp =>
         // println(s"mistral resp: ${resp.status} - ${resp.body}")
         MistralAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
-      }
+      })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[MistralAiApiResponse] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, MistralAiApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
-      call(method, path, body).map(_.toOpenAi).flatMap {
-        case resp if resp.finishBecauseOfToolCalls => {
+      call(method, path, body).map(_.map(_.toOpenAi)).flatMap {
+        case Left(err) => err.leftf
+        case Right(resp) if resp.finishBecauseOfToolCalls => {
           body match {
-            case None => resp.toMistral.vfuture
+            case None => resp.toMistral.rightf
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
@@ -88,7 +90,7 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
             }
           }
         }
-        case resp => resp.toMistral.vfuture
+        case Right(resp) => resp.toMistral.rightf
       }
     } else {
       call(method, path, body)
@@ -96,9 +98,11 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
   }
 
 
-  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
+  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logStream("Mistral", method, url, body)(env)
     env.Ws
-      .url(s"${baseUrl}${path}")
+      .url(url)
       .withHttpHeaders(
         "Authorization" -> s"Bearer ${token}",
         "Accept" -> "application/json",
@@ -113,7 +117,7 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapStreamResponse("Mistral", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
           .map(_.utf8String)
@@ -123,14 +127,15 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
           .takeWhile(_ != "[DONE]")
           .map(str => Json.parse(str))
           .map(json => OpenAiChatResponseChunk(json)), resp)
-      }
+      })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
       stream(method, path, body).flatMap {
-        case res => {
+        case Left(err) => err.leftf
+        case Right(res) => {
           var isToolCall = false
           var isToolCallEnded = false
           var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
@@ -164,18 +169,21 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = LlmFunctions.callToolsOpenai(calls, mcpConnectors)(ec, env)
+              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   streamWithToolSupport(method, path, newBody.some, mcpConnectors)
                 }
-              Source.future(a).flatMapConcat(a => a._1)
+              Source.future(a).flatMapConcat {
+                case Left(err) => Source.failed(new Throwable(err.stringify))
+                case Right(tuple) => tuple._1
+              }
             } else {
               Source.single(chunk)
             }
           }
-          (newSource, res._2).vfuture
+          (newSource, res._2).rightf
         }
       }
     } else {
@@ -262,8 +270,10 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
     } else {
       api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
     }
-    callF.map { resp =>
-    //api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
+    callF.map {
+      case Left(err) => err.left
+      case Right(resp) =>
+        //api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
@@ -318,7 +328,8 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
     }
     callF.map {
     // api.stream("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
-      case (source, resp) =>
+      case Left(err) => err.left
+      case Right((source, resp)) =>
         source
           .filterNot { chunk =>
             if (chunk.usage.nonEmpty) {
@@ -384,8 +395,10 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
     val obody = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val callF = api.call("POST", "/v1/fim/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
-    callF.map { resp =>
-      //api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
+    callF.map {
+      case Left(err) => err.left
+      case Right(resp) =>
+        //api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),

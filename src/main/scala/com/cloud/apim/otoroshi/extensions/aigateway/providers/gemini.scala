@@ -30,11 +30,17 @@ object GeminiApi {
   }
 }
 
-class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
+class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends NoStreamingApiClient[GeminiApiResponse] {
+
+  override def supportsCompletion: Boolean = false
+
+  override def supportsTools: Boolean = false
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = GeminiApi.genericUrl(path, token)
+    ProviderHelpers.logCall("Gemini", method, url, body)(env)
     env.Ws
-      .url(s"${GeminiApi.genericUrl(path, token)}")
+      .url(url)
       .withHttpHeaders(
         "Accept" -> "application/json",
       ).applyOnWithOpt(body) {
@@ -47,7 +53,7 @@ class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.s
       .execute()
   }
 
-  def call(method: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[GeminiApiResponse] = {
+  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, GeminiApiResponse]] = {
     env.Ws
       .url(s"${GeminiApi.url(model, token)}")
       .withHttpHeaders(
@@ -60,10 +66,11 @@ class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.s
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapResponse("Gemini", r, env) { resp =>
         GeminiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
-      }
+      })
   }
+
 }
 
 object GeminiChatClientOptions {
@@ -100,8 +107,14 @@ case class GeminiChatClientOptions(
 
 class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: String) extends ChatClient {
 
-  // supports tools: true
-  // supports streaming: true
+  // TODO: supports tools: true
+  // TODO: supports streaming: true
+
+  override def supportsCompletion: Boolean = api.supportsCompletion
+
+  override def supportsStreaming: Boolean = api.supportsStreaming
+
+  override def supportsTools: Boolean = api.supportsTools
 
   override def model: Option[String] = api.model.some
 
@@ -118,10 +131,12 @@ class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: Str
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    api.call("POST", Some(mergedOptions ++ Json.obj(
+    api.call("POST", "", Some(mergedOptions ++ Json.obj(
       "contents" -> Json.obj("parts" -> prompt.json),
       "generationConfig" -> options.json
-    ))).map { resp =>
+    ))).map {
+      case Left(err) => err.left
+      case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit.empty,
         ChatResponseMetadataUsage(

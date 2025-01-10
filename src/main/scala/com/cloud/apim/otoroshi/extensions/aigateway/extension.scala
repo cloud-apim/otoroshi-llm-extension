@@ -90,13 +90,17 @@ class AiGatewayExtensionState(env: Env) {
   }
 }
 
+object AiExtension {
+  val logger = Logger("cloud-apim-llm-extension")
+}
+
 class AiExtension(val env: Env) extends AdminExtension {
 
   private lazy val datastores = new AiGatewayExtensionDatastores(env, id)
 
   lazy val states = new AiGatewayExtensionState(env)
 
-  val logger = Logger("cloud-apim-llm-extension")
+  val logger = AiExtension.logger
 
   override def id: AdminExtensionId = AdminExtensionId("cloud-apim.extensions.LlmExtension")
 

@@ -22,11 +22,16 @@ object CloudflareApi {
     s"https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${modelName}"
   }
 }
-class CloudflareApi(val accountId: String, val modelName: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
+class CloudflareApi(val accountId: String, val modelName: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends NoStreamingApiClient[CloudflareApiResponse] {
 
-  def call(method: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[CloudflareApiResponse] = {
+  override def supportsTools: Boolean = false
+  override def supportsCompletion: Boolean = false
+
+  override def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, CloudflareApiResponse]] = {
+    val url = s"${CloudflareApi.url(accountId, modelName)}"
+    ProviderHelpers.logCall("Cloudflare", method, url, body)(env)
     env.Ws
-      .url(s"${CloudflareApi.url(accountId, modelName)}")
+      .url(url)
       .withHttpHeaders(
         "Authorization" -> s"Bearer ${token}",
         "Accept" -> "application/json",
@@ -38,9 +43,9 @@ class CloudflareApi(val accountId: String, val modelName: String, token: String,
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapResponse("Cloudflare", r, env) { resp =>
         CloudflareApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
-      }
+      })
   }
 }
 
@@ -89,9 +94,8 @@ case class CloudflareChatClientOptions(
 
 class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOptions, id: String) extends ChatClient {
 
-  // supports tools: false
-  // supports streaming: false
-
+  override def supportsTools: Boolean = api.supportsTools
+  override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = false
 
   override def model: Option[String] = api.modelName.some
@@ -99,48 +103,50 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    api.call("POST", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
-      val usage = ChatResponseMetadata(
-        ChatResponseMetadataRateLimit(
-          requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-requests-limit").map(_.toLong).getOrElse(-1L),
-          requestsRemaining = resp.headers.getIgnoreCase("x-ratelimit-requests-remaining").map(_.toLong).getOrElse(-1L),
-          tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-tokens-limit").map(_.toLong).getOrElse(-1L),
-          tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-tokens-remaining").map(_.toLong).getOrElse(-1L),
-        ),
-        ChatResponseMetadataUsage(
-          promptTokens = resp.body.select("usage").select("input_tokens").asOpt[Long].getOrElse(-1L),
-          generationTokens = resp.body.select("usage").select("output_tokens").asOpt[Long].getOrElse(-1L),
-        ),
-        None
-      )
-      val duration: Long = resp.headers.getIgnoreCase("Cloudflare-processing-ms").map(_.toLong).getOrElse(0L)
-      val slug = Json.obj(
-        "provider_kind" -> "cloudflare",
-        "provider" -> id,
-        "duration" -> duration,
-        "account_id" -> api.accountId,
-        "model_name" ->api.modelName,
-        "rate_limit" -> usage.rateLimit.json,
-        "usage" -> usage.usage.json
-      ).applyOnWithOpt(usage.cache) {
-        case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
-      }
-      attrs.update(ChatClient.ApiUsageKey -> usage)
-      attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-        case Some(obj @ JsObject(_)) => {
-          val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-          val newArr = arr ++ Seq(slug)
-          obj ++ Json.obj("ai" -> newArr)
+    api.call("POST", "", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
+      case Left(err) => err.left
+      case Right(resp) =>
+        val usage = ChatResponseMetadata(
+          ChatResponseMetadataRateLimit(
+            requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-requests-limit").map(_.toLong).getOrElse(-1L),
+            requestsRemaining = resp.headers.getIgnoreCase("x-ratelimit-requests-remaining").map(_.toLong).getOrElse(-1L),
+            tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-tokens-limit").map(_.toLong).getOrElse(-1L),
+            tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-tokens-remaining").map(_.toLong).getOrElse(-1L),
+          ),
+          ChatResponseMetadataUsage(
+            promptTokens = resp.body.select("usage").select("input_tokens").asOpt[Long].getOrElse(-1L),
+            generationTokens = resp.body.select("usage").select("output_tokens").asOpt[Long].getOrElse(-1L),
+          ),
+          None
+        )
+        val duration: Long = resp.headers.getIgnoreCase("Cloudflare-processing-ms").map(_.toLong).getOrElse(0L)
+        val slug = Json.obj(
+          "provider_kind" -> "cloudflare",
+          "provider" -> id,
+          "duration" -> duration,
+          "account_id" -> api.accountId,
+          "model_name" ->api.modelName,
+          "rate_limit" -> usage.rateLimit.json,
+          "usage" -> usage.usage.json
+        ).applyOnWithOpt(usage.cache) {
+          case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
         }
-        case Some(other) => other
-        case None => Json.obj("ai" -> Seq(slug))
-      }
-      val role = resp.body.select("role").asOpt[String].getOrElse("assistant")
-      val messages = resp.body.select("result").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
-        val content = obj.select("response").asOpt[String].getOrElse("")
-        ChatGeneration(ChatMessage(role, content, None))
-      }
-      Right(ChatResponse(messages, usage))
+        attrs.update(ChatClient.ApiUsageKey -> usage)
+        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+          case Some(obj @ JsObject(_)) => {
+            val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+            val newArr = arr ++ Seq(slug)
+            obj ++ Json.obj("ai" -> newArr)
+          }
+          case Some(other) => other
+          case None => Json.obj("ai" -> Seq(slug))
+        }
+        val role = resp.body.select("role").asOpt[String].getOrElse("assistant")
+        val messages = resp.body.select("result").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
+          val content = obj.select("response").asOpt[String].getOrElse("")
+          ChatGeneration(ChatMessage(role, content, None))
+        }
+        Right(ChatResponse(messages, usage))
     }
   }
 }

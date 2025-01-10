@@ -44,14 +44,15 @@ object OVHAiEndpointsApi {
 class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
 
   val supportsTools: Boolean = false
-
+  val supportsCompletion: Boolean = true
   val supportsStreaming: Boolean = true
 
   def rawCall(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
-    // println(s"calling ${method} ${baseUrl}${path}: ${body}")
     val url = OVHAiEndpointsModels.modelUrls.get(model).getOrElse(s"${model.toLowerCase().replaceAll("\\.", "")}.${baseDomain}")
+    val furl = s"https://${url}${path}"
+    ProviderHelpers.logCall("OVH", method, furl, body)(env)
     env.Ws
-      .url(s"https://${url}${path}")
+      .url(furl)
       .withHttpHeaders(
         "Authorization" -> s"Bearer ${token}",
         "Accept" -> "application/json",
@@ -65,17 +66,17 @@ class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token
       .execute()
   }
 
-  def call(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OVHAiEndpointsApiResponse] = {
+  def call(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, OVHAiEndpointsApiResponse]] = {
     rawCall(model, method, path, body)
-      .map { resp =>
-        // println(s"resp: ${resp.status} - ${resp.body}")
+      .map(r => ProviderHelpers.wrapResponse("OVH", r, env) { resp =>
         OVHAiEndpointsApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
-      }
+      })
   }
 
-  def stream(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
-    // println("streaming ovh")
+  def stream(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
     val url = OVHAiEndpointsModels.modelUrls.get(model).getOrElse(s"${model.toLowerCase().replaceAll("\\.", "")}.${baseDomain}")
+    val furl = s"https://${url}${path}"
+    ProviderHelpers.logStream("OVH", method, furl, body)(env)
     env.Ws
       .url(s"https://${url}${path}")
       .withHttpHeaders(
@@ -92,7 +93,7 @@ class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapStreamResponse("OVH", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
           .map(_.utf8String)
@@ -102,7 +103,7 @@ class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token
           .takeWhile(_ != "[DONE]")
           .map(str => Json.parse(str))
           .map(json => OpenAiChatResponseChunk(json)), resp)
-      }
+      })
   }
 }
 
@@ -146,6 +147,8 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
 
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
+  override def supportsCompletion: Boolean = api.supportsCompletion
+
   override def model: Option[String] = options.model.some
 
   override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
@@ -162,48 +165,50 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val body = mergedOptions ++ Json.obj("messages" -> prompt.json)
-    api.call(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(body)).map { resp =>
-      val usage = ChatResponseMetadata(
-        // no headers for that ... just plain old kong http ratelimiting
-        ChatResponseMetadataRateLimit(
-          requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
-          requestsRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
-          tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
-          tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
-        ),
-        ChatResponseMetadataUsage(
-          promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
-          generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
-        ),
-        None
-      )
-      val duration: Long = resp.headers.getIgnoreCase("X-Kong-Proxy-Latency").map(_.toLong).getOrElse(0L)
-      val slug = Json.obj(
-        "provider_kind" -> "ovh-ai-endpoints",
-        "provider" -> id,
-        "duration" -> duration,
-        "model" -> options.model.json,
-        "rate_limit" -> usage.rateLimit.json,
-        "usage" -> usage.usage.json
-      ).applyOnWithOpt(usage.cache) {
-        case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
-      }
-      attrs.update(ChatClient.ApiUsageKey -> usage)
-      attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-        case Some(obj@JsObject(_)) => {
-          val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-          val newArr = arr ++ Seq(slug)
-          obj ++ Json.obj("ai" -> newArr)
+    api.call(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(body)).map {
+      case Left(err) => err.left
+      case Right(resp) =>
+        val usage = ChatResponseMetadata(
+          // no headers for that ... just plain old kong http ratelimiting
+          ChatResponseMetadataRateLimit(
+            requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+            requestsRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+            tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+            tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+          ),
+          ChatResponseMetadataUsage(
+            promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
+            generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+          ),
+          None
+        )
+        val duration: Long = resp.headers.getIgnoreCase("X-Kong-Proxy-Latency").map(_.toLong).getOrElse(0L)
+        val slug = Json.obj(
+          "provider_kind" -> "ovh-ai-endpoints",
+          "provider" -> id,
+          "duration" -> duration,
+          "model" -> options.model.json,
+          "rate_limit" -> usage.rateLimit.json,
+          "usage" -> usage.usage.json
+        ).applyOnWithOpt(usage.cache) {
+          case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
         }
-        case Some(other) => other
-        case None => Json.obj("ai" -> Seq(slug))
-      }
-      val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
-        val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
-        val content = obj.select("message").select("content").asOpt[String].getOrElse("")
-        ChatGeneration(ChatMessage(role, content, None))
-      }
-      Right(ChatResponse(messages, usage))
+        attrs.update(ChatClient.ApiUsageKey -> usage)
+        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+          case Some(obj@JsObject(_)) => {
+            val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+            val newArr = arr ++ Seq(slug)
+            obj ++ Json.obj("ai" -> newArr)
+          }
+          case Some(other) => other
+          case None => Json.obj("ai" -> Seq(slug))
+        }
+        val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
+          val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
+          val content = obj.select("message").select("content").asOpt[String].getOrElse("")
+          ChatGeneration(ChatMessage(role, content, None))
+        }
+        Right(ChatResponse(messages, usage))
     }
   }
 
@@ -211,7 +216,8 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     api.stream(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
-      case (source, resp) =>
+      case Left(err) => err.left
+      case Right((source, resp)) =>
         source
           .filterNot { chunk =>
             if (chunk.usage.nonEmpty) {
@@ -277,46 +283,48 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val callF = api.call(options.model, "POST", "/api/openai_compat/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
-    callF.map { resp =>
-      val usage = ChatResponseMetadata(
-        ChatResponseMetadataRateLimit(
-          requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
-          requestsRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
-          tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
-          tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
-        ),
-        ChatResponseMetadataUsage(
-          promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
-          generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
-        ),
-        None
-      )
-      val duration: Long = resp.headers.getIgnoreCase("X-Kong-Proxy-Latency").map(_.toLong).getOrElse(0L)
-      val slug = Json.obj(
-        "provider_kind" -> "ovh-ai-endpoints",
-        "provider" -> id,
-        "duration" -> duration,
-        "model" -> options.model.json,
-        "rate_limit" -> usage.rateLimit.json,
-        "usage" -> usage.usage.json
-      ).applyOnWithOpt(usage.cache) {
-        case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
-      }
-      attrs.update(ChatClient.ApiUsageKey -> usage)
-      attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-        case Some(obj@JsObject(_)) => {
-          val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-          val newArr = arr ++ Seq(slug)
-          obj ++ Json.obj("ai" -> newArr)
+    callF.map {
+      case Left(err) => err.left
+      case Right(resp) =>
+        val usage = ChatResponseMetadata(
+          ChatResponseMetadataRateLimit(
+            requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+            requestsRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+            tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+            tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+          ),
+          ChatResponseMetadataUsage(
+            promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
+            generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+          ),
+          None
+        )
+        val duration: Long = resp.headers.getIgnoreCase("X-Kong-Proxy-Latency").map(_.toLong).getOrElse(0L)
+        val slug = Json.obj(
+          "provider_kind" -> "ovh-ai-endpoints",
+          "provider" -> id,
+          "duration" -> duration,
+          "model" -> options.model.json,
+          "rate_limit" -> usage.rateLimit.json,
+          "usage" -> usage.usage.json
+        ).applyOnWithOpt(usage.cache) {
+          case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
         }
-        case Some(other) => other
-        case None => Json.obj("ai" -> Seq(slug))
-      }
-      val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
-        val content = obj.select("text").asString
-        ChatGeneration(ChatMessage("assistant", content, None))
-      }
-      Right(ChatResponse(messages, usage))
+        attrs.update(ChatClient.ApiUsageKey -> usage)
+        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+          case Some(obj@JsObject(_)) => {
+            val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+            val newArr = arr ++ Seq(slug)
+            obj ++ Json.obj("ai" -> newArr)
+          }
+          case Some(other) => other
+          case None => Json.obj("ai" -> Seq(slug))
+        }
+        val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
+          val content = obj.select("text").asString
+          ChatGeneration(ChatMessage("assistant", content, None))
+        }
+        Right(ChatResponse(messages, usage))
     }
   }
 }

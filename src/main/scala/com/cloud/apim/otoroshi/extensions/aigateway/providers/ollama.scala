@@ -74,12 +74,10 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
   override def  supportsCompletion: Boolean = true
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
-    // println("\n\n================================\n")
-    // println(s"calling ${method} ${baseUrl}${path} ${token}: ${body.getOrElse(Json.obj()).prettify}")
-    // println("calling ollama")
-    OllamaAiApi.logger.debug(s"calling ollama: ${body.get.prettify}")
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logCall("Ollama", method, url, body)(env)
     env.Ws
-      .url(s"${baseUrl}${path}")
+      .url(url)
       .withHttpHeaders(
         "Accept" -> "application/json",
       )
@@ -99,20 +97,18 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
       .execute()
   }
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
+  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
     rawCall(method, path, body)
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapResponse("Ollama", r, env) { resp =>
         OllamaAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json, resp)
-      }
+      })
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OllamaAiChatResponseChunk, _], WSResponse)] = {
-    println("\n\n================================\n")
-    println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
-    println("streaming ollama")
-    OllamaAiApi.logger.debug(s"streaming ollama: ${body.map(_.prettify).getOrElse("")}")
+  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OllamaAiChatResponseChunk, _], WSResponse)]] = {
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logStream("Ollama", method, url, body)(env)
     env.Ws
-      .url(s"${baseUrl}${path}")
+      .url(url)
       .withHttpHeaders(
         "Accept" -> "application/json",
       )
@@ -130,7 +126,7 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapStreamResponse("Ollama", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n"), Int.MaxValue, false))
           .map(_.utf8String)
@@ -139,16 +135,17 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
           .map(json => OllamaAiChatResponseChunk(json))
           .takeWhile(!_.done, inclusive = true)
         , resp)
-      }
+      })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[OllamaAiApiResponse] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
-        case resp if resp.finishBecauseOfToolCalls => {
+        case Left(err) => err.leftf
+        case Right(resp) if resp.finishBecauseOfToolCalls => {
           body match {
-            case None => resp.vfuture
+            case None => resp.rightf
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
@@ -161,15 +158,16 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
             }
           }
         }
-        case resp => resp.vfuture
+        case Right(resp) => resp.rightf
       }
     } else {
       call(method, path, body)
     }
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[(Source[OllamaAiChatResponseChunk, _], WSResponse)] = {
-    callWithToolSupport(method, path, body, mcpConnectors).map { resp =>
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OllamaAiChatResponseChunk, _], WSResponse)]] = {
+    callWithToolSupport(method, path, body, mcpConnectors).map {case Left(err) => err.left
+    case Right(resp) =>
       val source = resp.message.content.get.chunks(5).map { str =>
         OllamaAiChatResponseChunk(resp.body.asObject.deepMerge(Json.obj(
           "message" -> Json.obj("content" -> str),
@@ -179,7 +177,7 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
         "message" -> Json.obj("content" -> ""),
         "done" -> true
       )))))
-      (source, resp.response)
+      (source, resp.response).right
     }
   }
 }
@@ -289,7 +287,9 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         "options" -> mergedOptions
       )))
     }
-    callF.map { resp =>
+    callF.map {
+      case Left(err) => err.left
+      case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
@@ -341,7 +341,8 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
       "messages" -> prompt.json,
       "options" -> mergedOptionsWithoutModel
     ))).map {
-      case (source, resp) =>
+      case Left(err) => err.left
+      case Right((source, resp)) =>
         source
           .filterNot { chunk =>
             if (chunk.eval_count.nonEmpty) {
@@ -404,11 +405,12 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
   }
 
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    println("completion ollama")
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
-    callF.map { resp =>
+    callF.map {
+      case Left(err) => err.left
+      case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),

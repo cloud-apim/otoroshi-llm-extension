@@ -122,8 +122,10 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
   override def supportsCompletion: Boolean = false
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${AzureOpenAiApi.url(resourceName, deploymentId, path)}"
+    ProviderHelpers.logCall("AzureOpenai", method, url, body)(env)
     env.Ws
-      .url(s"${AzureOpenAiApi.url(resourceName, deploymentId, path)}")
+      .url(url)
       .withHttpHeaders(
         "Authorization" -> s"api-key ${apikey}",
         "Accept" -> "application/json",
@@ -137,20 +139,21 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
       .execute()
   }
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[AzureOpenAiApiResponse] = {
+  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {
     rawCall(method, path, body)
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapResponse("AzureOpenai", r, env) { resp =>
         AzureOpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
-      }
+      })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[AzureOpenAiApiResponse] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
-        case resp if resp.finishBecauseOfToolCalls => {
+        case Left(err) => err.leftf
+        case Right(resp) if resp.finishBecauseOfToolCalls => {
           body match {
-            case None => resp.vfuture
+            case None => resp.rightf
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
@@ -163,19 +166,18 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
             }
           }
         }
-        case resp => resp.vfuture
+        case Right(resp) => resp.rightf
       }
     } else {
       call(method, path, body)
     }
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[AzureOpenAiChatResponseChunk, _], WSResponse)] = {
-    // println("\n\n================================\n")
-    // println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
-    // println("calling openai")
+  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = {
+    val url = s"${AzureOpenAiApi.url(resourceName, deploymentId, path)}"
+    ProviderHelpers.logStream("AzureOpenai", method, url, body)(env)
     env.Ws
-      .url(s"${AzureOpenAiApi.url(resourceName, deploymentId, path)}")
+      .url(url)
       .withHttpHeaders(
         "Authorization" -> s"api-key ${apikey}",
         "Accept" -> "application/json",
@@ -190,7 +192,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapStreamResponse("AzureOpenai", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
           .map(_.utf8String)
@@ -200,14 +202,15 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
           .takeWhile(_ != "[DONE]")
           .map(str => Json.parse(str))
           .map(json => AzureOpenAiChatResponseChunk(json)), resp)
-      }
+      })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[(Source[AzureOpenAiChatResponseChunk, _], WSResponse)] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
       stream(method, path, body).flatMap {
-        case res => {
+        case Left(err) => err.leftf
+        case Right(res) => {
           var isToolCall = false
           var isToolCallEnded = false
           var toolCalls: Seq[AzureOpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
@@ -241,18 +244,22 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[(Source[AzureOpenAiChatResponseChunk, _], WSResponse)] = LlmFunctions.callToolsOpenai(calls, mcpConnectors)(ec, env)
+              val a: Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   streamWithToolSupport(method, path, newBody.some, mcpConnectors)
                 }
-              Source.future(a).flatMapConcat(a => a._1)
+              Source.future(a)
+                .flatMapConcat {
+                  case Left(err) => Source.failed(new Throwable(err.stringify))
+                  case Right(tuple) => tuple._1
+                }
             } else {
               Source.single(chunk)
             }
           }
-          (newSource, res._2).vfuture
+          (newSource, res._2).rightf
         }
       }
     } else {
@@ -354,7 +361,9 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     } else {
       api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
     }
-    callF.map { resp =>
+    callF.map {
+      case Left(err) => err.left
+      case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
@@ -409,7 +418,8 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
       api.stream("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
     }
     callF.map {
-      case (source, resp) =>
+      case Left(err) => err.left
+      case Right((source, resp)) =>
         source
           .filterNot { chunk =>
             if (chunk.usage.nonEmpty) {
@@ -477,7 +487,9 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
-    callF.map { resp =>
+    callF.map {
+      case Left(err) => err.left
+      case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),

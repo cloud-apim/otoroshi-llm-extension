@@ -20,14 +20,22 @@ case class CohereAiApiResponse(status: Int, headers: Map[String, String], body: 
 object CohereAiModels {
   val DEFAULT_COHERE_MODEL = "command-r-plus-08-2024"
 }
+
 object CohereAiApi {
   val baseUrl = "https://api.cohere.com"
 }
-class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
+
+class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends NoStreamingApiClient[CohereAiApiResponse] {
+
+  override def supportsTools: Boolean = false
+
+  override def supportsCompletion: Boolean = false
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logCall("Cohere", method, url, body)(env)
     env.Ws
-      .url(s"${baseUrl}${path}")
+      .url(url)
       .withHttpHeaders(
         "Authorization" -> s"Bearer ${token}",
         "Accept" -> "application/json",
@@ -41,11 +49,11 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
       .execute()
   }
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[CohereAiApiResponse] = {
+  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
     rawCall(method, path, body)
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapResponse("Cohere", r, env) { resp =>
         CohereAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
-      }
+      })
   }
 }
 
@@ -98,9 +106,15 @@ case class CohereAiChatClientOptions(
 
 class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, id: String) extends ChatClient {
 
-  // supports tools: true
-  // supports streaming: true
-  override def supportsCompletion: Boolean = true
+  // TODO: supports tools: true
+  // TODO: supports streaming: true
+
+  override def supportsTools: Boolean = api.supportsTools
+
+  override def supportsStreaming: Boolean = api.supportsStreaming
+
+  override def supportsCompletion: Boolean = api.supportsCompletion
+
   override def model: Option[String] = options.model.some
 
   override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
@@ -116,7 +130,9 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    api.call("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
+    api.call("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
+      case Left(err) => err.left
+      case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),

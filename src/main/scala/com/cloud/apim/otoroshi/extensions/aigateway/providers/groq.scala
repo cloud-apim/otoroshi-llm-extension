@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions, WasmFunction}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -38,8 +38,10 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
   override def supportsCompletion: Boolean = false
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logCall("Groq", method, url, body)(env)
     env.Ws
-      .url(s"${baseUrl}${path}")
+      .url(url)
       .withHttpHeaders(
         "Authorization" -> s"Bearer ${token}",
         "Accept" -> "application/json",
@@ -53,20 +55,21 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       .execute()
   }
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[GroqApiResponse] = {
+  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
     rawCall(method, path, body)
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapResponse("Groq", r, env) { resp =>
         GroqApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
-      }
+      })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[GroqApiResponse] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
-      call(method, path, body).map(_.toOpenAi).flatMap {
-        case resp if resp.finishBecauseOfToolCalls => {
+      call(method, path, body).map(_.map(_.toOpenAi)).flatMap {
+        case Left(err) => err.leftf
+        case Right(resp) if resp.finishBecauseOfToolCalls => {
           body match {
-            case None => resp.toGroq.vfuture
+            case None => resp.toGroq.rightf
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
@@ -79,16 +82,18 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
             }
           }
         }
-        case resp => resp.toGroq.vfuture
+        case Right(resp) => resp.toGroq.rightf
       }
     } else {
       call(method, path, body)
     }
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
+  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logStream("Groq", method, url, body)(env)
     env.Ws
-      .url(s"${baseUrl}${path}")
+      .url(url)
       .withHttpHeaders(
         "Authorization" -> s"Bearer ${token}",
         "Accept" -> "application/json",
@@ -103,7 +108,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapStreamResponse("Groq", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
           .map(_.utf8String)
@@ -113,14 +118,15 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
           .takeWhile(_ != "[DONE]")
           .map(str => Json.parse(str))
           .map(json => OpenAiChatResponseChunk(json)), resp)
-      }
+      })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
       stream(method, path, body).flatMap {
-        case res => {
+        case Left(err) => err.leftf
+        case Right(res) => {
           var isToolCall = false
           var isToolCallEnded = false
           var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
@@ -154,18 +160,21 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = LlmFunctions.callToolsOpenai(calls, mcpConnectors)(ec, env)
+              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   streamWithToolSupport(method, path, newBody.some, mcpConnectors)
                 }
-              Source.future(a).flatMapConcat(a => a._1)
+              Source.future(a).flatMapConcat {
+                case Left(err) => Source.failed(new Throwable(err.stringify))
+                case Right(tuple) => tuple._1
+              }
             } else {
               Source.single(chunk)
             }
           }
-          (newSource, res._2).vfuture
+          (newSource, res._2).rightf
         }
       }
     } else {
@@ -249,7 +258,9 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     } else {
       api.call("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
     }
-    callF.map { resp =>
+    callF.map {
+      case Left(err) => err.left
+      case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
@@ -303,7 +314,8 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
       api.stream("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
     }
     callF.map {
-      case (source, resp) =>
+      case Left(err) => err.left
+      case Right((source, resp)) =>
         source
           .filterNot { chunk =>
             if (chunk.usage.nonEmpty) {

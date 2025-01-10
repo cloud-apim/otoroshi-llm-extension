@@ -24,11 +24,10 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
   override def supportsCompletion: Boolean = false
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
-    // println("\n\n================================\n")
-    // println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
-    // println("calling x.ai")
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logCall("X.ai", method, url, body)(env)
     env.Ws
-      .url(s"${baseUrl}${path}")
+      .url(url)
       .withHttpHeaders(
         "Authorization" -> s"Bearer ${token}",
         "Accept" -> "application/json",
@@ -41,25 +40,24 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
       .withRequestTimeout(timeout)
       .execute()
       .map { resp =>
-        // println(s"resp: ${resp.status} - ${resp.body}")
-        // println("\n\n================================\n")
         resp
       }
   }
 
-  override def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
-    rawCall(method, path, body).map { resp =>
+  override def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
+    rawCall(method, path, body).map(r => ProviderHelpers.wrapResponse("X.ai", r, env) { resp =>
       OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
-    }
+    })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[OpenAiApiResponse] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
-        case resp if resp.finishBecauseOfToolCalls => {
+        case Left(err) => err.leftf
+        case Right(resp) if resp.finishBecauseOfToolCalls => {
           body match {
-            case None => resp.vfuture
+            case None => resp.rightf
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
@@ -79,10 +77,9 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
     }
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
-    // println("\n\n================================\n")
-    // println(s"calling ${method} ${baseUrl}${path}: ${body.getOrElse(Json.obj()).prettify}")
-    // println("calling x.ai")
+  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logStream("X.ai", method, url, body)(env)
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -99,7 +96,7 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapStreamResponse("X.ai", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
           .map(_.utf8String)
@@ -109,14 +106,15 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
           .takeWhile(_ != "[DONE]")
           .map(str => Json.parse(str))
           .map(json => OpenAiChatResponseChunk(json)), resp)
-      }
+      })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
       stream(method, path, body).flatMap {
-        case res => {
+        case Left(err) => err.leftf
+        case Right(res) => {
           var isToolCall = false
           var isToolCallEnded = false
           var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
@@ -150,18 +148,21 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[(Source[OpenAiChatResponseChunk, _], WSResponse)] = LlmFunctions.callToolsOpenai(calls, mcpConnectors)(ec, env)
+              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors)(ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   streamWithToolSupport(method, path, newBody.some, mcpConnectors)
                 }
-              Source.future(a).flatMapConcat(a => a._1)
+              Source.future(a).flatMapConcat {
+                case Left(err) => Source.failed(new Throwable(err.stringify))
+                case Right(tuple) => tuple._1
+              }
             } else {
               Source.single(chunk)
             }
           }
-          (newSource, res._2).vfuture
+          (newSource, res._2).rightf
         }
       }
     } else {
@@ -260,7 +261,8 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
       api.stream("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
     }
     callF.map {
-      case (source, resp) =>
+      case Left(err) => err.left
+      case Right((source, resp)) =>
         var last: OpenAiChatResponseChunk = OpenAiChatResponseChunk(Json.obj())
         source
           .alsoTo(Sink.onComplete { _ =>
@@ -330,7 +332,9 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     } else {
       api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
     }
-    callF.map { resp =>
+    callF.map {
+      case Left(err) => err.left
+      case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
@@ -388,7 +392,9 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
-    callF.map { resp =>
+    callF.map {
+      case Left(err) => err.left
+      case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),

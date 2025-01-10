@@ -23,14 +23,20 @@ object HuggingfaceModels {
 object HuggingfaceApi {
   // POST https://api-inference.huggingface.co/models/google/gemma-2-2b-it
   def url(modelName: String): String = {
-    s"https://api-inference.huggingface.co/models/${modelName}/v1/chat/completions"
+    s"https://api-inference.huggingface.co/models/${modelName}/v1"
   }
 }
-class HuggingfaceApi(val modelName: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
+class HuggingfaceApi(val modelName: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends NoStreamingApiClient[HuggingfaceApiResponse] {
 
-  def call(method: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[HuggingfaceApiResponse] = {
+  override def supportsTools: Boolean = false
+
+  override def supportsCompletion: Boolean = false
+
+  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, HuggingfaceApiResponse]] = {
+    val url = s"${HuggingfaceApi.url(modelName)}${path}"
+    ProviderHelpers.logCall("Huggingface", method, url, body)(env)
     env.Ws
-      .url(s"${HuggingfaceApi.url(modelName)}")
+      .url(url)
       .withHttpHeaders(
         "Authorization" -> s"Bearer ${token}",
         "Accept" -> "application/json",
@@ -42,9 +48,9 @@ class HuggingfaceApi(val modelName: String, token: String, timeout: FiniteDurati
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
-      .map { resp =>
+      .map(r => ProviderHelpers.wrapResponse("Huggingface", r, env) { resp =>
         HuggingfaceApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
-      }
+      })
   }
 }
 
@@ -90,14 +96,22 @@ class HuggingfaceChatClient(api: HuggingfaceApi, options: HuggingfaceChatClientO
 
   // openai compat: false
   // supports tools: false
-  // supports streaming: true
+  // TODO: supports streaming: true
+
+  override def supportsCompletion: Boolean = api.supportsCompletion
+
+  override def supportsStreaming: Boolean = api.supportsStreaming
+
+  override def supportsTools: Boolean = api.supportsTools
 
   override def model: Option[String] = api.modelName.some
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    api.call("POST", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
+    api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
+      case Left(err) => err.left
+      case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),

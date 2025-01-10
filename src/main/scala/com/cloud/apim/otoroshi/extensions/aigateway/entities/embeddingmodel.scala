@@ -40,7 +40,7 @@ case class EmbeddingModel(
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     provider.toLowerCase() match {
       case "openai" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       }
