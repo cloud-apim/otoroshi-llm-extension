@@ -302,13 +302,11 @@ class ChatSuite extends munit.FunSuite {
     testProvider("groq", "GROQ_TOKEN", Json.obj("model" -> "llama3-8b-8192", "max_tokens" -> 128))
     testProvider("cohere", "COHERE_TOKEN", Json.obj("model" -> "command-r7b-12-2024", "max_tokens" -> 128))
 
+    // testProvider("azure-openai", "AZURE_OPENAI_TOKEN", Json.obj("model" -> "claude-3-5-sonnet-latest", "max_tokens" -> 128)) // TODO: no account
+    // testProvider("cloudflare", "CLOUDFLARE_TOKEN", Json.obj("model" -> "claude-3-5-sonnet-latest", "max_tokens" -> 128))     // TODO: no account
 
-    // testProvider("azure-openai", "ANTHROPIC_TOKEN", Json.obj("model" -> "claude-3-5-sonnet-latest", "max_tokens" -> 128)) // TODO: no account
-    // testProvider("cloudflare", "ANTHROPIC_TOKEN", Json.obj("model" -> "claude-3-5-sonnet-latest", "max_tokens" -> 128))   // TODO: no account and never
-
-
-    // testProvider("ovh-ai-endpoints", "OVH_AI_TOKEN", Json.obj("model" -> "llama_3_70b_instruct", "max_tokens" -> 128))    // TODO: need to find how to retrieve new token automatically
-    // testProvider("anthropic", "ANTHROPIC_TOKEN", Json.obj("model" -> "claude-3-5-sonnet-latest", "max_tokens" -> 128))    // TODO: need a creditcard
-    // testProvider("x-ai", "XAI_TOKEN", Json.obj("model" -> "grok-beta", "max_tokens" -> 128))                              // TODO: need a creditcard
+    // testProvider("ovh-ai-endpoints", "OVH_AI_TOKEN", Json.obj("model" -> "llama_3_70b_instruct", "max_tokens" -> 128))       // TODO: need to find how to retrieve new token automatically
+    // testProvider("anthropic", "ANTHROPIC_TOKEN", Json.obj("model" -> "claude-3-5-sonnet-latest", "max_tokens" -> 128))       // TODO: need a creditcard
+    // testProvider("x-ai", "XAI_TOKEN", Json.obj("model" -> "grok-beta", "max_tokens" -> 128))                                 // TODO: need a creditcard
   }
 }
