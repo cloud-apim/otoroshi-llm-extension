@@ -247,7 +247,7 @@ case class OllamaAiChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools" - "mcp_connectors" - "allow_config_override"
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override")
 }
 
 class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, id: String) extends ChatClient {

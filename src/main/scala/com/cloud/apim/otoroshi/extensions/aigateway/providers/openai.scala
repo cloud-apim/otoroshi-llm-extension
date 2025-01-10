@@ -342,15 +342,15 @@ case class OpenAiChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools" - "mcp_connectors" - "allow_config_override"
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override")
 }
 
-class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String) extends ChatClient {
+class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String, modelsPath: String = "/v1/models", completion: Boolean = true) extends ChatClient {
 
   override def model: Option[String] = options.model.some
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
-  override def supportsCompletion: Boolean = api.supportsCompletion
+  override def supportsCompletion: Boolean = completion //api.supportsCompletion
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
@@ -531,9 +531,11 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
   }
 
   override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
-    api.rawCall("GET", "/v1/models", None).map { resp =>
+    api.rawCall("GET", modelsPath, None).map { resp =>
       if (resp.status == 200) {
-        Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString).filter(v => v.toLowerCase.startsWith("gpt") || v.toLowerCase.startsWith("o1")))
+        Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString)
+          .applyOnIf(providerName.toLowerCase() == "openai")(_.filter(v => v.toLowerCase.startsWith("gpt") || v.toLowerCase.startsWith("o1")))
+        )
       } else {
         Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
       }

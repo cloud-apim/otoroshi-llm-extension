@@ -7,3 +7,5 @@ target/
 .vscode
 target
 node_modules
+/lib
+/logs

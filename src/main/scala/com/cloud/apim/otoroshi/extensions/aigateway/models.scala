@@ -20,6 +20,13 @@ trait ChatOptions {
   def json: JsObject
   def jsonForCall: JsObject
   def allowConfigOverride: Boolean
+
+  def optionsCleanup(options: JsObject): JsObject = {
+    JsObject(options.value.filter {
+      case (_, JsNull) => false
+      case _ => true
+    })
+  }
 }
 case class ChatPrompt(messages: Seq[ChatMessage], options: Option[ChatOptions] = None) {
   def json: JsValue = JsArray(messages.map(_.json))

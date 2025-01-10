@@ -228,7 +228,7 @@ case class GroqChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools" - "mcp_connectors" - "allow_config_override"
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override")
 
   override def topK: Int = 0
 }

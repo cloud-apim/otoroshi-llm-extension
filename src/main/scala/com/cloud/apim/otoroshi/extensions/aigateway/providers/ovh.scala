@@ -140,7 +140,7 @@ case class OVHAiEndpointsChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "allow_config_override")
 }
 
 class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsChatClientOptions, id: String) extends ChatClient {

@@ -9,23 +9,26 @@ import play.api.libs.json.{JsObject, JsValue, Json}
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
 
+/*
 case class HuggingfaceApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
   def json: JsValue = Json.obj(
     "status" -> status,
     "headers" -> headers,
     "body" -> body,
   )
-}
+}*/
 object HuggingfaceModels {
   val GOOGLE_GEMMA_2_2B = "google/gemma-2-2b-it"
   val STARCODER = "bigcode/starcoder"
 }
 object HuggingfaceApi {
+  val baseUrl = "https://api-inference.huggingface.co"
   // POST https://api-inference.huggingface.co/models/google/gemma-2-2b-it
   def url(modelName: String): String = {
     s"https://api-inference.huggingface.co/models/${modelName}/v1"
   }
 }
+/*
 class HuggingfaceApi(val modelName: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends NoStreamingApiClient[HuggingfaceApiResponse] {
 
   override def supportsTools: Boolean = false
@@ -87,7 +90,7 @@ case class HuggingfaceChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "allow_config_override")
 
   override def topK: Int = 0
 }
@@ -157,3 +160,4 @@ class HuggingfaceChatClient(api: HuggingfaceApi, options: HuggingfaceChatClientO
     }
   }
 }
+*/

@@ -127,7 +127,7 @@ case class AiProvider(
       case "deepseek" => {
         val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Deepseek", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
-        new OpenAiChatClient(api, opts, id, "deepseek").some
+        new OpenAiChatClient(api, opts, id, "deepseek", "/models").some
       }
       case "x-ai" => {
         val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
@@ -155,16 +155,19 @@ case class AiProvider(
         new CloudflareChatClient(api, opts, id).some
       }
       case "gemini" => {
-        val model = connection.select("model").as[String]
+        val model = connection.select("model").asOpt[String].getOrElse("gemini-1.5-flash")
         val api = new GeminiApi(model, token, timeout.getOrElse(10.seconds), env = env)
         val opts = GeminiChatClientOptions.fromJson(options)
         new GeminiChatClient(api, opts, id).some
       }
       case "huggingface" => {
-        val modelName = connection.select("model_name").as[String]
-        val api = new HuggingfaceApi(modelName, token, timeout.getOrElse(10.seconds), env)
-        val opts = HuggingfaceChatClientOptions.fromJson(options)
-        new HuggingfaceChatClient(api, opts, id).some
+        // val modelName = connection.select("model_name").as[String]
+        // val api = new HuggingfaceApi(modelName, token, timeout.getOrElse(10.seconds), env)
+        // val opts = HuggingfaceChatClientOptions.fromJson(options)
+        // new HuggingfaceChatClient(api, opts, id).some
+        val api = new OpenAiApi(baseUrl.getOrElse(HuggingfaceApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "huggingface", env = env)
+        val opts = OpenAiChatClientOptions.fromJson(options)
+        new OpenAiChatClient(api, opts, id, "huggingface", "/models", completion = false).some
       }
       case "mistral" => {
         val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)

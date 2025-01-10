@@ -89,7 +89,7 @@ case class CloudflareChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "allow_config_override")
 }
 
 class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOptions, id: String) extends ChatClient {

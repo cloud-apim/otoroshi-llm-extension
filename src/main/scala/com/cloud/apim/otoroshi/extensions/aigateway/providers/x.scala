@@ -241,7 +241,7 @@ case class XAiChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools" - "mcp_connectors" - "allow_config_override"
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override")
 }
 
 class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: String) extends ChatClient {

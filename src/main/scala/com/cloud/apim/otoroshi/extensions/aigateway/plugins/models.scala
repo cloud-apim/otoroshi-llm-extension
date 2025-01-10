@@ -114,15 +114,18 @@ class OpenAiCompatProvidersWithModels extends NgBackendCall {
         case (provider, client) => client.listModels().map(e => (provider, e))
       }
       .collect {
-        case (provider, Right(list)) => list.map { model =>
-          Json.obj(
-            "id" -> model,
-            "combined_id" -> (if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"),
-            "object" -> "model",
-            "created" -> now,
-            "owned_by" -> provider.computedName,
-            "owned_by_with_model" -> s"${provider.computedName} / ${model}"
-          )
+        case (provider, Right(list)) => {
+          println(s"got list: ${list}")
+          list.map { model =>
+            Json.obj(
+              "id" -> model,
+              "combined_id" -> (if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"),
+              "object" -> "model",
+              "created" -> now,
+              "owned_by" -> provider.computedName,
+              "owned_by_with_model" -> s"${provider.computedName} / ${model}"
+            )
+          }
         }
       }
       .flatMapConcat(list => Source(list))

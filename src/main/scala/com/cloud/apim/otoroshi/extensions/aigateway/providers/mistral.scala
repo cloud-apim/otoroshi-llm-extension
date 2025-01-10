@@ -241,7 +241,7 @@ case class MistralAiChatClientOptions(
     case (obj, tc) => obj ++ Json.obj("tools" -> tc)
   }
 
-  def jsonForCall: JsObject = json - "wasm_tools" - "mcp_connectors" - "allow_config_override"
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override")
 }
 
 class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions, id: String) extends ChatClient {

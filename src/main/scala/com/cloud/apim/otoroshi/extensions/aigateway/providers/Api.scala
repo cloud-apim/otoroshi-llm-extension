@@ -4,7 +4,6 @@ import akka.stream.scaladsl.Source
 import otoroshi.env.Env
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.Logger
 import play.api.libs.json.{JsValue, Json}
 import play.api.libs.ws.WSResponse
 

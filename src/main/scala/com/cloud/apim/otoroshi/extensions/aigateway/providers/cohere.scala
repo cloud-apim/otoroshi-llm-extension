@@ -4,6 +4,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway._
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
+import play.api.libs.json
 import play.api.libs.json.{JsObject, JsValue, Json}
 import play.api.libs.ws.WSResponse
 
@@ -98,7 +99,7 @@ case class CohereAiChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = json - "wasm_tools" - "allow_config_override"
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "allow_config_override")
 
   override def topP: Float = p.map(_.toFloat).getOrElse(0.75f)
   override def topK: Int = k.getOrElse(0)
@@ -167,11 +168,13 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
         case Some(other) => other
         case None => Json.obj("ai" -> Seq(slug))
       }
-      val messages = resp.body.select("message").select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
+      val messages = resp.body.select("message").asOpt[JsObject].map { obj =>
         val role = obj.select("role").asOpt[String].getOrElse("assistant")
-        val content = obj.select("message").asOpt[String].getOrElse("")
-        ChatGeneration(ChatMessage(role, content, None))
-      }
+        obj.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { c =>
+          val text = c.select("text").asOpt[String].getOrElse("")
+          ChatGeneration(ChatMessage(role, text, None))
+        }
+      }.toSeq.flatten
       Right(ChatResponse(messages, usage))
     }
   }
