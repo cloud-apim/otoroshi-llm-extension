@@ -35,13 +35,13 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
 
   override def supportsCompletion: Boolean = true
 
-  override def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logCall("Anthropic", method, url, body)(env)
     env.Ws
       .url(url)
       .withHttpHeaders(
-        "Authorization" -> s"x-api-key ${token}",
+        s"x-api-key" -> token,
         "anthropic-version" -> "2023-06-01",
         "Accept" -> "application/json",
       ).applyOnWithOpt(body) {
@@ -52,6 +52,10 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
+  }
+
+  override def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {
+    rawCall(method, path, body)
       .map(r => ProviderHelpers.wrapResponse("Anthropic", r, env) { resp =>
         AnthropicApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
       })
@@ -116,9 +120,19 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
 
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
-  override def supportsCompletion: Boolean = api.supportsCompletion
+  override def supportsCompletion: Boolean = false
 
   override def model: Option[String] = options.model.some
+
+  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+    api.rawCall("GET", "/v1/models", None).map { resp =>
+      if (resp.status == 200) {
+        Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
+      } else {
+        Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
+      }
+    }
+  }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
@@ -167,53 +181,5 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
         }
         Right(ChatResponse(messages, usage))
     }
-  }
-
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val obody = originalBody.asObject - "messages" - "provider" - "prompt"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    api.call("POST", "/v1/complete", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content))).map {
-      case Left(err) => err.left
-      case Right(resp) =>
-        val usage = ChatResponseMetadata(
-          ChatResponseMetadataRateLimit(
-            requestsLimit = resp.headers.getIgnoreCase("anthropic-ratelimit-requests-limit").map(_.toLong).getOrElse(-1L),
-            requestsRemaining = resp.headers.getIgnoreCase("anthropic-ratelimit-requests-remaining").map(_.toLong).getOrElse(-1L),
-            tokensLimit = resp.headers.getIgnoreCase("anthropic-ratelimit-tokens-limit").map(_.toLong).getOrElse(-1L),
-            tokensRemaining = resp.headers.getIgnoreCase("anthropic-ratelimit-tokens-remaining").map(_.toLong).getOrElse(-1L),
-          ),
-          ChatResponseMetadataUsage(
-            promptTokens = resp.body.select("usage").select("input_tokens").asOpt[Long].getOrElse(-1L),
-            generationTokens = resp.body.select("usage").select("output_tokens").asOpt[Long].getOrElse(-1L),
-          ),
-          None
-        )
-        val duration: Long = resp.headers.getIgnoreCase("anthropic-processing-ms").map(_.toLong).getOrElse(0L)
-        val slug = Json.obj(
-          "provider_kind" -> "anthropic",
-          "provider" -> id,
-          "duration" -> duration,
-          "model" -> options.model.json,
-          "rate_limit" -> usage.rateLimit.json,
-          "usage" -> usage.usage.json,
-        ).applyOnWithOpt(usage.cache) {
-          case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
-        }
-        attrs.update(ChatClient.ApiUsageKey -> usage)
-        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-          case Some(obj @ JsObject(_)) => {
-            val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-            val newArr = arr ++ Seq(slug)
-            obj ++ Json.obj("ai" -> newArr)
-          }
-          case Some(other) => other
-          case None => Json.obj("ai" -> Seq(slug))
-        }
-        val content = resp.body.select("completion").asOpt[String].getOrElse("")
-        val messages = Seq(
-          ChatGeneration(ChatMessage("assistant", content, None))
-        )
-        Right(ChatResponse(messages, usage))
-      }
   }
 }

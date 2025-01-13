@@ -223,7 +223,7 @@ object LlmProviders {
     huggingface,
     groq,
     cohere,
-    // anthropic,
+    anthropic,
     // xai,
     // ovh,
     // azure,
