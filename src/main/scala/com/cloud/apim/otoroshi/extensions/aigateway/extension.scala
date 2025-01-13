@@ -398,7 +398,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      'azure-openai': ${AzureOpenAiChatClientOptions().json.stringify},
             |      'cohere': ${CohereAiChatClientOptions().json.stringify},
             |      ovh: ${OVHAiEndpointsChatClientOptions().json.stringify},
-            |      huggingface: ${OpenAiChatClientOptions().copy(model = "google/gemma-2-2b-it".json.stringify)},
+            |      huggingface: ${OpenAiChatClientOptions().copy(model = "google/gemma-2-2b-it".json.stringify).json.stringify},
             |    };
             |    const GuardrailsOptions = {
             |      possibleModerationCategories: ${JsArray(LLMGuardrailsHardcodedItems.possibleModerationCategories.map(_.json)).stringify},

@@ -62,6 +62,8 @@ lazy val root = (project in file("."))
     assembly / test  := {},
     assembly / assemblyJarName := "otoroshi-llm-extension-assembly_2.12-dev.jar",
     assembly / assemblyMergeStrategy := {
+      case PathList("scala", xs @ _*) => MergeStrategy.first
+      case PathList("com", "sun", "jna", xs @ _*) => MergeStrategy.first
       case PathList(ps @ _*) if ps.contains("module-info.class") => MergeStrategy.first
       case PathList(ps @ _*) if ps.last == "FastDoubleParser-NOTICE" => MergeStrategy.first
       case PathList(ps @ _*) if ps.last == "groovy-release-info.properties" => MergeStrategy.first

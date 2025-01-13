@@ -265,12 +265,15 @@ object LlmToolFunctionBackendOptions {
 
   case class Http(options: JsValue) extends LlmToolFunctionBackendOptions {
     def json: JsValue = options
-    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = Future.apply("Not supported yet")
+    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+
+      Future.apply("Http backend not supported yet")
+    }
   }
 
   case class Route(options: JsValue) extends LlmToolFunctionBackendOptions {
     def json: JsValue = options
-    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = Future.apply("Not supported yet")
+    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = Future.apply("Route backend not supported yet")
   }
 }
 
@@ -356,8 +359,8 @@ case class LlmToolFunction(
     backend.kind match {
       case LlmToolFunctionBackendKind.QuickJs => backend.options.call(arguments)
       case LlmToolFunctionBackendKind.WasmPlugin => backend.options.call(arguments)
-      case LlmToolFunctionBackendKind.Route => "error, route not supported yet".vfuture
-      case LlmToolFunctionBackendKind.Http => "error, http not supported yet".vfuture
+      case LlmToolFunctionBackendKind.Route => backend.options.call(arguments)
+      case LlmToolFunctionBackendKind.Http => backend.options.call(arguments)
     }
   }
 }

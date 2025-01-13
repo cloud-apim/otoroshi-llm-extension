@@ -30,7 +30,7 @@ class ToolFunctionsPage extends Component {
       type: 'array',
       props: { label: 'Required params.' },
     },
-    wasmPlugin: {
+    'backend.wasmPlugin': {
       type: 'select',
       props: {
         label: 'Wasm plugin',
@@ -38,7 +38,7 @@ class ToolFunctionsPage extends Component {
         transformer: (item) => ({ label: item.name, value: item.id }),
       },
     },
-    jsPath: {
+    'backend.jsPath': {
       type: 'code',
       props: {
         label: 'Javascript path',
@@ -48,6 +48,18 @@ class ToolFunctionsPage extends Component {
     tags: {
       type: 'array',
       props: { label: 'Tags' },
+    },
+    'backend.kind': {
+      type: "select",
+      props: {
+        label: 'Kind',
+        possibleValues: [
+          { label: 'Quick JS (Wasm)', value: 'QuickJs' },
+          { label: 'Wasm Plugin', value: 'WasmPlugin' },
+          { label: 'Http call', value: 'Http' },
+          { label: 'Route call', value: 'Route' },
+        ]
+      }
     }
   };
 
@@ -64,8 +76,19 @@ class ToolFunctionsPage extends Component {
     },
   ];
 
-  formFlow = [
-    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'strict', 'wasmPlugin', 'jsPath', '---', 'parameters', 'required'];
+  formFlow = (item) => [
+    '_loc', 'id', 'name', 'description', 'tags', 'metadata',
+    '<<<Backend',
+    'backend.kind',
+    (item.backend.kind === 'QuickJs') ? 'backend.jsPath' : null,
+    (item.backend.kind === 'WasmPlugin') ? 'backend.wasmPlugin' : null,
+    //(item.backend.kind === 'WasmPlugin') ? 'backend.http' : null,
+    //(item.backend.kind === 'WasmPlugin') ? 'backend.route' : null,
+    '<<<Function parameters',
+    'strict',
+    'parameters',
+    'required',
+  ].filter(i => !!i);
 
   componentDidMount() {
     this.props.setTitle(`LLM Tool Functions`);
