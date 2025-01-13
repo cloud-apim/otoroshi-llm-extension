@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 import akka.stream.Materializer
 import com.cloud.apim.otoroshi.extensions.aigateway.{LLmExtensionSuite, LlmProviders, OtoroshiClient, TestLlmProviderSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.domains.LlmProviderUtils
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmToolFunction}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmToolFunction, LlmToolFunctionBackend, LlmToolFunctionBackendKind, LlmToolFunctionBackendOptions}
 import otoroshi.api.Otoroshi
 import otoroshi.models.WasmPlugin
 import otoroshi.utils.syntax.implicits._
@@ -394,11 +394,16 @@ class ProvidersSuite extends LLmExtensionSuite {
                                 |    "description": "The arrival city (airport code)"
                                 |  }
                                 |}""".stripMargin).asObject,
-      jsPath = """'inline module';
-                 |
-                 |exports.tool_call = function(args) {
-                 |  return JSON.stringify({ departure: "08:00 AM", arrival: "11:30 AM", duration: "5h 30m" });
-                 |}""".stripMargin.some,
+      backend = LlmToolFunctionBackend(
+        kind = LlmToolFunctionBackendKind.QuickJs,
+        options = LlmToolFunctionBackendOptions.QuickJs(
+          """'inline module';
+            |
+            |exports.tool_call = function(args) {
+            |  return JSON.stringify({ departure: "08:00 AM", arrival: "11:30 AM", duration: "5h 30m" });
+            |}""".stripMargin
+        )
+      )
     )
     val fr = client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "tool-functions").upsertEntity(function).awaitf(awaitFor)
     assert(fr.createdOrUpdated, s"[${provider.name}] function has not been created")
@@ -520,11 +525,16 @@ class ProvidersSuite extends LLmExtensionSuite {
                                 |    "description": "The arrival city (airport code)"
                                 |  }
                                 |}""".stripMargin).asObject,
-      jsPath = """'inline module';
-                 |
-                 |exports.tool_call = function(args) {
-                 |  return JSON.stringify({ departure: "08:00 AM", arrival: "11:30 AM", duration: "5h 30m" });
-                 |}""".stripMargin.some,
+      backend = LlmToolFunctionBackend(
+        kind = LlmToolFunctionBackendKind.QuickJs,
+        options = LlmToolFunctionBackendOptions.QuickJs(
+          """'inline module';
+            |
+            |exports.tool_call = function(args) {
+            |  return JSON.stringify({ departure: "08:00 AM", arrival: "11:30 AM", duration: "5h 30m" });
+            |}""".stripMargin
+        )
+      )
     )
     val fr = client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "tool-functions").upsertEntity(function).awaitf(awaitFor)
     assert(fr.createdOrUpdated, s"[${provider.name}] function has not been created")

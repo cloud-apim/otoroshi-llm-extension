@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
-import akka.stream.alpakka.s3.scaladsl.S3
 import akka.stream.alpakka.s3._
+import akka.stream.alpakka.s3.scaladsl.S3
 import akka.stream.scaladsl.{Sink, Source}
 import akka.stream.{Attributes, Materializer}
 import akka.util.ByteString
@@ -29,25 +29,38 @@ import scala.concurrent.duration.DurationInt
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
-case class LlmToolFunction(
-                           location: EntityLocation = EntityLocation.default,
-                           id: String,
-                           name: String,
-                           description: String = "",
-                           tags: Seq[String] = Seq.empty,
-                           metadata: Map[String, String] = Map.empty,
-                           strict: Boolean = true,
-                           parameters: JsObject,
-                           required: Option[Seq[String]] = None,
-                           wasmPlugin: Option[String] = None,
-                           jsPath: Option[String] = None,
-                         ) extends EntityLocationSupport {
-  override def internalId: String               = id
-  override def json: JsValue                    = LlmToolFunction.format.writes(this)
-  override def theName: String                  = name
-  override def theDescription: String           = description
-  override def theTags: Seq[String]             = tags
-  override def theMetadata: Map[String, String] = metadata
+sealed trait LlmToolFunctionBackendKind {
+  def name: String
+  def json: JsValue = JsString(name)
+}
+object LlmToolFunctionBackendKind {
+  case object QuickJs extends LlmToolFunctionBackendKind { def name: String = "QuickJs" }
+  case object WasmPlugin extends LlmToolFunctionBackendKind { def name: String = "WasmPlugin" }
+  case object Http extends LlmToolFunctionBackendKind { def name: String = "Http" }
+  case object Route extends LlmToolFunctionBackendKind { def name: String = "Route" }
+  def apply(str: String): LlmToolFunctionBackendKind = str match {
+    case "QuickJs" => QuickJs
+    case "WasmPlugin" => WasmPlugin
+    case "Http" => Http
+    case "Route" => Route
+    case _ => QuickJs
+  }
+}
+
+case class LlmToolFunctionBackend(kind: LlmToolFunctionBackendKind, options: LlmToolFunctionBackendOptions) {
+  def json: JsValue = Json.obj(
+    "kind" -> kind.json,
+    "options" -> options.json
+  )
+}
+
+
+sealed trait LlmToolFunctionBackendOptions {
+  def json: JsValue
+  def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String]
+}
+
+object LlmToolFunctionBackendOptions {
 
   private def s3ClientSettingsAttrs(conf: S3Configuration): Attributes = {
     val awsCredentials = StaticCredentialsProvider.create(
@@ -166,24 +179,46 @@ case class LlmToolFunction(
     }
   }
 
-  def callWasmPlugin(ref: String, arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
-    env.proxyState.wasmPlugin(ref) match {
-      case None => "error, wasm plugin not found".vfuture
-      case Some(plugin) => {
-        env.wasmIntegration.wasmVmFor(plugin.config).flatMap {
-          case None => "unable to create wasm vm".vfuture
-          case Some((vm, localconfig)) => {
-            vm.call(
-              WasmFunctionParameters.ExtismFuntionCall(
-                plugin.config.functionName.orElse(localconfig.functionName).getOrElse("tool_call"),
-                arguments
-              ),
-              None
-            ).map {
-              case Left(err) => err.stringify
-              case Right(output) => output._1
-            }.andThen {
-              case _ => vm.release()
+  object QuickJs {
+    def apply(str: String): QuickJs = {
+      new QuickJs(Json.obj("jsPath" -> str), Json.obj())
+    }
+  }
+
+  case class QuickJs(options: JsValue, root: JsValue) extends LlmToolFunctionBackendOptions {
+    lazy val jsPath = root.select("jsPath").asOpt[String].orElse(options.select("jsPath").asOpt[String]).filter(_.trim.nonEmpty)
+    def json: JsValue = Json.obj(
+      "jsPath" -> jsPath
+    )
+    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+      jsPath match {
+        case None => "error, not wasm plugin ref".vfuture
+        case Some(path) => {
+          getCode(path, Map.empty).flatMap { code =>
+            env.wasmIntegration.wasmVmFor(LlmToolFunction.wasmConfigRef).flatMap {
+              case None => "unable to create wasm vm".vfuture
+              case Some((vm, localconfig)) => {
+                vm.call(
+                  WasmFunctionParameters.ExtismFuntionCall(
+                    "cloud_apim_module_plugin_execute_tool_call",
+                    Json.obj(
+                      "code" -> code,
+                      "arguments" -> arguments,
+                    ).stringify
+                  ),
+                  None
+                ).map {
+                  case Left(err) =>
+                    err.prettify.debugPrintln
+                    err.stringify
+                  case Right(output) =>
+                    val out = output._1.debugPrintln
+                    println(s"the function output is: '${out}'")
+                    out
+                }.andThen {
+                  case _ => vm.release()
+                }
+              }
             }
           }
         }
@@ -191,42 +226,138 @@ case class LlmToolFunction(
     }
   }
 
-  def callJsPlugin(path: String, arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
-    getCode(path, Map.empty).flatMap { code =>
-      env.wasmIntegration.wasmVmFor(LlmToolFunction.wasmConfigRef).flatMap {
-        case None => "unable to create wasm vm".vfuture
-        case Some((vm, localconfig)) => {
-          vm.call(
-            WasmFunctionParameters.ExtismFuntionCall(
-              "cloud_apim_module_plugin_execute_tool_call",
-              Json.obj(
-                "code" -> code,
-                "arguments" -> arguments,
-              ).stringify
-            ),
-            None
-          ).map {
-            case Left(err) =>
-              err.prettify.debugPrintln
-              err.stringify
-            case Right(output) =>
-              val out = output._1.debugPrintln
-              println(s"the function output is: '${out}'")
-              out
-          }.andThen {
-            case _ => vm.release()
+  case class WasmPlugin(options: JsValue, root: JsValue) extends LlmToolFunctionBackendOptions {
+    lazy val wasmPlugin: Option[String] = root.select("wasmPlugin").asOpt[String].orElse(options.select("wasmPlugin").asOpt[String]).filter(_.trim.nonEmpty)
+    def json: JsValue = Json.obj(
+      "wasmPlugin" -> wasmPlugin
+    )
+
+    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+      wasmPlugin match {
+        case None => "error, not wasm plugin ref".vfuture
+        case Some(ref) => {
+          env.proxyState.wasmPlugin(ref) match {
+            case None => "error, wasm plugin not found".vfuture
+            case Some(plugin) => {
+              env.wasmIntegration.wasmVmFor(plugin.config).flatMap {
+                case None => "unable to create wasm vm".vfuture
+                case Some((vm, localconfig)) => {
+                  vm.call(
+                    WasmFunctionParameters.ExtismFuntionCall(
+                      plugin.config.functionName.orElse(localconfig.functionName).getOrElse("tool_call"),
+                      arguments
+                    ),
+                    None
+                  ).map {
+                    case Left(err) => err.stringify
+                    case Right(output) => output._1
+                  }.andThen {
+                    case _ => vm.release()
+                  }
+                }
+              }
+            }
           }
         }
       }
     }
   }
 
+  case class Http(options: JsValue) extends LlmToolFunctionBackendOptions {
+    def json: JsValue = options
+    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = Future.apply("Not supported yet")
+  }
+
+  case class Route(options: JsValue) extends LlmToolFunctionBackendOptions {
+    def json: JsValue = options
+    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = Future.apply("Not supported yet")
+  }
+}
+
+
+
+case class LlmToolFunction(
+                           location: EntityLocation = EntityLocation.default,
+                           id: String,
+                           name: String,
+                           description: String = "",
+                           tags: Seq[String] = Seq.empty,
+                           metadata: Map[String, String] = Map.empty,
+                           // --------------------
+                           strict: Boolean = true,
+                           parameters: JsObject,
+                           required: Option[Seq[String]] = None,
+                           // --------------------
+                           backend: LlmToolFunctionBackend
+                         ) extends EntityLocationSupport {
+  override def internalId: String               = id
+  override def json: JsValue                    = LlmToolFunction.format.writes(this)
+  override def theName: String                  = name
+  override def theDescription: String           = description
+  override def theTags: Seq[String]             = tags
+  override def theMetadata: Map[String, String] = metadata
+
+  //def callWasmPlugin(ref: String, arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+  //  env.proxyState.wasmPlugin(ref) match {
+  //    case None => "error, wasm plugin not found".vfuture
+  //    case Some(plugin) => {
+  //      env.wasmIntegration.wasmVmFor(plugin.config).flatMap {
+  //        case None => "unable to create wasm vm".vfuture
+  //        case Some((vm, localconfig)) => {
+  //          vm.call(
+  //            WasmFunctionParameters.ExtismFuntionCall(
+  //              plugin.config.functionName.orElse(localconfig.functionName).getOrElse("tool_call"),
+  //              arguments
+  //            ),
+  //            None
+  //          ).map {
+  //            case Left(err) => err.stringify
+  //            case Right(output) => output._1
+  //          }.andThen {
+  //            case _ => vm.release()
+  //          }
+  //        }
+  //      }
+  //    }
+  //  }
+  //}
+
+  //def callJsPlugin(path: String, arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+  //  getCode(path, Map.empty).flatMap { code =>
+  //    env.wasmIntegration.wasmVmFor(LlmToolFunction.wasmConfigRef).flatMap {
+  //      case None => "unable to create wasm vm".vfuture
+  //      case Some((vm, localconfig)) => {
+  //        vm.call(
+  //          WasmFunctionParameters.ExtismFuntionCall(
+  //            "cloud_apim_module_plugin_execute_tool_call",
+  //            Json.obj(
+  //              "code" -> code,
+  //              "arguments" -> arguments,
+  //            ).stringify
+  //          ),
+  //          None
+  //        ).map {
+  //          case Left(err) =>
+  //            err.prettify.debugPrintln
+  //            err.stringify
+  //          case Right(output) =>
+  //            val out = output._1.debugPrintln
+  //            println(s"the function output is: '${out}'")
+  //            out
+  //        }.andThen {
+  //          case _ => vm.release()
+  //        }
+  //      }
+  //    }
+  //  }
+  //}
+
   def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
-    (wasmPlugin, jsPath) match {
-      case (Some(ref), None) => callWasmPlugin(ref, arguments)
-      case (None, Some(path)) => callJsPlugin(path, arguments)
-      case (Some(ref), Some(_)) => callWasmPlugin(ref, arguments)
-      case (None, None) => "error, nothing to call".vfuture
+    backend.kind match {
+      case LlmToolFunctionBackendKind.QuickJs => backend.options.call(arguments)
+      case LlmToolFunctionBackendKind.WasmPlugin => backend.options.call(arguments)
+      case LlmToolFunctionBackendKind.Route => "error, route not supported yet".vfuture
+      case LlmToolFunctionBackendKind.Http => "error, http not supported yet".vfuture
     }
   }
 }
@@ -266,7 +397,7 @@ object LlmToolFunction {
     instances = 4
   )
 
-  private val modulesCache = Scaffeine().maximumSize(1000).expireAfterWrite(120.seconds).build[String, String]
+  val modulesCache = Scaffeine().maximumSize(1000).expireAfterWrite(120.seconds).build[String, String]
   val logger = Logger("LlmToolFunction")
 
   def _tools(functions: Seq[String])(implicit env: Env): Seq[JsObject] = {
@@ -352,10 +483,11 @@ object LlmToolFunction {
       "strict" -> o.strict,
       "parameters" -> o.parameters,
       "required" -> o.required.map(v => JsArray(v.map(_.json))).getOrElse(JsNull).asValue,
-      "wasmPlugin" -> o.wasmPlugin.map(_.json).getOrElse(JsNull).asValue,
-      "jsPath" -> o.jsPath.map(_.json).getOrElse(JsNull).asValue,
+      "backend" -> o.backend.json
     )
     override def reads(json: JsValue): JsResult[LlmToolFunction] = Try {
+      val kind = LlmToolFunctionBackendKind(json.select("backend").select("kind").asOpt[String].getOrElse("QuickJs"))
+      val options = json.select("backend").select("options").asOpt[JsObject].getOrElse(Json.obj())
       LlmToolFunction(
         location = otoroshi.models.EntityLocation.readFromKey(json),
         id = (json \ "id").as[String],
@@ -366,8 +498,15 @@ object LlmToolFunction {
         strict = json.select("strict").asOpt[Boolean].getOrElse(true),
         parameters = json.select("parameters").asOpt[JsObject].getOrElse(Json.obj()),
         required = json.select("required").asOpt[Seq[String]],
-        wasmPlugin = json.select("wasmPlugin").asOpt[String].filter(_.trim.nonEmpty),
-        jsPath = json.select("jsPath").asOpt[String].filter(_.trim.nonEmpty),
+        backend = LlmToolFunctionBackend(
+          kind = kind,
+          options = kind match {
+            case LlmToolFunctionBackendKind.WasmPlugin => LlmToolFunctionBackendOptions.WasmPlugin(options, json)
+            case LlmToolFunctionBackendKind.QuickJs => LlmToolFunctionBackendOptions.QuickJs(options, json)
+            case LlmToolFunctionBackendKind.Http => LlmToolFunctionBackendOptions.Http(options)
+            case LlmToolFunctionBackendKind.Route => LlmToolFunctionBackendOptions.Route(options)
+          }
+        )
       )
     } match {
       case Failure(ex)    =>
@@ -401,8 +540,10 @@ object LlmToolFunction {
             strict = true,
             parameters = Json.obj(),
             required = None,
-            wasmPlugin = None,
-            jsPath = None
+            backend = LlmToolFunctionBackend(
+              kind = LlmToolFunctionBackendKind.QuickJs,
+              options = LlmToolFunctionBackendOptions.QuickJs(Json.obj(), Json.obj())
+            )
           ).json
         },
         canRead = true,
