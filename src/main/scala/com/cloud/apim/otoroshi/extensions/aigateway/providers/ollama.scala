@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions, WasmFunction}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions}
 import org.joda.time.DateTime
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap

@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 import akka.stream.Materializer
 import com.cloud.apim.otoroshi.extensions.aigateway.{LLmExtensionSuite, LlmProviders, OtoroshiClient, TestLlmProviderSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.domains.LlmProviderUtils
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, WasmFunction}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmToolFunction}
 import otoroshi.api.Otoroshi
 import otoroshi.models.WasmPlugin
 import otoroshi.utils.syntax.implicits._
@@ -380,7 +380,7 @@ class ProvidersSuite extends LLmExtensionSuite {
       },
     )
     LlmProviderUtils.upsertProvider(client)(llmprovider)
-    val function = WasmFunction(
+    val function = LlmToolFunction(
       id = functionId,
       name = "get_flight_times",
       description = "Get the flight times between two cities",
@@ -443,12 +443,12 @@ class ProvidersSuite extends LLmExtensionSuite {
          |}""".stripMargin)).awaitf(awaitFor)
     assert(routeChat.created, s"[${provider.name}] route chat has not been created")
     val payload = WasmPlugin(
-      id = WasmFunction.wasmPluginId,
+      id = LlmToolFunction.wasmPluginId,
       name = "Otoroshi LLM Extension - tool call runtime",
       description = "This plugin provides the runtime for the wasm backed LLM tool calls",
-      config = WasmFunction.wasmConfig
+      config = LlmToolFunction.wasmConfig
     ).json.stringify.byteString
-    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${WasmFunction.wasmPluginId}", payload, None)(otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
+    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
     await(1300.millis)
     val resp = client.call("POST", s"http://${provider.name}.oto.tools:${port}/chat", Map.empty, Some(Json.parse(
       s"""{
@@ -506,7 +506,7 @@ class ProvidersSuite extends LLmExtensionSuite {
       },
     )
     LlmProviderUtils.upsertProvider(client)(llmprovider)
-    val function = WasmFunction(
+    val function = LlmToolFunction(
       id = functionId,
       name = "get_flight_times",
       description = "Get the flight times between two cities",
@@ -569,12 +569,12 @@ class ProvidersSuite extends LLmExtensionSuite {
          |}""".stripMargin)).awaitf(awaitFor)
     assert(routeChat.created, s"[${provider.name}] route chat has not been created")
     val payload = WasmPlugin(
-      id = WasmFunction.wasmPluginId,
+      id = LlmToolFunction.wasmPluginId,
       name = "Otoroshi LLM Extension - tool call runtime",
       description = "This plugin provides the runtime for the wasm backed LLM tool calls",
-      config = WasmFunction.wasmConfig
+      config = LlmToolFunction.wasmConfig
     ).json.stringify.byteString
-    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${WasmFunction.wasmPluginId}", payload, None)(otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
+    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
     await(1300.millis)
     val resp = client.stream("POST", s"http://${provider.name}.oto.tools:${port}/chat?stream=true", Map.empty, Some(Json.parse(
       s"""{

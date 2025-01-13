@@ -25,7 +25,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val promptTemplatesDatastore: PromptTemplateDataStore = new KvPromptTemplateDataStore(extensionId, env.datastores.redis, env)
   val promptContextDataStore: PromptContextDataStore = new KvPromptContextDataStore(extensionId, env.datastores.redis, env)
   val promptsDataStore: PromptDataStore = new KvPromptDataStore(extensionId, env.datastores.redis, env)
-  val toolFunctionDataStore: WasmFunctionDataStore = new KvWasmFunctionDataStore(extensionId, env.datastores.redis, env)
+  val toolFunctionDataStore: LlmToolFunctionDataStore = new KvLlmToolFunctionDataStore(extensionId, env.datastores.redis, env)
   val embeddingModelsDataStore: EmbeddingModelsDataStore = new KvEmbeddingModelsDataStore(extensionId, env.datastores.redis, env)
   val embeddingStoresDataStore: EmbeddingStoresDataStore = new KvEmbeddingStoresDataStore(extensionId, env.datastores.redis, env)
   val mcpConnectorsDatastore: McpConnectorsDataStore = new KvMcpConnectorsDataStore(extensionId, env.datastores.redis, env)
@@ -61,10 +61,10 @@ class AiGatewayExtensionState(env: Env) {
     _prompts.addAll(values.map(v => (v.id, v))).remAll(_prompts.keySet.toSeq.diff(values.map(_.id)))
   }
 
-  private val _toolFunctions = new UnboundedTrieMap[String, WasmFunction]()
-  def toolFunction(id: String): Option[WasmFunction] = _toolFunctions.get(id)
-  def allToolFunctions(): Seq[WasmFunction]          = _toolFunctions.values.toSeq
-  def updateToolFunctions(values: Seq[WasmFunction]): Unit = {
+  private val _toolFunctions = new UnboundedTrieMap[String, LlmToolFunction]()
+  def toolFunction(id: String): Option[LlmToolFunction] = _toolFunctions.get(id)
+  def allToolFunctions(): Seq[LlmToolFunction]          = _toolFunctions.values.toSeq
+  def updateToolFunctions(values: Seq[LlmToolFunction]): Unit = {
     _toolFunctions.addAll(values.map(v => (v.id, v))).remAll(_toolFunctions.keySet.toSeq.diff(values.map(_.id)))
   }
 
@@ -114,14 +114,14 @@ class AiExtension(val env: Env) extends AdminExtension {
     logger.info("the 'LLM Extension' is enabled !")
     implicit val ev = env
     implicit val ec = env.otoroshiExecutionContext
-    env.datastores.wasmPluginsDataStore.findById(WasmFunction.wasmPluginId).flatMap {
+    env.datastores.wasmPluginsDataStore.findById(LlmToolFunction.wasmPluginId).flatMap {
       case Some(_) => ().vfuture
       case None => {
         env.datastores.wasmPluginsDataStore.set(WasmPlugin(
-          id = WasmFunction.wasmPluginId,
+          id = LlmToolFunction.wasmPluginId,
           name = "Otoroshi LLM Extension - tool call runtime",
-          description = "This plugin provides the runtime for the wasm backed LLM tool calls",
-          config = WasmFunction.wasmConfig
+          description = "This plugin provides the runtime for the wasm/http/whatever backed LLM tool calls",
+          config = LlmToolFunction.wasmConfig
         )).map(_ => ())
       }
     }
@@ -858,7 +858,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(PromptContext.resource(env, datastores, states)),
       AdminExtensionEntity(Prompt.resource(env, datastores, states)),
       AdminExtensionEntity(PromptTemplate.resource(env, datastores, states)),
-      AdminExtensionEntity(WasmFunction.resource(env, datastores, states)),
+      AdminExtensionEntity(LlmToolFunction.resource(env, datastores, states)),
       AdminExtensionEntity(EmbeddingModel.resource(env, datastores, states)),
       AdminExtensionEntity(EmbeddingStore.resource(env, datastores, states)),
       AdminExtensionEntity(McpConnector.resource(env, datastores, states)),

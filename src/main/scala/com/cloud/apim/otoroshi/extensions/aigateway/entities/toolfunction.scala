@@ -1,11 +1,10 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import akka.stream.alpakka.s3.scaladsl.S3
-import akka.stream.{Attributes, Materializer}
-import akka.stream.alpakka.s3.{ApiVersion, MemoryBufferType, ObjectMetadata, S3Attributes, S3Settings}
+import akka.stream.alpakka.s3._
 import akka.stream.scaladsl.{Sink, Source}
+import akka.stream.{Attributes, Materializer}
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.providers.OpenAiApiResponseChoiceMessageToolCall
 import com.github.blemale.scaffeine.Scaffeine
 import io.otoroshi.wasm4s.scaladsl.{WasmFunctionParameters, WasmSource, WasmSourceKind}
 import otoroshi.api._
@@ -30,7 +29,7 @@ import scala.concurrent.duration.DurationInt
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
-case class WasmFunction(
+case class LlmToolFunction(
                            location: EntityLocation = EntityLocation.default,
                            id: String,
                            name: String,
@@ -44,7 +43,7 @@ case class WasmFunction(
                            jsPath: Option[String] = None,
                          ) extends EntityLocationSupport {
   override def internalId: String               = id
-  override def json: JsValue                    = WasmFunction.format.writes(this)
+  override def json: JsValue                    = LlmToolFunction.format.writes(this)
   override def theName: String                  = name
   override def theDescription: String           = description
   override def theTags: Seq[String]             = tags
@@ -96,10 +95,8 @@ case class WasmFunction(
   }
 
   private def getCode(path: String, headers: Map[String, String])(implicit env: Env, ec: ExecutionContext): Future[String] = {
-    import WasmFunction.modulesCache
-    import WasmFunction.logger
 
-    modulesCache.getIfPresent(path) match {
+    LlmToolFunction.modulesCache.getIfPresent(path) match {
       case Some(code) => code.vfuture
       case None => {
         if (path.startsWith("https://") || path.startsWith("http://")) {
@@ -110,11 +107,11 @@ case class WasmFunction(
             .get()
             .flatMap { response =>
               if (response.status == 200) {
-                modulesCache.put(path, response.body)
+                LlmToolFunction.modulesCache.put(path, response.body)
                 response.body.vfuture
               } else {
                 getDefaultCode().map { code =>
-                  modulesCache.put(path, code)
+                  LlmToolFunction.modulesCache.put(path, code)
                   code
                 }
               }
@@ -123,52 +120,51 @@ case class WasmFunction(
           val file = new File(path.replace("file://", ""), "")
           if (file.exists()) {
             val code = Files.readString(file.toPath)
-            modulesCache.put(path, code)
+            LlmToolFunction.modulesCache.put(path, code)
             code.vfuture
           } else {
             getDefaultCode().map { code =>
-              modulesCache.put(path, code)
+              LlmToolFunction.modulesCache.put(path, code)
               code
             }
           }
         } else if (path.startsWith("'inline module';") || path.startsWith("\"inline module\";")) {
-          modulesCache.put(path, path)
+          LlmToolFunction.modulesCache.put(path, path)
           path.vfuture
         } else if (path.startsWith("s3://")) {
-          logger.info(s"fetching from S3: ${path}")
+          LlmToolFunction.logger.info(s"fetching from S3: ${path}")
           val config = S3Configuration.format.reads(JsObject(headers.mapValues(_.json))).get
           fileContent(path.replaceFirst("s3://", ""), config)(env.otoroshiExecutionContext, env.otoroshiMaterializer).flatMap {
             case None => {
-              logger.info(s"unable to fetch from S3: ${path}")
+              LlmToolFunction.logger.info(s"unable to fetch from S3: ${path}")
               getDefaultCode().map { code =>
-                modulesCache.put(path, code)
+                LlmToolFunction.modulesCache.put(path, code)
                 code
               }
             }
             case Some((_, codeRaw)) => {
               val code = codeRaw.utf8String
-              modulesCache.put(path, code)
+              LlmToolFunction.modulesCache.put(path, code)
               code.vfuture
             }
           }.recoverWith {
             case t: Throwable => {
-              logger.error(s"error when fetch from S3: ${path}", t)
+              LlmToolFunction.logger.error(s"error when fetch from S3: ${path}", t)
               getDefaultCode().map { code =>
-                modulesCache.put(path, code)
+                LlmToolFunction.modulesCache.put(path, code)
                 code
               }
             }
           }
         } else {
           getDefaultCode().map { code =>
-            modulesCache.put(path, code)
+            LlmToolFunction.modulesCache.put(path, code)
             code
           }
         }
       }
     }
   }
-
 
   def callWasmPlugin(ref: String, arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
     env.proxyState.wasmPlugin(ref) match {
@@ -197,7 +193,7 @@ case class WasmFunction(
 
   def callJsPlugin(path: String, arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
     getCode(path, Map.empty).flatMap { code =>
-      env.wasmIntegration.wasmVmFor(WasmFunction.wasmConfigRef).flatMap {
+      env.wasmIntegration.wasmVmFor(LlmToolFunction.wasmConfigRef).flatMap {
         case None => "unable to create wasm vm".vfuture
         case Some((vm, localconfig)) => {
           vm.call(
@@ -258,7 +254,7 @@ case class GenericApiResponseChoiceMessageToolCall(raw: JsObject) {
   lazy val isMcp: Boolean = function.isMcp
 }
 
-object WasmFunction {
+object LlmToolFunction {
   val wasmPluginId = "wasm-plugin_cloud_apim_llm_extension_tool_call_runtime"
   val wasmConfigRef = WasmConfig(source = WasmSource(WasmSourceKind.Local, wasmPluginId, Json.obj()))
   val wasmConfig = WasmConfig(
@@ -271,7 +267,7 @@ object WasmFunction {
   )
 
   private val modulesCache = Scaffeine().maximumSize(1000).expireAfterWrite(120.seconds).build[String, String]
-  val logger = Logger("WasmFunction")
+  val logger = Logger("LlmToolFunction")
 
   def _tools(functions: Seq[String])(implicit env: Env): Seq[JsObject] = {
     /*Json.obj(
@@ -346,8 +342,8 @@ object WasmFunction {
     }
   }
 
-  val format = new Format[WasmFunction] {
-    override def writes(o: WasmFunction): JsValue = o.location.jsonWithKey ++ Json.obj(
+  val format = new Format[LlmToolFunction] {
+    override def writes(o: LlmToolFunction): JsValue = o.location.jsonWithKey ++ Json.obj(
       "id"          -> o.id,
       "name"        -> o.name,
       "description" -> o.description,
@@ -359,8 +355,8 @@ object WasmFunction {
       "wasmPlugin" -> o.wasmPlugin.map(_.json).getOrElse(JsNull).asValue,
       "jsPath" -> o.jsPath.map(_.json).getOrElse(JsNull).asValue,
     )
-    override def reads(json: JsValue): JsResult[WasmFunction] = Try {
-      WasmFunction(
+    override def reads(json: JsValue): JsResult[LlmToolFunction] = Try {
+      LlmToolFunction(
         location = otoroshi.models.EntityLocation.readFromKey(json),
         id = (json \ "id").as[String],
         name = (json \ "name").as[String],
@@ -387,15 +383,15 @@ object WasmFunction {
       "tool-function",
       "ai-gateway.extensions.cloud-apim.com",
       ResourceVersion("v1", true, false, true),
-      GenericResourceAccessApiWithState[WasmFunction](
-        format = WasmFunction.format,
-        clazz = classOf[WasmFunction],
+      GenericResourceAccessApiWithState[LlmToolFunction](
+        format = LlmToolFunction.format,
+        clazz = classOf[LlmToolFunction],
         keyf = id => datastores.toolFunctionDataStore.key(id),
         extractIdf = c => datastores.toolFunctionDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
         tmpl = (v, p) => {
-          WasmFunction(
+          LlmToolFunction(
             id = IdGenerator.namedId("tool-function", env),
             name = "tool function",
             description = "A new tool function",
@@ -422,13 +418,13 @@ object WasmFunction {
   }
 }
 
-trait WasmFunctionDataStore extends BasicStore[WasmFunction]
+trait LlmToolFunctionDataStore extends BasicStore[LlmToolFunction]
 
-class KvWasmFunctionDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
-  extends WasmFunctionDataStore
-    with RedisLikeStore[WasmFunction] {
-  override def fmt: Format[WasmFunction]                  = WasmFunction.format
+class KvLlmToolFunctionDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
+  extends LlmToolFunctionDataStore
+    with RedisLikeStore[LlmToolFunction] {
+  override def fmt: Format[LlmToolFunction]                  = LlmToolFunction.format
   override def redisLike(implicit env: Env): RedisLike = redisCli
   override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:toolfunctions:$id"
-  override def extractId(value: WasmFunction): String    = value.id
+  override def extractId(value: LlmToolFunction): String    = value.id
 }
