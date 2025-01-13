@@ -621,7 +621,7 @@ class ProvidersSuite extends LLmExtensionSuite {
     otoroshi.stop()
   }
 
-  // // test("providers should support chat no streaming")
+  // test("providers should support chat no streaming")
   LlmProviders.listOfProvidersSupportingChatCompletions.foreach { provider =>
     test(s"provider '${provider.name}' should support chat/completions sync") {
       printHeader(provider.name, "chat/completions sync")
@@ -629,7 +629,7 @@ class ProvidersSuite extends LLmExtensionSuite {
     }
   }
 
-  // // test("providers should support chat with streaming")
+  // test("providers should support chat with streaming")
   LlmProviders.listOfProvidersSupportingChatCompletionsStream.foreach { provider =>
     test(s"provider '${provider.name}' should support chat/completions stream") {
       printHeader(provider.name, "chat/completions stream")
@@ -637,7 +637,7 @@ class ProvidersSuite extends LLmExtensionSuite {
     }
   }
 
-  // // test("providers should support simple completions")
+  // test("providers should support simple completions")
   LlmProviders.listOfProvidersSupportingCompletions.foreach { provider =>
     test(s"provider '${provider.name}' should support simple completions") {
       printHeader(provider.name, "completions")
