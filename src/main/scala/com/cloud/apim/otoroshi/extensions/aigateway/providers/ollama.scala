@@ -147,11 +147,12 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
           body match {
             case None => resp.rightf
             case Some(body) => {
-              val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
+              val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty)//.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
               LlmFunctions.callToolsOllama(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors)(ec, env)
                 .flatMap { callResps =>
-                  val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   callWithToolSupport(method, path, newBody.some, mcpConnectors)
                 }

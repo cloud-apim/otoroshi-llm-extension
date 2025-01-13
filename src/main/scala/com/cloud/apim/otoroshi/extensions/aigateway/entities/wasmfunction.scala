@@ -31,17 +31,17 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
 case class WasmFunction(
-                           location: EntityLocation,
+                           location: EntityLocation = EntityLocation.default,
                            id: String,
                            name: String,
-                           description: String,
-                           tags: Seq[String],
-                           metadata: Map[String, String],
-                           strict: Boolean,
+                           description: String = "",
+                           tags: Seq[String] = Seq.empty,
+                           metadata: Map[String, String] = Map.empty,
+                           strict: Boolean = true,
                            parameters: JsObject,
-                           required: Option[Seq[String]],
-                           wasmPlugin: Option[String],
-                           jsPath: Option[String],
+                           required: Option[Seq[String]] = None,
+                           wasmPlugin: Option[String] = None,
+                           jsPath: Option[String] = None,
                          ) extends EntityLocationSupport {
   override def internalId: String               = id
   override def json: JsValue                    = WasmFunction.format.writes(this)
@@ -319,19 +319,27 @@ object WasmFunction {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
-  def _callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def _callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     call(functions) { (resp, tc) =>
-      Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
+      Source(List(
+        Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)),
+        Json.obj(
         "role" -> "tool",
         "content" -> resp,
         "tool_call_id" -> tc.id
-      )))
+      ))).applyOnIf(providerName.toLowerCase().contains("deepseek")) { s => // temporary fix for https://github.com/deepseek-ai/DeepSeek-V3/issues/15
+        s.concat(Source(List(
+          Json.obj("role" -> "user", "content" -> resp)
+        )))
+      }
     }
   }
 
   def _callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     call(functions) { (resp, tc) =>
-      Source(List(Json.obj("role" -> "assistant", "content" -> "", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
+      Source(List(
+        Json.obj("role" -> "assistant", "content" -> "", "tool_calls" -> Json.arr(tc.raw)),
+        Json.obj(
         "role" -> "tool",
         "content" -> resp,
       )))
@@ -356,7 +364,7 @@ object WasmFunction {
         location = otoroshi.models.EntityLocation.readFromKey(json),
         id = (json \ "id").as[String],
         name = (json \ "name").as[String],
-        description = (json \ "description").as[String],
+        description = (json \ "description").asOpt[String].getOrElse(""),
         metadata = (json \ "metadata").asOpt[Map[String, String]].getOrElse(Map.empty),
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         strict = json.select("strict").asOpt[Boolean].getOrElse(true),
@@ -376,7 +384,7 @@ object WasmFunction {
     Resource(
       "ToolFunction",
       "tool-functions",
-      "tool-functions",
+      "tool-function",
       "ai-gateway.extensions.cloud-apim.com",
       ResourceVersion("v1", true, false, true),
       GenericResourceAccessApiWithState[WasmFunction](

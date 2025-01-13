@@ -6,6 +6,7 @@ import akka.stream.scaladsl.{Framing, Sink, Source}
 import akka.util.ByteString
 import com.typesafe.config.ConfigFactory
 import otoroshi.api.Otoroshi
+import otoroshi.models.Entity
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json.{JsObject, JsValue}
 import play.api.{Configuration, Logger}
@@ -386,7 +387,7 @@ case class OtoroshiClientStreamedResponse(resp: WSResponse, chunks: Seq[JsValue]
   def success: Boolean = resp.status > 199 && resp.status < 300
   def status: Int = resp.status
   def headers: Map[String, String] = resp.headers.mapValues(_.last)
-  def state: String = s"${status} - ${resp.body}"
+  def state: String = s"${status} - ${headers}"
   lazy val message: String = chunks.map { chunk =>
     val choices = chunk.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
     choices.map(_.select("delta").select("content").asOpt[String].getOrElse("")).mkString("")
@@ -406,6 +407,10 @@ case class OtoroshiClient(port: Int, client: WSClient, ec: ExecutionContext, mat
       case (builder, body) => builder.withBody(body)
     }.withRequestTimeout(60.seconds).stream().flatMap { resp =>
       resp.bodyAsSource
+        // .map(r => {
+        //   println(s"r: ${r.utf8String}")
+        //   r
+        // })
         .via(Framing.delimiter("\n\n".byteString, 50000, true))
         .map(_.utf8String)
         .filter(_.startsWith("data: "))
@@ -437,7 +442,7 @@ case class OtoroshiEntityClient(client: OtoroshiClient, group: String, version: 
     }(client.ec)
   }
 
-  def call(method: String, id: Option[String], body: Option[JsValue]): Future[OtoroshiResponse] = {
+  def call(method: String, id: Option[String] = None, body: Option[JsValue] = None): Future[OtoroshiResponse] = {
     val baseUrl = s"http://otoroshi-api.oto.tools:${client.port}/apis/${group}/${version}/${pluralName}"
     val url = id match {
       case None => baseUrl
@@ -450,17 +455,46 @@ case class OtoroshiEntityClient(client: OtoroshiClient, group: String, version: 
     raw_call(method, url, headers, body)
   }
 
-  def create(body: JsValue): Future[OtoroshiResponse] = {
+  def createRaw(body: JsValue): Future[OtoroshiResponse] = {
     call("POST", None, Some(body))
+  }
+
+  def upsertRaw(id: String, body: JsValue): Future[OtoroshiResponse] = {
+    call("POST", None, Some(body))
+  }
+
+  def deleteRaw(id: String): Future[OtoroshiResponse] = {
+    call("DELETE", Some(id), None)
+  }
+
+  def createEntity[T <: Entity](body: T): Future[OtoroshiResponse] = {
+    call("POST", None, Some(body.json))
+  }
+
+  def upsertEntity[T <: Entity](body: T): Future[OtoroshiResponse] = {
+    call("POST", Some(body.theId), Some(body.json))
+  }
+
+  def deleteEntity[T <: Entity](body: T): Future[OtoroshiResponse] = {
+    call("DELETE", Some(body.theId), None)
   }
 }
 
 case class OtoroshiResponse(client: OtoroshiClient, group: String, pluralName: String, method: String, url: String, inHeaders: Map[String, String], inBody: Option[JsValue], resp: WSResponse) {
   def created: Boolean = resp.status == 201
+  def createdOrUpdated: Boolean = resp.status == 201 || resp.status == 200
   def success: Boolean = resp.status > 199 && resp.status < 300
   def status: Int = resp.status
   def headers: Map[String, String] = resp.headers.mapValues(_.last)
   def body: ByteString = resp.bodyAsBytes
   def bodyJson: JsValue = resp.json
   def state: String = s"${status} - ${resp.body}"
+}
+
+
+class LLmExtensionSuite extends munit.FunSuite {
+  def await(duration: FiniteDuration): Unit = Utils.await(duration)
+  def freePort: Int = Utils.freePort
+  def startOtoroshiServer(port: Int = freePort): Otoroshi = Utils.startOtoroshi(port)
+  def clientFor(port: Int): OtoroshiClient = Utils.clientFor(port)
 }

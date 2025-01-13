@@ -371,13 +371,17 @@ object McpSupport {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
-  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     callTool(functions, connectors) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
         "role" -> "tool",
         "content" -> resp,
         "tool_call_id" -> tc.id
-      )))
+      ))).applyOnIf(providerName.toLowerCase().contains("deepseek")) { s => // temporary fix for https://github.com/deepseek-ai/DeepSeek-V3/issues/15
+        s.concat(Source(List(
+          Json.obj("role" -> "user", "content" -> resp)
+        )))
+      }
     }
   }
 

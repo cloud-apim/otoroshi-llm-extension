@@ -7,10 +7,10 @@ import scala.concurrent.{ExecutionContext, Future}
 
 object LlmFunctions {
 
-  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val (wasmFunctions, mcpConnectors) = functions.partition(_.isWasm)
-    val wasmFunctionsF = WasmFunction._callToolsOpenai(wasmFunctions)(ec, env)
-    val mcpConnectorsF = McpSupport.callToolsOpenai(mcpConnectors, conns)(ec, env)
+    val wasmFunctionsF = WasmFunction._callToolsOpenai(wasmFunctions, providerName)(ec, env)
+    val mcpConnectorsF = McpSupport.callToolsOpenai(mcpConnectors, conns, providerName)(ec, env)
     for {
       wasmFunctionsR <- wasmFunctionsF
       mcpConnectorsR <- mcpConnectorsF

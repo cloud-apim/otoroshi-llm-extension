@@ -155,11 +155,12 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
           body match {
             case None => resp.rightf
             case Some(body) => {
-              val messages = body.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
+              val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) // .map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors)(ec, env)
+              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, "azure")(ec, env)
                 .flatMap { callResps =>
-                  val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   callWithToolSupport(method, path, newBody.some, mcpConnectors)
                 }
@@ -207,7 +208,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
 
   override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
-      val messages = body.get.select("messages").asOpt[Seq[JsObject]].map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
+      val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
       stream(method, path, body).flatMap {
         case Left(err) => err.leftf
         case Right(res) => {
@@ -244,9 +245,10 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors)(ec, env)
+              val a: Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, "azure")(ec, env)
                 .flatMap { callResps =>
-                  val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   streamWithToolSupport(method, path, newBody.some, mcpConnectors)
                 }

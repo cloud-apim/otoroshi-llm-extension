@@ -85,19 +85,16 @@ case class CacheSettings(
 )
 
 case class AiProvider(
-                       location: EntityLocation,
+                       location: EntityLocation = EntityLocation.default,
                        id: String,
                        name: String,
-                       description: String,
-                       tags: Seq[String],
-                       metadata: Map[String, String],
+                       description: String = "",
+                       tags: Seq[String] = Seq.empty,
+                       metadata: Map[String, String] = Map.empty,
                        provider: String,
                        connection: JsObject,
                        options: JsObject,
                        providerFallback: Option[String] = None,
-                       //regexValidation: RegexValidationSettings = RegexValidationSettings(),
-                       //llmValidation: LlmValidationSettings = LlmValidationSettings(),
-                       //httpValidation: HttpValidationSettings = HttpValidationSettings(),
                        cache: CacheSettings = CacheSettings(),
                        guardrails: Guardrails = Guardrails.empty,
                      ) extends EntityLocationSupport {
@@ -231,7 +228,7 @@ object AiProvider {
         location = otoroshi.models.EntityLocation.readFromKey(json),
         id = (json \ "id").as[String],
         name = (json \ "name").as[String],
-        description = (json \ "description").as[String],
+        description = (json \ "description").asOpt[String].getOrElse(""),
         metadata = (json \ "metadata").asOpt[Map[String, String]].getOrElse(Map.empty),
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         provider = (json \ "provider").as[String],
