@@ -8,9 +8,12 @@ import akka.util.ByteString
 import com.github.blemale.scaffeine.Scaffeine
 import io.otoroshi.wasm4s.scaladsl.{WasmFunctionParameters, WasmSource, WasmSourceKind}
 import otoroshi.api._
+import otoroshi.el.GlobalExpressionLanguage
 import otoroshi.env.Env
 import otoroshi.models._
 import otoroshi.next.extensions.AdminExtensionId
+import otoroshi.next.models.NgTlsConfig
+import otoroshi.next.plugins.BodyHelper
 import otoroshi.security.IdGenerator
 import otoroshi.storage._
 import otoroshi.storage.drivers.inmemory.S3Configuration
@@ -25,7 +28,7 @@ import software.amazon.awssdk.regions.providers.AwsRegionProvider
 
 import java.io.File
 import java.nio.file.Files
-import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.{DurationInt, DurationLong}
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
@@ -186,10 +189,13 @@ object LlmToolFunctionBackendOptions {
   }
 
   case class QuickJs(options: JsValue, root: JsValue) extends LlmToolFunctionBackendOptions {
-    lazy val jsPath = root.select("jsPath").asOpt[String].orElse(options.select("jsPath").asOpt[String]).filter(_.trim.nonEmpty)
+
+    private lazy val jsPath: Option[String] = root.select("jsPath").asOpt[String].orElse(options.select("jsPath").asOpt[String]).filter(_.trim.nonEmpty)
+
     def json: JsValue = Json.obj(
       "jsPath" -> jsPath
     )
+
     def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
       jsPath match {
         case None => "error, not wasm plugin ref".vfuture
@@ -227,7 +233,9 @@ object LlmToolFunctionBackendOptions {
   }
 
   case class WasmPlugin(options: JsValue, root: JsValue) extends LlmToolFunctionBackendOptions {
-    lazy val wasmPlugin: Option[String] = root.select("wasmPlugin").asOpt[String].orElse(options.select("wasmPlugin").asOpt[String]).filter(_.trim.nonEmpty)
+
+    private lazy val wasmPlugin: Option[String] = root.select("wasmPlugin").asOpt[String].orElse(options.select("wasmPlugin").asOpt[String]).filter(_.trim.nonEmpty)
+
     def json: JsValue = Json.obj(
       "wasmPlugin" -> wasmPlugin
     )
@@ -264,10 +272,65 @@ object LlmToolFunctionBackendOptions {
   }
 
   case class Http(options: JsValue) extends LlmToolFunctionBackendOptions {
+
     def json: JsValue = options
+
     def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
 
-      Future.apply("Http backend not supported yet")
+      def replace(str: String, params: Map[String, String]): String = {
+        if (str.contains("${")) {
+          GlobalExpressionLanguage.expressionReplacer.replaceOn(str) { key =>
+            params.getOrElse(key, s"no-params-$key")
+          }
+        } else {
+          str
+        }
+      }
+
+      val params: Map[String, String] = Try(Json.parse(arguments).as[Map[String, String]]) match {
+        case Failure(_) => Map("arguments" -> arguments)
+        case Success(map) => map
+      }
+      val origStr = options.stringify
+      val finalStr = replace(origStr, params)
+      val finalOptions = Json.parse(finalStr).asObject
+
+      val url = finalOptions.select("url").asString
+      val method = finalOptions.select("method").asOpt[String].getOrElse("POST")
+      // val body: Option[String] = finalOptions.select("body").asOpt[String].filter(_.nonEmpty)
+      val body: Option[ByteString] = BodyHelper.extractBodyFromOpt(finalOptions)
+      val headers = finalOptions.select("headers").asOpt[Map[String, String]].getOrElse(Map.empty)
+      val timeout = finalOptions.select("timeout").asOpt[Long].filter(_ > 0L).getOrElse(10.seconds.toMillis)
+      val followRedirect = finalOptions.select("followRedirect").asOpt[Boolean].getOrElse(true)
+      val tls_enabled = finalOptions.at("tls.enabled").asOpt[Boolean].getOrElse(false)
+      val tls_loose = finalOptions.at("tls.loose").asOpt[Boolean].getOrElse(false)
+      val tls_trust_all = finalOptions.at("tls.trust_all").asOpt[Boolean].getOrElse(false)
+      val tls_certs = finalOptions.at("tls.certs").asOpt[Seq[String]].getOrElse(Seq.empty)
+      val tls_trusted_certs = finalOptions.at("tls.trusted_certs").asOpt[Seq[String]].getOrElse(Seq.empty)
+
+      val tlsConfig = NgTlsConfig(
+        certs = tls_certs,
+        trustedCerts = tls_trusted_certs,
+        enabled = tls_enabled,
+        loose = tls_loose,
+        trustAll = tls_trust_all,
+      )
+      env.MtlsWs
+        .url(url, tlsConfig.legacy)
+        .withMethod(method)
+        .withHttpHeaders(headers.toSeq: _*)
+        .withRequestTimeout(timeout.millis)
+        .withFollowRedirects(followRedirect)
+        .applyOnWithOpt(body) {
+          case (builder, body) => builder.withBody(body)
+        }
+        .execute()
+        .map { resp =>
+          resp.body
+        }
+        .recover {
+          case t: Throwable => t.getMessage
+        }
     }
   }
 

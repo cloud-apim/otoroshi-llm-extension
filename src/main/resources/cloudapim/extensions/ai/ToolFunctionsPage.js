@@ -1,3 +1,12 @@
+
+function tryOrTrue(f) {
+  try {
+    return f();
+  } catch (e) {
+    return true;
+  }
+}
+
 class ToolFunctionsPage extends Component {
 
   formSchema = {
@@ -45,6 +54,68 @@ class ToolFunctionsPage extends Component {
 
       },
     },
+    'backend.options.headers': { type: 'object', props: { label: 'Headers' } },
+    'backend.options.timeout': {
+      type: 'number',
+      props: { label: 'Timeout', suffix: 'millis.' },
+    },
+    'backend.options.method': { type: 'string', props: { label: 'Method' } },
+    'backend.options.url': { type: 'string', props: { label: 'URL' } },
+    'backend.options.body': { type: 'text', props: { label: 'Body' } },
+    'backend.options.followRedirect': { type: 'bool', props: { label: 'Follow redirects' } },
+    'backend.options.proxy': { type: Proxy, props: { label: 'Proxy' } },
+    'backend.options.tls.enabled': {
+      type: 'bool',
+      props: { label: 'Custom TLS Settings' },
+    },
+    'backend.options.tls.loose': {
+      type: 'bool',
+      display: (v) => tryOrTrue(() => v.mtlsConfig.mtls),
+      props: { label: 'TLS loose' },
+    },
+    'backend.options.tls.trust_all': {
+      type: 'bool',
+      display: (v) => tryOrTrue(() => v.mtlsConfig.mtls),
+      props: { label: 'TrustAll' },
+    },
+    'backend.options.tls.certs': {
+      type: 'array',
+      display: (v) => tryOrTrue(() => v.mtlsConfig.mtls),
+      props: {
+        label: 'Client certificates',
+        placeholder: 'Choose a client certificate',
+        valuesFrom: '/bo/api/proxy/api/certificates',
+        transformer: (a) => ({
+          value: a.id,
+          label: (
+            React.createElement('span', null,
+              React.createElement('span', { className: "badge bg-success", style: { minWidth: 63 }},
+                a.certType
+              ), ` ${a.name} - ${a.description}`,
+            )
+          ),
+        }),
+      },
+    },
+    'backend.options.tls.trusted_certs': {
+      type: 'array',
+      display: (v) => tryOrTrue(() => v.mtlsConfig.mtls && !v.mtlsConfig.trustAll),
+      props: {
+        label: 'Trusted certificates',
+        placeholder: 'Choose a trusted certificate',
+        valuesFrom: '/bo/api/proxy/api/certificates',
+        transformer: (a) => ({
+          value: a.id,
+          label: (
+            React.createElement('span', null,
+              React.createElement('span', { className: "badge bg-success", style: { minWidth: 63 }},
+                a.certType
+              ), ` ${a.name} - ${a.description}`,
+            )
+          ),
+        }),
+      },
+    },
     tags: {
       type: 'array',
       props: { label: 'Tags' },
@@ -57,7 +128,7 @@ class ToolFunctionsPage extends Component {
           { label: 'Quick JS (Wasm)', value: 'QuickJs' },
           { label: 'Wasm Plugin', value: 'WasmPlugin' },
           { label: 'Http call', value: 'Http' },
-          { label: 'Route call', value: 'Route' },
+          // { label: 'Route call', value: 'Route' },
         ]
       }
     }
@@ -82,8 +153,21 @@ class ToolFunctionsPage extends Component {
     'backend.kind',
     (item.backend.kind === 'QuickJs') ? 'backend.jsPath' : null,
     (item.backend.kind === 'WasmPlugin') ? 'backend.wasmPlugin' : null,
-    //(item.backend.kind === 'WasmPlugin') ? 'backend.http' : null,
-    //(item.backend.kind === 'WasmPlugin') ? 'backend.route' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.url' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.method' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.body' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.headers' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.timeout' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.followRedirect' : null,
+    // (item.backend.kind === 'Http') ? 'backend.options.proxy' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.tls.enabled' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.tls.loose' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.tls.trust_all' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.tls.certs' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.tls.trusted_certs' : null,
+    // (item.backend.kind === 'Route') ? 'backend.options.route_id' : null,
+    // (item.backend.kind === 'Route') ? 'backend.options.apikey_id' : null,
+    // (item.backend.kind === 'Route') ? 'backend.options.cert_id' : null,
     '<<<Function parameters',
     'strict',
     'parameters',
