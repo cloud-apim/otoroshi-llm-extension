@@ -4,6 +4,8 @@ import akka.actor.{Actor, ActorRef, PoisonPill, Props}
 import akka.stream.scaladsl.{Flow, Sink, Source, SourceQueueWithComplete}
 import akka.stream.{Materializer, OverflowStrategy}
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, McpSupport}
+import dev.langchain4j.model.chat.request.json.JsonSchemaElement
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
@@ -18,15 +20,24 @@ import play.api.mvc.Results
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.{ExecutionContext, Future}
+import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Try}
 
-case class McpProxyEndpointConfig(refs: Seq[String]) extends NgPluginConfig {
+case class McpProxyEndpointConfig(name: Option[String], version: Option[String], functionRefs: Seq[String], mcpRefs: Seq[String]) extends NgPluginConfig {
   def json: JsValue = McpProxyEndpointConfig.format.writes(this)
 }
 
 object McpProxyEndpointConfig {
-  val configFlow: Seq[String] = Seq("refs")
+  val configFlow: Seq[String] = Seq("name", "version", "refs", "mcp_refs")
   val configSchema: Option[JsObject] = Some(Json.obj(
+    "name" -> Json.obj(
+      "type" -> "string",
+      "label" -> "MCP server name"
+    ),
+    "version" -> Json.obj(
+      "type" -> "string",
+      "label" -> "MCP server version"
+    ),
     "refs" -> Json.obj(
       "type" -> "select",
       "array" -> true,
@@ -38,17 +49,37 @@ object McpProxyEndpointConfig {
           "value" -> "id",
         ),
       ),
+    ),
+    "mcp_refs" -> Json.obj(
+      "type" -> "select",
+      "array" -> true,
+      "label" -> s"MCP Connectors",
+      "props" -> Json.obj(
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-connectors",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      ),
     )
   ))
-  val default = McpProxyEndpointConfig(Seq.empty)
+  val default = McpProxyEndpointConfig(None, None, Seq.empty, Seq.empty)
   val format = new Format[McpProxyEndpointConfig] {
-    override def writes(o: McpProxyEndpointConfig): JsValue = Json.obj("refs" -> o.refs)
+    override def writes(o: McpProxyEndpointConfig): JsValue = Json.obj(
+      "name" -> o.name.map(_.json).getOrElse(JsNull).asValue,
+      "version" -> o.version.map(_.json).getOrElse(JsNull).asValue,
+      "refs" -> o.functionRefs,
+      "mcp_refs" -> o.mcpRefs,
+    )
     override def reads(json: JsValue): JsResult[McpProxyEndpointConfig] = Try {
       val singleRef = json.select("ref").asOpt[String].map(r => Seq(r)).getOrElse(Seq.empty)
       val refs = json.select("refs").asOpt[Seq[String]].getOrElse(Seq.empty)
       val allRefs = refs ++ singleRef
       McpProxyEndpointConfig(
-        refs = allRefs
+        name = json.select("name").asOptString.filter(_.trim.nonEmpty),
+        version = json.select("version").asOptString.filter(_.trim.nonEmpty),
+        functionRefs = allRefs,
+        mcpRefs = json.select("mcp_refs").asOpt[Seq[String]].getOrElse(Seq.empty)
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -81,15 +112,19 @@ class McpLocalProxyEndpoint extends NgBackendCall {
   }
 
   def call(_jsonBody: JsValue, config: McpProxyEndpointConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+
     val method = _jsonBody.select("method").asOpt[String].getOrElse("tools/get").toLowerCase()
     val params = _jsonBody.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val ext = env.adminExtensions.extension[AiExtension].get
-    val functions = config.refs.flatMap(r => ext.states.toolFunction(r))
+    val functions: Seq[LlmToolFunction] = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val functionsMap = functions.map(f => (f.name, f)).toMap
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    val mcpFunctions = mcpConnectors.flatMap(_.listTools())
+    val mcpFunctionsMap = mcpConnectors.flatMap(c => c.listTools().map(f => (f.name(), c))).toMap
 
     method match {
       case "tools/get" => {
-        val payload = JsArray(functions.map { wf =>
+        val thunks: Seq[JsValue] = functions.map { wf =>
           val required: JsArray = wf.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(wf.parameters.value.keySet.toSeq.map(_.json)))
           Json.obj(
             "name" -> wf.name,
@@ -100,14 +135,41 @@ class McpLocalProxyEndpoint extends NgBackendCall {
               "required" -> required,
             ),
           )
-        })
+        }
+        val mcpThunks = mcpFunctions.map { desc =>
+          val required: Seq[String] = Option(desc.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
+          val properties: JsObject = JsObject(Option(desc.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
+            McpSupport.schemaToJson(el)
+          })
+          Json.obj(
+            "name" -> desc.name,
+            "description" -> desc.description,
+            "inputSchema" -> Json.obj(
+              "type" -> "object",
+              "properties" -> properties,
+              "required" -> required,
+            ),
+          )
+        }
+        val payload = JsArray(thunks ++ mcpThunks)
         BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(payload)), None).rightf
       }
       case "tools/call" => {
         val name = params.select("name").asString
         val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
         functionsMap.get(name) match {
-          case None => NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> "unknown function"))).leftf
+          case None => mcpFunctionsMap.get(name) match {
+            case None => NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> "unknown function"))).leftf
+            case Some(function) => {
+              val res = function.call(name, arguments.stringify)
+              BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(
+                Json.obj(
+                  "type" -> "text",
+                  "text" -> res
+                )
+              )), None).rightf
+            }
+          }
           case Some(function) => {
             function.call(arguments.stringify).map { res =>
               BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(
@@ -232,11 +294,14 @@ class McpSseEndpoint extends NgBackendCall {
     jsonRpcResponse(id, Json.obj())
   }
 
-  def initialize(id: Long, session: SseSession)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def initialize(id: Long, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val response = Json.obj(
       "protocolVersion" -> "2024-11-05",
       "capabilities" -> Json.obj("tools" -> Json.obj(), "logging" -> Json.obj()),
-      "serverInfo" -> Json.obj("name" -> "otoroshi-sse-endpoint", "version" -> "1.0.0"), // TODO: custom valies
+      "serverInfo" -> Json.obj("name" ->
+        config.name.getOrElse("otoroshi-sse-endpoint").json,
+        "version" -> config.version.getOrElse("1.0.0").json,
+      ),
     )
     session.send(id, response)
     jsonRpcResponse(id, response)
@@ -244,8 +309,10 @@ class McpSseEndpoint extends NgBackendCall {
 
   def getToolList(id: Long, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    val functions = config.refs.flatMap(r => ext.states.toolFunction(r))
-    val response = Json.obj("tools" -> JsArray(functions.map { wf =>
+    val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    val mcpFunctions = mcpConnectors.flatMap(_.listTools())
+    val thunks: Seq[JsValue] = functions.map { wf =>
       val required: JsArray = wf.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(wf.parameters.value.keySet.toSeq.map(_.json)))
       Json.obj(
         "name" -> wf.name,
@@ -256,7 +323,24 @@ class McpSseEndpoint extends NgBackendCall {
           "required" -> required,
         ),
       )
-    }))
+    }
+    val mcpThunks = mcpFunctions.map { desc =>
+      val required: Seq[String] = Option(desc.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
+      val properties: JsObject = JsObject(Option(desc.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
+        McpSupport.schemaToJson(el)
+      })
+      Json.obj(
+        "name" -> desc.name,
+        "description" -> desc.description,
+        "inputSchema" -> Json.obj(
+          "type" -> "object",
+          "properties" -> properties,
+          "required" -> required,
+        ),
+      )
+    }
+    val allTunks = thunks ++ mcpThunks
+    val response = Json.obj("tools" -> JsArray(allTunks))
     session.send(id, response)
     jsonRpcResponse(id, response)
   }
@@ -264,14 +348,27 @@ class McpSseEndpoint extends NgBackendCall {
   def toolsCall(id: Long, session: SseSession, request: JsValue, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val ext = env.adminExtensions.extension[AiExtension].get
-    val functions = config.refs.flatMap(r => ext.states.toolFunction(r))
+    val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val functionsMap = functions.map(f => (f.name, f)).toMap
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    val mcpFunctionsMap = mcpConnectors.flatMap(c => c.listTools().map(f => (f.name(), c))).toMap
     val name = params.select("name").asString
     val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
     functionsMap.get(name) match {
-      case None => {
-        session.sendError(id, 0, s"unknown function ${name}", Json.obj("name" -> name))
-        error(400, s"unknown function ${name}")
+      case None => mcpFunctionsMap.get(name) match {
+        case None => {
+          session.sendError(id, 0, s"unknown function ${name}", Json.obj("name" -> name))
+          error(400, s"unknown function ${name}")
+        }
+        case Some(function) => {
+          val res = function.call(name, arguments.stringify)
+          val payload = Json.obj("content" -> Json.arr(Json.obj(
+            "type" -> "text",
+            "text" -> res
+          )))
+          session.send(id, payload)
+          jsonRpcResponse(id, payload)
+        }
       }
       case Some(function) => {
         function.call(arguments.stringify).flatMap { res =>
@@ -339,7 +436,7 @@ class McpSseEndpoint extends NgBackendCall {
                   case Success(json) => {
                     val id = json.select("id").asOpt[Long].getOrElse(0L)
                     json.select("method").asOpt[String] match {
-                      case Some("initialize") => initialize(id, session)
+                      case Some("initialize") => initialize(id, session, config)
                       case Some("shutdown") => {
                         session.finished.set(true)
                         emptyResp(id)
@@ -459,15 +556,20 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env) extends 
     val response = Json.obj(
       "protocolVersion" -> "2024-11-05",
       "capabilities" -> Json.obj("tools" -> Json.obj(), "logging" -> Json.obj()),
-      "serverInfo" -> Json.obj("name" -> "otoroshi-ws-endpoint", "version" -> "1.0.0"), // TODO: custom valies
+      "serverInfo" -> Json.obj(
+        "name" -> config.name.getOrElse("otoroshi-ws-endpoint").json,
+        "version" -> config.version.getOrElse("1.0.0").json,
+      ),
     )
     jsonRpcResponse(id, response)
   }
 
   def getToolList(id: Long, config: McpProxyEndpointConfig): JsValue = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    val functions = config.refs.flatMap(r => ext.states.toolFunction(r))
-    val response = Json.obj("tools" -> JsArray(functions.map { wf =>
+    val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    val mcpFunctions = mcpConnectors.flatMap(_.listTools())
+    val thunks = functions.map { wf =>
       val required: JsArray = wf.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(wf.parameters.value.keySet.toSeq.map(_.json)))
       Json.obj(
         "name" -> wf.name,
@@ -478,7 +580,23 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env) extends 
           "required" -> required,
         ),
       )
-    }))
+    }
+    val mcpThunks = mcpFunctions.map { desc =>
+      val required: Seq[String] = Option(desc.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
+      val properties: JsObject = JsObject(Option(desc.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
+        McpSupport.schemaToJson(el)
+      })
+      Json.obj(
+        "name" -> desc.name,
+        "description" -> desc.description,
+        "inputSchema" -> Json.obj(
+          "type" -> "object",
+          "properties" -> properties,
+          "required" -> required,
+        ),
+      )
+    }
+    val response = Json.obj("tools" -> JsArray(thunks ++ mcpThunks))
     jsonRpcResponse(id, response)
   }
 
@@ -487,13 +605,25 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env) extends 
     implicit val ev = env
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val ext = env.adminExtensions.extension[AiExtension].get
-    val functions = config.refs.flatMap(r => ext.states.toolFunction(r))
+    val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val functionsMap = functions.map(f => (f.name, f)).toMap
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    val mcpFunctionsMap = mcpConnectors.flatMap(c => c.listTools().map(f => (f.name(), c))).toMap
     val name = params.select("name").asString
     val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
     functionsMap.get(name) match {
-      case None => {
-        jsonRpcError(id, 400, s"unknown function ${name}", Json.obj()).vfuture
+      case None => mcpFunctionsMap.get(name) match {
+        case None => {
+          jsonRpcError(id, 400, s"unknown function ${name}", Json.obj()).vfuture
+        }
+        case Some(function) => {
+          val res = function.call(name, arguments.stringify)
+          val payload = Json.obj("content" -> Json.arr(Json.obj(
+            "type" -> "text",
+            "text" -> res
+          )))
+          jsonRpcResponse(id, payload).vfuture
+        }
       }
       case Some(function) => {
         function.call(arguments.stringify).flatMap { res =>
@@ -614,19 +744,24 @@ class McpRespEndpoint extends NgBackendCall {
     jsonRpcResponse(id, Json.obj())
   }
 
-  def initialize(id: Long)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def initialize(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val response = Json.obj(
       "protocolVersion" -> "2024-11-05",
       "capabilities" -> Json.obj("tools" -> Json.obj(), "logging" -> Json.obj()),
-      "serverInfo" -> Json.obj("name" -> "otoroshi-sse-endpoint", "version" -> "1.0.0"), // TODO: custom valies
+      "serverInfo" -> Json.obj(
+        "name" -> config.name.getOrElse("otoroshi-rest-endpoint").json,
+        "version" -> config.version.getOrElse("1.0.0").json,
+      ),
     )
     jsonRpcResponse(id, response)
   }
 
   def getToolList(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    val functions = config.refs.flatMap(r => ext.states.toolFunction(r))
-    val response = Json.obj("tools" -> JsArray(functions.map { wf =>
+    val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    val mcpFunctions = mcpConnectors.flatMap(_.listTools())
+    val thunks = functions.map { wf =>
       val required: JsArray = wf.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(wf.parameters.value.keySet.toSeq.map(_.json)))
       Json.obj(
         "name" -> wf.name,
@@ -637,19 +772,48 @@ class McpRespEndpoint extends NgBackendCall {
           "required" -> required,
         ),
       )
-    }))
+    }
+    val mcpThunks = mcpFunctions.map { desc =>
+      val required: Seq[String] = Option(desc.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
+      val properties: JsObject = JsObject(Option(desc.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
+        McpSupport.schemaToJson(el)
+      })
+      Json.obj(
+        "name" -> desc.name,
+        "description" -> desc.description,
+        "inputSchema" -> Json.obj(
+          "type" -> "object",
+          "properties" -> properties,
+          "required" -> required,
+        ),
+      )
+    }
+    val response = Json.obj("tools" -> JsArray(thunks ++ mcpThunks))
     jsonRpcResponse(id, response)
   }
 
   def toolsCall(id: Long, request: JsValue, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val ext = env.adminExtensions.extension[AiExtension].get
-    val functions = config.refs.flatMap(r => ext.states.toolFunction(r))
+    val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val functionsMap = functions.map(f => (f.name, f)).toMap
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    val mcpFunctionsMap = mcpConnectors.flatMap(c => c.listTools().map(f => (f.name(), c))).toMap
+
     val name = params.select("name").asString
     val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
     functionsMap.get(name) match {
-      case None => error(400, s"unknown function ${name}")
+      case None => mcpFunctionsMap.get(name) match {
+        case None => error(400, s"unknown function ${name}")
+        case Some(function) => {
+          val res = function.call(name, arguments.stringify)
+          val payload = Json.obj("content" -> Json.arr(Json.obj(
+            "type" -> "text",
+            "text" -> res
+          )))
+          jsonRpcResponse(id, payload)
+        }
+      }
       case Some(function) => {
         function.call(arguments.stringify).flatMap { res =>
           val payload = Json.obj("content" -> Json.arr(Json.obj(
@@ -683,7 +847,7 @@ class McpRespEndpoint extends NgBackendCall {
           case Success(json) => {
             val id = json.select("id").asOpt[Long].getOrElse(0L)
             json.select("method").asOpt[String] match {
-              case Some("initialize") => initialize(id)
+              case Some("initialize") => initialize(id, config)
               case Some("shutdown") => emptyResp(id)
               case Some("exit") => emptyResp(id)
               case Some("ping") => jsonRpcResponse(id, Json.obj())

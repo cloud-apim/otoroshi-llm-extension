@@ -280,7 +280,7 @@ object McpSupport {
     }
   }
 
-  private def schemaToJson(el: JsonSchemaElement): JsObject = {
+  def schemaToJson(el: JsonSchemaElement): JsObject = {
     el match {
       case s: JsonBooleanSchema   => Json.obj("description" -> s.description(), "type" -> "boolean")
       case s: JsonEnumSchema      => Json.obj("description" -> s.description(), "type" -> "string", "enum" -> (s.enumValues().asScala.toSeq))
