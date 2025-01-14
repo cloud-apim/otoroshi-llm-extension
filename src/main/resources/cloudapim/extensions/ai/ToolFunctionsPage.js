@@ -39,7 +39,7 @@ class ToolFunctionsPage extends Component {
       type: 'array',
       props: { label: 'Required params.' },
     },
-    'backend.wasmPlugin': {
+    'backend.options.wasmPlugin': {
       type: 'select',
       props: {
         label: 'Wasm plugin',
@@ -47,7 +47,7 @@ class ToolFunctionsPage extends Component {
         transformer: (item) => ({ label: item.name, value: item.id }),
       },
     },
-    'backend.jsPath': {
+    'backend.options.jsPath': {
       type: 'code',
       props: {
         label: 'Javascript path',
@@ -151,8 +151,8 @@ class ToolFunctionsPage extends Component {
     '_loc', 'id', 'name', 'description', 'tags', 'metadata',
     '<<<Backend',
     'backend.kind',
-    (item.backend.kind === 'QuickJs') ? 'backend.jsPath' : null,
-    (item.backend.kind === 'WasmPlugin') ? 'backend.wasmPlugin' : null,
+    (item.backend.kind === 'QuickJs') ? 'backend.options.jsPath' : null,
+    (item.backend.kind === 'WasmPlugin') ? 'backend.options.wasmPlugin' : null,
     (item.backend.kind === 'Http') ? 'backend.options.url' : null,
     (item.backend.kind === 'Http') ? 'backend.options.method' : null,
     (item.backend.kind === 'Http') ? 'backend.options.body' : null,
@@ -194,8 +194,12 @@ class ToolFunctionsPage extends Component {
           metadata: {},
           strict: true,
           parameters: {},
-          wasmPlugin: null,
-          jsPath: null
+          backend: {
+            kind: 'QuickJs',
+            options: {
+              jsPath: "'inline module';\n\nexports.tool_call = function(args) {\n  return 'hello world !';\n}",
+            }
+          }
         }),
         itemName: "Tool Function",
         formSchema: this.formSchema,
