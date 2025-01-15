@@ -83,14 +83,14 @@ case class McpConnectorPoolSettings(size: Int = 1) {
 }
 
 case class McpConnector(
-                           location: EntityLocation,
+                           location: EntityLocation = EntityLocation.default,
                            id: String,
                            name: String,
-                           description: String,
-                           tags: Seq[String],
-                           metadata: Map[String, String],
-                           pool: McpConnectorPoolSettings,
-                           transport: McpConnectorTransport,
+                           description: String = "",
+                           tags: Seq[String] = Seq.empty,
+                           metadata: Map[String, String] = Map.empty,
+                           pool: McpConnectorPoolSettings = McpConnectorPoolSettings(),
+                           transport: McpConnectorTransport = McpConnectorTransport(),
                          ) extends EntityLocationSupport {
   override def internalId: String               = id
   override def json: JsValue                    = McpConnector.format.writes(this)
@@ -129,7 +129,8 @@ case class McpConnector(
   }
 
   private def withClient[T](f: DefaultMcpClient => T)(implicit ec: ExecutionContext, env: Env): Future[T] = {
-    val promise = Promise.apply[T]()
+    f(McpConnector.connectorsCache.get(id).get._1.peek()).vfuture
+    /*val promise = Promise.apply[T]()
     McpConnector.connectorsCache.get(id) match {
       case None => {
         clientPool()
@@ -172,7 +173,7 @@ case class McpConnector(
         }
       }
     }
-    promise.future
+    promise.future*/
   }
 
   private def buildClient(): DefaultMcpClient = {

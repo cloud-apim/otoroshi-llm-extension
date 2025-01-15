@@ -19,7 +19,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.Base64
 import scala.concurrent.{Await, ExecutionContext, Future, Promise}
-import scala.concurrent.duration.{DurationInt, FiniteDuration}
+import scala.concurrent.duration.{DurationInt, DurationLong, FiniteDuration}
 import scala.util.{Random, Try}
 
 object Utils {
@@ -402,10 +402,12 @@ case class OtoroshiClient(port: Int, client: WSClient, ec: ExecutionContext, mat
     }.execute()
   }
 
-  def stream(method: String, url: String, headers: Map[String, String], body: Option[JsValue]): Future[OtoroshiClientStreamedResponse] = {
+  def noop(in: String): Unit = ()
+
+  def stream(method: String, url: String, headers: Map[String, String], body: Option[JsValue], timeout: FiniteDuration = 60.seconds, handler: Function[String, Unit] = noop): Future[OtoroshiClientStreamedResponse] = {
     client.url(url).withMethod(method).withHttpHeaders(headers.toSeq:_*).applyOnWithOpt(body){
       case (builder, body) => builder.withBody(body)
-    }.withRequestTimeout(60.seconds).stream().flatMap { resp =>
+    }.withRequestTimeout(timeout).stream().flatMap { resp =>
       resp.bodyAsSource
         // .map(r => {
         //   println(s"r: ${r.utf8String}")
@@ -413,10 +415,15 @@ case class OtoroshiClient(port: Int, client: WSClient, ec: ExecutionContext, mat
         // })
         .via(Framing.delimiter("\n\n".byteString, 50000, true))
         .map(_.utf8String)
+        .map(r => {
+          handler(r)
+          r
+        })
         .filter(_.startsWith("data: "))
         .map(_.replaceFirst("data: ", ""))
         .filterNot(_.startsWith("[DONE]"))
         .map(_.parseJson)
+        .takeWithin((timeout.toMillis - 10).millis)
         .runWith(Sink.seq)(mat)
         .map { chunks =>
           OtoroshiClientStreamedResponse(resp, chunks)
@@ -497,4 +504,44 @@ class LLmExtensionSuite extends munit.FunSuite {
   def freePort: Int = Utils.freePort
   def startOtoroshiServer(port: Int = freePort): Otoroshi = Utils.startOtoroshi(port)
   def clientFor(port: Int): OtoroshiClient = Utils.clientFor(port)
+}
+
+class LlmExtensionOneOtoroshiServerPerSuite extends LLmExtensionSuite {
+
+  val port: Int = freePort
+  var otoroshi: Otoroshi = _
+  var client: OtoroshiClient = _
+  implicit var ec: ExecutionContext = _
+  implicit var mat: Materializer = _
+
+  override def beforeAll(): Unit = {
+    otoroshi = startOtoroshiServer(port)
+    client = clientFor(port)
+    ec = otoroshi.executionContext
+    mat = otoroshi.materializer
+  }
+
+  override def afterAll(): Unit = {
+    otoroshi.stop()
+  }
+}
+
+class LlmExtensionOneOtoroshiServerPerTest extends LLmExtensionSuite {
+
+  val port: Int = freePort
+  var otoroshi: Otoroshi = _
+  var client: OtoroshiClient = _
+  implicit var ec: ExecutionContext = _
+  implicit var mat: Materializer = _
+
+  override def beforeEach(context: BeforeEach): Unit = {
+    otoroshi = startOtoroshiServer(port)
+    client = clientFor(port)
+    ec = otoroshi.executionContext
+    mat = otoroshi.materializer
+  }
+
+  override def afterEach(context: AfterEach): Unit = {
+    otoroshi.stop()
+  }
 }

@@ -272,7 +272,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
     val mergedOptionsWithoutModel = mergedOptions - "model"
-    val callF = if (api.supportsTools && options.wasmTools.nonEmpty) {
+    val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(
         "model" -> mergedOptions.select("model").asOptString.getOrElse(options.model).asInstanceOf[String],

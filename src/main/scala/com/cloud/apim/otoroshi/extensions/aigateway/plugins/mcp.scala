@@ -93,7 +93,7 @@ object McpProxyEndpointConfig {
 class McpLocalProxyEndpoint extends NgBackendCall {
 
   override def name: String = "Cloud APIM - MCP Tools Endpoint"
-  override def description: Option[String] = "Exposes tool functions as an MCP server with a local proxy provided by npx @cloud-admin/otoroshi-mcp-proxy".some
+  override def description: Option[String] = "Exposes tool functions as an MCP server with a local proxy provided by npx @cloud-apim/otoroshi-mcp-proxy".some
 
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -408,9 +408,9 @@ class McpSseEndpoint extends NgBackendCall {
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default)
     if (ctx.request.method.toLowerCase() == "get") {
-      val sessionId = IdGenerator.token(16)
+      val sessionId = if (env.isDev) ctx.request.queryParam("sessionId").getOrElse(IdGenerator.token(16)) else IdGenerator.token(16)
       val session = SseSession(sessionId)
-      // println(s"adding session: ${sessionId}")
+      println(s"adding session: ${sessionId}")
       sessions.put(sessionId, session)
       val sessionSource: Source[ByteString, _] = session.init().map(v => s"event: message\ndata: ${v.stringify}\n\n".byteString)
       val source: Source[ByteString, _] = Source.single(ByteString(s"event: endpoint\ndata: ${ctx.request.path}?sessionId=${sessionId}\n\n"))
@@ -454,13 +454,18 @@ class McpSseEndpoint extends NgBackendCall {
                       case Some("initialize") => initialize(id, session, config)
                       case Some("shutdown") => {
                         session.finished.set(true)
+                        session.send(id, Json.obj())
                         emptyResp(id)
                       }
                       case Some("exit") => {
                         session.finished.set(true)
+                        session.send(id, Json.obj())
                         emptyResp(id)
                       }
-                      case Some("ping") => jsonRpcResponse(id, Json.obj())
+                      case Some("ping") => {
+                        session.send(id, Json.obj())
+                        jsonRpcResponse(id, Json.obj())
+                      }
                       case Some("cancelled") => {
                         session.canceledRequests.put(id, ())
                         emptyResp(id)
@@ -500,8 +505,8 @@ class McpSseEndpoint extends NgBackendCall {
 
 class McpWebsocketEndpoint extends NgWebsocketBackendPlugin {
 
-  override def name: String = "Cloud APIM - MCP Websocket Endpoint"
-  override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official) Websocket Transport".some
+  override def name: String = "Cloud APIM - MCP WebSocket Endpoint"
+  override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official) WebSocket Transport".some
 
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -724,8 +729,8 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env) extends 
 
 class McpRespEndpoint extends NgBackendCall {
 
-  override def name: String = "Cloud APIM - MCP Rest Endpoint"
-  override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official) Rest Transport".some
+  override def name: String = "Cloud APIM - MCP REST Endpoint"
+  override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official) REST Transport".some
 
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
