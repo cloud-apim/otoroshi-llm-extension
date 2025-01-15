@@ -27,7 +27,7 @@ object LlmFunctions {
     } yield wasmFunctionsR ++ mcpConnectorsR
   }
 
-  def tools(wasmFunctions: Seq[String], mcpConnectors: Seq[String])(implicit env: Env): JsObject = {
+  def tools(wasmFunctions: Seq[String], mcpConnectors: Seq[String])(implicit ec: ExecutionContext, env: Env): JsObject = {
     val tools: Seq[JsObject] = LlmToolFunction._tools(wasmFunctions) ++ McpSupport.tools(mcpConnectors)
     Json.obj(
       "tools" -> tools
