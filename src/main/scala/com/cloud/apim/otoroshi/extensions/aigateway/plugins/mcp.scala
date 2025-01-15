@@ -11,6 +11,7 @@ import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.security.IdGenerator
+import otoroshi.utils.http.RequestImplicits.EnhancedRequestHeader
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.http.websocket.Message
@@ -18,7 +19,7 @@ import play.api.libs.json._
 import play.api.libs.streams.ActorFlow
 import play.api.mvc.Results
 
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
@@ -433,7 +434,15 @@ class McpSseEndpoint extends NgBackendCall {
         case None => error(400, s"no session not found")
         case Some(sessionId) => {
           sessions.get(sessionId) match {
-            case None => error(400, s"session not found: ${sessionId}")
+            case None =>
+              val count = ctx.request.queryParam("redirectCount").map(_.toInt).getOrElse(0)
+              if (count < 10) {
+                println("redirect")
+                val nextCount = count + 1
+                NgProxyEngineError.NgResultProxyEngineError(Results.SeeOther(s"${ctx.rawRequest.theProtocol}://${ctx.rawRequest.theHost}${ctx.request.path}?sessionId=${sessionId}&redirectCount=${nextCount}")).leftf
+              } else {
+                error(400, s"session not found: ${sessionId}")
+              }
             case Some(session) => {
               ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
                 // println(s"received client command raw ${sessionId} : ${bodyRaw.utf8String}")
