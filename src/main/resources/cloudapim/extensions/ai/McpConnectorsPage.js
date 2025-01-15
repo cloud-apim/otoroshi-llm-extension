@@ -23,6 +23,10 @@ class McpConnectorsPage extends Component {
       type: 'array',
       props: { label: 'Tags' },
     },
+    'pool.size': {
+      type: 'number',
+      props: { label: 'Pool size', placeholder: 'Connector pool size' },
+    },
     'transport.kind': {
       'type': 'select',
       props: { label: 'Transport kind', possibleValues: [
@@ -52,7 +56,7 @@ class McpConnectorsPage extends Component {
   ];
 
   formFlow = [
-    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'transport.kind', 'transport.options'];
+    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options'];
 
   componentDidMount() {
     this.props.setTitle(`MCP Connectors`);
@@ -72,6 +76,9 @@ class McpConnectorsPage extends Component {
           description: 'An new MCP Connector',
           tags: [],
           metadata: {},
+          pool: {
+            size: 1
+          },
           transport: {
             kind: "stdio",
             options: {
