@@ -680,7 +680,7 @@ class AiProvidersPage extends Component {
     'options.wasm_tools': {
       type: 'array',
       props: {
-        label: 'Tool Function',
+        label: 'Tool Functions',
         placeholder: 'Select a tool function',
         valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/tool-functions',
         transformer: (a) => ({
