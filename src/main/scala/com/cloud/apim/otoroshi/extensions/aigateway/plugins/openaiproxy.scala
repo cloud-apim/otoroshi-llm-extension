@@ -18,7 +18,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 class OpenAiCompatProxy extends NgBackendCall {
 
-  override def name: String = "Cloud APIM - LLM OpenAI Compat. Proxy"
+  override def name: String = "Cloud APIM - LLM OpenAI chat/completions Proxy"
   override def description: Option[String] = "Delegates call to a LLM provider but with an OpenAI like API".some
 
   override def core: Boolean = false
@@ -34,7 +34,7 @@ class OpenAiCompatProxy extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'LLM OpenAI Compat. Proxy' plugin is available !")
+      ext.logger.info("the 'LLM OpenAI chat/completions Proxy' plugin is available !")
     }
     ().vfuture
   }
@@ -135,7 +135,7 @@ class OpenAiCompatProxy extends NgBackendCall {
 
 class OpenAiCompletionProxy extends NgBackendCall {
 
-  override def name: String = "Cloud APIM - LLM OpenAI Completion Proxy"
+  override def name: String = "Cloud APIM - LLM OpenAI completions Proxy"
   override def description: Option[String] = "Delegates completion calls to a LLM provider but with an OpenAI like API".some
 
   override def core: Boolean = false
@@ -151,7 +151,7 @@ class OpenAiCompletionProxy extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'LLM OpenAI Completion Proxy' plugin is available !")
+      ext.logger.info("the 'LLM OpenAI completions Proxy' plugin is available !")
     }
     ().vfuture
   }
