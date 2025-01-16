@@ -731,8 +731,8 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env) extends 
 
 class McpRespEndpoint extends NgBackendCall {
 
-  override def name: String = "Cloud APIM - MCP REST Endpoint"
-  override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official) REST Transport".some
+  override def name: String = "Cloud APIM - MCP HTTP Endpoint"
+  override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official) HTTP Transport".some
 
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -747,7 +747,7 @@ class McpRespEndpoint extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'MCP Rest Endpoint' plugin is available !")
+      ext.logger.info("the 'MCP HTTP Endpoint' plugin is available !")
     }
     ().vfuture
   }
@@ -774,7 +774,7 @@ class McpRespEndpoint extends NgBackendCall {
       "protocolVersion" -> "2024-11-05",
       "capabilities" -> Json.obj("tools" -> Json.obj(), "logging" -> Json.obj()),
       "serverInfo" -> Json.obj(
-        "name" -> config.name.getOrElse("otoroshi-rest-endpoint").json,
+        "name" -> config.name.getOrElse("otoroshi-http-endpoint").json,
         "version" -> config.version.getOrElse("1.0.0").json,
       ),
     )
