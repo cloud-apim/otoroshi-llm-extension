@@ -410,7 +410,7 @@ class McpSseEndpoint extends NgBackendCall {
     if (ctx.request.method.toLowerCase() == "get") {
       val sessionId = if (env.isDev) ctx.request.queryParam("sessionId").getOrElse(IdGenerator.token(16)) else IdGenerator.token(16)
       val session = SseSession(sessionId)
-      println(s"adding session: ${sessionId}")
+      // println(s"adding session: ${sessionId}")
       sessions.put(sessionId, session)
       val sessionSource: Source[ByteString, _] = session.init().map(v => s"event: message\ndata: ${v.stringify}\n\n".byteString)
       val source: Source[ByteString, _] = Source.single(ByteString(s"event: endpoint\ndata: ${ctx.request.path}?sessionId=${sessionId}\n\n"))
@@ -437,7 +437,7 @@ class McpSseEndpoint extends NgBackendCall {
             case None =>
               val count = ctx.request.queryParam("redirectCount").map(_.toInt).getOrElse(0)
               if (count < 10) {
-                println("redirect")
+                // println("redirect")
                 val nextCount = count + 1
                 NgProxyEngineError.NgResultProxyEngineError(Results.SeeOther(s"${ctx.rawRequest.theProtocol}://${ctx.rawRequest.theHost}${ctx.request.path}?sessionId=${sessionId}&redirectCount=${nextCount}")).leftf
               } else {
@@ -633,11 +633,10 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env) extends 
     val mcpFunctionsMap: Map[String, McpConnector] = mcpFunctionsRawMap.mapValues(_._2)
     val name = params.select("name").asString
     val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
+    // println(s"ws tool call: ${name} - ${arguments.stringify}")
     functionsMap.get(name) match {
       case None => mcpFunctionsMap.get(name) match {
-        case None => {
-          jsonRpcError(id, 400, s"unknown function ${name}", Json.obj()).vfuture
-        }
+        case None => jsonRpcError(id, 400, s"unknown function ${name}", Json.obj()).vfuture
         case Some(function) => {
           function.call(name, arguments.stringify).flatMap { res =>
             val payload = Json.obj("content" -> Json.arr(Json.obj(
@@ -673,6 +672,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env) extends 
   }
 
   def handle(data: String): Unit = {
+    // println(s"handle ws raw message: ${data}")
     Try(data.parseJson) match {
       case Failure(e) => send(jsonRpcError(0, 400, "error while parsing json-rpc payload", Json.obj()))
       case Success(json) => {
@@ -723,7 +723,9 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env) extends 
     case play.api.http.websocket.PingMessage(_)                   => out ! play.api.http.websocket.PongMessage(ByteString.empty)
     case play.api.http.websocket.CloseMessage(statusCode, reason) => self ! PoisonPill
     case play.api.http.websocket.PongMessage(_)                   => ()
-    case _                                                        => ()
+    case m                                                        =>  {
+      println(s"unhandled m: ${m.getClass.getName} - ${m}")
+    }
   }
 }
 

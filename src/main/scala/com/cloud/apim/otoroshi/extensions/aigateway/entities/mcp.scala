@@ -129,8 +129,8 @@ case class McpConnector(
   }
 
   private def withClient[T](f: DefaultMcpClient => T)(implicit ec: ExecutionContext, env: Env): Future[T] = {
-    f(McpConnector.connectorsCache.get(id).get._1.peek()).vfuture
-    /*val promise = Promise.apply[T]()
+    //f(McpConnector.connectorsCache.get(id).get._1.peek()).vfuture
+    val promise = Promise.apply[T]()
     McpConnector.connectorsCache.get(id) match {
       case None => {
         clientPool()
@@ -173,7 +173,7 @@ case class McpConnector(
         }
       }
     }
-    promise.future*/
+    promise.future
   }
 
   private def buildClient(): DefaultMcpClient = {

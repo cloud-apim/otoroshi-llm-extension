@@ -5,21 +5,26 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.{Framing, Sink, Source}
 import akka.util.ByteString
 import com.typesafe.config.ConfigFactory
+import io.netty.buffer.Unpooled
+import io.netty.util.CharsetUtil
 import otoroshi.api.Otoroshi
 import otoroshi.models.Entity
 import otoroshi.utils.syntax.implicits._
+import play.api.Configuration
 import play.api.libs.json.{JsObject, JsValue}
-import play.api.{Configuration, Logger}
 import play.api.libs.ws.ahc.{AhcWSClient, AhcWSClientConfig}
 import play.api.libs.ws.{WSClient, WSClientConfig, WSConfigParser, WSResponse}
 import play.core.server.ServerConfig
+import reactor.core.Disposable
+import reactor.core.publisher.Sinks
+import reactor.netty.http.client.HttpClient
 
 import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.util.Base64
-import scala.concurrent.{Await, ExecutionContext, Future, Promise}
 import scala.concurrent.duration.{DurationInt, DurationLong, FiniteDuration}
+import scala.concurrent.{Await, ExecutionContext, Future, Promise}
 import scala.util.{Random, Try}
 
 object Utils {
@@ -396,10 +401,22 @@ case class OtoroshiClientStreamedResponse(resp: WSResponse, chunks: Seq[JsValue]
 
 case class OtoroshiClient(port: Int, client: WSClient, ec: ExecutionContext, mat: Materializer) {
 
+  lazy val wsclient = HttpClient.create()
+
   def call(method: String, url: String, headers: Map[String, String], body: Option[JsValue]): Future[WSResponse] = {
     client.url(url).withMethod(method).withHttpHeaders(headers.toSeq:_*).applyOnWithOpt(body){
       case (builder, body) => builder.withBody(body)
     }.execute()
+  }
+
+  def ws(url: String)(f: Function[Sinks.Many[String], Function[String, Unit]]): (Sinks.Many[String], Disposable) = {
+    val hotSource: Sinks.Many[String] = Sinks.many().unicast().onBackpressureBuffer[String]()
+    val hotFlux = hotSource.asFlux()
+    val thunk = f(hotSource)
+    (hotSource, wsclient.websocket().uri(url).handle((in, out) => {
+      in.receive().asString().subscribe((t: String) => thunk(t))
+      out.send(hotFlux.map(str => Unpooled.wrappedBuffer(str.getBytes(CharsetUtil.ISO_8859_1))))
+    }).subscribe())
   }
 
   def noop(in: String): Unit = ()
