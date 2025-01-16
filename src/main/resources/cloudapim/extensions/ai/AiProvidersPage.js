@@ -622,10 +622,6 @@ class AiProvidersPage extends Component {
         ]
       },
     },
-    'options.ratio': {
-      type: 'number',
-      props: { label: 'TTL', suffix: 'millis.' },
-    },
     'options.refs': {
       type: 'array',
       props: {
@@ -775,7 +771,6 @@ class AiProvidersPage extends Component {
         'options.refs',
         '<<<Load balancing',
         'options.loadbalancing',
-        'options.ratio',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
