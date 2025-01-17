@@ -316,9 +316,40 @@ class Guardrail extends Component {
 
 class AiProvidersPage extends Component {
 
-  state = {}
+  state = {
+    dynamicModels: null
+  }
 
-  providerModels = (provider) => {
+  fetchModels = (provider) => {
+    fetch('/extensions/cloud-apim/extensions/ai-extension/providers/_models', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(provider)
+    }).then(r => {
+      if (r.status === 200) {
+        r.json().then(body => {
+          if (body.done) {
+            this.setState({ dynamicModels: body.models })
+          }
+        })
+      }
+    })
+  }
+
+  providerModels = (provider, s) => {
+    if (this.state.dynamicModels === null) {
+      this.fetchModels(s);
+    }
+    if (this.state.dynamicModels && this.state.dynamicModels.length > 0) {
+      return {
+        'type': 'select',
+        props: { label: 'Description', possibleValues: this.state.dynamicModels.map(mod => ({ label: mod, value: mod })) }
+      }
+    }
     if (provider === "openai") {
       return {
         'type': 'select',
@@ -483,7 +514,7 @@ class AiProvidersPage extends Component {
       type: 'number',
       props: { label: 'Timeout', suffix: 'ms.' },
     },
-    'options.model': this.providerModels(state.provider || 'none'),
+    'options.model': this.providerModels(state.provider || 'none', state),
     'options.max_tokens': {
       type: 'string',
       props: { label: 'Max. tokens' },

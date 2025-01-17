@@ -6,6 +6,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities._
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHardcodedItems
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
+import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
 import otoroshi.models._
 import otoroshi.next.extensions._
@@ -18,7 +19,7 @@ import play.api.libs.json.{JsArray, JsError, JsObject, JsSuccess, Json}
 import play.api.mvc.{RequestHeader, Result, Results}
 
 import scala.concurrent.Future
-import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
 class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val providersDatastore: AiProviderDataStore = new KvAiProviderDataStore(extensionId, env.datastores.redis, env)
@@ -101,6 +102,11 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val states = new AiGatewayExtensionState(env)
 
   val logger = AiExtension.logger
+
+  val modelsCache = Scaffeine()
+    .maximumSize(100)
+    .expireAfterWrite(1.hour)
+    .build[String, Seq[String]]()
 
   override def id: AdminExtensionId = AdminExtensionId("cloud-apim.extensions.LlmExtension")
 
@@ -320,6 +326,56 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
+  def handleProviderModelsFetch(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body:  Option[Source[ByteString, _]]): Future[Result] = {
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val mat = env.otoroshiMaterializer
+    implicit val ev = env
+    (body match {
+      case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
+      case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
+        val bodyStr = bodyRaw.utf8String
+        val bodyJson = bodyStr.parseJson
+        bodyJson.select("id").asOptString match {
+          case None => Results.Ok(Json.obj("done" -> false, "error" -> "no id")).vfuture
+          case Some(providerId) => {
+            env.vaults.fillSecretsAsync(providerId, bodyStr).flatMap { editedRaw =>
+              val edited = editedRaw.parseJson
+              AiProvider.format.reads(edited) match {
+                case JsError(errors) => Results.Ok(Json.obj("done" -> false, "error" -> "bad provider format")).vfuture
+                case JsSuccess(provider, _) => {
+                  val token = provider.connection.select("token").asOptString.getOrElse("--")
+                  val key = s"${provider.id}-${token}".sha256
+                  modelsCache.getIfPresent(key) match {
+                    case Some(models) => Results.Ok(Json.obj("done" -> true, "from_cache" -> true, "models" -> JsArray(models.map(_.json)))).vfuture
+                    case None => {
+                      provider.getChatClient() match {
+                        case None => Results.Ok(Json.obj("done" -> false, "error" -> "no client")).vfuture
+                        case Some(client) => {
+                          client.listModels() map {
+                            case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> "error fetching models", "error_details" -> err))
+                            case Right(models) => {
+                              modelsCache.put(key, models)
+                              Results.Ok(Json.obj("done" -> true, "from_cache" -> false, "models" -> JsArray(models.map(_.json))))
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }).recover {
+      case e: Throwable => {
+        e.printStackTrace()
+        Results.Ok(Json.obj("done" -> false, "error" -> e.getMessage))
+      }
+    }
+  }
+
   override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = Seq(
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
@@ -344,6 +400,12 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/extensions/cloud-apim/extensions/ai-extension/prompts/_test",
       wantsBody = true,
       handle = handlePromptTest
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = "/extensions/cloud-apim/extensions/ai-extension/providers/_models",
+      wantsBody = true,
+      handle = handleProviderModelsFetch
     )
   )
 
