@@ -16,8 +16,10 @@ import play.api.libs.ws.ahc.{AhcWSClient, AhcWSClientConfig}
 import play.api.libs.ws.{WSClient, WSClientConfig, WSConfigParser, WSResponse}
 import play.core.server.ServerConfig
 import reactor.core.Disposable
-import reactor.core.publisher.Sinks
+import reactor.core.publisher.{Mono, Sinks}
+import reactor.netty.DisposableServer
 import reactor.netty.http.client.HttpClient
+import reactor.netty.http.server.{HttpServer, HttpServerRequest, HttpServerResponse, HttpServerRoutes}
 
 import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
@@ -517,10 +519,37 @@ case class OtoroshiResponse(client: OtoroshiClient, group: String, pluralName: S
 
 
 class LLmExtensionSuite extends munit.FunSuite {
+
+  private[aigateway] val testServers = scala.collection.mutable.ArraySeq.empty[(String, Int, DisposableServer)]
+
   def await(duration: FiniteDuration): Unit = Utils.await(duration)
   def freePort: Int = Utils.freePort
   def startOtoroshiServer(port: Int = freePort): Otoroshi = Utils.startOtoroshi(port)
   def clientFor(port: Int): OtoroshiClient = Utils.clientFor(port)
+
+  def createTestServerWithRoutes(name: String, f: HttpServerRoutes => HttpServerRoutes): (Int, DisposableServer) = {
+    println(s"starting test server: '${name}'")
+    val fakeApiServerPort = freePort
+    val fakeApiServer = HttpServer.create()
+        .host("0.0.0.0")
+        .port(fakeApiServerPort)
+        .route(routes => f(routes))
+        .bindNow()
+    testServers :+ (name, fakeApiServerPort, fakeApiServer)
+    (fakeApiServerPort, fakeApiServer)
+  }
+
+  def createTestServer(name: String, f: (HttpServerRequest, HttpServerResponse) => org.reactivestreams.Publisher[Void]): (Int, DisposableServer) = {
+    println(s"starting test server: '${name}'")
+    val fakeApiServerPort = freePort
+    val fakeApiServer = HttpServer.create()
+      .host("0.0.0.0")
+      .port(fakeApiServerPort)
+      .handle((req: HttpServerRequest, res: HttpServerResponse) => f(req, res))
+      .bindNow()
+    testServers :+ (name, fakeApiServerPort, fakeApiServer)
+    (fakeApiServerPort, fakeApiServer)
+  }
 }
 
 class LlmExtensionOneOtoroshiServerPerSuite extends LLmExtensionSuite {
@@ -540,6 +569,12 @@ class LlmExtensionOneOtoroshiServerPerSuite extends LLmExtensionSuite {
 
   override def afterAll(): Unit = {
     otoroshi.stop()
+    testServers.foreach {
+      case (name, _, server) => {
+        println(s"stopping test server '${name}'")
+        server.disposeNow()
+      }
+    }
   }
 }
 

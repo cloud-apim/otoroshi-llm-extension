@@ -8,27 +8,19 @@ import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpRespEndpoint, McpSseEndpoint, McpWebsocketEndpoint, OpenAiCompatProxy}
 import play.api.libs.json.{JsObject, Json}
 import reactor.core.publisher.Mono
-import reactor.netty.http.server.HttpServer
 
 import java.io.File
 import java.util.UUID
 import scala.concurrent.duration.DurationInt
 
-// TODO: use internal http server instead of cloud apim serverless
 class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
-  val fakeApiServerPort = freePort
-  val fakeApiServer =
-    HttpServer.create()
-      .host("0.0.0.0")
-      .port(fakeApiServerPort)
-      .route(routes => routes.get("/flight", (_, response) => {
-        response
-          .status(200)
-          .addHeader("Content-Type", "application/json")
-          .sendString(Mono.just("{ departure: \"08:00 AM\", arrival: \"11:30 AM\", duration: \"13h\" }"))
-      }))
-      .bindNow()
+  val (fakeApiServerPort, _) = createTestServerWithRoutes("httpapi", routes => routes.get("/flight", (_, response) => {
+    response
+      .status(200)
+      .addHeader("Content-Type", "application/json")
+      .sendString(Mono.just("{ departure: \"08:00 AM\", arrival: \"11:30 AM\", duration: \"13h\" }"))
+  }))
 
   test("llm provider can use an stdio mcp server") {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -212,7 +204,7 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         kind = LlmToolFunctionBackendKind.Http,
         options = LlmToolFunctionBackendOptions.Http(Json.obj(
           "method" -> "GET",
-          "url" -> s"http://localhost:${fakeApiServerPort}/flight" //"https://demo-sandbox-01j301vp84vwf6xjah3k2tryqa.cloud-apim.dev/flight"
+          "url" -> s"http://localhost:${fakeApiServerPort}/flight"
         ))
       )
     )
@@ -317,7 +309,7 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         kind = LlmToolFunctionBackendKind.Http,
         options = LlmToolFunctionBackendOptions.Http(Json.obj(
           "method" -> "GET",
-          "url" -> s"http://localhost:${fakeApiServerPort}/flight" // "https://demo-sandbox-01j301vp84vwf6xjah3k2tryqa.cloud-apim.dev/flight"
+          "url" -> s"http://localhost:${fakeApiServerPort}/flight"
         ))
       )
     )
@@ -422,7 +414,7 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         kind = LlmToolFunctionBackendKind.Http,
         options = LlmToolFunctionBackendOptions.Http(Json.obj(
           "method" -> "GET",
-          "url" -> s"http://localhost:${fakeApiServerPort}/flight" // "https://demo-sandbox-01j301vp84vwf6xjah3k2tryqa.cloud-apim.dev/flight"
+          "url" -> s"http://localhost:${fakeApiServerPort}/flight"
         ))
       )
     )
@@ -703,7 +695,7 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         kind = LlmToolFunctionBackendKind.Http,
         options = LlmToolFunctionBackendOptions.Http(Json.obj(
           "method" -> "GET",
-          "url" -> s"http://localhost:${fakeApiServerPort}/flight" // "https://demo-sandbox-01j301vp84vwf6xjah3k2tryqa.cloud-apim.dev/flight"
+          "url" -> s"http://localhost:${fakeApiServerPort}/flight"
         ))
       )
     )

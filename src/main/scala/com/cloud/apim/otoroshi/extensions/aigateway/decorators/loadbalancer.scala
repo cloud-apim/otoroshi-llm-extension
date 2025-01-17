@@ -8,7 +8,7 @@ import otoroshi.utils.TypedMap
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsBoolean, JsNull, JsNumber, JsObject, JsString, JsValue, Json}
+import play.api.libs.json.{JsBoolean, JsDefined, JsLookupResult, JsNull, JsNumber, JsObject, JsString, JsUndefined, JsValue, Json}
 
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
 import scala.concurrent.{ExecutionContext, Future}
@@ -92,7 +92,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
           LoadBalancingTarget(
             obj.select("ref").asString,
             obj.select("weight").asOpt[Int].getOrElse(1),
-            obj.select("selector").asOptString
+            obj.select("selector_expected").asOptString
           )
         }
       })
@@ -110,46 +110,30 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
         .flatMap(r => if (r.weight <= 1) Seq(r) else (0 to r.weight).map(_ => r))
         .flatMap(r => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r.ref)).map(v => (v, r.selector)))
       // val index = LoadBalancerChatClient.counter.incrementAndGet() % (if (providers.nonEmpty) providers.size else 1)
+
+      def filterAll(body: JsObject, f: (JsObject, Option[String]) => JsLookupResult): Seq[(AiProvider, Option[String])] = {
+        all_providers.filter {
+          case (p, selector) =>
+            val mergedOptions: JsObject = if (p.options.select("allow_config_override").asOptBoolean.getOrElse(true)) p.options.deepMerge(body) else p.options
+            f(mergedOptions, selector) match {
+              case _ if selector.isEmpty => true
+              case JsUndefined() => true
+              case JsDefined(JsNull) => true
+              case JsDefined(JsString(str)) if selector.contains(str) => true // TODO: handle more complex expressions ?
+              case JsDefined(JsBoolean(str)) if selector.contains(str.toString) => true
+              case JsDefined(JsNumber(str)) if selector.contains(str.toString) => true
+              case _ => false
+            }
+        }
+      }
+
       val body = originalBody.asObject
       val providers = selector_expr match {
         case None => all_providers
         case Some("*") => all_providers
-        case Some(str) if str.startsWith("JsonPointer(") => all_providers.filter {
-          case (p, selector) =>
-            val mergedOptions: JsObject = if (p.options.select("allow_config_override").asOptBoolean.getOrElse(true)) p.options.deepMerge(body) else p.options
-            mergedOptions.atPointer(str.substring(12).init).asValue match {
-              case _ if selector.isEmpty => true
-              case JsNull => true
-              case JsString(str) if selector.contains(str) => true
-              case JsBoolean(str) if selector.contains(str.toString) => true
-              case JsNumber(str) if selector.contains(str.toString) => true
-              case _ => false
-            }
-        }
-        case Some(str) if str.startsWith("JsonPath(") => all_providers.filter {
-          case (p, selector) =>
-            val mergedOptions: JsObject = if (p.options.select("allow_config_override").asOptBoolean.getOrElse(true)) p.options.deepMerge(body) else p.options
-            mergedOptions.atPath(str.substring(9).init).asValue match {
-              case _ if selector.isEmpty => true
-              case JsNull => true
-              case JsString(str) if selector.contains(str) => true
-              case JsBoolean(str) if selector.contains(str.toString) => true
-              case JsNumber(str) if selector.contains(str.toString) => true
-              case _ => false
-            }
-        }
-        case Some(str) => all_providers.filter {
-          case (p, selector) =>
-            val mergedOptions: JsObject = if (p.options.select("allow_config_override").asOptBoolean.getOrElse(true)) p.options.deepMerge(body) else p.options
-            mergedOptions.at(str).asValue match {
-              case _ if selector.isEmpty => true
-              case JsNull => true
-              case JsString(str) if selector.contains(str) => true
-              case JsBoolean(str) if selector.contains(str.toString) => true
-              case JsNumber(str) if selector.contains(str.toString) => true
-              case _ => false
-            }
-        }
+        case Some(str) if str.startsWith("JsonPointer(") => filterAll(body, (o, _) => o.atPointer(str.substring(12).init))
+        case Some(str) if str.startsWith("JsonPath(") => filterAll(body, (o, _) => o.atPath(str.substring(9).init))
+        case Some(str) => filterAll(body, (o, _) => o.at(str))
       }
       val selectedProvider = loadBalancing.select(LoadBalancerChatClient.counter.incrementAndGet().toString, providers.map(_._1))
       selectedProvider.getChatClient() match {
