@@ -59,6 +59,7 @@ lazy val root = (project in file("."))
       "io.netty" % "netty-transport-native-epoll" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       munit % Test
     ),
+    fork := true,
     assembly / test  := {},
     assembly / assemblyJarName := "otoroshi-llm-extension-assembly_2.12-dev.jar",
     assembly / assemblyMergeStrategy := {
