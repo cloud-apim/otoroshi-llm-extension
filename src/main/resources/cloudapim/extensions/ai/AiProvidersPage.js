@@ -1359,6 +1359,7 @@ class AiProvidersPage extends Component {
                 provider: 'ollama',
                 connection: {
                   base_url: BaseUrls.ollama,
+                  token: null,
                   timeout: 30000,
                 },
                 options: ClientOptions.ollama,
@@ -1370,9 +1371,10 @@ class AiProvidersPage extends Component {
                 description: state.description,
                 tags: state.tags,
                 metadata: state.metadata,
-                provider: 'ollama',
+                provider: 'anthropic',
                 connection: {
                   base_url: BaseUrls.anthropic,
+                  token: "xxx",
                   timeout: 30000,
                 },
                 options: ClientOptions.anthropic,
@@ -1387,6 +1389,7 @@ class AiProvidersPage extends Component {
                 provider: 'groq',
                 connection: {
                   base_url: BaseUrls.groq,
+                  token: "xxx",
                   timeout: 30000,
                 },
                 options: ClientOptions.groq,
