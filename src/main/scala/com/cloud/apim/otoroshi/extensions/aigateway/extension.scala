@@ -345,7 +345,11 @@ class AiExtension(val env: Env) extends AdminExtension {
                 case JsSuccess(provider, _) => {
                   val token = provider.connection.select("token").asOptString.getOrElse("--")
                   val key = s"${provider.id}-${token}".sha256
-                  modelsCache.getIfPresent(key) match {
+                  val forceUpdate: Boolean = req.getQueryString("force").contains("true")
+                  if (forceUpdate) {
+                    logger.info(s"forcing models reload for ${provider.name} / ${provider.id}")
+                  }
+                  modelsCache.getIfPresent(key).filterNot(_ => forceUpdate) match {
                     case Some(models) => Results.Ok(Json.obj("done" -> true, "from_cache" -> true, "models" -> JsArray(models.map(_.json)))).vfuture
                     case None => {
                       provider.getChatClient() match {

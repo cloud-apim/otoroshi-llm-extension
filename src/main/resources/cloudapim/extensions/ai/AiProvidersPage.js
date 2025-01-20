@@ -29,6 +29,21 @@ class AiProviderTesterMessage extends Component {
   }
 }
 
+class ModelsReloadButton extends Component {
+  render() {
+    return React.createElement('div', { className: 'row mb-3' },
+      React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, ''),
+      React.createElement('div', { className: 'col-sm-10', style: { display: 'flex' } },
+        React.createElement('button', {
+          className: 'btn btn-sm btn-success',
+          type: 'button',
+          onClick: (e) => this.props.fetchModels(this.props.provider, true)
+        },  React.createElement('i', { className: 'fas fa-sync' }, null), ' models')
+      )
+    );
+  }
+}
+
 class AiProviderTester extends Component {
   state = {
     calling: false,
@@ -320,8 +335,8 @@ class AiProvidersPage extends Component {
     dynamicModels: null
   }
 
-  fetchModels = (provider) => {
-    fetch('/extensions/cloud-apim/extensions/ai-extension/providers/_models', {
+  fetchModels = (provider, force) => {
+    fetch(`/extensions/cloud-apim/extensions/ai-extension/providers/_models?force=${!!force}`, {
       method: 'POST',
       credentials: 'include',
       headers: {
@@ -347,13 +362,13 @@ class AiProvidersPage extends Component {
     if (this.state.dynamicModels && this.state.dynamicModels.length > 0) {
       return {
         'type': 'select',
-        props: { label: 'Description', possibleValues: this.state.dynamicModels.map(mod => ({ label: mod, value: mod })) }
+        props: { label: 'Model', possibleValues: this.state.dynamicModels.map(mod => ({ label: mod, value: mod })) }
       }
     }
     if (provider === "openai") {
       return {
         'type': 'select',
-        props: { label: 'Description', possibleValues: [
+        props: { label: 'Model', possibleValues: [
             { label: 'gpt-4o', value: 'gpt-4o' },
             { label: 'gpt-4o-mini', value: 'gpt-4o-mini' },
             { label: 'gpt-4-turbo-preview', value: 'gpt-4-turbo-preview' },
@@ -367,14 +382,14 @@ class AiProvidersPage extends Component {
     } else if (provider === "x-ai") {
       return {
         'type': 'select',
-        props: { label: 'Description', possibleValues: [
+        props: { label: 'Model', possibleValues: [
             { label: 'grok-beta', value: 'grok-beta' },
           ] }
       }
     } else if (provider === "anthropic") {
       return {
         'type': 'select',
-        props: { label: 'Description', possibleValues: [
+        props: { label: 'Model', possibleValues: [
             { label: "google/gemma-2-2b-it", value: "google/gemma-2-2b-it" },
             { label: "bigcode/starcoder", value: "bigcode/starcoder" },
             { label: "meta-llama/Meta-Llama-3.1-8B-Instruct", value: "meta-llama/Meta-Llama-3.1-8B-Instruct" },
@@ -386,7 +401,7 @@ class AiProvidersPage extends Component {
     } else if (provider === "huggingface") {
        return {
          'type': 'select',
-         props: { label: 'Description', possibleValues: [
+         props: { label: 'Model', possibleValues: [
              { label: "claude-3-5-sonnet-20240620", value: "claude-3-5-sonnet-20240620" },
              { label: "claude-3-opus-20240229", value: "claude-3-opus-20240229" },
              { label: "claude-3-sonnet-20240229", value: "claude-3-sonnet-20240229" },
@@ -396,7 +411,7 @@ class AiProvidersPage extends Component {
      } else if (provider === "mistral") {
       return {
         'type': 'select',
-        props: { label: 'Description', possibleValues: [
+        props: { label: 'Model', possibleValues: [
             { label: "open-mistral-7b", value: "open-mistral-7b" },
             { label: "open-mixtral-8x7b", value: "open-mixtral-8x7b" },
             { label: "open-mixtral-8x22b", value: "open-mixtral-8x22b" },
@@ -413,7 +428,7 @@ class AiProvidersPage extends Component {
     } else if (provider === "ovh-ai-endpoints") {
       return {
         'type': 'select',
-        props: { label: 'Description', possibleValues: [
+        props: { label: 'Model', possibleValues: [
             { 'label': "CodeLlama-13b-Instruct-hf", value: 'CodeLlama-13b-Instruct-hf' },
             { 'label': "Mixtral-8x7B-Instruct-v0.1", value: 'Mixtral-8x7B-Instruct-v0.1' },
             { 'label': "Meta-Llama-3-70B-Instruct", value: 'Meta-Llama-3-70B-Instruct' },
@@ -426,7 +441,7 @@ class AiProvidersPage extends Component {
     } else if (provider === "deepseek") {
       return {
         'type': 'select',
-        props: { label: 'Description', possibleValues: [
+        props: { label: 'Model', possibleValues: [
             { 'label': "deepseek-chat", value: 'deepseek-chat' },
           ] }
       }
@@ -476,7 +491,7 @@ class AiProvidersPage extends Component {
     },
     'provider': {
       'type': 'select',
-      props: { label: 'Description', possibleValues: this.providerList }
+      props: { label: ' ', possibleValues: this.providerList }
     },
     'connection.model_name': {
       type: 'string',
@@ -515,6 +530,10 @@ class AiProvidersPage extends Component {
       props: { label: 'Timeout', suffix: 'ms.' },
     },
     'options.model': this.providerModels(state.provider || 'none', state),
+    'options.provider_models_reload': {
+      type: ModelsReloadButton,
+      props: { fetchModels: this.fetchModels, provider: this.state }
+    },
     'options.max_tokens': {
       type: 'string',
       props: { label: 'Max. tokens' },
@@ -822,6 +841,7 @@ class AiProvidersPage extends Component {
         '<<<Connection options',
         'options.allow_config_override',
         'options.model',
+        'options.provider_models_reload',
         'options.num_predict',
         'options.tfs_z',
         'options.seed',
@@ -878,6 +898,7 @@ class AiProvidersPage extends Component {
         '<<<Connection options',
         'options.allow_config_override',
         'options.model',
+        'options.provider_models_reload',
         'options.max_tokens',
         'options.random_seed',
         'options.safe_prompt',
@@ -924,6 +945,7 @@ class AiProvidersPage extends Component {
         '<<<Connection options',
         'options.allow_config_override',
         'options.model',
+        'options.provider_models_reload',
         'options.max_tokens',
         'options.random_seed',
         'options.safe_prompt',
@@ -971,6 +993,7 @@ class AiProvidersPage extends Component {
         '<<<Connection options',
         'options.allow_config_override',
         'options.model',
+        'options.provider_models_reload',
         'options.max_tokens',
         'options.temperature',
         'options.top_p',
@@ -1016,6 +1039,7 @@ class AiProvidersPage extends Component {
         '<<<Connection options',
         'options.allow_config_override',
         'options.model',
+        'options.provider_models_reload',
         'options.max_tokens',
         'options.temperature',
         'options.top_p',
@@ -1054,6 +1078,7 @@ class AiProvidersPage extends Component {
         'provider',
         '<<<API Connection',
         'connection.model',
+        'options.provider_models_reload',
         'connection.token',
         'connection.timeout',
         '>>>API Connection raw',
@@ -1154,6 +1179,7 @@ class AiProvidersPage extends Component {
         '<<<Connection options',
         'options.allow_config_override',
         'options.model',
+        'options.provider_models_reload',
         'options.max_tokens',
         'options.temperature',
         'options.topP',
@@ -1288,6 +1314,7 @@ class AiProvidersPage extends Component {
       '<<<Connection options',
       'options.allow_config_override',
       'options.model',
+      'options.provider_models_reload',
       'options.max_tokens',
       'options.n',
       'options.temperature',

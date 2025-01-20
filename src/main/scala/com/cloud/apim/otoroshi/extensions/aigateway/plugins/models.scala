@@ -127,6 +127,7 @@ class OpenAiCompatProvidersWithModels extends NgBackendCall {
             }
             Json.obj(
               "id" -> combined,
+              "combined_id" -> combined,
               "simple_id" -> model,
               "object" -> "model",
               "created" -> now,
