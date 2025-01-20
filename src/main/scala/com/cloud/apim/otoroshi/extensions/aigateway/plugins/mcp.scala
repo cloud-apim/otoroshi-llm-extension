@@ -90,6 +90,7 @@ object McpProxyEndpointConfig {
   }
 }
 
+/*
 class McpLocalProxyEndpoint extends NgBackendCall {
 
   override def name: String = "Cloud APIM - MCP Tools Endpoint"
@@ -210,6 +211,7 @@ class McpLocalProxyEndpoint extends NgBackendCall {
     }
   }
 }
+*/
 
 case class SseSession(
   sessionId: String,
@@ -413,7 +415,7 @@ class McpSseEndpoint extends NgBackendCall {
       // println(s"adding session: ${sessionId}")
       sessions.put(sessionId, session)
       val sessionSource: Source[ByteString, _] = session.init().map(v => s"event: message\ndata: ${v.stringify}\n\n".byteString)
-      val source: Source[ByteString, _] = Source.single(ByteString(s"event: endpoint\ndata: ${ctx.request.path}?sessionId=${sessionId}\n\n"))
+      val source: Source[ByteString, _] = Source.single(ByteString(s"event: endpoint\ndata: ${ctx.rawRequest.path}?sessionId=${sessionId}\n\n"))
         .concat(sessionSource)
         .alsoTo(Sink.onComplete {
           case _ =>

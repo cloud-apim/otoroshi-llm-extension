@@ -2,12 +2,19 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorTransportKind.Stdio
+import com.fasterxml.jackson.core.JsonProcessingException
+import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.google.gson.Gson
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
 import dev.langchain4j.mcp.client.DefaultMcpClient
+import dev.langchain4j.mcp.client.protocol.{McpCallToolRequest, McpInitializeRequest, McpListToolsRequest}
 import dev.langchain4j.mcp.client.transport.http.HttpMcpTransport
 import dev.langchain4j.mcp.client.transport.stdio.StdioMcpTransport
+import dev.langchain4j.mcp.client.transport.{McpOperationHandler, McpTransport}
 import dev.langchain4j.model.chat.request.json._
+import okhttp3._
+import okio.ByteString
+import org.slf4j.LoggerFactory
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
 import otoroshi.env.Env
 import otoroshi.models.{EntityLocation, EntityLocationSupport}
@@ -18,9 +25,10 @@ import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiExtension, AiGatewayExtensionDatastores, AiGatewayExtensionState}
 import play.api.libs.json._
 
+import java.io.IOException
 import java.util.UUID
-import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
+import java.util.concurrent.{CompletableFuture, ConcurrentLinkedQueue}
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.{Duration, DurationLong, FiniteDuration}
 import scala.concurrent.{Await, ExecutionContext, Future, Promise}
@@ -33,8 +41,12 @@ sealed trait McpConnectorTransportKind {
 object McpConnectorTransportKind {
   case object Stdio extends McpConnectorTransportKind { def name: String = "stdio" }
   case object Sse extends McpConnectorTransportKind { def name: String = "sse" }
+  case object Websocket extends McpConnectorTransportKind { def name: String = "ws" }
+  case object Http extends McpConnectorTransportKind { def name: String = "http" }
   def apply(str: String): McpConnectorTransportKind = str.toLowerCase match {
     case "sse" => Sse
+    case "ws" => Websocket
+    case "http" => Http
     case _ => Stdio
   }
 }
@@ -187,6 +199,19 @@ case class McpConnector(
           .build()
       }
       case McpConnectorTransportKind.Sse => {
+        val opts = transport.sseOptions
+        new HttpMcpTransport.Builder()
+          .sseUrl(opts.url)
+          .logRequests(opts.log)
+          .logResponses(opts.log)
+          .timeout(java.time.Duration.ofMillis(opts.timeout.toMillis))
+          .build()
+      }
+      case McpConnectorTransportKind.Websocket => {
+        val opts = transport.sseOptions
+        new WebsocketHttpTransport(opts.url, opts.log, opts.log, java.time.Duration.ofMillis(opts.timeout.toMillis))
+      }
+      case McpConnectorTransportKind.Http => {
         val opts = transport.sseOptions
         new HttpMcpTransport.Builder()
           .sseUrl(opts.url)
@@ -434,5 +459,203 @@ object McpSupport {
         "content" -> resp,
       )))
     }
+  }
+}
+
+object WebsocketHttpTransport {
+  val logger = LoggerFactory.getLogger(classOf[WebsocketHttpTransport])
+  val OBJECT_MAPPER = new ObjectMapper()
+}
+
+class WebsocketHttpTransport(wsUrl: String, logRequests: Boolean, logResponses: Boolean, timeout: java.time.Duration) extends McpTransport {
+
+  private val log = WebsocketHttpTransport.logger
+  private val OBJECT_MAPPER = WebsocketHttpTransport.OBJECT_MAPPER
+
+  private val client = new OkHttpClient.Builder().build()
+  private val websocket = new AtomicReference[WebSocket]()
+  private val websocketOpen = new AtomicBoolean(false)
+  private val handler = new AtomicReference[McpOperationHandler]()
+
+  private def initWebSocket(): Unit = {
+    val request = new Request.Builder()
+      .url(wsUrl)
+      .get()
+      .build()
+    val ws: WebSocket = client.newWebSocket(request, new WebSocketListener {
+      override def onMessage(webSocket: WebSocket, bytes: ByteString): Unit = onWebsocketMessage(bytes.utf8().parseJson)
+      override def onMessage(webSocket: WebSocket, text: String): Unit = onWebsocketMessage(text.parseJson)
+      override def onOpen(webSocket: WebSocket, response: Response): Unit = websocketOpen.set(true)
+      override def onClosed(webSocket: WebSocket, code: Int, reason: String): Unit = websocketOpen.set(false)
+      override def onClosing(webSocket: WebSocket, code: Int, reason: String): Unit = ()
+      override def onFailure(webSocket: WebSocket, t: Throwable, response: Response): Unit = ()
+    })
+    websocket.set(ws)
+  }
+
+  private def websocketClient(): WebSocket = synchronized {
+    if (!websocketOpen.get()) {
+      initWebSocket()
+    }
+    websocket.get()
+  }
+
+  private def onWebsocketMessage(message: JsValue): Unit = {
+    val payload = OBJECT_MAPPER.readTree(message.stringify)
+    if (logResponses) {
+      log.info("response: {}", message.stringify)
+    }
+    handler.get().handle(payload)
+  }
+
+
+  override def start(messageHandler: McpOperationHandler): Unit = {
+    initWebSocket()
+    handler.set(messageHandler)
+  }
+
+  override def initialize(request: McpInitializeRequest): CompletableFuture[JsonNode] = {
+    val future = new CompletableFuture[JsonNode]()
+    handler.get.startOperation(request.getId, future)
+    val payload = OBJECT_MAPPER.writeValueAsString(request)
+    if (logRequests) {
+      log.info("request: {}", payload)
+    }
+    websocketClient().send(payload)
+    future
+  }
+
+  override def listTools(request: McpListToolsRequest): CompletableFuture[JsonNode] = {
+    val future = new CompletableFuture[JsonNode]()
+    handler.get.startOperation(request.getId, future)
+    val payload = OBJECT_MAPPER.writeValueAsString(request)
+    if (logRequests) {
+      log.info("request: {}", payload)
+    }
+    websocketClient().send(payload)
+    future
+  }
+
+  override def executeTool(request: McpCallToolRequest): CompletableFuture[JsonNode] = {
+    val future = new CompletableFuture[JsonNode]()
+    handler.get.startOperation(request.getId, future)
+    val payload = OBJECT_MAPPER.writeValueAsString(request)
+    if (logRequests) {
+      log.info("request: {}", payload)
+    }
+    websocketClient().send(payload)
+    future
+  }
+
+  override def cancelOperation(operationId: Long): Unit = {
+    ()
+  }
+
+  override def close(): Unit = {
+    Option(websocket.get()).foreach(_.close(1000, "close"))
+    client.dispatcher.executorService.shutdown()
+  }
+}
+
+
+object OtoroshiHttpTransport {
+  val logger = LoggerFactory.getLogger(classOf[OtoroshiHttpTransport])
+  val OBJECT_MAPPER = new ObjectMapper()
+}
+
+class OtoroshiHttpTransport(httpUrl: String, logRequests: Boolean, logResponses: Boolean, timeout: java.time.Duration) extends McpTransport {
+
+  private val log = OtoroshiHttpTransport.logger
+  private val OBJECT_MAPPER = OtoroshiHttpTransport.OBJECT_MAPPER
+
+  private val client = new OkHttpClient.Builder().build()
+  private val handler = new AtomicReference[McpOperationHandler]()
+
+  override def start(messageHandler: McpOperationHandler): Unit = {
+    handler.set(messageHandler)
+  }
+
+  override def initialize(request: McpInitializeRequest): CompletableFuture[JsonNode] = {
+    try {
+      val payload = OBJECT_MAPPER.writeValueAsString(request)
+      if (logRequests) {
+        log.info("request: {}", payload)
+      }
+      val httpRequest = new Request.Builder()
+        .url(httpUrl)
+        .header("Content-Type", "application/json")
+        .post(RequestBody.create(OBJECT_MAPPER.writeValueAsBytes(request)))
+        .build()
+      execute(httpRequest, request.getId)
+    } catch {
+      case e: JsonProcessingException => CompletableFuture.failedFuture(e)
+    }
+  }
+
+  override def listTools(request: McpListToolsRequest): CompletableFuture[JsonNode] = {
+    try {
+      val payload = OBJECT_MAPPER.writeValueAsString(request)
+      if (logRequests) {
+        log.info("request: {}", payload)
+      }
+      val httpRequest = new Request.Builder()
+        .url(httpUrl)
+        .header("Content-Type", "application/json")
+        .post(RequestBody.create(OBJECT_MAPPER.writeValueAsBytes(request)))
+        .build()
+      execute(httpRequest, request.getId)
+    } catch {
+      case e: JsonProcessingException => CompletableFuture.failedFuture(e)
+    }
+  }
+
+  override def executeTool(request: McpCallToolRequest): CompletableFuture[JsonNode] = {
+    try {
+      val payload = OBJECT_MAPPER.writeValueAsString(request)
+      if (logRequests) {
+        log.info("request: {}", payload)
+      }
+      val httpRequest = new Request.Builder()
+        .url(httpUrl)
+        .header("Content-Type", "application/json")
+        .post(RequestBody.create(OBJECT_MAPPER.writeValueAsBytes(request)))
+        .build()
+      execute(httpRequest, request.getId)
+    } catch {
+      case e: JsonProcessingException => CompletableFuture.failedFuture(e)
+    }
+  }
+
+  override def cancelOperation(operationId: Long): Unit = {
+    ()
+  }
+
+  private def execute(request: Request, id: Long): CompletableFuture[JsonNode] = {
+    val future = new CompletableFuture[JsonNode]()
+    handler.get().startOperation(id, future)
+    client.newCall(request).enqueue(new Callback() {
+      override def onFailure(call: Call, e: IOException): Unit = {
+        future.completeExceptionally(e)
+      }
+      override def onResponse(call: Call, response: Response): Unit = {
+        val statusCode = response.code
+        if (!isExpectedStatusCode(statusCode)) {
+          future.completeExceptionally(new RuntimeException("Unexpected status code: " + statusCode))
+        } else {
+          val payload = response.body().byteString().utf8()
+          if (logResponses) {
+            log.info("response: {}", payload)
+          }
+          handler.get().handle(OBJECT_MAPPER.readTree(payload))
+        }
+      }
+    })
+    future
+  }
+
+  private def isExpectedStatusCode(statusCode: Int) = statusCode >= 200 && statusCode < 300
+
+  override def close(): Unit = {
+    client.dispatcher.executorService.shutdown()
   }
 }

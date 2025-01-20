@@ -32,6 +32,8 @@ class McpConnectorsPage extends Component {
       props: { label: 'Transport kind', possibleValues: [
           { label: 'SSE', value: "sse" },
           { label: 'Stdio', value: "stdio" },
+          { label: 'HTTP', value: "http" },
+          { label: 'WebSocket', value: "ws" },
         ] }
     },
     'transport.options': {

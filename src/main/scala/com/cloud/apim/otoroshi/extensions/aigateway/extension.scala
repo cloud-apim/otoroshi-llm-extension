@@ -168,12 +168,13 @@ class AiExtension(val env: Env) extends AdminExtension {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         val bodyJson = bodyRaw.utf8String.parseJson
-        bodyJson.select("provider").asOpt[String] match {
-          case None => Results.Ok(Json.obj("done" -> false, "error" -> "no provider")).vfuture
-          case Some(providerId) => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(providerId)) match {
-            case None => Results.Ok(Json.obj("done" -> false, "error" -> "no extension")).vfuture
-            case Some(old_provider) => {
+        // bodyJson.select("provider").asOpt[String] match {
+        //   case None => Results.Ok(Json.obj("done" -> false, "error" -> "no provider in body")).vfuture
+        //   case Some(providerId) => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(providerId)) match {
+        //     case None => Results.Ok(Json.obj("done" -> false, "error" -> "no provider")).vfuture
+        //     case Some(old_provider) => {
               val _edited = bodyJson.select("edited").asOpt[JsObject].getOrElse(Json.obj())
+              val providerId = _edited.select("id").asOpt[String].orElse(bodyJson.select("provider").asOpt[String]).getOrElse("new_llm_provider")
               env.vaults.fillSecretsAsync(providerId, _edited.stringify).flatMap { editedRaw =>
                 val edited = editedRaw.parseJson
                 AiProvider.format.reads(edited) match {
@@ -198,9 +199,10 @@ class AiExtension(val env: Env) extends AdminExtension {
                   }
                 }
               }
-            }
-          }
-        }
+          //    }
+          //  }
+          //}
+        //}
       }
     }).recover {
       case e: Throwable => {
