@@ -326,7 +326,57 @@ class KvMcpConnectorsDataStore(extensionId: AdminExtensionId, redisCli: RedisLik
   override def extractId(value: McpConnector): String    = value.id
 }
 
+object McpSupportImplicits {
+  implicit class BetterJsonBooleanSchema(val node: JsonBooleanSchema) extends AnyVal {
+    def safeDescription(): String = {
+      Option(node.description()).getOrElse("")
+    }
+  }
+  implicit class BetterJsonEnumSchema(val node: JsonEnumSchema) extends AnyVal {
+    def safeDescription(): String = {
+      Option(node.description()).getOrElse("")
+    }
+  }
+  implicit class BetterJsonIntegerSchema(val node: JsonIntegerSchema) extends AnyVal {
+    def safeDescription(): String = {
+      Option(node.description()).getOrElse("")
+    }
+  }
+  implicit class BetterJsonNumberSchema(val node: JsonNumberSchema) extends AnyVal {
+    def safeDescription(): String = {
+      Option(node.description()).getOrElse("")
+    }
+  }
+  implicit class BetterJsonStringSchema(val node: JsonStringSchema) extends AnyVal {
+    def safeDescription(): String = {
+      Option(node.description()).getOrElse("")
+    }
+  }
+  implicit class BetterJsonObjectSchema(val node: JsonObjectSchema) extends AnyVal {
+    def safeDescription(): String = {
+      Option(node.description()).getOrElse("")
+    }
+  }
+  implicit class BetterJsonAnyOfSchema(val node: JsonAnyOfSchema) extends AnyVal {
+    def safeDescription(): String = {
+      Option(node.description()).getOrElse("")
+    }
+  }
+  implicit class BetterJsonArraySchema(val node: JsonArraySchema) extends AnyVal {
+    def safeDescription(): String = {
+      Option(node.description()).getOrElse("")
+    }
+  }
+  implicit class BetterToolSpecification(val node: ToolSpecification) extends AnyVal {
+    def safeDescription(): String = {
+      Option(node.description()).getOrElse("")
+    }
+  }
+}
+
 object McpSupport {
+
+  import McpSupportImplicits._
 
   private val gson = new Gson()
 
@@ -349,11 +399,11 @@ object McpSupport {
 
   def schemaToJson(el: JsonSchemaElement): JsObject = {
     el match {
-      case s: JsonBooleanSchema   => Json.obj("description" -> s.description(), "type" -> "boolean")
-      case s: JsonEnumSchema      => Json.obj("description" -> s.description(), "type" -> "string", "enum" -> (s.enumValues().asScala.toSeq))
-      case s: JsonIntegerSchema   => Json.obj("description" -> s.description(), "type" -> "integer")
-      case s: JsonNumberSchema    => Json.obj("description" -> s.description(), "type" -> "number")
-      case s: JsonStringSchema    => Json.obj("description" -> s.description(), "type" -> "string")
+      case s: JsonBooleanSchema   => Json.obj("description" -> s.safeDescription(), "type" -> "boolean")
+      case s: JsonEnumSchema      => Json.obj("description" -> s.safeDescription(), "type" -> "string", "enum" -> (s.enumValues().asScala.toSeq))
+      case s: JsonIntegerSchema   => Json.obj("description" -> s.safeDescription(), "type" -> "integer")
+      case s: JsonNumberSchema    => Json.obj("description" -> s.safeDescription(), "type" -> "number")
+      case s: JsonStringSchema    => Json.obj("description" -> s.safeDescription(), "type" -> "string")
       case s: JsonObjectSchema    => {
         val additionalProperties: scala.Boolean = Option(s.additionalProperties()).map(_.booleanValue()).getOrElse(false)
         val required: Seq[String] = Option(s.required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
@@ -364,7 +414,7 @@ object McpSupport {
           schemaToJson(el)
         })
         Json.obj(
-          "description" -> s.description(),
+          "description" -> s.safeDescription(),
           "type" -> "object",
           "required" -> required,
           "properties" -> properties,
@@ -372,8 +422,8 @@ object McpSupport {
           "additionalProperties" -> additionalProperties,
         )
       }
-      case s: JsonAnyOfSchema     => Json.obj("description" -> s.description(), "anyOf" -> JsArray(s.anyOf().asScala.toSeq.map(schemaToJson)))
-      case s: JsonArraySchema     => Json.obj("description" -> s.description(), "type" -> "array", "items" ->schemaToJson(s.items()))
+      case s: JsonAnyOfSchema     => Json.obj("description" -> s.safeDescription(), "anyOf" -> JsArray(s.anyOf().asScala.toSeq.map(schemaToJson)))
+      case s: JsonArraySchema     => Json.obj("description" -> s.safeDescription(), "type" -> "array", "items" ->schemaToJson(s.items()))
       case s: JsonReferenceSchema => Json.obj("$ref" -> s.reference())
       case _ => Json.parse(gson.toJson(el)).asObject
     }
@@ -397,7 +447,7 @@ object McpSupport {
             "function" -> Json.obj(
               //"name" -> s"mcp___${connector.id}___${function.name()}",
               "name" -> s"mcp___${idx}___${function.name()}",
-              "description" -> function.description(),
+              "description" -> function.safeDescription(),
               "strict" -> true,
               "parameters" -> Json.obj(
                 "type" -> "object",
