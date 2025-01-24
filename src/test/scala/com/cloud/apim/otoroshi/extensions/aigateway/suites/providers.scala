@@ -1003,7 +1003,7 @@ class ImageContentSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
 class DocumentCitationSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
-  test("provider anthropic should be able to handle image content in anthropic format") {
+  test("provider anthropic should be able to handle citations from documents") {
     val provider = LlmProviders.anthropic
     val token = sys.env(provider.envToken)
     val port = client.port
