@@ -144,7 +144,7 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
         val role = resp.body.select("role").asOpt[String].getOrElse("assistant")
         val messages = resp.body.select("result").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
           val content = obj.select("response").asOpt[String].getOrElse("")
-          ChatGeneration(ChatMessage(role, content, None))
+          ChatGeneration(ChatMessage.output(role, content, None))
         }
         Right(ChatResponse(messages, usage))
     }

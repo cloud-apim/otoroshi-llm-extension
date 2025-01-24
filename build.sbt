@@ -60,6 +60,7 @@ lazy val root = (project in file("."))
       munit % Test
     ),
     fork := true,
+    Test / parallelExecution := false,
     assembly / test  := {},
     assembly / assemblyJarName := "otoroshi-llm-extension-assembly_2.12-dev.jar",
     assembly / assemblyMergeStrategy := {

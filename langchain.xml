@@ -1,0 +1,4 @@
+<configuration>
+    <logger name="dev.langchain4j.mcp.client.DefaultMcpClient" level="DEBUG" />
+    <logger name="dev.langchain4j.mcp.client.transport.stdio.StdioMcpTransport" level="DEBUG" />
+</configuration>

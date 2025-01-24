@@ -2,7 +2,7 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage}
 import otoroshi.env.Env
 import otoroshi.next.plugins.BodyHelper
 import otoroshi.next.plugins.api._
@@ -28,7 +28,7 @@ case class AiResponseBodyModifierConfig(ref: String = "", _prompt: String = "", 
       }
     }
   }
-  def preChatMessages(implicit env: Env): Seq[ChatMessage] = {
+  def preChatMessages(implicit env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -40,7 +40,7 @@ case class AiResponseBodyModifierConfig(ref: String = "", _prompt: String = "", 
       }
     }
   }
-  def postChatMessages(implicit env: Env): Seq[ChatMessage] = {
+  def postChatMessages(implicit env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -165,8 +165,8 @@ class AiResponseBodyModifier extends NgRequestTransformer {
         case Some(client) => {
           ctx.otoroshiResponse.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
             client.call(ChatPrompt(config.preChatMessages ++ Seq(
-              ChatMessage("system", config.prompt, None),
-              ChatMessage("user", bodyRaw.utf8String, None),
+              ChatMessage.input("system", config.prompt, None),
+              ChatMessage.input("user", bodyRaw.utf8String, None),
             ) ++ config.postChatMessages), ctx.attrs, Json.obj()).flatMap {
               case Left(err) => Left(Results.InternalServerError(Json.obj("error" -> err))).vfuture // TODO: rewrite error
               case Right(resp) => {

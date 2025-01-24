@@ -1,7 +1,7 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage}
 import otoroshi.el.GlobalExpressionLanguage
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
@@ -26,7 +26,7 @@ case class LlmResponseConfig(ref: String = "", _prompt: String = "", promptRef: 
       }
     }
   }
-  def preChatMessages(implicit env: Env): Seq[ChatMessage] = {
+  def preChatMessages(implicit env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -38,7 +38,7 @@ case class LlmResponseConfig(ref: String = "", _prompt: String = "", promptRef: 
       }
     }
   }
-  def postChatMessages(implicit env: Env): Seq[ChatMessage] = {
+  def postChatMessages(implicit env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -160,7 +160,7 @@ class LlmResponseEndpoint extends NgBackendCall {
             )
           }
           val prompt = applyEl(config.promptBeforeEl)
-          client.call(ChatPrompt(config.preChatMessages.map(pm => pm.copy(content = applyEl(pm.content))) ++ Seq(ChatMessage("user", prompt, None)) ++ config.postChatMessages.map(pm => pm.copy(content = applyEl(pm.content)))), ctx.attrs, Json.obj()).map {
+          client.call(ChatPrompt(config.preChatMessages.map(_.transformContent(applyEl)) ++ Seq(ChatMessage.input("user", prompt, None)) ++ config.postChatMessages.map(_.transformContent(applyEl))), ctx.attrs, Json.obj()).map {
             case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> err)))) // TODO: rewrite error
             case Right(resp) => {
               Right(BackendCallResponse(NgPluginHttpResponse.fromResult(

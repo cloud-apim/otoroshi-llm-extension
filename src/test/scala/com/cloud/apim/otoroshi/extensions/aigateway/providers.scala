@@ -154,7 +154,7 @@ object LlmProviders {
   val azure = TestLlmProviderSettings( // TODO: no account
     "azure-openai",
     "AZURE_OPENAI_TOKEN",
-    Json.obj("model" -> "claude-3-5-sonnet-latest", "max_tokens" -> maxTokens),
+    Json.obj("model" -> "gpt-4o-mini", "max_tokens" -> maxTokens),
     supportsModels = true,
     supportsChatCompletion = true,
     supportsCompletion = true,

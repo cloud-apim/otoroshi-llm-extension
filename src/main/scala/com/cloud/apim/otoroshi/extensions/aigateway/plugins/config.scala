@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import com.cloud.apim.otoroshi.extensions.aigateway.ChatMessage
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, InputChatMessage}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.NgPluginConfig
@@ -21,7 +21,7 @@ object AiPluginsKeys {
 
 case class AiPromptRequestConfig(ref: String = "", _prompt: String = "", promptRef: Option[String] = None, contextRef: Option[String] = None, extractor: Option[String] = None) extends NgPluginConfig {
   def json: JsValue = AiPromptRequestConfig.format.writes(this)
-  def preChatMessages(implicit env: Env): Seq[ChatMessage] = {
+  def preChatMessages(implicit env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -33,7 +33,7 @@ case class AiPromptRequestConfig(ref: String = "", _prompt: String = "", promptR
       }
     }
   }
-  def postChatMessages(implicit env: Env): Seq[ChatMessage] = {
+  def postChatMessages(implicit env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {

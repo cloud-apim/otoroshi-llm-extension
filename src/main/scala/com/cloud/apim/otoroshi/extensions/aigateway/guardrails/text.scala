@@ -24,7 +24,7 @@ class ContainsGuardrail extends Guardrail {
     val matchAllConversation = false //config.select("match_all_conversation").asOpt[Boolean].getOrElse(false)
     val operation = config.select("operation").asOpt[String].getOrElse("contains_all")
     val values = config.select("values").asOpt[Seq[String]].getOrElse(Seq.empty)
-    val message = if (matchAllConversation) messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(". ") else messages.head.content
+    val message = if (matchAllConversation) messages.filter(_.role.toLowerCase().trim == "user").map(_.wholeTextContent).mkString(". ") else messages.head.wholeTextContent
     operation match {
       case "contains_all" if values.forall(value => message.contains(value)) => GuardrailResult.GuardrailPass.vfuture
       case "contains_none" if values.forall(value => !message.contains(value)) => GuardrailResult.GuardrailPass.vfuture
@@ -49,7 +49,7 @@ class SemanticContainsGuardrail extends Guardrail {
     val matchAllConversation = false // config.select("match_all_conversation").asOpt[Boolean].getOrElse(false)
     val embeddingModel = new dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel()
     val store = new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
-    val message = if (matchAllConversation) messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(". ") else messages.last.content
+    val message = if (matchAllConversation) messages.filter(_.role.toLowerCase().trim == "user").map(_.wholeTextContent).mkString(". ") else messages.last.wholeTextContent
     val segment = TextSegment.from(message)
     val embedding = embeddingModel.embed(segment).content()
     store.add(embedding, segment)
@@ -89,7 +89,7 @@ class CharactersCountGuardrail extends Guardrail {
     val message = messages.head
     val min = config.select("min").asOpt[Long].getOrElse(0L)
     val max = config.select("max").asOpt[Long].getOrElse(Long.MaxValue)
-    val count = message.content.length
+    val count = message.wholeTextContent.length
     val pass = count >= min && count <= max
     if (pass) {
       GuardrailResult.GuardrailPass.vfuture
@@ -111,7 +111,7 @@ class WordsCountGuardrail extends Guardrail {
     val message = messages.head
     val min = config.select("min").asOpt[Long].getOrElse(0L)
     val max = config.select("max").asOpt[Long].getOrElse(Long.MaxValue)
-    val count = message.content.split("\\s+").length
+    val count = message.wholeTextContent.split("\\s+").length
     val pass = count >= min && count <= max
     if (pass) {
       GuardrailResult.GuardrailPass.vfuture
@@ -133,7 +133,7 @@ class SentencesCountGuardrail extends Guardrail {
     val message = messages.head
     val min = config.select("min").asOpt[Long].getOrElse(0L)
     val max = config.select("max").asOpt[Long].getOrElse(Long.MaxValue)
-    val count = message.content.split("[.!?]").length
+    val count = message.wholeTextContent.split("[.!?]").length
     val pass = count >= min && count <= max
     if (pass) {
       GuardrailResult.GuardrailPass.vfuture

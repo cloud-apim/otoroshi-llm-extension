@@ -172,7 +172,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
         val role = obj.select("role").asOpt[String].getOrElse("assistant")
         obj.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { c =>
           val text = c.select("text").asOpt[String].getOrElse("")
-          ChatGeneration(ChatMessage(role, text, None))
+          ChatGeneration(ChatMessage.output(role, text, None))
         }
       }.toSeq.flatten
       Right(ChatResponse(messages, usage))

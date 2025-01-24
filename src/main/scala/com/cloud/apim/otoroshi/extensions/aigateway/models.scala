@@ -28,14 +28,326 @@ trait ChatOptions {
     })
   }
 }
-case class ChatPrompt(messages: Seq[ChatMessage], options: Option[ChatOptions] = None) {
-  def json: JsValue = JsArray(messages.map(_.json))
+sealed trait ChatMessageContentFlavor
+object ChatMessageContentFlavor {
+  case object Common extends ChatMessageContentFlavor
+  case object OpenAi extends ChatMessageContentFlavor
+  case object Anthropic extends ChatMessageContentFlavor
+  case object Ollama extends ChatMessageContentFlavor
 }
-object ChatMessage {
-  val format = new Format[ChatMessage] {
+sealed trait ChatMessageContent { self =>
+  def json(flavor: ChatMessageContentFlavor): JsValue
+  def transformContent(f: String => String): ChatMessageContent = {
+    self
+  }
+}
+object ChatMessageContent {
 
-    override def reads(json: JsValue): JsResult[ChatMessage] = Try {
-      ChatMessage(
+  def fromJson(json: JsObject): ChatMessageContent = {
+    val url = json.at("source.url").asOptString
+    lazy val dataBase64 = json.at("source.data").asOptString.map(_.byteString.decodeBase64)
+    lazy val dataText = json.at("source.data").asOptString.map(_.byteString)
+    val mediaType = json.at("source.media_type").asOptString.getOrElse("application/octet-stream")
+    json.select("type").asOpt[String] match {
+      case Some("text") => TextContent(json.select("text").asString)
+      case Some("document") => {
+        val title = json.select("title").asOptString
+        val context = json.select("context").asOptString
+        val citations = json.at("citations.enabled").asOptBoolean
+        json.at("source.media_type").asOptString match {
+          case Some("text/plain") => TextFileContent(url, dataText, title, context, citations)
+          case Some("application/pdf") => PdfFileContent(url, dataBase64, title, context, citations)
+          case _ => TextFileContent(url, dataText, title, context, citations)
+        }
+      }
+      case Some("video") => VideoContent(mediaType, url, dataBase64)
+      case Some("image") => ImageContent(mediaType, url, dataBase64)
+      case Some("audio") =>  AudioContent(mediaType, url, dataBase64)
+      case Some("image_url") => {
+        val (openaiUrl, openaiData, openaiMediaType) = json.at("image_url.url").asOpt[String] match {
+          case Some(str) if str.startsWith("https://") || str.startsWith("http://") => (Some(str), None, "image/jpeg")
+          case Some(str) if str.startsWith("data:") && str.contains("base64,")=> {
+            val base = str.replaceFirst("data:", "")
+            val media = base.split(";")(0)
+            val base64 = base.split("base64,")(1).byteString.decodeBase64
+            (None, base64.some, media)
+          }
+        }
+        ImageContent(openaiMediaType, openaiUrl, openaiData)
+      }
+      case Some("input_audio") => {
+        val data = json.at("input_audio.data").asString.byteString.decodeBase64
+        val format = json.at("input_audio.format").asString match {
+          case "wav" => "audio/x-wav"
+          case "mp3" => "audio/mpeg3"
+        }
+        AudioContent(format, None, data.some)
+      }
+      case _ => TextContent(json.select("text").asString)
+    }
+  }
+
+  case class TextContent(text: String) extends ChatMessageContent {
+    override def json(flavor: ChatMessageContentFlavor): JsValue = flavor match {
+      case _ => Json.obj("type" -> "text", "text" -> text)
+    }
+    override def transformContent(f: String => String): ChatMessageContent = {
+      copy(text = f(text))
+    }
+  }
+  case class TextFileContent(url: Option[String], data: Option[ByteString], title: Option[String], context: Option[String], citations: Option[Boolean]) extends ChatMessageContent {
+    override def json(flavor: ChatMessageContentFlavor): JsValue = flavor match {
+      case _ => Json.obj(
+        "type" -> "document",
+        "source" -> Json.obj(
+          "type" -> "text",
+          "media_type" -> "text/plain",
+        ).applyOnWithOpt(url) {
+          case (obj, url) => obj ++ Json.obj("url" -> url)
+        }.applyOnWithOpt(data) {
+          case (obj, data) => obj ++ Json.obj("data" -> data.utf8String)
+        }
+      ).applyOnWithOpt(title) {
+        case (obj, title) => obj ++ Json.obj("title" -> title)
+      }.applyOnWithOpt(context) {
+        case (obj, context) => obj ++ Json.obj("context" -> context)
+      }.applyOnWithOpt(citations) {
+        case (obj, citations) => obj ++ Json.obj("citations" -> Json.obj("enabled" -> citations))
+      }
+    }
+  }
+  case class PdfFileContent(url: Option[String], data: Option[ByteString], title: Option[String], context: Option[String], citations: Option[Boolean]) extends ChatMessageContent {
+    val kind: String = url match {
+      case Some(_) => "url"
+      case None => data match {
+        case Some(_) => "base64"
+        case None => "unknown"
+      }
+    }
+    override def json(flavor: ChatMessageContentFlavor): JsValue = flavor match {
+      case _ => Json.obj(
+        "type" -> "document",
+        "source" -> Json.obj(
+          "type" -> kind,
+          "media_type" -> "application/pdf",
+        ).applyOnWithOpt(url) {
+          case (obj, url) => obj ++ Json.obj("url" -> url)
+        }.applyOnWithOpt(data) {
+          case (obj, data) => obj ++ Json.obj("data" -> data.encodeBase64.utf8String)
+        }
+      ).applyOnWithOpt(title) {
+        case (obj, title) => obj ++ Json.obj("title" -> title)
+      }.applyOnWithOpt(context) {
+        case (obj, context) => obj ++ Json.obj("context" -> context)
+      }.applyOnWithOpt(citations) {
+        case (obj, citations) => obj ++ Json.obj("citations" -> Json.obj("enabled" -> citations))
+      }
+    }
+  }
+  case class VideoContent(mediaType: String, url: Option[String], data: Option[ByteString]) extends ChatMessageContent {
+    val kind: String = url match {
+      case Some(_) => "url"
+      case None => data match {
+        case Some(_) => "base64"
+        case None => "unknown"
+      }
+    }
+    override def json(flavor: ChatMessageContentFlavor): JsValue = flavor match {
+      case _ => Json.obj(
+        "type" -> "video",
+        "source" -> Json.obj(
+          "type" -> kind,
+          "media_type" -> mediaType,
+        ).applyOnWithOpt(url) {
+          case (obj, url) => obj ++ Json.obj("url" -> url)
+        }.applyOnWithOpt(data) {
+          case (obj, data) => obj ++ Json.obj("data" -> data.encodeBase64.utf8String)
+        }
+      )
+    }
+  }
+  case class ImageContent(mediaType: String, url: Option[String], data: Option[ByteString]) extends ChatMessageContent {
+    val kind: String = url match {
+      case Some(_) => "url"
+      case None => data match {
+        case Some(_) => "base64"
+        case None => "unknown"
+      }
+    }
+    override def json(flavor: ChatMessageContentFlavor): JsValue = flavor match {
+      case ChatMessageContentFlavor.OpenAi => {
+        val computedUrl = data match {
+          case Some(data) => s"data:${mediaType};base64,${data.encodeBase64.utf8String}"
+          case _ => url.get
+        }
+        Json.obj(
+          "type" -> "image_url",
+          "image_url" -> Json.obj(
+            "url" -> computedUrl,
+          )
+        )
+      }
+      case _ => Json.obj(
+        "type" -> "image",
+        "source" -> Json.obj(
+          "type" -> kind,
+          "media_type" -> mediaType,
+        ).applyOnWithOpt(url) {
+          case (obj, url) => obj ++ Json.obj("url" -> url)
+        }.applyOnWithOpt(data) {
+          case (obj, data) => obj ++ Json.obj("data" -> data.encodeBase64.utf8String)
+        }
+      )
+    }
+  }
+  case class AudioContent(mediaType: String, url: Option[String], data: Option[ByteString]) extends ChatMessageContent {
+    val kind: String = url match {
+      case Some(_) => "url"
+      case None => data match {
+        case Some(_) => "base64"
+        case None => "unknown"
+      }
+    }
+    override def json(flavor: ChatMessageContentFlavor): JsValue = flavor match {
+      case ChatMessageContentFlavor.OpenAi => Json.obj(
+        "type" -> "input_audio",
+        "input_audio" -> Json.obj(
+          "data" -> data.get.encodeBase64.utf8String,
+          "format" -> mediaType,
+        )
+      )
+      case _ => Json.obj(
+        "type" -> "audio",
+        "source" -> Json.obj(
+          "type" -> kind,
+          "media_type" -> mediaType,
+        ).applyOnWithOpt(url) {
+          case (obj, url) => obj ++ Json.obj("url" -> url)
+        }.applyOnWithOpt(data) {
+          case (obj, data) => obj ++ Json.obj("data" -> data.encodeBase64.utf8String)
+        }
+      )
+    }
+  }
+}
+
+trait ChatMessage {
+  def role: String
+  def wholeTextContent: String
+  // def content: String
+}
+
+object ChatMessage {
+  def input(role: String, content: String, prefix: Option[Boolean]): InputChatMessage = {
+    InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None)
+  }
+  def output(role: String, content: String, prefix: Option[Boolean]): OutputChatMessage = {
+    OutputChatMessage(role, content, prefix)
+  }
+}
+
+case class ChatPrompt(messages: Seq[InputChatMessage], options: Option[ChatOptions] = None) {
+  def json: JsValue = JsArray(messages.map(_.json(ChatMessageContentFlavor.Common)))
+  def jsonWithFlavor(flavor: ChatMessageContentFlavor): JsValue = JsArray(messages.map(_.json(flavor)))
+}
+object InputChatMessage {
+  def fromJson(json: JsValue): InputChatMessage = format.reads(json).get
+  def fromJsonSafe(json: JsValue): Option[InputChatMessage] = format.reads(json).asOpt
+  val format = new Format[InputChatMessage] {
+    override def reads(json: JsValue): JsResult[InputChatMessage] = Try {
+      val content: Seq[ChatMessageContent] = json.select("content").asOptString match {
+        case Some(text) => Seq(ChatMessageContent.TextContent(text))
+        case None => json.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
+          ChatMessageContent.fromJson(obj)
+        }
+      }
+      InputChatMessage(
+        role = json.select("role").asString,
+        contentParts = content,
+        prefix = json.select("prefix").asOptBoolean,
+        name = json.select("name").asOptString,
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+
+    override def writes(o: InputChatMessage): JsValue = o.json(ChatMessageContentFlavor.Common)
+  }
+}
+case class InputChatMessage(role: String, contentParts: Seq[ChatMessageContent], prefix: Option[Boolean], name: Option[String]) extends ChatMessage {
+
+  def json(flavor: ChatMessageContentFlavor): JsValue = Json.obj(
+    "role" -> role,
+  ).applyOnIf(isSingleTextContent) { obj =>
+    val text: String = singleTextContentUnsafe
+    obj ++ Json.obj("content" -> text)
+  }.applyOnIf(!isSingleTextContent) { obj =>
+    val arr: JsArray = JsArray(contentParts.map(_.json(flavor)))
+    obj ++ Json.obj("content" -> arr)
+  }.applyOnWithOpt(prefix) {
+    case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
+  }.applyOnWithOpt(name) {
+    case (obj, name) => obj ++ Json.obj("name" -> name)
+  }.applyOnIf(flavor == ChatMessageContentFlavor.Ollama && hasImage) { obj =>
+    obj ++ Json.obj("images" -> images)
+  }
+
+  def content: String = singleTextContentUnsafe
+  def images: JsArray = JsArray(contentParts.collect {
+    case i: ChatMessageContent.ImageContent => i
+  }.map { img =>
+    img.data.get.encodeBase64.utf8String.json
+  })
+
+  lazy val wholeTextContent: String = {
+    contentParts.collect {
+      case p: ChatMessageContent.TextContent => p.text
+    }.mkString(". ")
+  }
+
+  def transformContent(f: String => String): InputChatMessage = {
+    copy(contentParts = contentParts.map(_.transformContent(f)))
+  }
+
+  def isSingleTextContent: Boolean = {
+    val textParts = contentParts.collect {
+      case t: ChatMessageContent.TextContent => t
+    }
+    if (textParts.size == 1) {
+      textParts.head match {
+        case ChatMessageContent.TextContent(_) => true
+        case _ => false
+      }
+    } else {
+      false
+    }
+  }
+
+  def hasImage: Boolean = {
+    contentParts.collect {
+      case t: ChatMessageContent.ImageContent => t
+    }.nonEmpty
+  }
+
+  def singleTextContentUnsafe: String = singleTextContent.getOrElse("no content")
+
+  def singleTextContent: Option[String] = {
+    if (isSingleTextContent) {
+      contentParts.head match {
+        case ChatMessageContent.TextContent(text) => text.some
+        case _ => None
+      }
+    } else {
+      None
+    }
+  }
+}
+
+object OutputChatMessage {
+  val format = new Format[OutputChatMessage] {
+    override def reads(json: JsValue): JsResult[OutputChatMessage] = Try {
+      OutputChatMessage(
         role = json.select("role").asString,
         content = json.select("content").asString,
         prefix = json.select("prefix").asOptBoolean,
@@ -45,27 +357,28 @@ object ChatMessage {
       case Success(e) => JsSuccess(e)
     }
 
-    override def writes(o: ChatMessage): JsValue = o.json
+    override def writes(o: OutputChatMessage): JsValue = o.json
   }
 }
-case class ChatMessage(role: String, content: String, prefix: Option[Boolean]) {
+case class OutputChatMessage(role: String, content: String, prefix: Option[Boolean]) extends ChatMessage {
+
+  override def wholeTextContent: String = content
+
   def json: JsValue = Json.obj(
     "role" -> role,
     "content" -> content,
   ).applyOnWithOpt(prefix) {
     case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
   }
-  def asLangchain4j: dev.langchain4j.data.message.ChatMessage = {
-    role match {
-      case "user" => new dev.langchain4j.data.message.UserMessage(content)
-      case "assistant" => new dev.langchain4j.data.message.AiMessage(content)
-      case "ai" => new dev.langchain4j.data.message.AiMessage(content)
-      case "system" => new dev.langchain4j.data.message.SystemMessage(content)
-      case _ => new dev.langchain4j.data.message.UserMessage(content)
-    }
+
+  def toInput(): InputChatMessage = InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None)
+
+  def transformContent(f: String => String): OutputChatMessage = {
+    copy(content = f(content))
   }
 }
-case class ChatGeneration(message: ChatMessage) {
+
+case class ChatGeneration(message: OutputChatMessage) {
   def json: JsValue = Json.obj(
     "message" -> message.json
   )

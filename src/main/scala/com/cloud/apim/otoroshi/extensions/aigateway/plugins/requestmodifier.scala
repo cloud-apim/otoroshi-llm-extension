@@ -52,8 +52,8 @@ class AiRequestBodyModifier extends NgRequestTransformer {
             val promise = Promise[Source[ByteString, NotUsed]]()
             ctx.otoroshiRequest.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
               client.call(ChatPrompt(config.preChatMessages ++ Seq(
-                ChatMessage("system", config.prompt, None),
-                ChatMessage("user", bodyRaw.utf8String, None),
+                ChatMessage.input("system", config.prompt, None),
+                ChatMessage.input("user", bodyRaw.utf8String, None),
               ) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
                 case Left(err) => promise.trySuccess(Source.single(err.stringify.byteString))
                 case Right(resp) => {

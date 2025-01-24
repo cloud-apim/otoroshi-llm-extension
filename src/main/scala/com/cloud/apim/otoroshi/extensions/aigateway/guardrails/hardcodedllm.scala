@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt, InputChatMessage, OutputChatMessage}
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmValidationSettings}
 import otoroshi.env.Env
@@ -195,7 +195,7 @@ abstract class HardCodedLLMGuardrail extends Guardrail {
     GuardrailResult.GuardrailDenied(msg).vfuture
   }
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val llmValidation = LlmValidationSettings.format.reads(config).getOrElse(LlmValidationSettings())
     llmValidation.provider match {
       case None => pass()
@@ -204,8 +204,12 @@ abstract class HardCodedLLMGuardrail extends Guardrail {
         env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(ref).flatMap(_.getChatClient())) match {
           case None => GuardrailResult.GuardrailDenied("validation provider not found").vfuture
           case Some(validationClient) => {
+            val messages = _messages.map {
+              case i: InputChatMessage => i
+              case o: OutputChatMessage => o.toInput()
+            }
             validationClient.call(ChatPrompt(Seq(
-              ChatMessage("system", systemPrompt(
+              ChatMessage.input("system", systemPrompt(
                 config.select("items").asOpt[Seq[String]]
                   .orElse(config.select("pif_items").asOpt[Seq[String]])
                   .orElse(config.select("moderation_items").asOpt[Seq[String]])

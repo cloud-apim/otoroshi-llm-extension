@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
-import com.cloud.apim.otoroshi.extensions.aigateway.ChatMessage
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, InputChatMessage}
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
 import otoroshi.env.Env
 import otoroshi.models._
@@ -29,20 +29,20 @@ case class PromptContext(
   override def theDescription: String           = description
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
-  def preChatMessages(): Seq[ChatMessage] = {
+  def preChatMessages(): Seq[InputChatMessage] = {
     preMessages.map { message =>
       val role = message.select("role").asOpt[String].getOrElse("user")
       val content = message.select("content").asOpt[String].getOrElse("no input")
       val prefix = message.select("prefix").asOptBoolean
-      ChatMessage(role, content, prefix)
+      ChatMessage.input(role, content, prefix)
     }
   }
-  def postChatMessages(): Seq[ChatMessage] = {
+  def postChatMessages(): Seq[InputChatMessage] = {
     postMessages.map { message =>
       val role = message.select("role").asOpt[String].getOrElse("user")
       val content = message.select("content").asOpt[String].getOrElse("no input")
       val prefix = message.select("prefix").asOptBoolean
-      ChatMessage(role, content, prefix)
+      ChatMessage.input(role, content, prefix)
     }
   }
 }

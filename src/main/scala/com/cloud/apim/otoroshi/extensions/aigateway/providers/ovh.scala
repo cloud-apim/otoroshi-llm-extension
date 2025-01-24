@@ -206,7 +206,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
         val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
           val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
           val content = obj.select("message").select("content").asOpt[String].getOrElse("")
-          ChatGeneration(ChatMessage(role, content, None))
+          ChatGeneration(ChatMessage.output(role, content, None))
         }
         Right(ChatResponse(messages, usage))
     }
@@ -215,7 +215,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    api.stream(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
+    api.stream(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi)))).map {
       case Left(err) => err.left
       case Right((source, resp)) =>
         source
@@ -322,7 +322,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
         }
         val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
           val content = obj.select("text").asString
-          ChatGeneration(ChatMessage("assistant", content, None))
+          ChatGeneration(ChatMessage.output("assistant", content, None))
         }
         Right(ChatResponse(messages, usage))
     }

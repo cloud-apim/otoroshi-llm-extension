@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmValidationSettings}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt, InputChatMessage, OutputChatMessage}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -23,7 +23,7 @@ class LLMGuardrail extends Guardrail {
 
   def fail(idx: Int): Future[GuardrailResult] = GuardrailResult.GuardrailDenied(s"request content did not pass llm validation (${idx})").vfuture
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val llmValidation = LlmValidationSettings.format.reads(config).getOrElse(LlmValidationSettings())
     llmValidation.provider match {
       case None => pass()
@@ -37,13 +37,17 @@ class LLMGuardrail extends Guardrail {
               env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(ref).flatMap(_.getChatClient())) match {
                 case None => GuardrailResult.GuardrailDenied("validation provider not found").vfuture
                 case Some(validationClient) => {
+                  val messages = _messages.map {
+                    case i: InputChatMessage => i
+                    case o: OutputChatMessage => o.toInput()
+                  }
                   validationClient.call(ChatPrompt(Seq(
-                    ChatMessage("system", prompt.prompt, None)
+                    ChatMessage.input("system", prompt.prompt, None)
                   ) ++ messages), attrs, Json.obj()).flatMap {
                     case Left(err) => fail(2)
                     case Right(resp) => {
                       val content = resp.generations.head.message.content.toLowerCase().trim.replace("\n", " ")
-                      println(s"content: '${content}'")
+                      //  println(s"content: '${content}'")
                       if (content == "true") {
                         pass()
                       } else if (content == "false") {

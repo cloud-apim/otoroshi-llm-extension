@@ -2,7 +2,6 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
 import akka.stream.scaladsl.{Sink, Source}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins._
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._

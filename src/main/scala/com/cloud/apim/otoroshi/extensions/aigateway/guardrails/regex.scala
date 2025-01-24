@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatMessageContent, InputChatMessage, OutputChatMessage}
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
@@ -28,10 +28,22 @@ class RegexGuardrail extends Guardrail {
     val allow = config.select("allow").asOpt[Seq[String]].getOrElse(Seq.empty)
     val deny = config.select("deny").asOpt[Seq[String]].getOrElse(Seq.empty)
 
-    if (validate(messages.head.content, allow, deny)) {
-      GuardrailResult.GuardrailPass.vfuture
-    } else {
-      GuardrailResult.GuardrailDenied("message does not match regex").vfuture
+    messages.head match {
+      case i: InputChatMessage => {
+        val content: String = i.wholeTextContent
+        if (validate(content, allow, deny)) {
+          GuardrailResult.GuardrailPass.vfuture
+        } else {
+          GuardrailResult.GuardrailDenied("message does not match regex").vfuture
+        }
+      }
+      case OutputChatMessage(_, content, _) => {
+        if (validate(content, allow, deny)) {
+          GuardrailResult.GuardrailPass.vfuture
+        } else {
+          GuardrailResult.GuardrailDenied("message does not match regex").vfuture
+        }
+      }
     }
   }
 }

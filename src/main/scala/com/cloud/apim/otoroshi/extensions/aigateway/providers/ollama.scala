@@ -277,14 +277,14 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
       api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(
         "model" -> mergedOptions.select("model").asOptString.getOrElse(options.model).asInstanceOf[String],
         "stream" -> false,
-        "messages" -> prompt.json,
+        "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
         "options" -> mergedOptionsWithoutModel,
       ) ++ tools), options.mcpConnectors)
     } else {
       api.call("POST", "/api/chat", Some(Json.obj(
         "model" -> options.model,
         "stream" -> false,
-        "messages" -> prompt.json,
+        "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
         "options" -> mergedOptions
       )))
     }
@@ -327,7 +327,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
       }
       val role = resp.body.select("message").select("role").asOpt[String].getOrElse("user")
       val content = resp.body.select("message").select("content").asOpt[String].getOrElse("")
-      val message = ChatGeneration(ChatMessage(role, content, None))
+      val message = ChatGeneration(ChatMessage.output(role, content, None))
       Right(ChatResponse(Seq(message), usage))
     }
   }
@@ -339,7 +339,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     api.stream("POST", "/api/chat", Some(Json.obj(
       "model" -> mergedOptions.select("model").asOptString.getOrElse(options.model).asInstanceOf[String],
       "stream" -> true,
-      "messages" -> prompt.json,
+      "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
       "options" -> mergedOptionsWithoutModel
     ))).map {
       case Left(err) => err.left
@@ -448,7 +448,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
       }
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
         val content = obj.select("text").asString
-        ChatGeneration(ChatMessage("assistant", content, None))
+        ChatGeneration(ChatMessage.output("assistant", content, None))
       }
       Right(ChatResponse(messages, usage))
     }

@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, HttpValidationSettings}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatMessageContentFlavor, InputChatMessage, OutputChatMessage}
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -32,7 +32,7 @@ class WebhookGuardrail extends Guardrail {
   override def manyMessages: Boolean = true
 
   override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
-    val key = messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
+    val key = messages.map(m => s"${m.role}:${m.wholeTextContent}").mkString(",").sha512
     val httpValidation = HttpValidationSettings.format.reads(config).getOrElse(HttpValidationSettings())
     httpValidation.url match {
       case None => GuardrailResult.GuardrailPass.vfuture
@@ -41,10 +41,14 @@ class WebhookGuardrail extends Guardrail {
           case Some((_, true)) => GuardrailResult.GuardrailPass.vfuture
           case Some((_, false)) => GuardrailResult.GuardrailDenied("request content did not pass http validation").vfuture
           case None => {
+            val arr = messages.map {
+              case i: InputChatMessage => i.json(ChatMessageContentFlavor.Common)
+              case o: OutputChatMessage => o.json
+            }
             env.Ws
               .url(httpValidation.url.get)
               .withHttpHeaders(httpValidation.headers.toSeq: _*)
-              .post(JsArray(messages.map(_.json))).flatMap { resp =>
+              .post(JsArray(arr)).flatMap { resp =>
                 if (resp.status != 200) {
                   WebhookGuardrail.cache.put(key, (httpValidation.ttl, false))
                   GuardrailResult.GuardrailDenied("request content did not pass http validation").vfuture

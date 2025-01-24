@@ -178,7 +178,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
     originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
       case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
       case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-        Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg, prefix = None))),
+        Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None))),
         ChatResponseMetadata.empty,
       )).vfuture
       case GuardrailResult.GuardrailPass => {
@@ -188,7 +188,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
             originalProvider.guardrails.call(GuardrailsCallPhase.After, r.generations.map(_.message), originalProvider, chatClient, attrs).flatMap {
               case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "after")).vfuture
               case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-                Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg, prefix = None))),
+                Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None))),
                 ChatResponseMetadata.empty,
               )).vfuture
               case GuardrailResult.GuardrailPass => Right(r).vfuture
@@ -203,7 +203,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
     originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
       case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
       case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-        Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg, prefix = None))),
+        Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None))),
         ChatResponseMetadata.empty,
       ).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
       case GuardrailResult.GuardrailPass => {
@@ -219,7 +219,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
     originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
       case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
       case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-        Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg, prefix = None))),
+        Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None))),
         ChatResponseMetadata.empty,
       )).vfuture
       case GuardrailResult.GuardrailPass => {
@@ -229,7 +229,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
             originalProvider.guardrails.call(GuardrailsCallPhase.After, r.generations.map(_.message), originalProvider, chatClient, attrs).flatMap {
               case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "after")).vfuture
               case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-                Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg, prefix = None))),
+                Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None))),
                 ChatResponseMetadata.empty,
               )).vfuture
               case GuardrailResult.GuardrailPass => Right(r).vfuture
@@ -244,7 +244,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
     originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
       case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
       case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-        Seq(ChatGeneration(ChatMessage(role = "assistant", content = msg, prefix = None))),
+        Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None))),
         ChatResponseMetadata.empty,
       ).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
       case GuardrailResult.GuardrailPass => {

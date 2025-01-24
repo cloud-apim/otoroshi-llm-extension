@@ -137,7 +137,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    api.call("POST", "/v1/messages", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
+    api.call("POST", "/v1/messages", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic)))).map {
       case Left(err) => err.left
       case Right(resp) =>
         val usage = ChatResponseMetadata(
@@ -177,7 +177,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
         val role = resp.body.select("role").asOpt[String].getOrElse("assistant")
         val messages = resp.body.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
           val content = obj.select("text").asOpt[String].getOrElse("")
-          ChatGeneration(ChatMessage(role, content, None))
+          ChatGeneration(ChatMessage.output(role, content, None))
         }
         Right(ChatResponse(messages, usage))
     }

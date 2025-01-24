@@ -313,7 +313,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
         val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
         val content = obj.select("message").select("content").asOpt[String].getOrElse("")
-        ChatGeneration(ChatMessage(role, content, None))
+        ChatGeneration(ChatMessage.output(role, content, None))
       }
       Right(ChatResponse(messages, usage))
     }
@@ -438,7 +438,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
         val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
         val content = obj.select("message").select("content").asOpt[String].getOrElse("")
-        ChatGeneration(ChatMessage(role, content, None))
+        ChatGeneration(ChatMessage.output(role, content, None))
       }
       Right(ChatResponse(messages, usage))
     }

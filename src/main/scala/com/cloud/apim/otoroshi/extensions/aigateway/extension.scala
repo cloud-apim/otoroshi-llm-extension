@@ -5,7 +5,7 @@ import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities._
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHardcodedItems
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage}
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
 import otoroshi.models._
@@ -186,8 +186,8 @@ class AiExtension(val env: Env) extends AdminExtension {
                         //val role = bodyJson.select("role").asOpt[String].getOrElse("user")
                         //val content = bodyJson.select("content").asOpt[String].getOrElse("no input")
                         //val lastMessage = ChatMessage(role, content)
-                        val historyMessages: Seq[ChatMessage] = bodyJson.select("history").asOpt[Seq[JsObject]].map(_.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
-                        val messages: Seq[ChatMessage] = historyMessages // ++ Seq(lastMessage)
+                        val historyMessages: Seq[InputChatMessage] = bodyJson.select("history").asOpt[Seq[JsObject]].map(_.flatMap(o => InputChatMessage.fromJsonSafe(o))).getOrElse(Seq.empty)
+                        val messages: Seq[InputChatMessage] = historyMessages // ++ Seq(lastMessage)
                         client.call(ChatPrompt(messages), TypedMap.empty, Json.obj()).map {
                           case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                           case Right(response) => {
@@ -229,10 +229,15 @@ class AiExtension(val env: Env) extends AdminExtension {
                 case Some(provider) => provider.getChatClient() match {
                   case None => Results.Ok(Json.obj("done" -> false, "error" -> "no client")).vfuture
                   case Some(client) => {
-                    val role = bodyJson.select("role").asOpt[String].getOrElse("user")
-                    val content = bodyJson.select("content").asOpt[String].getOrElse("no input")
-                    val prefix = bodyJson.select("prefix").asOptBoolean
-                    client.call(ChatPrompt(messages.map(m => ChatMessage(m.select("role").asOpt[String].getOrElse("system"), m.select("content").asOpt[String].getOrElse(""), m.select("prefix").asOptBoolean)) ++ Seq(ChatMessage(role, content, None))), TypedMap.empty, Json.obj()).map {
+                    // val role = bodyJson.select("role").asOpt[String].getOrElse("user")
+                    // val content = bodyJson.select("content").asOpt[String].getOrElse("no input")
+                    // val prefix = bodyJson.select("prefix").asOptBoolean
+                    client.call(ChatPrompt(messages.map(m => /*ChatMessage.input(
+                      m.select("role").asOpt[String].getOrElse("system"),
+                      m.select("content").asOpt[String].getOrElse(""),
+                      m.select("prefix").asOptBoolean)*/
+                      InputChatMessage.fromJson(m)
+                    ) ++ Seq(InputChatMessage.fromJson(bodyJson)/*ChatMessage(role, content, prefix)*/)), TypedMap.empty, Json.obj()).map {
                       case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                       case Right(response) => {
                         Results.Ok(Json.obj("done" -> true, "response" -> response.generations.map(_.json)))
@@ -272,7 +277,7 @@ class AiExtension(val env: Env) extends AdminExtension {
                   case Some(client) => {
                     val context = bodyJson.select("ctx").asOpt[JsObject].getOrElse(Json.obj())
                     val messagesRaw = AiLlmProxy.applyTemplate(template, context)
-                    val messages = messagesRaw.map(m => ChatMessage(m.select("role").asOpt[String].getOrElse("system"), m.select("content").asOpt[String].getOrElse(""), m.select("prefix").asOptBoolean))
+                    val messages = messagesRaw.map(m => ChatMessage.input(m.select("role").asOpt[String].getOrElse("system"), m.select("content").asOpt[String].getOrElse(""), m.select("prefix").asOptBoolean))
                     client.call(ChatPrompt(messages), TypedMap.empty, Json.obj()).map {
                       case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                       case Right(response) => {
@@ -309,7 +314,7 @@ class AiExtension(val env: Env) extends AdminExtension {
               case None => Results.Ok(Json.obj("done" -> false, "error" -> "no client")).vfuture
               case Some(client) => {
                 val prompt = bodyJson.select("prompt").asOpt[String].getOrElse("")
-                val messages = Seq(ChatMessage("user", prompt, None))
+                val messages = Seq(ChatMessage.input("user", prompt, None))
                 client.call(ChatPrompt(messages), TypedMap.empty, Json.obj()).map {
                   case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                   case Right(response) => {

@@ -5,7 +5,7 @@ import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
@@ -76,10 +76,11 @@ class OpenAiCompatProxy extends NgBackendCall {
         if (validate(requestMessages, ctx)) {
           val (preContextMessages, postContextMessages) = ctx.attrs.get(AiPluginsKeys.PromptContextKey).getOrElse((Seq.empty, Seq.empty))
           val messages = (preContextMessages ++ requestMessages ++ postContextMessages).map { obj =>
-            val role = obj.select("role").asOpt[String].getOrElse("user")
-            val content = obj.select("content").asOpt[String].getOrElse("")
-            val prefix = obj.select("prefix").asOptBoolean
-            ChatMessage(role, content, prefix)
+            // val role = obj.select("role").asOpt[String].getOrElse("user")
+            // val content = obj.select("content").asOpt[String].getOrElse("")
+            // val prefix = obj.select("prefix").asOptBoolean
+            // ChatMessage.input(role, content, prefix)
+            InputChatMessage.fromJson(obj)
           }
           if (stream) {
             client.tryStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {
@@ -192,7 +193,7 @@ class OpenAiCompletionProxy extends NgBackendCall {
             val role = obj.select("role").asOpt[String].getOrElse("user")
             val content = obj.select("content").asOpt[String].getOrElse("")
             val prefix = obj.select("prefix").asOptBoolean
-            ChatMessage(role, content, prefix)
+            ChatMessage.input(role, content, prefix)
           }
           if (stream) {
             client.tryCompletionStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {

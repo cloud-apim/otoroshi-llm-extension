@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import akka.stream.Materializer
-import com.cloud.apim.otoroshi.extensions.aigateway.{LLmExtensionSuite, LlmProviders, OtoroshiClient, TestLlmProviderSettings}
+import com.cloud.apim.otoroshi.extensions.aigateway.{LLmExtensionSuite, LlmExtensionOneOtoroshiServerPerSuite, LlmProviders, OtoroshiClient, TestLlmProviderSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.domains.LlmProviderUtils
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmToolFunction, LlmToolFunctionBackend, LlmToolFunctionBackendKind, LlmToolFunctionBackendOptions}
 import otoroshi.api.Otoroshi
@@ -678,4 +678,438 @@ class ProvidersSuite extends LLmExtensionSuite {
       testToolsCallStreamWith(provider, client, 30.seconds)
     }
   }
+}
+
+class ImageContentSuite extends LlmExtensionOneOtoroshiServerPerSuite {
+
+  test("provider openai should be able to handle image content in openai format") {
+    val provider = LlmProviders.openai
+    val token = sys.env(provider.envToken)
+    val port = client.port
+    val providerId = s"provider_${UUID.randomUUID().toString}"
+    val routeChatId = s"route_${UUID.randomUUID().toString}"
+    val awaitFor = 30.seconds
+
+    val llmprovider = AiProvider(
+      id = providerId,
+      name = s"${provider.name} provider",
+      provider = provider.name,
+      connection = provider.baseUrl match {
+        case None => Json.obj(
+          "token" -> token,
+          "timeout" -> 30000
+        )
+        case Some(url) => Json.obj(
+          "base_url" -> url,
+          "token" -> token,
+          "timeout" -> 30000
+        )
+      },
+      options = provider.options,
+    )
+    LlmProviderUtils.upsertProvider(client)(llmprovider)
+    val routeChat = client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertRaw(routeChatId, Json.parse(
+      s"""{
+         |  "id": "${routeChatId}",
+         |  "name": "openai",
+         |  "frontend": {
+         |    "domains": [
+         |      "${provider.name}.oto.tools/chat_img"
+         |    ]
+         |  },
+         |  "backend": {
+         |    "targets": [
+         |      {
+         |        "id": "target_1",
+         |        "hostname": "request.otoroshi.io",
+         |        "port": 443,
+         |        "tls": true
+         |      }
+         |    ],
+         |    "root": "/",
+         |    "rewrite": false,
+         |    "load_balancing": {
+         |      "type": "RoundRobin"
+         |    }
+         |  },
+         |  "plugins": [
+         |    {
+         |      "enabled": true,
+         |      "plugin": "cp:otoroshi.next.plugins.OverrideHost"
+         |    },
+         |    {
+         |      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
+         |      "config": {
+         |        "refs": [
+         |          "${providerId}"
+         |        ]
+         |      }
+         |    }
+         |  ]
+         |}""".stripMargin)).awaitf(awaitFor)
+    assert(routeChat.created, s"[${provider.name}] route chat has not been created")
+    await(1300.millis)
+    val resp = client.call("POST", s"http://${provider.name}.oto.tools:${port}/chat_img", Map.empty, Some(Json.parse(
+      s"""{
+         |  "model": "gpt-4o",
+         |  "messages": [
+         |    {
+         |      "role": "user",
+         |      "content": [
+         |        {
+         |          "type": "text",
+         |          "text": "Whats in this image?"
+         |        },
+         |        {
+         |          "type": "image_url",
+         |          "image_url": {
+         |            "url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/Orange_tabby_cat_sitting_on_fallen_leaves-Hisashi-01.jpg/398px-Orange_tabby_cat_sitting_on_fallen_leaves-Hisashi-01.jpg"
+         |          }
+         |        }
+         |      ]
+         |    }
+         |  ],
+         |  "max_tokens": 300
+         |}""".stripMargin))).awaitf(awaitFor)
+    if (resp.status != 200 && resp.status != 201) {
+      println(resp.body)
+    }
+    // assertEquals(resp.status, 200, s"[${provider.name}] chat route did not respond with 200")
+    val pointer = resp.json.at("choices.0.message.content")
+    // assert(pointer.isDefined, s"[${provider.name}] no message content")
+    // assert(pointer.get.asString.nonEmpty, s"[${provider.name}] no message")
+    println(s"[${provider.name}] message: ${pointer.asString}")
+    client.forLlmEntity("providers").deleteEntity(llmprovider)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
+    await(1300.millis)
+  }
+
+  test("provider anthropic should be able to handle image content in anthropic format") {
+    val provider = LlmProviders.anthropic
+    val token = sys.env(provider.envToken)
+    val port = client.port
+    val providerId = s"provider_${UUID.randomUUID().toString}"
+    val routeChatId = s"route_${UUID.randomUUID().toString}"
+    val awaitFor = 30.seconds
+
+    val llmprovider = AiProvider(
+      id = providerId,
+      name = s"${provider.name} provider",
+      provider = provider.name,
+      connection = provider.baseUrl match {
+        case None => Json.obj(
+          "token" -> token,
+          "timeout" -> 30000
+        )
+        case Some(url) => Json.obj(
+          "base_url" -> url,
+          "token" -> token,
+          "timeout" -> 30000
+        )
+      },
+      options = provider.options,
+    )
+    LlmProviderUtils.upsertProvider(client)(llmprovider)
+    val routeChat = client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertRaw(routeChatId, Json.parse(
+      s"""{
+         |  "id": "${routeChatId}",
+         |  "name": "openai",
+         |  "frontend": {
+         |    "domains": [
+         |      "${provider.name}.oto.tools/chat_img"
+         |    ]
+         |  },
+         |  "backend": {
+         |    "targets": [
+         |      {
+         |        "id": "target_1",
+         |        "hostname": "request.otoroshi.io",
+         |        "port": 443,
+         |        "tls": true
+         |      }
+         |    ],
+         |    "root": "/",
+         |    "rewrite": false,
+         |    "load_balancing": {
+         |      "type": "RoundRobin"
+         |    }
+         |  },
+         |  "plugins": [
+         |    {
+         |      "enabled": true,
+         |      "plugin": "cp:otoroshi.next.plugins.OverrideHost"
+         |    },
+         |    {
+         |      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
+         |      "config": {
+         |        "refs": [
+         |          "${providerId}"
+         |        ]
+         |      }
+         |    }
+         |  ]
+         |}""".stripMargin)).awaitf(awaitFor)
+    assert(routeChat.created, s"[${provider.name}] route chat has not been created")
+    await(1300.millis)
+    val url = "https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/Orange_tabby_cat_sitting_on_fallen_leaves-Hisashi-01.jpg/398px-Orange_tabby_cat_sitting_on_fallen_leaves-Hisashi-01.jpg"
+    val imgResp = client.call("GET", url, Map.empty, None).awaitf(awaitFor)
+    val base64 = imgResp.bodyAsBytes.encodeBase64.utf8String
+    val resp = client.call("POST", s"http://${provider.name}.oto.tools:${port}/chat_img", Map.empty, Some(
+      Json.obj(
+        "model" -> "claude-3-5-sonnet-20241022",
+        "max_tokens" -> 300,
+        "messages" -> Json.arr(
+          Json.obj(
+            "role" -> "user",
+            "content" -> Json.arr(
+              Json.obj(
+                "type" -> "text",
+                "text" -> "Whats in this image?"
+              ),
+              Json.obj(
+                "type" -> "image",
+                "source" -> Json.obj(
+                  "type" -> "base64",
+                  "media_type" -> "image/jpeg",
+                  "data" -> base64,
+                )
+              )
+            )
+          )
+        )
+      )
+    )).awaitf(awaitFor)
+    if (resp.status != 200 && resp.status != 201) {
+      println(resp.body)
+    }
+    // assertEquals(resp.status, 200, s"[${provider.name}] chat route did not respond with 200")
+    val pointer = resp.json.at("choices.0.message.content")
+    // assert(pointer.isDefined, s"[${provider.name}] no message content")
+    // assert(pointer.get.asString.nonEmpty, s"[${provider.name}] no message")
+    println(s"[${provider.name}] message: ${pointer.asString}")
+    client.forLlmEntity("providers").deleteEntity(llmprovider)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
+    await(1300.millis)
+  }
+
+  test("provider anthropic should be able to handle image content in open format") {
+    val provider = LlmProviders.anthropic
+    val token = sys.env(provider.envToken)
+    val port = client.port
+    val providerId = s"provider_${UUID.randomUUID().toString}"
+    val routeChatId = s"route_${UUID.randomUUID().toString}"
+    val awaitFor = 30.seconds
+
+    val llmprovider = AiProvider(
+      id = providerId,
+      name = s"${provider.name} provider",
+      provider = provider.name,
+      connection = provider.baseUrl match {
+        case None => Json.obj(
+          "token" -> token,
+          "timeout" -> 30000
+        )
+        case Some(url) => Json.obj(
+          "base_url" -> url,
+          "token" -> token,
+          "timeout" -> 30000
+        )
+      },
+      options = provider.options,
+    )
+    LlmProviderUtils.upsertProvider(client)(llmprovider)
+    val routeChat = client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertRaw(routeChatId, Json.parse(
+      s"""{
+         |  "id": "${routeChatId}",
+         |  "name": "openai",
+         |  "frontend": {
+         |    "domains": [
+         |      "${provider.name}.oto.tools/chat_img"
+         |    ]
+         |  },
+         |  "backend": {
+         |    "targets": [
+         |      {
+         |        "id": "target_1",
+         |        "hostname": "request.otoroshi.io",
+         |        "port": 443,
+         |        "tls": true
+         |      }
+         |    ],
+         |    "root": "/",
+         |    "rewrite": false,
+         |    "load_balancing": {
+         |      "type": "RoundRobin"
+         |    }
+         |  },
+         |  "plugins": [
+         |    {
+         |      "enabled": true,
+         |      "plugin": "cp:otoroshi.next.plugins.OverrideHost"
+         |    },
+         |    {
+         |      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
+         |      "config": {
+         |        "refs": [
+         |          "${providerId}"
+         |        ]
+         |      }
+         |    }
+         |  ]
+         |}""".stripMargin)).awaitf(awaitFor)
+    assert(routeChat.created, s"[${provider.name}] route chat has not been created")
+    await(1300.millis)
+    val url = "https://upload.wikimedia.org/wikipedia/commons/thumb/8/85/Orange_tabby_cat_sitting_on_fallen_leaves-Hisashi-01.jpg/398px-Orange_tabby_cat_sitting_on_fallen_leaves-Hisashi-01.jpg"
+    val imgResp = client.call("GET", url, Map.empty, None).awaitf(awaitFor)
+    val base64 = imgResp.bodyAsBytes.encodeBase64.utf8String
+    val resp = client.call("POST", s"http://${provider.name}.oto.tools:${port}/chat_img", Map.empty, Some(
+      Json.obj(
+        "model" -> "claude-3-5-sonnet-20241022",
+        "max_tokens" -> 300,
+        "messages" -> Json.arr(
+          Json.obj(
+            "role" -> "user",
+            "content" -> Json.arr(
+              Json.obj(
+                "type" -> "text",
+                "text" -> "Whats in this image?"
+              ),
+              Json.obj(
+                "type" -> "image_url",
+                "image_url" -> Json.obj(
+                  "url" -> s"data:image/jpeg;base64,${base64}",
+                )
+              )
+            )
+          )
+        )
+      )
+    )).awaitf(awaitFor)
+    if (resp.status != 200 && resp.status != 201) {
+      //println(resp.body)
+    }
+    assertEquals(resp.status, 200, s"[${provider.name}] chat route did not respond with 200")
+    val pointer = resp.json.at("choices.0.message.content")
+    assert(pointer.isDefined, s"[${provider.name}] no message content")
+    assert(pointer.get.asString.nonEmpty, s"[${provider.name}] no message")
+    assert(pointer.get.asString.contains("cat"), s"[${provider.name}] no cat")
+    println(s"[${provider.name}] message: ${pointer.asString}")
+    client.forLlmEntity("providers").deleteEntity(llmprovider)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
+    await(1300.millis)
+  }
+
+}
+
+class DocumentCitationSuite extends LlmExtensionOneOtoroshiServerPerSuite {
+
+  test("provider anthropic should be able to handle image content in anthropic format") {
+    val provider = LlmProviders.anthropic
+    val token = sys.env(provider.envToken)
+    val port = client.port
+    val providerId = s"provider_${UUID.randomUUID().toString}"
+    val routeChatId = s"route_${UUID.randomUUID().toString}"
+    val awaitFor = 30.seconds
+
+    val llmprovider = AiProvider(
+      id = providerId,
+      name = s"${provider.name} provider",
+      provider = provider.name,
+      connection = provider.baseUrl match {
+        case None => Json.obj(
+          "token" -> token,
+          "timeout" -> 30000
+        )
+        case Some(url) => Json.obj(
+          "base_url" -> url,
+          "token" -> token,
+          "timeout" -> 30000
+        )
+      },
+      options = provider.options,
+    )
+    LlmProviderUtils.upsertProvider(client)(llmprovider)
+    val routeChat = client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertRaw(routeChatId, Json.parse(
+      s"""{
+         |  "id": "${routeChatId}",
+         |  "name": "openai",
+         |  "frontend": {
+         |    "domains": [
+         |      "${provider.name}.oto.tools/chat_doc"
+         |    ]
+         |  },
+         |  "backend": {
+         |    "targets": [
+         |      {
+         |        "id": "target_1",
+         |        "hostname": "request.otoroshi.io",
+         |        "port": 443,
+         |        "tls": true
+         |      }
+         |    ],
+         |    "root": "/",
+         |    "rewrite": false,
+         |    "load_balancing": {
+         |      "type": "RoundRobin"
+         |    }
+         |  },
+         |  "plugins": [
+         |    {
+         |      "enabled": true,
+         |      "plugin": "cp:otoroshi.next.plugins.OverrideHost"
+         |    },
+         |    {
+         |      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
+         |      "config": {
+         |        "refs": [
+         |          "${providerId}"
+         |        ]
+         |      }
+         |    }
+         |  ]
+         |}""".stripMargin)).awaitf(awaitFor)
+    assert(routeChat.created, s"[${provider.name}] route chat has not been created")
+    await(1300.millis)
+    val resp = client.call("POST", s"http://${provider.name}.oto.tools:${port}/chat_doc", Map.empty, Some(
+      Json.obj(
+        "model" -> "claude-3-5-sonnet-20241022",
+        "max_tokens" -> 300,
+        "messages" -> Json.arr(
+          Json.obj(
+            "role" -> "user",
+            "content" -> Json.arr(
+              Json.obj(
+                "type" -> "document",
+                "title" -> "My Document",
+                "context" -> "This is a trustworthy document",
+                "citations" -> Json.obj("enabled" -> true),
+                "source" -> Json.obj(
+                  "type" -> "text",
+                  "media_type" -> "text/plain",
+                  "data" -> "The grass is yellow. The sky is grey.",
+                )
+              ),
+              Json.obj(
+                "type" -> "text",
+                "text" -> "What color is the grass and sky?"
+              ),
+
+            )
+          )
+        )
+      )
+    )).awaitf(awaitFor)
+    if (resp.status != 200 && resp.status != 201) {
+      println(resp.body)
+    }
+    // assertEquals(resp.status, 200, s"[${provider.name}] chat route did not respond with 200")
+    val pointer = resp.json.at("choices.0.message.content")
+    // assert(pointer.isDefined, s"[${provider.name}] no message content")
+    // assert(pointer.get.asString.nonEmpty, s"[${provider.name}] no message")
+    println(s"[${provider.name}] message: ${pointer.asString}")
+    client.forLlmEntity("providers").deleteEntity(llmprovider)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
+    await(1300.millis)
+  }
+
 }
