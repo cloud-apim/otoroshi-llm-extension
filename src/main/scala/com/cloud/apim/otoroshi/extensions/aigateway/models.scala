@@ -311,9 +311,9 @@ case class InputChatMessage(role: String, contentParts: Seq[ChatMessageContent],
   }
 
   def isSingleTextContent: Boolean = {
-    val textParts = contentParts.collect {
+    val textParts = contentParts/*.collect {
       case t: ChatMessageContent.TextContent => t
-    }
+    }*/
     if (textParts.size == 1) {
       textParts.head match {
         case ChatMessageContent.TextContent(_) => true
