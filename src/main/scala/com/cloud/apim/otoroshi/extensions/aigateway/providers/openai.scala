@@ -44,7 +44,7 @@ case class OpenAiChatResponseChunkChoiceDelta(raw: JsValue) {
 
 case class OpenAiChatResponseChunkChoice(raw: JsValue) {
   lazy val finish_reason: Option[String] = raw.select("finish_reason").asOptString
-  lazy val index: Option[Int] = raw.select("finish_reason").asOptInt
+  lazy val index: Option[Int] = raw.select("index").asOptInt
   lazy val delta: Option[OpenAiChatResponseChunkChoiceDelta] = raw.select("delta").asOpt[JsObject].map(OpenAiChatResponseChunkChoiceDelta.apply)
 }
 

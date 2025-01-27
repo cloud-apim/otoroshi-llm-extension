@@ -643,7 +643,7 @@ class ProvidersSuite extends LLmExtensionSuite {
   LlmProviders.listOfProvidersSupportingChatCompletionsStream.foreach { provider =>
     test(s"provider '${provider.name}' should support chat/completions stream") {
       printHeader(provider.name, "chat/completions stream")
-      testChatCompletionWith(provider, client, 30.seconds)
+      testChatCompletionStreamingWith(provider, client, 30.seconds)
     }
   }
 
