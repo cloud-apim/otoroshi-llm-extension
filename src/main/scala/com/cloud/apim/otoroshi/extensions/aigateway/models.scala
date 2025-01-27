@@ -241,8 +241,8 @@ object ChatMessage {
   def input(role: String, content: String, prefix: Option[Boolean]): InputChatMessage = {
     InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None)
   }
-  def output(role: String, content: String, prefix: Option[Boolean]): OutputChatMessage = {
-    OutputChatMessage(role, content, prefix)
+  def output(role: String, content: String, prefix: Option[Boolean], raw: JsObject): OutputChatMessage = {
+    OutputChatMessage(role, content, prefix, raw)
   }
 }
 
@@ -351,6 +351,7 @@ object OutputChatMessage {
         role = json.select("role").asString,
         content = json.select("content").asString,
         prefix = json.select("prefix").asOptBoolean,
+        raw = json.asOpt[JsObject].getOrElse(Json.obj())
       )
     } match {
       case Failure(e) => JsError(e.getMessage)
@@ -360,15 +361,22 @@ object OutputChatMessage {
     override def writes(o: OutputChatMessage): JsValue = o.json
   }
 }
-case class OutputChatMessage(role: String, content: String, prefix: Option[Boolean]) extends ChatMessage {
+case class OutputChatMessage(role: String, content: String, prefix: Option[Boolean], raw: JsObject) extends ChatMessage {
 
   override def wholeTextContent: String = content
+
+  lazy val citations = raw.select("citations").asOpt[Seq[JsObject]]
+    .orElse(raw.at("message.citations").asOpt[Seq[JsObject]])
+    .orElse(raw.at("content.citations").asOpt[Seq[JsObject]])
+  lazy val hasCitations = citations.isDefined
 
   def json: JsValue = Json.obj(
     "role" -> role,
     "content" -> content,
   ).applyOnWithOpt(prefix) {
     case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
+  }.applyOnWithOpt(citations) {
+    case (obj, citations) => obj ++ Json.obj("citations" -> citations)
   }
 
   def toInput(): InputChatMessage = InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None)

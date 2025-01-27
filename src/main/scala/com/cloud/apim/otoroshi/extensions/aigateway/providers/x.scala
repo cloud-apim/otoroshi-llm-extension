@@ -374,7 +374,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
         val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
         val content = obj.select("message").select("content").asOpt[String].getOrElse("")
-        ChatGeneration(ChatMessage.output(role, content, None))
+        ChatGeneration(ChatMessage.output(role, content, None, obj))
       }
       Right(ChatResponse(messages, usage))
     }
@@ -433,7 +433,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
       }
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
         val content = obj.select("text").asString
-        ChatGeneration(ChatMessage.output("assistant", content, None))
+        ChatGeneration(ChatMessage.output("assistant", content, None, obj))
       }
       Right(ChatResponse(messages, usage))
     }

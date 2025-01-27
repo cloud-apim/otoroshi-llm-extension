@@ -300,7 +300,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
         val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
         val content = obj.select("message").select("content").asOpt[String].getOrElse("")
-        ChatGeneration(ChatMessage.output(role, content, None))
+        ChatGeneration(ChatMessage.output(role, content, None, obj))
       }
       Right(ChatResponse(messages, usage))
     }

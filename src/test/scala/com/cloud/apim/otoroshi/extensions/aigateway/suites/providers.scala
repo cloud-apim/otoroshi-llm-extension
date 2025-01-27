@@ -1099,14 +1099,14 @@ class DocumentCitationSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         )
       )
     )).awaitf(awaitFor)
-    if (resp.status != 200 && resp.status != 201) {
-      println(resp.body)
-    }
+    //if (resp.status != 200 && resp.status != 201) {
+      println(resp.json.prettify)
+    //}
     // assertEquals(resp.status, 200, s"[${provider.name}] chat route did not respond with 200")
-    val pointer = resp.json.at("choices.0.message.content")
+    val message = resp.json.at("choices").as[Seq[JsObject]].map(_.at("message.content").asString).mkString(" ")
     // assert(pointer.isDefined, s"[${provider.name}] no message content")
-    // assert(pointer.get.asString.nonEmpty, s"[${provider.name}] no message")
-    println(s"[${provider.name}] message: ${pointer.asString}")
+    assert(message.nonEmpty, s"[${provider.name}] no message")
+    println(s"[${provider.name}] message: ${message}")
     client.forLlmEntity("providers").deleteEntity(llmprovider)
     client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
     await(1300.millis)

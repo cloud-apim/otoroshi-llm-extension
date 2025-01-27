@@ -37,7 +37,7 @@ class RegexGuardrail extends Guardrail {
           GuardrailResult.GuardrailDenied("message does not match regex").vfuture
         }
       }
-      case OutputChatMessage(_, content, _) => {
+      case OutputChatMessage(_, content, _, _) => {
         if (validate(content, allow, deny)) {
           GuardrailResult.GuardrailPass.vfuture
         } else {
