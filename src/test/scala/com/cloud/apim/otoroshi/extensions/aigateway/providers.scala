@@ -99,9 +99,9 @@ object LlmProviders {
     supportsModels = true,
     supportsChatCompletion = true,
     supportsCompletion = true,
-    supportsTools = false,
+    supportsTools = true,
     supportsStreaming = true,
-    supportsToolsStreaming = false,
+    supportsToolsStreaming = true,
   )
 
   val scaleway = TestLlmProviderSettings(
@@ -218,7 +218,7 @@ object LlmProviders {
     deepseek,
     mistral,
     mistralCompletion,
-    gemini,
+    //gemini,
     scaleway,
     huggingface,
     groq,

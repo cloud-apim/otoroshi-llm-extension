@@ -22,7 +22,7 @@ object HuggingfaceModels {
   val STARCODER = "bigcode/starcoder"
 }
 object HuggingfaceApi {
-  val baseUrl = "https://api-inference.huggingface.co"
+  val baseUrl = "https://api-inference.huggingface.co/v1"
   // POST https://api-inference.huggingface.co/models/google/gemma-2-2b-it
   def url(modelName: String): String = {
     s"https://api-inference.huggingface.co/models/${modelName}/v1"

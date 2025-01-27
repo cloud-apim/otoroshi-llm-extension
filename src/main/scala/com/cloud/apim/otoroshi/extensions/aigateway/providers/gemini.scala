@@ -22,6 +22,7 @@ object GeminiModels {
 }
 
 object GeminiApi {
+  def baseUrl: String = "https://generativelanguage.googleapis.com/v1beta/openai"
   def url(model: String, token: String): String = {
     s"https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${token}"
   }
