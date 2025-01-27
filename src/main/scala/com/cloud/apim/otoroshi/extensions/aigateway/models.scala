@@ -370,6 +370,14 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
     .orElse(raw.at("content.citations").asOpt[Seq[JsObject]])
   lazy val hasCitations = citations.isDefined
 
+  lazy val reasoningDetails = raw.select("reasoning_content").asOpt[String]
+    .orElse(raw.select("reasoning").asOpt[String])
+    .orElse(raw.at("message.reasoning_content").asOpt[String])
+    .orElse(raw.at("message.reasoning").asOpt[String])
+    .orElse(raw.at("content.reasoning_content").asOpt[String])
+    .orElse(raw.at("content.reasoning").asOpt[String])
+  lazy val hasReasoningDetails = reasoningDetails.isDefined
+
   def json: JsValue = Json.obj(
     "role" -> role,
     "content" -> content,
@@ -377,6 +385,8 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
     case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
   }.applyOnWithOpt(citations) {
     case (obj, citations) => obj ++ Json.obj("citations" -> citations)
+  }.applyOnWithOpt(reasoningDetails) {
+    case (obj, reasoningDetails) => obj ++ Json.obj("reasoning_details" -> reasoningDetails)
   }
 
   def toInput(): InputChatMessage = InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None)
