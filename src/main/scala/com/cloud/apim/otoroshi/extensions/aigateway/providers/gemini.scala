@@ -1,26 +1,5 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
-import otoroshi.env.Env
-import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
-import play.api.libs.ws.WSResponse
-
-import scala.concurrent.duration.{DurationInt, FiniteDuration}
-import scala.concurrent.{ExecutionContext, Future, promise}
-
-case class GeminiApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
-  def json: JsValue = Json.obj(
-    "status" -> status,
-    "headers" -> headers,
-    "body" -> body,
-  )
-}
-object GeminiModels {
-  val GEMINI_1_5_FLASH = "gemini-1.5-flash"
-}
-
 object GeminiApi {
   def baseUrl: String = "https://generativelanguage.googleapis.com/v1beta/openai"
   def url(model: String, token: String): String = {
@@ -30,6 +9,20 @@ object GeminiApi {
     s"https://generativelanguage.googleapis.com/v1beta${path}?key=${token}"
   }
 }
+
+object GeminiModels {
+  val GEMINI_1_5_FLASH = "gemini-1.5-flash"
+}
+
+/*
+case class GeminiApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
+  def json: JsValue = Json.obj(
+    "status" -> status,
+    "headers" -> headers,
+    "body" -> body,
+  )
+}
+
 
 class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends NoStreamingApiClient[GeminiApiResponse] {
 
@@ -187,3 +180,5 @@ class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: Str
     }
   }
 }
+
+ */

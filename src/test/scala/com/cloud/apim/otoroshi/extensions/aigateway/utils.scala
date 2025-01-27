@@ -18,6 +18,7 @@ import play.core.server.ServerConfig
 import reactor.core.Disposable
 import reactor.core.publisher.{Mono, Sinks}
 import reactor.netty.DisposableServer
+import reactor.netty.http.HttpProtocol
 import reactor.netty.http.client.HttpClient
 import reactor.netty.http.server.{HttpServer, HttpServerRequest, HttpServerResponse, HttpServerRoutes}
 
@@ -406,7 +407,7 @@ case class OtoroshiClient(port: Int, client: WSClient, ec: ExecutionContext, mat
   lazy val wsclient = HttpClient.create()
 
   def call(method: String, url: String, headers: Map[String, String], body: Option[JsValue]): Future[WSResponse] = {
-    client.url(url).withMethod(method).withHttpHeaders(headers.toSeq:_*).applyOnWithOpt(body){
+    client.url(url).withMethod(method).withHttpHeaders(headers.toSeq:_*).applyOnWithOpt(body) {
       case (builder, body) => builder.withBody(body)
     }.execute()
   }

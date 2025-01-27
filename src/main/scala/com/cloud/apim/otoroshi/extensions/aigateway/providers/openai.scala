@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import akka.http.scaladsl.model.Uri
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
@@ -132,12 +133,14 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
+    val uri = Uri(url)
     ProviderHelpers.logCall(providerName, method, url, body)(env)
     env.Ws
       .url(url)
       .withHttpHeaders(
         "Authorization" -> s"Bearer ${token}",
         "Accept" -> "application/json",
+        "Host" -> uri.authority.host.toString(),
       ).applyOnWithOpt(body) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
@@ -191,12 +194,14 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
 
   override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
     val url = s"${baseUrl}${path}"
+    val uri = Uri(url)
     ProviderHelpers.logStream(providerName, method, url, body)(env)
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
         "Authorization" -> s"Bearer ${token}",
         "Accept" -> "application/json",
+        "Host" -> uri.authority.host.toString(),
       ).applyOnWithOpt(body) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
