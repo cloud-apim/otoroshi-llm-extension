@@ -116,6 +116,7 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
           ChatResponseMetadataUsage(
             promptTokens = resp.body.select("usage").select("input_tokens").asOpt[Long].getOrElse(-1L),
             generationTokens = resp.body.select("usage").select("output_tokens").asOpt[Long].getOrElse(-1L),
+            reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
           ),
           None
         )

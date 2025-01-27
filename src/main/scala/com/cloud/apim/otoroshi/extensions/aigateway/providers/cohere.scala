@@ -144,6 +144,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("usage").select("tokens").select("input_tokens").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usage").select("tokens").select("output_tokens").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.at("usage.tokens.reasoning_tokens").asOpt[Long].getOrElse(-1L),
         ),
         None
       )

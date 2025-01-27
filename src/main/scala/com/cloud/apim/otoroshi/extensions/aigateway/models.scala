@@ -512,19 +512,22 @@ case class ChatResponseMetadataRateLimit(requestsLimit: Long, requestsRemaining:
 }
 
 object ChatResponseMetadataUsage {
-  val empty: ChatResponseMetadataUsage = ChatResponseMetadataUsage(0L, 0L)
+  val empty: ChatResponseMetadataUsage = ChatResponseMetadataUsage(0L, 0L, 0L)
 }
 
-case class ChatResponseMetadataUsage(promptTokens: Long, generationTokens: Long) {
+case class ChatResponseMetadataUsage(promptTokens: Long, generationTokens: Long, reasoningTokens: Long) {
   def json: JsValue = Json.obj(
     "prompt_tokens" -> promptTokens,
     "generation_tokens" -> generationTokens,
+    "reasoning_tokens" -> reasoningTokens,
   )
   def openaiJson: JsValue = Json.obj(
     "prompt_tokens" -> promptTokens,
     "completion_tokens" -> generationTokens,
     "total_tokens" -> (promptTokens + generationTokens),
-    "completion_tokens_details" -> Json.obj()
+    "completion_tokens_details" -> Json.obj(
+      "reasoning_tokens" -> reasoningTokens
+    )
   )
 }
 

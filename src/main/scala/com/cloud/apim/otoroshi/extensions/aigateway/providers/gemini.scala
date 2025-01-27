@@ -153,6 +153,7 @@ class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: Str
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("usageMetadata").select("promptTokenCount").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usageMetadata").select("totalTokenCount").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.at("usageMetadata.reasoningTokenCount").asOpt[Long].getOrElse(-1L),
         ),
         None
       )

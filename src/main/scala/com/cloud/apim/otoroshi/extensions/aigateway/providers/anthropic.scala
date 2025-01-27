@@ -150,6 +150,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
           ChatResponseMetadataUsage(
             promptTokens = resp.body.select("usage").select("input_tokens").asOpt[Long].getOrElse(-1L),
             generationTokens = resp.body.select("usage").select("output_tokens").asOpt[Long].getOrElse(-1L),
+            reasoningTokens = resp.body.at("usage.reasoning_tokens").asOpt[Long].getOrElse(-1L),
           ),
           None
         )

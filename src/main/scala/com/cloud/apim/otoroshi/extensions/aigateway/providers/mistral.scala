@@ -286,6 +286,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
         ),
         None
       )
@@ -345,6 +346,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
                 ChatResponseMetadataUsage(
                   promptTokens = chunk.usage.map(_.prompt_tokens).getOrElse(-1L),
                   generationTokens = chunk.usage.map(_.completion_tokens).getOrElse(-1L),
+                  reasoningTokens = chunk.usage.map(_.reasoningTokens).getOrElse(-1L),
                 ),
                 None
               )
@@ -411,6 +413,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
         ),
         None
       )

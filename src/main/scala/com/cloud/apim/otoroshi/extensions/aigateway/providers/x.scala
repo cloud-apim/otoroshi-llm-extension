@@ -279,6 +279,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
                 ChatResponseMetadataUsage(
                   promptTokens = last.usage.map(_.prompt_tokens).getOrElse(-1L),
                   generationTokens = last.usage.map(_.completion_tokens).getOrElse(-1L),
+                  reasoningTokens = last.usage.map(_.reasoningTokens).getOrElse(-1l)
                 ),
                 None
               )
@@ -347,6 +348,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
         ),
         None
       )
@@ -407,6 +409,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
         ),
         None
       )

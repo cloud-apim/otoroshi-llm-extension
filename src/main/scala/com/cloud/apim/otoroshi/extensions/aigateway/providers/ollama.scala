@@ -57,6 +57,7 @@ case class OllamaAiChatResponseChunk(raw: JsValue) {
   lazy val message: OllamaAiChatResponseChunkMessage = OllamaAiChatResponseChunkMessage(raw.select("message").asObject)
   lazy val total_duration: Option[Long] = raw.select("total_duration").asOpt[Long]
   lazy val load_duration: Option[Long] = raw.select("load_duration").asOpt[Long]
+  lazy val reasoning_count: Option[Long] = raw.select("reasoning_count").asOpt[Long]
   lazy val prompt_eval_count: Option[Long] = raw.select("prompt_eval_count").asOpt[Long]
   lazy val prompt_eval_duration: Option[Long] = raw.select("prompt_eval_duration").asOpt[Long]
   lazy val eval_count: Option[Long] = raw.select("eval_count").asOpt[Long]
@@ -301,6 +302,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("prompt_eval_count").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("eval_count").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.select("reasoning_counter").asOpt[Long].getOrElse(0L),
         ),
         None
       )
@@ -357,6 +359,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
                 ChatResponseMetadataUsage(
                   promptTokens = chunk.prompt_eval_count.getOrElse(-1L),
                   generationTokens = chunk.eval_count.getOrElse(-1L),
+                  reasoningTokens = chunk.reasoning_count.getOrElse(-1L),
                 ),
                 None
               )
@@ -422,6 +425,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("prompt_eval_count").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("eval_count").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.select("reasoning_count").asOpt[Long].getOrElse(0L),
         ),
         None
       )

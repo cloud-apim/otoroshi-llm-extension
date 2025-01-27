@@ -20,6 +20,7 @@ case class AzureOpenAiChatResponseChunkUsage(raw: JsValue) {
   lazy val completion_tokens: Long = raw.select("completion_tokens").asLong
   lazy val prompt_tokens: Long = raw.select("prompt_tokens").asLong
   lazy val total_tokens: Long = raw.select("total_tokens").asLong
+  lazy val reasoning_tokens: Long = raw.select("reasoning_tokens").asLong
 }
 
 case class AzureOpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw: JsValue) {
@@ -376,6 +377,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
         ),
         None
       )
@@ -435,6 +437,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
                 ChatResponseMetadataUsage(
                   promptTokens = chunk.usage.map(_.prompt_tokens).getOrElse(-1L),
                   generationTokens = chunk.usage.map(_.completion_tokens).getOrElse(-1L),
+                  reasoningTokens = chunk.usage.map(_.reasoning_tokens).getOrElse(-1L),
                 ),
                 None
               )
@@ -502,6 +505,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
         ),
         None
       )

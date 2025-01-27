@@ -18,6 +18,7 @@ case class OpenAiChatResponseChunkUsage(raw: JsValue) {
   lazy val completion_tokens: Long = raw.select("completion_tokens").asLong
   lazy val prompt_tokens: Long = raw.select("prompt_tokens").asLong
   lazy val total_tokens: Long = raw.select("total_tokens").asLong
+  lazy val reasoningTokens: Long = raw.at("completion_tokens_details.reasoning_tokens").asOptLong.getOrElse(0L)
 }
 
 case class OpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw: JsValue) {
@@ -370,11 +371,13 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
       case Right((source, resp)) =>
         val promptTokensCounter = new AtomicLong(0L)
         val generationTokensCounter = new AtomicLong(0L)
+        val reasoningTokensCounter = new AtomicLong(0L)
         source
           .applyOnIf(accumulateStreamConsumptions)(
             _.map { chunk =>
               promptTokensCounter.addAndGet(chunk.usage.map(_.prompt_tokens).getOrElse(-1L))
               generationTokensCounter.addAndGet(chunk.usage.map(_.completion_tokens).getOrElse(-1L))
+              reasoningTokensCounter.addAndGet(chunk.usage.map(_.reasoningTokens).getOrElse(-1L))
               if (chunk.choices.exists(_.finish_reason.contains("stop"))) {
                 val usage = ChatResponseMetadata(
                   ChatResponseMetadataRateLimit(
@@ -386,6 +389,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
                   ChatResponseMetadataUsage(
                     promptTokens = promptTokensCounter.get(),
                     generationTokens = generationTokensCounter.get(),
+                    reasoningTokens = reasoningTokensCounter.get(),
                   ),
                   None
                 )
@@ -427,6 +431,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
                   ChatResponseMetadataUsage(
                     promptTokens = chunk.usage.map(_.prompt_tokens).getOrElse(-1L),
                     generationTokens = chunk.usage.map(_.completion_tokens).getOrElse(-1L),
+                    reasoningTokens = chunk.usage.map(_.reasoningTokens).getOrElse(-1L),
                   ),
                   None
                 )
@@ -499,6 +504,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
         ),
         None
       )
@@ -549,6 +555,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
         ChatResponseMetadataUsage(
           promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
           generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
+          reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
         ),
         None
       )
