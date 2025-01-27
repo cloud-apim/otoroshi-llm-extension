@@ -1186,7 +1186,6 @@ class ReasoningSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val resp = client.call("POST", s"http://${provider.name}.oto.tools:${port}/chat_reason", Map.empty, Some(
       Json.obj(
         "model" -> "deepseek-reasoner",
-        //"max_tokens" -> 300,
         "messages" -> Json.arr(
           Json.obj(
             "role" -> "user",
@@ -1195,13 +1194,13 @@ class ReasoningSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         )
       )
     )).awaitf(awaitFor)
-    //if (resp.status != 200 && resp.status != 201) {
-    println(resp.json.prettify)
-    //}
-    // assertEquals(resp.status, 200, s"[${provider.name}] chat route did not respond with 200")
-    //val message = resp.json.at("choices").as[Seq[JsObject]].map(_.at("message.content").asString).mkString(" ")
-    // assert(pointer.isDefined, s"[${provider.name}] no message content")
-    //assert(message.nonEmpty, s"[${provider.name}] no message")
+    if (resp.status != 200 && resp.status != 201) {
+      println(resp.json.prettify)
+    }
+    assertEquals(resp.status, 200, s"[${provider.name}] chat route did not respond with 200")
+    val reasoning = resp.json.at("choices.0.message.reasoning_details").asOptString
+    assert(reasoning.isDefined, s"[${provider.name}] no reasoning content")
+    assert(reasoning.get.nonEmpty, s"[${provider.name}] no reasoning")
     //println(s"[${provider.name}] message: ${message}")
     client.forLlmEntity("providers").deleteEntity(llmprovider)
     client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
