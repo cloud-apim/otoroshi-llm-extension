@@ -160,7 +160,7 @@ case class AiProvider(
         //-------
         val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "gemini", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options).copy(model = model)
-        new OpenAiChatClient(api, opts, id, "gemini", "/models", completion = false).some
+        new OpenAiChatClient(api, opts, id, "gemini", "/models", completion = false, accumulateStreamConsumptions = true).some
       }
       case "huggingface" => {
         // val modelName = connection.select("model_name").as[String]

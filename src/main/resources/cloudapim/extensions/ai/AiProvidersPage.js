@@ -436,6 +436,11 @@ class AiProvidersPage extends Component {
             { 'label': "Mixtral-8x22B-Instruct-v0.1", value: 'Mixtral-8x22B-Instruct-v0.1' },
             { 'label': "Mistral-7B-Instruct-v0.2", value: 'Mistral-7B-Instruct-v0.2' },
             { 'label': "Meta-Llama-3-8B-Instruct", value: 'Meta-Llama-3-8B-Instruct' },
+            { 'label': "mathstral-7B-v0.1", value: "mathstral-7B-v0.1" },
+            { 'label': "mamba-codestral-7B-v0.1", value: "mamba-codestral-7B-v0.1" },
+            { 'label': "Meta-Llama-3_1-70B-Instruct", value: "Meta-Llama-3_1-70B-Instruct" },
+            { 'label': "llava-next-mistral-7b", value: "llava-next-mistral-7b" },
+            { 'label': "Mistral-Nemo-Instruct-2407", value: "Mistral-Nemo-Instruct-2407" },
           ] }
       }
     } else if (provider === "deepseek") {

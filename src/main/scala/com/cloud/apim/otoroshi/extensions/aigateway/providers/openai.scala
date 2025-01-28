@@ -5,6 +5,7 @@ import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions}
+import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -50,7 +51,7 @@ case class OpenAiChatResponseChunkChoice(raw: JsValue) {
 }
 
 case class OpenAiChatResponseChunk(raw: JsValue) {
-  lazy val id: String = raw.select("id").asString
+  lazy val id: String = raw.select("id").asOptString.getOrElse(s"chatcmpl-${ULID.random().toLowerCase()}")
   lazy val obj: String = raw.select("object").asString
   lazy val created: Long = raw.select("created").asLong
   lazy val model: String = raw.select("model").asString

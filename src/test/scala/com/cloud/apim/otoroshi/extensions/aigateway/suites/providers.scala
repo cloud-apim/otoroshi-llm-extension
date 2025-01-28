@@ -384,6 +384,7 @@ class ProvidersSuite extends LLmExtensionSuite {
       id = functionId,
       name = "get_flight_times",
       description = "Get the flight times between two cities",
+      strict = false,
       parameters = Json.parse("""{
                                 |  "departure": {
                                 |    "type": "string",
@@ -515,6 +516,7 @@ class ProvidersSuite extends LLmExtensionSuite {
       id = functionId,
       name = "get_flight_times",
       description = "Get the flight times between two cities",
+      strict = false,
       parameters = Json.parse("""{
                                 |  "departure": {
                                 |    "type": "string",

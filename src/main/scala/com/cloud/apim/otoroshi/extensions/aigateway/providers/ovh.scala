@@ -36,6 +36,11 @@ object OVHAiEndpointsModels {
     "Mixtral-8x22B-Instruct-v0.1" -> "mixtral-8x22b-instruct-v01.endpoints.kepler.ai.cloud.ovh.net",
     "Mistral-7B-Instruct-v0.2" -> "mistral-7b-instruct-v02.endpoints.kepler.ai.cloud.ovh.net",
     "Meta-Llama-3-8B-Instruct" -> "llama-3-8b-instruct.endpoints.kepler.ai.cloud.ovh.net",
+    "mathstral-7B-v0.1" -> "https://mathstral-7B-v01.endpoints.kepler.ai.cloud.ovh.net",
+    "mamba-codestral-7B-v0.1" -> "https://mamba-codestral-7b-v0-1.endpoints.kepler.ai.cloud.ovh.net",
+    "Meta-Llama-3_1-70B-Instruct" -> "https://llama-3-1-70b-instruct.endpoints.kepler.ai.cloud.ovh.net",
+    "llava-next-mistral-7b" -> "https://llava-next-mistral-7b-instruct.endpoints.kepler.ai.cloud.ovh.net",
+    "Mistral-Nemo-Instruct-2407" -> "https://mistral-nemo-instruct-2407.endpoints.kepler.ai.cloud.ovh.net",
   )
 }
 object OVHAiEndpointsApi {

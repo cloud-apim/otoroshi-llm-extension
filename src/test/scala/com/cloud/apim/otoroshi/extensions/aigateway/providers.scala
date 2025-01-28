@@ -55,11 +55,24 @@ object LlmProviders {
     supportsToolsStreaming = false,
   )
 
-  val deepseek = TestLlmProviderSettings(
+  val deepseekBeta = TestLlmProviderSettings(
     "deepseek",
     "DEEPSEEK_TOKEN",
     Json.obj("model" -> "deepseek-chat", "max_tokens" -> maxTokens),
     baseUrl = Some("https://api.deepseek.com/beta"),
+    supportsModels = false,
+    supportsChatCompletion = true,
+    supportsCompletion = false,
+    supportsTools = true,
+    supportsStreaming = true,
+    supportsToolsStreaming = false,
+  )
+
+  val deepseek = TestLlmProviderSettings(
+    "deepseek",
+    "DEEPSEEK_TOKEN",
+    Json.obj("model" -> "deepseek-chat", "max_tokens" -> maxTokens),
+    baseUrl = Some("https://api.deepseek.com"),
     supportsModels = true,
     supportsChatCompletion = true,
     supportsCompletion = false,
@@ -175,10 +188,10 @@ object LlmProviders {
     supportsToolsStreaming = false,
   )
 
-  val ovh = TestLlmProviderSettings( // TODO: need to find how to retrieve new token automatically
+  val ovh = TestLlmProviderSettings(
     "ovh-ai-endpoints",
     "OVH_AI_TOKEN",
-    Json.obj("model" -> "llama_3_70b_instruct", "max_tokens" -> maxTokens),
+    Json.obj("model" -> "Meta-Llama-3-70B-Instruct", "max_tokens" -> maxTokens),
     supportsModels = true,
     supportsChatCompletion = true,
     supportsCompletion = true,
@@ -187,7 +200,7 @@ object LlmProviders {
     supportsToolsStreaming = false,
   )
 
-  val anthropic = TestLlmProviderSettings( // TODO: need a creditcard
+  val anthropic = TestLlmProviderSettings(
     "anthropic",
     "ANTHROPIC_TOKEN",
     Json.obj("model" -> "claude-3-5-sonnet-latest", "max_tokens" -> maxTokens),
@@ -199,7 +212,7 @@ object LlmProviders {
     supportsToolsStreaming = false,
   )
 
-  val xai = TestLlmProviderSettings( // TODO: need a creditcard
+  val xai = TestLlmProviderSettings(
     "x-ai",
     "XAI_TOKEN",
     Json.obj("model" -> "grok-beta", "max_tokens" -> maxTokens),
@@ -216,6 +229,7 @@ object LlmProviders {
     openaiCompletion,
     ollama,
     deepseek,
+    deepseekBeta,
     mistral,
     mistralCompletion,
     gemini,
@@ -224,9 +238,9 @@ object LlmProviders {
     groq,
     cohere,
     anthropic,
+    xai,
+    ovh,
 
-    // xai,
-    // ovh,
     // azure,
     // cloudflare,
   )
