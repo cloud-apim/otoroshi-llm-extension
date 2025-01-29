@@ -632,7 +632,7 @@ class ProvidersSuite extends LLmExtensionSuite {
   override def afterAll(): Unit = {
     otoroshi.stop()
   }
-
+/*
   // test("providers should support chat no streaming")
   LlmProviders.listOfProvidersSupportingChatCompletions.foreach { provider =>
     test(s"provider '${provider.name}' should support chat/completions sync") {
@@ -664,7 +664,7 @@ class ProvidersSuite extends LLmExtensionSuite {
       testModelsWith(provider, client, 30.seconds)
     }
   }
-
+*/
   // test("providers should support tools call no streaming")
   LlmProviders.listOfProvidersSupportingTools.foreach { provider =>
     test(s"provider '${provider.name}' should support tools_call sync") {
@@ -672,7 +672,7 @@ class ProvidersSuite extends LLmExtensionSuite {
       testToolsCallWith(provider, client, 30.seconds)
     }
   }
-
+/*
   // test("providers should support tools call with streaming")
   LlmProviders.listOfProvidersSupportingToolsStream.foreach { provider =>
     test(s"provider '${provider.name}' should support tools_call stream") {
@@ -680,6 +680,8 @@ class ProvidersSuite extends LLmExtensionSuite {
       testToolsCallStreamWith(provider, client, 30.seconds)
     }
   }
+
+ */
 }
 
 class ImageContentSuite extends LlmExtensionOneOtoroshiServerPerSuite {

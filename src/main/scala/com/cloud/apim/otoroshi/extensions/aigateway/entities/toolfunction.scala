@@ -451,6 +451,24 @@ case class GenericApiResponseChoiceMessageToolCall(raw: JsObject) {
   lazy val isMcp: Boolean = function.isMcp
 }
 
+case class AnthropicApiResponseChoiceMessageToolCall(raw: JsObject) {
+  lazy val id: String = raw.select("id").asOpt[String].getOrElse(raw.select("function").select("name").asString)
+  lazy val raw_name: String = raw.select("name").asString
+  lazy val name: String = raw_name.replaceFirst("wasm___", "").replaceFirst("mcp___", "")
+  lazy val isWasm: Boolean = raw_name.startsWith("wasm___")
+  lazy val isMcp: Boolean = raw_name.startsWith("mcp___")
+  lazy val connectorId: Int = if (isMcp) raw_name.split("___")(1).toInt else 0
+  lazy val connectorFunctionName: String = if (isMcp) raw_name.split("___")(2) else name
+  lazy val input: JsObject = raw.select("input").asObject
+  lazy val arguments: String = {
+    raw.select("input").asValue match {
+      case JsString(str) => str
+      case obj @ JsObject(_) => obj.stringify
+      case v => v.toString()
+    }
+  }
+}
+
 object LlmToolFunction {
   val wasmPluginId = "wasm-plugin_cloud_apim_llm_extension_tool_call_runtime"
   val wasmConfigRef = WasmConfig(source = WasmSource(WasmSourceKind.Local, wasmPluginId, Json.obj()))
@@ -488,6 +506,22 @@ object LlmToolFunction {
     )*/
   }
 
+  def _toolsAnthropic(functions: Seq[String])(implicit env: Env): Seq[JsObject] = {
+    functions.flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(ext => ext.states.toolFunction(id))).map { function =>
+      val required: JsArray = function.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(function.parameters.value.keySet.toSeq.map(_.json)))
+      Json.obj(
+        "name" -> s"wasm___${function.id}", //function.name,
+        "description" -> function.description,
+        "input_schema" -> Json.obj(
+          "type" -> "object",
+          "required" -> required,
+          "additionalProperties" -> false,
+          "properties" -> function.parameters
+        )
+      )
+    }
+  }
+
   private def call(functions: Seq[GenericApiResponseChoiceMessageToolCall])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
@@ -498,6 +532,31 @@ object LlmToolFunction {
           case Some(function) => {
             println(s"calling function '${function.name}' with args: '${toolCall.function.arguments}'")
             function.call(toolCall.function.arguments).map { r =>
+              (r, toolCall).some
+            }
+          }
+        }
+      }
+      .collect {
+        case Some(t) => t
+      }
+      .flatMapConcat {
+        case (resp, tc) => f(resp, tc)
+      }
+      .runWith(Sink.seq)(env.otoroshiMaterializer)
+  }
+
+  private def callAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall])(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    Source(functions.toList)
+      .mapAsync(1) { toolCall =>
+        val fid = toolCall.name
+        val ext = env.adminExtensions.extension[AiExtension].get
+        ext.states.toolFunction(fid) match {
+          case None => (s"undefined function ${fid}", toolCall).some.vfuture
+          case Some(function) => {
+            val args = toolCall.arguments
+            println(s"calling function '${function.name}' with args: '${args}'")
+            function.call(args).map { r =>
               (r, toolCall).some
             }
           }
@@ -525,6 +584,24 @@ object LlmToolFunction {
           Json.obj("role" -> "user", "content" -> resp)
         )))
       }
+    }
+  }
+
+  def _callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callAnthropic(functions) { (resp, tc) =>
+      Source(List(
+        Json.obj("role" -> "assistant", "content" -> Json.arr(Json.obj(
+          "type" -> "tool_use",
+          "id" -> tc.id,
+          "name" -> tc.name,
+          "input" -> tc.input,
+
+        ))),
+        Json.obj("role" -> "user", "content" -> Json.arr(Json.obj(
+          "type" -> "tool_result",
+          "tool_use_id" -> tc.id,
+          "content" -> resp
+        )))))
     }
   }
 

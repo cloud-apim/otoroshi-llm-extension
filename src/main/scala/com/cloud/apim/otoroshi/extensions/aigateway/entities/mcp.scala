@@ -462,6 +462,34 @@ object McpSupport {
     }
   }
 
+  def toolsAnthropic(connectors: Seq[String])(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    connectors.zipWithIndex.flatMap(tuple => ext.states.mcpConnector(tuple._1).map(v => (v, tuple._2))).flatMap {
+      case (connector, idx) =>
+        connector.listToolsBlocking().map { function =>
+          val additionalProperties: scala.Boolean = Option(function.parameters().additionalProperties()).map(_.booleanValue()).getOrElse(false)
+          val required: Seq[String] = Option(function.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
+          val properties: JsObject = JsObject(Option(function.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
+            schemaToJson(el)
+          })
+          val definitions: JsObject = JsObject(Option(function.parameters().definitions()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
+            schemaToJson(el)
+          })
+          Json.obj(
+            "name" -> s"mcp___${idx}___${function.name()}",
+            "description" -> function.safeDescription(),
+            "input_schema" -> Json.obj(
+              "type" -> "object",
+              "required" -> required,
+              "additionalProperties" -> additionalProperties,
+              "properties" -> properties,
+              "definitions" -> definitions,
+            )
+          )
+        }
+    }
+  }
+
   private def callTool(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
@@ -488,6 +516,33 @@ object McpSupport {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
+  private def callAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], connectors: Seq[String])(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    Source(functions.toList)
+      .mapAsync(1) { toolCall =>
+        val args = toolCall.arguments
+        val cid: Int = toolCall.connectorId
+        val functionName: String = toolCall.connectorFunctionName
+        val connectorId = connectors(cid)
+        val ext = env.adminExtensions.extension[AiExtension].get
+        ext.states.mcpConnector(connectorId) match {
+          case None => (s"undefined mcp connector ${connectorId}", toolCall).some.vfuture
+          case Some(function) => {
+            println(s"calling mcp function '${functionName}' with args: '${args}'")
+            function.call(functionName, args).map { r =>
+              (r, toolCall).some
+            }
+          }
+        }
+      }
+      .collect {
+        case Some(t) => t
+      }
+      .flatMapConcat {
+        case (resp, tc) => f(resp, tc)
+      }
+      .runWith(Sink.seq)(env.otoroshiMaterializer)
+  }
+
   def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     callTool(functions, connectors) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
@@ -499,6 +554,23 @@ object McpSupport {
           Json.obj("role" -> "user", "content" -> resp)
         )))
       }
+    }
+  }
+
+  def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callAnthropic(functions, connectors) { (resp, tc) =>
+      Source(List(
+        Json.obj("role" -> "assistant", "content" -> Json.arr(Json.obj(
+          "type" -> "tool_use",
+          "id" -> tc.id,
+          "name" -> tc.name,
+          "input" -> tc.input,
+        ))),
+        Json.obj("role" -> "user", "content" -> Json.arr(Json.obj(
+          "type" -> "tool_result",
+          "tool_use_id" -> tc.id,
+          "content" -> resp
+        )))))
     }
   }
 
