@@ -172,7 +172,7 @@ object AnthropicChatClientOptions {
       stop_sequences = json.select("stop_sequences").asOpt[Seq[String]],
       tools = json.select("tools").asOpt[Seq[JsValue]],
       tool_choice = json.select("tool_choice").asOpt[Seq[JsValue]],
-      max_tokens = json.select("max_tokens").asOpt[Int],
+      max_tokens = json.select("max_tokens").asOpt[Int].getOrElse(1024),
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
       topP = json.select("top_p").asOpt[Float].getOrElse(1.0f),
       topK = json.select("top_k").asOpt[Int].getOrElse(0),
@@ -186,7 +186,7 @@ object AnthropicChatClientOptions {
 
 case class AnthropicChatClientOptions(
   model: String = AnthropicModels.CLAUDE_3_HAIKU,
-  max_tokens: Option[Int] = None,
+  max_tokens: Int = 1024,
   metadata: Option[JsObject] = None,
   stop_sequences: Option[Seq[String]] = None,
   stream: Option[Boolean] = Some(false),
