@@ -22,11 +22,21 @@ case class AnthropicChatResponseChunkUsage(raw: JsObject) {
 
 case class AnthropicChatResponseChunkChoice(raw: JsValue, role: String) {
   lazy val index: Option[Int] = raw.select("index").asOptInt
+  lazy val typ: Option[String] = raw.at("content_block.type").asOptString.orElse(raw.at("delta.type").asOptString)
   lazy val content: Option[String] = raw.at("content_block.text").asOptString.orElse(raw.at("delta.text").asOptString)
   lazy val finish_reason: Option[String] = raw.at("delta.stop_reason").asOptString
+
+  lazy val contentBlockObj: JsObject = raw.select("content_block").asObject
+
+  lazy val tool_use = typ.contains("tool_use")
+  lazy val input_json_delta = typ.contains("input_json_delta")
+  lazy val stop_tool_use = finish_reason.contains("tool_use")
+
+  lazy val partial_json: String = raw.at("delta.partial_json").asString
 }
 
 case class AnthropicApiResponseChunk(raw: JsValue, messageRef: Option[JsValue]) {
+  lazy val typ: String = messageRef.flatMap(_.select("type").asOptString).getOrElse("--")
   lazy val id: String = messageRef.flatMap(_.select("id").asOptString).getOrElse("--")
   lazy val created: Long = messageRef.flatMap(_.select("created").asOptLong).getOrElse(0L)
   lazy val model: String = messageRef.flatMap(_.select("model").asOptString).getOrElse("--")
@@ -35,6 +45,18 @@ case class AnthropicApiResponseChunk(raw: JsValue, messageRef: Option[JsValue]) 
     AnthropicChatResponseChunkUsage(obj)
   }
   lazy val choices: Seq[AnthropicChatResponseChunkChoice] = Seq(AnthropicChatResponseChunkChoice(raw, role))
+
+  lazy val ztyp = raw.select("type").asString
+  lazy val message_start: Boolean = ztyp == "message_start"
+  lazy val content_block_start: Boolean = ztyp == "content_block_start"
+  lazy val content_block_delta: Boolean = ztyp == "content_block_delta"
+  lazy val content_block_stop: Boolean = ztyp == "content_block_stop"
+  lazy val message_delta: Boolean = ztyp == "message_delta"
+  lazy val message_stop: Boolean = ztyp == "message_stop"
+}
+
+case class AnthropicChatResponseChunkChoiceDeltaToolCall(raw: JsValue) {
+
 }
 
 case class AnthropicApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
@@ -89,7 +111,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
       })
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
+  def raw_stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logStream(providerName, method, url, body)(env)
     val messageRef = new AtomicReference[JsValue]()
@@ -127,11 +149,25 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
             json
           }
           .filterNot(_.select("type").asOptString.contains("ping"))
-          .filterNot(_.select("type").asOptString.contains("content_block_stop"))
-          .takeWhile(!_.select("type").asOptString.contains("message_stop"))
+          // .filterNot(_.select("type").asOptString.contains("content_block_stop"))
+          .takeWhile(!_.select("type").asOptString.contains("message_stop"), true)
           .map(json => AnthropicApiResponseChunk(json, Option(messageRef.get())))
           , resp)
       })
+  }
+
+
+  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
+    raw_stream(method, path, body)
+      .map {
+        case Left(e) => Left(e)
+        case Right((source, resp)) => {
+          val nSource = source
+            .filterNot(_.content_block_stop)
+            .filterNot(_.message_stop)
+          Right((nSource, resp))
+        }
+      }
   }
 
   override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {
@@ -162,46 +198,63 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
     }
   }
 
-  /*override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
-      stream(method, path, body).flatMap {
+      raw_stream(method, path, body).flatMap {
         case Left(err) => err.leftf
         case Right(res) => {
           var isToolCall = false
           var isToolCallEnded = false
-          var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
+          var toolCalls: Seq[AnthropicChatResponseChunkChoiceDeltaToolCall] = Seq.empty
           var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
-          var toolCallUsage: OpenAiChatResponseChunkUsage = null
+          // var toolCallUsage: AnthropicChatResponseChunkUsage = null
+          var index: Int = 0
           val newSource = res._1.flatMapConcat { chunk =>
-            if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
+            // println(s"chunk: ${chunk.raw.prettify}")
+            if (!isToolCall &&  chunk.choices.exists(_.tool_use)) {
+              // println("start tool_user")
               isToolCall = true
-              toolCalls = chunk.choices.head.delta.head.tool_calls
+              toolCalls = toolCalls :+ AnthropicChatResponseChunkChoiceDeltaToolCall(chunk.choices.head.contentBlockObj)
               toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => ""): _*)
               Source.empty
             } else if (isToolCall && !isToolCallEnded) {
-              if (chunk.choices.head.finish_reason.contains("tool_calls")) {
+              if (chunk.choices.head.stop_tool_use) {
+                // println("stopping tool_user")
                 isToolCallEnded = true
               } else {
-                chunk.choices.head.delta.head.tool_calls.foreach { tc =>
-                  val index = tc.index.toInt
-                  val arg = tc.function.arguments
+                if (chunk.choices.head.input_json_delta) {
+                  // println("agg input")
+                  val tc = chunk.choices.head
+                  // val index: Int = tc.index.getOrElse(-1)
+                  val arg = tc.partial_json
                   if (index >= toolCallArgs.size) {
                     toolCallArgs = toolCallArgs :+ ""
                   }
-                  if (tc.function.hasName && !toolCalls.exists(t => t.function.hasName && t.function.name == tc.function.name)) {
-                    toolCalls = toolCalls :+ tc
-                  }
+                  // if (tc.function.hasName && !toolCalls.exists(t => t.function.hasName && t.function.name == tc.function.name)) {
+                  //   toolCalls = toolCalls :+ tc
+                  // }
                   toolCallArgs.update(index, toolCallArgs.apply(index) + arg)
-                }}
+                } else {
+                  //println("no agg")
+                  if (chunk.content_block_stop) {
+                    index = index + 1
+                  }
+                }
+              }
               Source.empty
-            } else if (isToolCall && isToolCallEnded) {
-              toolCallUsage = chunk.usage.get
+            } else if (isToolCall && isToolCallEnded && chunk.message_stop) {
+              //println("end tool_use 1")
+              //toolCallUsage = chunk.usage.get
               val calls = toolCalls.zipWithIndex.map {
                 case (toolCall, idx) =>
-                  GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
+                  //println(s"prep call ${idx} - ${toolCall.raw.prettify} - ${toolCallArgs(idx)}")
+                  val a = AnthropicApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("input" -> toolCallArgs(idx).parseJson)))
+                  //println(s"call ${idx}: ${a.raw.prettify}")
+                  a
               }
-              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, providerName)(ec, env)
+              //println("calling !!!")
+              val a: Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsAnthropic(calls, mcpConnectors, providerName)(ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -213,6 +266,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
                 case Right(tuple) => tuple._1
               }
             } else {
+              // println(s"nothing: ${chunk.typ} ${chunk.raw.select("type").asString} ${isToolCall} && ${isToolCallEnded} && ${chunk.message_stop} - ${isToolCall && isToolCallEnded && chunk.message_stop}")
               Source.single(chunk)
             }
           }
@@ -222,7 +276,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
     } else {
       stream(method, path, body)
     }
-  }*/
+  }
 }
 
 object AnthropicChatClientOptions {

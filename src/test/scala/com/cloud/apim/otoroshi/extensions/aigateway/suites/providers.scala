@@ -505,7 +505,7 @@ class ProvidersSuite extends LLmExtensionSuite {
         )
       },
       options = provider.options ++ Json.obj(
-        "max_tokens" -> 128,
+        "max_tokens" -> 256,
         "wasm_tools" -> Json.arr(functionId)
       ).applyOnIf(provider.name == "ollama") { obj =>
         obj ++ Json.obj("num_predict" -> 128)
@@ -664,7 +664,7 @@ class ProvidersSuite extends LLmExtensionSuite {
       testModelsWith(provider, client, 30.seconds)
     }
   }
-*/
+
   // test("providers should support tools call no streaming")
   LlmProviders.listOfProvidersSupportingTools.foreach { provider =>
     test(s"provider '${provider.name}' should support tools_call sync") {
@@ -672,7 +672,8 @@ class ProvidersSuite extends LLmExtensionSuite {
       testToolsCallWith(provider, client, 30.seconds)
     }
   }
-/*
+
+*/
   // test("providers should support tools call with streaming")
   LlmProviders.listOfProvidersSupportingToolsStream.foreach { provider =>
     test(s"provider '${provider.name}' should support tools_call stream") {
@@ -681,7 +682,6 @@ class ProvidersSuite extends LLmExtensionSuite {
     }
   }
 
- */
 }
 
 class ImageContentSuite extends LlmExtensionOneOtoroshiServerPerSuite {

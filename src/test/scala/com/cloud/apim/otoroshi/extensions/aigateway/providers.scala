@@ -209,7 +209,7 @@ object LlmProviders {
     supportsCompletion = true,
     supportsTools = true,
     supportsStreaming = true,
-    supportsToolsStreaming = false,
+    supportsToolsStreaming = true,
   )
 
   val xai = TestLlmProviderSettings(
