@@ -32,7 +32,7 @@ trait DecoratorChatClient extends ChatClient {
   override def supportsStreaming: Boolean = chatClient.supportsStreaming
   override def supportsTools: Boolean = chatClient.supportsTools
   override def supportsCompletion: Boolean = chatClient.supportsCompletion
-  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = chatClient.listModels()
+  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = chatClient.listModels(raw)
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.completion(prompt, attrs, originalBody)
   override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = chatClient.completionStream(prompt, attrs, originalBody)
 }

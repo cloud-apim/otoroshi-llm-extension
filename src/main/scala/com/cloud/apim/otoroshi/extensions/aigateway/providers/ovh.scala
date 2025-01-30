@@ -21,6 +21,7 @@ case class OVHAiEndpointsApiResponse(status: Int, headers: Map[String, String], 
 }
 
 object OVHAiEndpointsModels {
+
   val codellama_13b_instruct_hf = "CodeLlama-13b-Instruct-hf"
   val mixtral_8x7b_instruct_v01 = "Mixtral-8x7B-Instruct-v0.1"
   val llama_3_70b_instruct = "Meta-Llama-3-70B-Instruct"
@@ -28,6 +29,7 @@ object OVHAiEndpointsModels {
   val mixtral_8x22b_instruct_v01 = "Mixtral-8x22B-Instruct-v0.1"
   val mistral_7b_instruct_v02 = "Mistral-7B-Instruct-v0.2"
   val llama_3_8b_instruct = "Meta-Llama-3-8B-Instruct"
+
   val modelUrls = Map(
     "CodeLlama-13b-Instruct-hf" -> "codellama-13b-instruct-hf.endpoints.kepler.ai.cloud.ovh.net",
     "Mixtral-8x7B-Instruct-v0.1" -> "mixtral-8x7b-instruct-v01.endpoints.kepler.ai.cloud.ovh.net",
@@ -156,13 +158,17 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
 
   override def model: Option[String] = options.model.some
 
-  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
-    api.rawCall(options.model, "GET", "/api/openai_compat/v1/models", None).map { resp =>
-      if (resp.status == 200) {
-        Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
-      } else {
-        Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
+  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+    if (raw) {
+      api.rawCall(options.model, "GET", "/api/openai_compat/v1/models", None).map { resp =>
+        if (resp.status == 200) {
+          Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
+        } else {
+          Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
+        }
       }
+    } else {
+      Right(OVHAiEndpointsModels.modelUrls.keys.toList).vfuture
     }
   }
 

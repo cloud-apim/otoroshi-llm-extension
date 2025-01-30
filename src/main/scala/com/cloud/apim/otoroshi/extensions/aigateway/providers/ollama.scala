@@ -259,7 +259,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
   override def supportsTools: Boolean = api.supportsTools
   override def supportsCompletion: Boolean = api.supportsCompletion
 
-  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/api/tags", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("models").as[List[JsObject]].map(obj => obj.select("name").asString))

@@ -253,7 +253,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
   override def supportsCompletion: Boolean = true
   override def model: Option[String] = options.model.some
 
-  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/v1/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))

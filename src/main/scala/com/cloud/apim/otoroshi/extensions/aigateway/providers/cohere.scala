@@ -332,7 +332,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
 
   override def model: Option[String] = options.model.some
 
-  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/v1/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("models").as[List[JsObject]].map(obj => obj.select("name").asString))

@@ -48,7 +48,7 @@ class OpenAiCompatModels extends NgBackendCall {
         case (provider, Some(client)) => (provider, client)
       }
       .mapAsync(1) {
-        case (provider, client) => client.listModels().map(e => (provider, e))
+        case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true")).map(e => (provider, e))
       }
       .collect {
         case (provider, Right(list)) => list.map { model =>
@@ -114,7 +114,7 @@ class OpenAiCompatProvidersWithModels extends NgBackendCall {
         case (provider, Some(client)) => (provider, client)
       }
       .mapAsync(1) {
-        case (provider, client) => client.listModels().map(e => (provider, e))
+        case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true")).map(e => (provider, e))
       }
       .collect {
         case (provider, Right(list)) => {
@@ -183,7 +183,7 @@ class LlmProviderModels extends NgBackendCall {
         case (provider, Some(client)) => (provider, client)
       }
       .mapAsync(1) {
-        case (provider, client) => client.listModels().map(e => (provider, e))
+        case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true")).map(e => (provider, e))
       }
       .collect {
         case (provider, Right(list)) => list.map { model =>
@@ -240,7 +240,7 @@ class LlmProvidersWithModels extends NgBackendCall {
         case (provider, Some(client)) => (provider, client)
       }
       .mapAsync(1) {
-        case (provider, client) => client.listModels().map(e => (provider, e))
+        case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true")).map(e => (provider, e))
       }
       .collect {
         case (provider, Right(list)) => list.map { model =>
