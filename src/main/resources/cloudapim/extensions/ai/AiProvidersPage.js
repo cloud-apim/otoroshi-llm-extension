@@ -940,10 +940,9 @@ class AiProvidersPage extends Component {
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
         'guardrails',
-        // TODO: soon
-        // '>>>Tools',
-        // 'options.wasm_tools',
-        // 'options.mcp_connectors',
+        '>>>Tools',
+        'options.wasm_tools',
+        'options.mcp_connectors',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
