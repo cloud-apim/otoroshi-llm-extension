@@ -22,10 +22,36 @@ case class CohereChatResponseChunkUsage(raw: JsObject) {
   lazy val reasoningTokens: Long = raw.select("reasoning_tokens").asOptLong.getOrElse(0L)
 }
 
+case class CohereChatResponseChunkChoiceDeltaMessageContentFunction(raw: JsValue) {
+  lazy val name: String = raw.select("name").asString
+  lazy val arguments: String = raw.select("arguments").asString
+}
+
+case class CohereChatResponseChunkChoiceDeltaMessageToolCall(raw: JsValue) {
+  lazy val id = raw.select("id").asString
+  lazy val typ = raw.select("type").asString
+  lazy val function = CohereChatResponseChunkChoiceDeltaMessageContentFunction(raw.select("function").asObject)
+}
+
+case class CohereChatResponseChunkChoiceDeltaMessageContent(raw: JsValue) {
+  lazy val typ = raw.select("type").asString
+  lazy val text = raw.select("text").asString
+}
+
+case class CohereChatResponseChunkChoiceDeltaMessage(raw: JsValue) {
+  lazy val content: CohereChatResponseChunkChoiceDeltaMessageContent = CohereChatResponseChunkChoiceDeltaMessageContent(raw.select("content").asObject)
+  lazy val tool_calls: CohereChatResponseChunkChoiceDeltaMessageToolCall = CohereChatResponseChunkChoiceDeltaMessageToolCall(raw.select("tool_calls").asObject)
+}
+
+case class CohereChatResponseChunkChoiceDelta(raw: JsValue) {
+  lazy val message: CohereChatResponseChunkChoiceDeltaMessage = CohereChatResponseChunkChoiceDeltaMessage(raw.select("message").asObject)
+}
+
 case class CohereChatResponseChunkChoice(raw: JsValue, role: String) {
   lazy val index: Option[Int] = raw.select("index").asOptInt
   lazy val content: Option[String] = raw.select("delta").select("message").select("content").select("text").asOptString
   lazy val finish_reason: Option[String] = raw.at("delta.finish_reason").asOptString
+  lazy val delta: Option[CohereChatResponseChunkChoiceDelta] = raw.select("delta").asOpt[JsObject].map(CohereChatResponseChunkChoiceDelta.apply)
 }
 
 case class CohereAiApiResponseChunk(raw: JsValue, messageStartRef: Option[JsValue], messageEndRef: Option[JsValue]) {
@@ -35,6 +61,13 @@ case class CohereAiApiResponseChunk(raw: JsValue, messageStartRef: Option[JsValu
     CohereChatResponseChunkUsage(obj)
   })
   lazy val choices: Seq[CohereChatResponseChunkChoice] = Seq(CohereChatResponseChunkChoice(raw, role))
+  lazy val typ: String = raw.select("type").asString
+
+  lazy val tool_call_start = typ == "tool-call-start"
+  lazy val tool_call_end = typ == "tool-call-end"
+  lazy val tool_call_delta = typ == "tool-call-delta"
+  lazy val message_start = typ == "message-start"
+  lazy val message_end = typ == "message-end"
 }
 
 case class CohereAiApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
@@ -122,6 +155,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
             }
             json
           }
+          .filterNot(_.select("type").asOptString.contains("tool-plan-delta"))
           .takeWhile(!_.select("type").asOptString.contains("message-end"), inclusive = true)
           .map(json => CohereAiApiResponseChunk(json, Option(messageStartRef.get()), Option(messageEndRef.get())))
           , resp)
@@ -140,7 +174,6 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              println(s"\n\ncallToolsOpenai: ${toolCalls.size}\n")
               LlmFunctions.callToolsCohere(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, providerName, fmap)(ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
@@ -160,47 +193,52 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
     }
   }
 
-  /*
   override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
+      val fmap: Map[String, String] = body.flatMap(_.select("fmap").asOpt[Map[String, String]]).getOrElse(Map.empty)
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
-      stream(method, path, body).flatMap {
+      stream(method, path, body.map(_.asObject - "fmap")).flatMap {
         case Left(err) => err.leftf
         case Right(res) => {
+          var index: Int = 0
           var isToolCall = false
           var isToolCallEnded = false
-          var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
+          var toolCalls: Seq[CohereChatResponseChunkChoiceDeltaMessageToolCall] = Seq.empty
           var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
-          var toolCallUsage: OpenAiChatResponseChunkUsage = null
+          // var toolCallUsage: OpenAiChatResponseChunkUsage = null
           val newSource = res._1.flatMapConcat { chunk =>
-            if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
+            Source.single(chunk)
+            if (!isToolCall && chunk.tool_call_start) {
               isToolCall = true
-              toolCalls = chunk.choices.head.delta.head.tool_calls
+              toolCalls = toolCalls :+ chunk.choices.head.delta.get.message.tool_calls
               toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => ""): _*)
               Source.empty
             } else if (isToolCall && !isToolCallEnded) {
-              if (chunk.choices.head.finish_reason.contains("tool_calls")) {
+              if (chunk.tool_call_end) { //chunk.choices.head.finish_reason.contains("TOOL_CALL")) {
                 isToolCallEnded = true
               } else {
-                chunk.choices.head.delta.head.tool_calls.foreach { tc =>
-                  val index = tc.index.toInt
+                if (chunk.tool_call_delta) {
+                  val tc = chunk.choices.head.delta.head.message.tool_calls
                   val arg = tc.function.arguments
                   if (index >= toolCallArgs.size) {
                     toolCallArgs = toolCallArgs :+ ""
                   }
-                  if (tc.function.hasName && !toolCalls.exists(t => t.function.hasName && t.function.name == tc.function.name)) {
-                    toolCalls = toolCalls :+ tc
-                  }
+                  // if (tc.function.hasName && !toolCalls.exists(t => t.function.hasName && t.function.name == tc.function.name)) {
+                  //   toolCalls = toolCalls :+ tc
+                  // }
                   toolCallArgs.update(index, toolCallArgs.apply(index) + arg)
-                }}
+                } else {
+                  index = index + 1
+                }
+              }
               Source.empty
             } else if (isToolCall && isToolCallEnded) {
-              toolCallUsage = chunk.usage.get
+              // toolCallUsage = chunk.usage.get
               val calls = toolCalls.zipWithIndex.map {
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, providerName)(ec, env)
+              val a: Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsCohere(calls, mcpConnectors, providerName, fmap)(ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -222,7 +260,6 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
       stream(method, path, body)
     }
   }
-  */
 }
 
 object CohereAiChatClientOptions {
@@ -308,7 +345,6 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    //api.call("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors)
       api.callWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors)
@@ -368,8 +404,8 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
-      api.streamWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))), options.mcpConnectors)
+      val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors)
+      api.streamWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))), options.mcpConnectors)
     } else {
       api.stream("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))))
     }

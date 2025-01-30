@@ -161,7 +161,7 @@ object LlmProviders {
     supportsCompletion = true,
     supportsTools = true,
     supportsStreaming = true,
-    supportsToolsStreaming = false,
+    supportsToolsStreaming = true,
   )
 
   val azure = TestLlmProviderSettings( // TODO: no account
@@ -225,21 +225,21 @@ object LlmProviders {
   )
 
   val all = List(
-    // openai,
-    // openaiCompletion,
-    // ollama,
-    // deepseek,
-    // deepseekBeta,
-    // mistral,
-    // mistralCompletion,
-    // gemini,
-    // scaleway,
-    // huggingface,
-    // groq,
+    openai,
+    openaiCompletion,
+    ollama,
+    deepseek,
+    deepseekBeta,
+    mistral,
+    mistralCompletion,
+    gemini,
+    scaleway,
+    huggingface,
+    groq,
     cohere,
-    // anthropic,
-    // xai,
-    // ovh,
+    anthropic,
+    xai,
+    ovh,
 
     // azure,
     // cloudflare,
