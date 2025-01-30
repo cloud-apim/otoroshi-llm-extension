@@ -156,7 +156,6 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
       })
   }
 
-
   override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
     raw_stream(method, path, body)
       .map {

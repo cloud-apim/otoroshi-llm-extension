@@ -159,7 +159,7 @@ object LlmProviders {
     supportsModels = true,
     supportsChatCompletion = true,
     supportsCompletion = true,
-    supportsTools = false,
+    supportsTools = true,
     supportsStreaming = true,
     supportsToolsStreaming = false,
   )
@@ -236,8 +236,8 @@ object LlmProviders {
     // scaleway,
     // huggingface,
     // groq,
-    // cohere,
-    anthropic,
+    cohere,
+    // anthropic,
     // xai,
     // ovh,
 

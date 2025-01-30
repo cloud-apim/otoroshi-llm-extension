@@ -373,7 +373,7 @@ class ProvidersSuite extends LLmExtensionSuite {
         )
       },
       options = provider.options ++ Json.obj(
-        "max_tokens" -> 128,
+        "max_tokens" -> 256,
         "wasm_tools" -> Json.arr(functionId)
       ).applyOnIf(provider.name == "ollama") { obj =>
         obj ++ Json.obj("num_predict" -> 128)
@@ -663,7 +663,7 @@ class ProvidersSuite extends LLmExtensionSuite {
       printHeader(provider.name, "models listing")
       testModelsWith(provider, client, 30.seconds)
     }
-  }
+  }*/
 
   // test("providers should support tools call no streaming")
   LlmProviders.listOfProvidersSupportingTools.foreach { provider =>
@@ -673,14 +673,14 @@ class ProvidersSuite extends LLmExtensionSuite {
     }
   }
 
-*/
+/*
   // test("providers should support tools call with streaming")
   LlmProviders.listOfProvidersSupportingToolsStream.foreach { provider =>
     test(s"provider '${provider.name}' should support tools_call stream") {
       printHeader(provider.name, "tools_call stream")
       testToolsCallStreamWith(provider, client, 30.seconds)
     }
-  }
+  }*/
 
 }
 

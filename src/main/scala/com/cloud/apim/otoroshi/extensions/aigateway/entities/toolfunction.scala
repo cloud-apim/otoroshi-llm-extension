@@ -28,6 +28,7 @@ import software.amazon.awssdk.regions.providers.AwsRegionProvider
 
 import java.io.File
 import java.nio.file.Files
+import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.{DurationInt, DurationLong}
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
@@ -506,6 +507,29 @@ object LlmToolFunction {
     )*/
   }
 
+  def toolsCohere(functions: Seq[String])(implicit env: Env): (Seq[JsObject], Map[String, String]) = {
+    val map = new TrieMap[String, String]()
+    (functions.flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(ext => ext.states.toolFunction(id))).map { function =>
+      val required: JsArray = function.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(function.parameters.value.keySet.toSeq.map(_.json)))
+      val fname = ("wasm___" + s"${function.id}".sha256)
+      map.put(s"${function.id}".sha256, s"${function.id}")
+      Json.obj(
+        "type" -> "function",
+        "function" -> Json.obj(
+          "name" -> fname, //function.name,
+          "description" -> function.description,
+          "strict" -> function.strict,
+          "parameters" -> Json.obj(
+            "type" -> "object",
+            "required" -> required,
+            "additionalProperties" -> false,
+            "properties" -> function.parameters
+          )
+        )
+      )
+    }, map.toMap)
+  }
+
   def _toolsAnthropic(functions: Seq[String])(implicit env: Env): Seq[JsObject] = {
     functions.flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(ext => ext.states.toolFunction(id))).map { function =>
       val required: JsArray = function.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(function.parameters.value.keySet.toSeq.map(_.json)))
@@ -528,6 +552,30 @@ object LlmToolFunction {
         val fid = toolCall.function.name
         val ext = env.adminExtensions.extension[AiExtension].get
         ext.states.toolFunction(fid) match {
+          case None => (s"undefined function ${fid}", toolCall).some.vfuture
+          case Some(function) => {
+            println(s"calling function '${function.name}' with args: '${toolCall.function.arguments}'")
+            function.call(toolCall.function.arguments).map { r =>
+              (r, toolCall).some
+            }
+          }
+        }
+      }
+      .collect {
+        case Some(t) => t
+      }
+      .flatMapConcat {
+        case (resp, tc) => f(resp, tc)
+      }
+      .runWith(Sink.seq)(env.otoroshiMaterializer)
+  }
+
+  private def callCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], fmap: Map[String, String])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    Source(functions.toList)
+      .mapAsync(1) { toolCall =>
+        val fid = toolCall.function.name
+        val ext = env.adminExtensions.extension[AiExtension].get
+        ext.states.toolFunction(fmap(fid)) match {
           case None => (s"undefined function ${fid}", toolCall).some.vfuture
           case Some(function) => {
             println(s"calling function '${function.name}' with args: '${toolCall.function.arguments}'")
@@ -580,6 +628,22 @@ object LlmToolFunction {
         "content" -> resp,
         "tool_call_id" -> tc.id
       ))).applyOnIf(providerName.toLowerCase().contains("deepseek")) { s => // temporary fix for https://github.com/deepseek-ai/DeepSeek-V3/issues/15
+        s.concat(Source(List(
+          Json.obj("role" -> "user", "content" -> resp)
+        )))
+      }
+    }
+  }
+
+  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, fmap: Map[String, String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callCohere(functions, fmap) { (resp, tc) =>
+      Source(List(
+        Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)),
+        Json.obj(
+          "role" -> "tool",
+          "content" -> resp,
+          "tool_call_id" -> tc.id
+        ))).applyOnIf(providerName.toLowerCase().contains("deepseek")) { s => // temporary fix for https://github.com/deepseek-ai/DeepSeek-V3/issues/15
         s.concat(Source(List(
           Json.obj("role" -> "user", "content" -> resp)
         )))

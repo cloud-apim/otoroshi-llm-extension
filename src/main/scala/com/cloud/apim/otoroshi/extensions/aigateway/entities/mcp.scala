@@ -462,6 +462,42 @@ object McpSupport {
     }
   }
 
+  def toolsCohere(connectors: Seq[String])(implicit env: Env, ec: ExecutionContext): (Seq[JsObject], Map[String, String]) = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val map = new TrieMap[String, String]()
+    (connectors.zipWithIndex.flatMap(tuple => ext.states.mcpConnector(tuple._1).map(v => (v, tuple._2))).flatMap {
+      case (connector, idx) =>
+        connector.listToolsBlocking().map { function =>
+          val additionalProperties: scala.Boolean = Option(function.parameters().additionalProperties()).map(_.booleanValue()).getOrElse(false)
+          val required: Seq[String] = Option(function.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
+          val properties: JsObject = JsObject(Option(function.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
+            schemaToJson(el)
+          })
+          val definitions: JsObject = JsObject(Option(function.parameters().definitions()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
+            schemaToJson(el)
+          })
+          val fname = ("mcp___" + s"${idx}___${function.name()}".sha256)
+          map.put(s"${idx}___${function.name()}".sha256,  s"${idx}___${function.name()}")
+          Json.obj(
+            "type" -> "function",
+            "function" -> Json.obj(
+              //"name" -> s"mcp___${connector.id}___${function.name()}",
+              "name" -> fname,
+              "description" -> function.safeDescription(),
+              "strict" -> true,
+              "parameters" -> Json.obj(
+                "type" -> "object",
+                "required" -> required,
+                "additionalProperties" -> additionalProperties,
+                "properties" -> properties,
+                "definitions" -> definitions,
+              )
+            )
+          )
+        }
+    }, map.toMap)
+  }
+
   def toolsAnthropic(connectors: Seq[String])(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     connectors.zipWithIndex.flatMap(tuple => ext.states.mcpConnector(tuple._1).map(v => (v, tuple._2))).flatMap {
@@ -516,6 +552,36 @@ object McpSupport {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
+  private def callToolCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], fmap: Map[String, String])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    Source(functions.toList)
+      .mapAsync(1) { _toolCall =>
+        val fn = _toolCall.raw.select("function").asObject
+        val nfn = fn ++ Json.obj("name" -> fmap(fn.select("name").asString))
+        val toolCall = GenericApiResponseChoiceMessageToolCall(_toolCall.raw.asObject ++ Json.obj("function" -> nfn))
+
+        val cid = toolCall.function.connectorId
+        val connectorId = connectors(cid)
+        val functionName = toolCall.function.connectorFunctionName
+        val ext = env.adminExtensions.extension[AiExtension].get
+        ext.states.mcpConnector(connectorId) match {
+          case None => (s"undefined mcp connector ${connectorId}", toolCall).some.vfuture
+          case Some(function) => {
+            println(s"calling mcp function '${functionName}' with args: '${toolCall.function.arguments}'")
+            function.call(functionName, toolCall.function.arguments).map { r =>
+              (r, _toolCall).some
+            }
+          }
+        }
+      }
+      .collect {
+        case Some(t) => t
+      }
+      .flatMapConcat {
+        case (resp, tc) => f(resp, tc)
+      }
+      .runWith(Sink.seq)(env.otoroshiMaterializer)
+  }
+
   private def callAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], connectors: Seq[String])(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
@@ -545,6 +611,20 @@ object McpSupport {
 
   def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     callTool(functions, connectors) { (resp, tc) =>
+      Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
+        "role" -> "tool",
+        "content" -> resp,
+        "tool_call_id" -> tc.id
+      ))).applyOnIf(providerName.toLowerCase().contains("deepseek")) { s => // temporary fix for https://github.com/deepseek-ai/DeepSeek-V3/issues/15
+        s.concat(Source(List(
+          Json.obj("role" -> "user", "content" -> resp)
+        )))
+      }
+    }
+  }
+
+  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String, fmap: Map[String, String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callToolCohere(functions, connectors, fmap) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
         "role" -> "tool",
         "content" -> resp,

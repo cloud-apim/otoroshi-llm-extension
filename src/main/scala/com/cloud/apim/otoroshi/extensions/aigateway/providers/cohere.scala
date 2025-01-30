@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.LlmFunctions
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -43,6 +43,8 @@ case class CohereAiApiResponse(status: Int, headers: Map[String, String], body: 
     "headers" -> headers,
     "body" -> body,
   )
+  lazy val finishBecauseOfToolCalls: Boolean = body.select("finish_reason").asOptString.contains("TOOL_CALL")
+  lazy val toolCalls: Seq[OpenAiApiResponseChoiceMessageToolCall] = body.at("message.tool_calls").asOpt[Seq[JsObject]].map(seq => seq.map(o => OpenAiApiResponseChoiceMessageToolCall(o))).getOrElse(Seq.empty)
 }
 object CohereAiModels {
   val DEFAULT_COHERE_MODEL = "command-r-plus-08-2024"
@@ -55,7 +57,7 @@ object CohereAiApi {
 class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[CohereAiApiResponse, CohereAiApiResponseChunk] {
 
   val providerName = "cohere"
-  override def supportsTools: Boolean = false
+  override def supportsTools: Boolean = true
   override def supportsCompletion: Boolean = false
   override def supportsStreaming: Boolean = true
 
@@ -126,6 +128,101 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
       })
   }
 
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
+    // TODO: accumulate consumptions ???
+    if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
+      val fmap: Map[String, String] = body.flatMap(_.select("fmap").asOpt[Map[String, String]]).getOrElse(Map.empty)
+      call(method, path, body.map(_.asObject - "fmap")).flatMap {
+        case Left(err) => err.leftf
+        case Right(resp) if resp.finishBecauseOfToolCalls => {
+          body match {
+            case None => resp.rightf
+            case Some(body) => {
+              val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
+              val toolCalls = resp.toolCalls
+              println(s"\n\ncallToolsOpenai: ${toolCalls.size}\n")
+              LlmFunctions.callToolsCohere(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, providerName, fmap)(ec, env)
+                .flatMap { callResps =>
+                  // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ callResps
+                  val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors)
+                }
+            }
+          }
+        }
+        case Right(resp) =>
+          // println(s"resp: ${resp.status} - ${resp.body.prettify}")
+          resp.rightf
+      }
+    } else {
+      call(method, path, body)
+    }
+  }
+
+  /*
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = {
+    if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
+      val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
+      stream(method, path, body).flatMap {
+        case Left(err) => err.leftf
+        case Right(res) => {
+          var isToolCall = false
+          var isToolCallEnded = false
+          var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
+          var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
+          var toolCallUsage: OpenAiChatResponseChunkUsage = null
+          val newSource = res._1.flatMapConcat { chunk =>
+            if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
+              isToolCall = true
+              toolCalls = chunk.choices.head.delta.head.tool_calls
+              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => ""): _*)
+              Source.empty
+            } else if (isToolCall && !isToolCallEnded) {
+              if (chunk.choices.head.finish_reason.contains("tool_calls")) {
+                isToolCallEnded = true
+              } else {
+                chunk.choices.head.delta.head.tool_calls.foreach { tc =>
+                  val index = tc.index.toInt
+                  val arg = tc.function.arguments
+                  if (index >= toolCallArgs.size) {
+                    toolCallArgs = toolCallArgs :+ ""
+                  }
+                  if (tc.function.hasName && !toolCalls.exists(t => t.function.hasName && t.function.name == tc.function.name)) {
+                    toolCalls = toolCalls :+ tc
+                  }
+                  toolCallArgs.update(index, toolCallArgs.apply(index) + arg)
+                }}
+              Source.empty
+            } else if (isToolCall && isToolCallEnded) {
+              toolCallUsage = chunk.usage.get
+              val calls = toolCalls.zipWithIndex.map {
+                case (toolCall, idx) =>
+                  GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
+              }
+              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, providerName)(ec, env)
+                .flatMap { callResps =>
+                  // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ callResps
+                  val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors)
+                }
+              Source.future(a).flatMapConcat {
+                case Left(err) => Source.failed(new Throwable(err.stringify))
+                case Right(tuple) => tuple._1
+              }
+            } else {
+              Source.single(chunk)
+            }
+          }
+          (newSource, res._2).rightf
+        }
+      }
+    } else {
+      stream(method, path, body)
+    }
+  }
+  */
 }
 
 object CohereAiChatClientOptions {
@@ -211,7 +308,14 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    api.call("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
+    //api.call("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
+    val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
+      val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors)
+      api.callWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors)
+    } else {
+      api.call("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
+    }
+    callF.map {
       case Left(err) => err.left
       case Right(resp) =>
       val usage = ChatResponseMetadata(

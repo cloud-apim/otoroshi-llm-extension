@@ -37,6 +37,15 @@ object LlmFunctions {
     } yield wasmFunctionsR ++ mcpConnectorsR
   }
 
+  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String], providerName: String, fmap: Map[String, String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    val (wasmFunctions, mcpConnectors) = functions.partition(_.isWasm)
+    val wasmFunctionsF = LlmToolFunction.callToolsCohere(wasmFunctions, providerName, fmap)(ec, env)
+    val mcpConnectorsF = McpSupport.callToolsCohere(mcpConnectors, conns, providerName, fmap)(ec, env)
+    for {
+      wasmFunctionsR <- wasmFunctionsF
+      mcpConnectorsR <- mcpConnectorsF
+    } yield wasmFunctionsR ++ mcpConnectorsR
+  }
 
   def tools(wasmFunctions: Seq[String], mcpConnectors: Seq[String])(implicit ec: ExecutionContext, env: Env): JsObject = {
     val tools: Seq[JsObject] = LlmToolFunction._tools(wasmFunctions) ++ McpSupport.tools(mcpConnectors)
@@ -50,5 +59,15 @@ object LlmFunctions {
     Json.obj(
       "tools" -> tools
     )
+  }
+
+  def toolsCohere(wasmFunctions: Seq[String], mcpConnectors: Seq[String])(implicit ec: ExecutionContext, env: Env): (JsObject, Map[String, String]) = {
+    val (wasmTools, wasmMap) = LlmToolFunction.toolsCohere(wasmFunctions)
+    val (mcpTools, mcpMap) =  McpSupport.toolsCohere(mcpConnectors)
+    val tools: Seq[JsObject] = wasmTools ++ mcpTools
+    val map = wasmMap ++ mcpMap
+    (Json.obj(
+      "tools" -> tools
+    ), map)
   }
 }
