@@ -4,9 +4,11 @@ import akka.stream.Materializer
 import com.cloud.apim.otoroshi.extensions.aigateway.{LLmExtensionSuite, LlmExtensionOneOtoroshiServerPerSuite, LlmProviders, OtoroshiClient, TestLlmProviderSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.domains.LlmProviderUtils
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmToolFunction, LlmToolFunctionBackend, LlmToolFunctionBackendKind, LlmToolFunctionBackendOptions}
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.OVHAiEndpointsApi
 import otoroshi.api.Otoroshi
 import otoroshi.models.WasmPlugin
 import otoroshi.utils.syntax.implicits._
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{OpenAiCompatModels, OpenAiCompatProxy}
 import play.api.libs.json.{JsObject, Json}
 
 import java.util.UUID
@@ -1204,6 +1206,143 @@ class ReasoningSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val reasoning = resp.json.at("choices.0.message.reasoning_details").asOptString
     assert(reasoning.isDefined, s"[${provider.name}] no reasoning content")
     assert(reasoning.get.nonEmpty, s"[${provider.name}] no reasoning")
+    //println(s"[${provider.name}] message: ${message}")
+    client.forLlmEntity("providers").deleteEntity(llmprovider)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
+    await(1300.millis)
+  }
+
+}
+
+class OvhModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
+
+  test("test".ignore) {
+
+    implicit val env = otoroshi.env
+    implicit val ec = otoroshi.env.otoroshiExecutionContext
+
+    OVHAiEndpointsApi.getModelsList().flatMap {
+      case Left(err) => ().vfuture
+      case Right(list) => {
+        list.mapAsync { ref =>
+          OVHAiEndpointsApi.getModel(ref.name).map {
+            case Left(err) => ()
+            case Right(model) => {
+              val r = client.call("GET", model.documentation_url, Map.empty, None).awaitf(30.seconds)
+              r.body.split("\n").toSeq.filter { line =>
+                line.contains("\"model\": \"") || line.contains("\"model\":\"")
+              }.map { line =>
+                line.replaceFirst("\"model\": \"", "").replaceFirst("\"model\":\"", "").replaceFirst("\",", "")
+              }.map { line =>
+                val name = line.trim
+                println(s"for model: ${ref.name} - ${model.name} - ${name} - ${ref.name == model.name} - ${ref.name == name} - ${model.name == name}")
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  test("should be able to access up to date OVH models list") {
+    val provider = LlmProviders.ovh
+    val token = sys.env(provider.envToken)
+    val port = client.port
+    val providerId = s"provider_${UUID.randomUUID().toString}"
+    val routeChatId = s"route_${UUID.randomUUID().toString}"
+    val awaitFor = 70.seconds
+
+    val llmprovider = AiProvider(
+      id = providerId,
+      name = s"${provider.name} provider",
+      provider = provider.name,
+      connection = Json.obj(
+        "token" -> token,
+        "timeout" -> 60000
+      ),
+      options = (provider.options - "max_tokens"),
+    )
+    LlmProviderUtils.upsertProvider(client)(llmprovider)
+    val routeChat = client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertRaw(routeChatId, Json.parse(
+      s"""{
+         |  "id": "${routeChatId}",
+         |  "name": "openai",
+         |  "frontend": {
+         |    "domains": [
+         |      "${provider.name}.oto.tools"
+         |    ]
+         |  },
+         |  "backend": {
+         |    "targets": [
+         |      {
+         |        "id": "target_1",
+         |        "hostname": "request.otoroshi.io",
+         |        "port": 443,
+         |        "tls": true
+         |      }
+         |    ],
+         |    "root": "/",
+         |    "rewrite": false,
+         |    "load_balancing": {
+         |      "type": "RoundRobin"
+         |    },
+         |    "client": {
+         |      "call_timeout": 70000,
+         |      "call_and_stream_timeout": 120000,
+         |      "connection_timeout": 10000,
+         |      "idle_timeout": 70000
+         |    }
+         |  },
+         |  "plugins": [
+         |    {
+         |      "enabled": true,
+         |      "plugin": "cp:otoroshi.next.plugins.OverrideHost"
+         |    },
+         |    {
+         |      "plugin": "cp:${classOf[OpenAiCompatModels].getName}",
+         |      "include": ["/models"],
+         |      "config": {
+         |        "refs": [
+         |          "${providerId}"
+         |        ]
+         |      }
+         |    },
+         |    {
+         |      "plugin": "cp:${classOf[OpenAiCompatProxy].getName}",
+         |      "include": ["/chat"],
+         |      "config": {
+         |        "refs": [
+         |          "${providerId}"
+         |        ]
+         |      }
+         |    }
+         |  ]
+         |}""".stripMargin)).awaitf(awaitFor)
+    assert(routeChat.created, s"[${provider.name}] route chat has not been created")
+    await(1300.millis)
+    val resp = client.call("GET", s"http://${provider.name}.oto.tools:${port}/models", Map.empty, None).awaitf(awaitFor)
+    //val resp1 = client.call("GET", s"http://${provider.name}.oto.tools:${port}/models", Map.empty, None).awaitf(awaitFor)
+    //val resp2 = client.call("GET", s"http://${provider.name}.oto.tools:${port}/models", Map.empty, None).awaitf(awaitFor)
+    //val resp3 = client.call("GET", s"http://${provider.name}.oto.tools:${port}/models", Map.empty, None).awaitf(awaitFor)
+    assertEquals(resp.status, 200, s"[${provider.name}] chat route did not respond with 200")
+    //assertEquals(resp1.status, 200, s"[${provider.name}] chat route did not respond with 200")
+    //assertEquals(resp2.status, 200, s"[${provider.name}] chat route did not respond with 200")
+    //assertEquals(resp3.status, 200, s"[${provider.name}] chat route did not respond with 200")
+
+    val resp4 = client.call("POST", s"http://${provider.name}.oto.tools:${port}/chat", Map.empty, Some(
+      Json.obj(
+        "messages" -> Json.arr(
+          Json.obj(
+            "role" -> "user",
+            "content" -> "hey who are you ?"
+          )
+        )
+      )
+    )).awaitf(awaitFor)
+    println(resp4.status, resp4.body)
+    // val reasoning = resp.json.at("choices.0.message.reasoning_details").asOptString
+    // assert(reasoning.isDefined, s"[${provider.name}] no reasoning content")
+    // assert(reasoning.get.nonEmpty, s"[${provider.name}] no reasoning")
     //println(s"[${provider.name}] message: ${message}")
     client.forLlmEntity("providers").deleteEntity(llmprovider)
     client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
