@@ -1305,7 +1305,7 @@ class AiProvidersPage extends Component {
         rowNavigation: true,
         extractKey: (item) => item.id,
         export: true,
-        kubernetesKind: "Provider",
+        kubernetesKind: "ai-gateway.extensions.cloud-apim.com/Provider",
         onStateChange: (state, oldState, update) => {
           this.setState(state)
           if (!_.isEqual(state.provider, oldState.provider)) {

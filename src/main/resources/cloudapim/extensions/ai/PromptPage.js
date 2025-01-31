@@ -139,7 +139,7 @@ class PromptsPage extends Component {
     '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'prompt', '>>>Tester', 'tester'];
 
   componentDidMount() {
-    this.props.setTitle(`AI Prompt`);
+    this.props.setTitle(`LLM Prompt`);
   }
 
   client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'prompts');
@@ -149,7 +149,7 @@ class PromptsPage extends Component {
       React.createElement(Table, {
         parentProps: this.props,
         selfUrl: "extensions/cloud-apim/ai-gateway/prompts",
-        defaultTitle: "All AI Prompts",
+        defaultTitle: "All LLM Prompts",
         defaultValue: () => ({
           id: 'prompt_' + uuid(),
           name: 'Prompt',
@@ -176,7 +176,7 @@ class PromptsPage extends Component {
         rowNavigation: true,
         extractKey: (item) => item.id,
         export: true,
-        kubernetesKind: "Prompt"
+        kubernetesKind: "ai-gateway.extensions.cloud-apim.com/Prompt"
       }, null)
     );
   }

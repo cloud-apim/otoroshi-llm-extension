@@ -159,7 +159,7 @@ class PromptContextsPage extends Component {
   ];
 
   componentDidMount() {
-    this.props.setTitle(`AI Prompt Context`);
+    this.props.setTitle(`LLM Prompt Context`);
   }
 
   client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'prompt-contexts');
@@ -169,7 +169,7 @@ class PromptContextsPage extends Component {
       React.createElement(Table, {
         parentProps: this.props,
         selfUrl: "extensions/cloud-apim/ai-gateway/contexts",
-        defaultTitle: "All AI Prompt Contexts",
+        defaultTitle: "All LLM Prompt Contexts",
         defaultValue: () => ({
           id: 'prompt-context_' + uuid(),
           name: 'Prompt Context',
@@ -178,7 +178,7 @@ class PromptContextsPage extends Component {
           metadata: {},
           messages: [],
         }),
-        itemName: "Prompt Context",
+        itemName: "LLM Prompt Context",
         formSchema: this.formSchema,
         formFlow: this.formFlow,
         columns: this.columns,
@@ -196,7 +196,7 @@ class PromptContextsPage extends Component {
         rowNavigation: true,
         extractKey: (item) => item.id,
         export: true,
-        kubernetesKind: "PromptContext"
+        kubernetesKind: "ai-gateway.extensions.cloud-apim.com/PromptContext"
       }, null)
     );
   }

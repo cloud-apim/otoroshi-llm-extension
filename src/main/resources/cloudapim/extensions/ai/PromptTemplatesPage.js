@@ -143,7 +143,7 @@ class PromptTemplatesPage extends Component {
     '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'template', '>>>Tester', 'tester',];
 
   componentDidMount() {
-    this.props.setTitle(`AI Prompt Templates`);
+    this.props.setTitle(`LLM Prompt Templates`);
   }
 
   client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'prompt-templates');
@@ -153,7 +153,7 @@ class PromptTemplatesPage extends Component {
       React.createElement(Table, {
         parentProps: this.props,
         selfUrl: "extensions/cloud-apim/ai-gateway/templates",
-        defaultTitle: "All AI Prompt Templates",
+        defaultTitle: "All LLM Prompt Templates",
         defaultValue: () => ({
           id: 'prompt-template_' + uuid(),
           name: 'Prompt Template',
@@ -180,7 +180,7 @@ class PromptTemplatesPage extends Component {
         rowNavigation: true,
         extractKey: (item) => item.id,
         export: true,
-        kubernetesKind: "PromptTemplate"
+        kubernetesKind: "ai-gateway.extensions.cloud-apim.com/PromptTemplate"
       }, null)
     );
   }

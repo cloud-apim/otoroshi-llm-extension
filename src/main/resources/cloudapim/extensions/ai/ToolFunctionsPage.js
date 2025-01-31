@@ -219,7 +219,7 @@ class ToolFunctionsPage extends Component {
         rowNavigation: true,
         extractKey: (item) => item.id,
         export: true,
-        kubernetesKind: "PromptTemplate"
+        kubernetesKind: "ai-gateway.extensions.cloud-apim.com/ToolFunction"
       }, null)
     );
   }

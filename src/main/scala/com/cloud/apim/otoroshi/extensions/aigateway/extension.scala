@@ -117,7 +117,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   override def enabled: Boolean = env.isDev || configuration.getOptional[Boolean]("enabled").getOrElse(false)
 
   override def start(): Unit = {
-    logger.info("the 'LLM Extension' is enabled !")
+    logger.info("the 'AI - LLM Extension' is enabled !")
     implicit val ev = env
     implicit val ec = env.otoroshiExecutionContext
     env.datastores.wasmPluginsDataStore.findById(LlmToolFunction.wasmPluginId).flatMap {
@@ -491,36 +491,36 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    return {
             |      id: extensionId,
             |      categories:[{
-            |        title: 'AI',
-            |        description: 'All the features provided the Cloud APIM AI extension',
+            |        title: 'AI - LLM',
+            |        description: 'All the features provided the Cloud APIM AI - LLM extension',
             |        features: [
             |          {
-            |            title: 'AI Providers',
-            |            description: 'All your AI Providers',
+            |            title: 'LLM Providers',
+            |            description: 'All your LLM Providers',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |            link: '/extensions/cloud-apim/ai-gateway/providers',
             |            display: () => true,
             |            icon: () => 'fa-brain',
             |          },
             |          {
-            |            title: 'AI Prompt Templates',
-            |            description: 'All your AI Prompt Templates',
+            |            title: 'LLM Prompt Templates',
+            |            description: 'All your LLM Prompt Templates',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |            link: '/extensions/cloud-apim/ai-gateway/templates',
             |            display: () => true,
             |            icon: () => 'fa-brain',
             |          },
             |          {
-            |            title: 'AI Prompt Contexts',
-            |            description: 'All your AI Prompt Contexts',
+            |            title: 'LLM Prompt Contexts',
+            |            description: 'All your LLM Prompt Contexts',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |            link: '/extensions/cloud-apim/ai-gateway/contexts',
             |            display: () => true,
             |            icon: () => 'fa-brain',
             |          },
             |          {
-            |            title: 'AI Prompts',
-            |            description: 'All your AI Prompts',
+            |            title: 'LLM Prompts',
+            |            description: 'All your LLM Prompts',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |            link: '/extensions/cloud-apim/ai-gateway/prompts',
             |            display: () => true,
@@ -562,32 +562,32 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      }],
             |      features: [
             |        {
-            |          title: 'AI Providers',
-            |          description: 'All your AI Providers',
+            |          title: 'LLM Providers',
+            |          description: 'All your LLM Providers',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |          link: '/extensions/cloud-apim/ai-gateway/providers',
             |          display: () => true,
             |          icon: () => 'fa-brain',
             |        },
             |        {
-            |          title: 'AI Prompt Templates',
-            |          description: 'All your AI Prompt Templates',
+            |          title: 'LLM Prompt Templates',
+            |          description: 'All your LLM Prompt Templates',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |          link: '/extensions/cloud-apim/ai-gateway/templates',
             |          display: () => true,
             |          icon: () => 'fa-brain',
             |        },
             |        {
-            |          title: 'AI Prompt Contexts',
-            |          description: 'All your AI Prompt Contexts',
+            |          title: 'LLM Prompt Contexts',
+            |          description: 'All your LLM Prompt Contexts',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |          link: '/extensions/cloud-apim/ai-gateway/contexts',
             |          display: () => true,
             |          icon: () => 'fa-brain',
             |        },
             |        {
-            |          title: 'AI Prompts',
-            |          description: 'All your AI Prompts',
+            |          title: 'LLM Prompts',
+            |          description: 'All your LLM Prompts',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |          link: '/extensions/cloud-apim/ai-gateway/prompts',
             |          display: () => true,
@@ -628,26 +628,26 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      ],
             |      sidebarItems: [
             |        {
-            |          title: 'AI Providers',
-            |          text: 'All your AI LLM Providers',
+            |          title: 'LLM Providers',
+            |          text: 'All your LLM LLM Providers',
             |          path: 'extensions/cloud-apim/ai-gateway/providers',
             |          icon: 'brain'
             |        },
             |        {
-            |          title: 'AI Prompt Templates',
-            |          text: 'All your AI Prompt Templates',
+            |          title: 'LLM Prompt Templates',
+            |          text: 'All your LLM Prompt Templates',
             |          path: 'extensions/cloud-apim/ai-gateway/templates',
             |          icon: 'brain'
             |        },
             |        {
-            |          title: 'AI Prompt Contexts',
-            |          text: 'All your AI Prompt Contexts',
+            |          title: 'LLM Prompt Contexts',
+            |          text: 'All your LLM Prompt Contexts',
             |          path: 'extensions/cloud-apim/ai-gateway/contexts',
             |          icon: 'brain'
             |        },
             |        {
-            |          title: 'AI Prompts',
-            |          text: 'All your AI Prompts',
+            |          title: 'LLM Prompts',
+            |          text: 'All your LLM Prompts',
             |          path: 'extensions/cloud-apim/ai-gateway/prompts',
             |          icon: 'brain'
             |        },
@@ -682,7 +682,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/providers`
             |          },
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
-            |          label: 'AI LLM providers',
+            |          label: 'LLM providers',
             |          value: 'aillmproviders',
             |        },
             |        {
@@ -690,7 +690,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/templates`
             |          },
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
-            |          label: 'AI Prompt Templates',
+            |          label: 'LLM Prompt Templates',
             |          value: 'prompttemplates',
             |        },
             |        {
@@ -698,7 +698,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/contexts`
             |          },
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
-            |          label: 'AI Prompt Contexts',
+            |          label: 'LLM Prompt Contexts',
             |          value: 'promptcontexts',
             |        },
             |        {
@@ -706,7 +706,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/prompts`
             |          },
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
-            |          label: 'AI Prompts',
+            |          label: 'LLM Prompts',
             |          value: 'prompts',
             |        },
             |        {
