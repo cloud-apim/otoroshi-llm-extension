@@ -1321,6 +1321,7 @@ class OvhModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assert(routeChat.created, s"[${provider.name}] route chat has not been created")
     await(1300.millis)
     val resp = client.call("GET", s"http://${provider.name}.oto.tools:${port}/models", Map.empty, None).awaitf(awaitFor)
+    println(resp.body)
     //val resp1 = client.call("GET", s"http://${provider.name}.oto.tools:${port}/models", Map.empty, None).awaitf(awaitFor)
     //val resp2 = client.call("GET", s"http://${provider.name}.oto.tools:${port}/models", Map.empty, None).awaitf(awaitFor)
     //val resp3 = client.call("GET", s"http://${provider.name}.oto.tools:${port}/models", Map.empty, None).awaitf(awaitFor)

@@ -51,17 +51,14 @@ object OVHAiEndpointsModels {
   )
 }
 
-case class OVHAiEndpointsApiModelRef(json: JsValue) {
-  lazy val id: String = json.select("id").asString
-  lazy val name: String = json.select("name").asString
-}
-
 case class OVHAiEndpointsApiModel(json: JsValue) {
   lazy val id: String = json.select("id").asString
   lazy val name: String = json.select("name").asString
   lazy val gradio_url: String = json.select("gradio_url").asString
   lazy val documentation_url: String = json.select("documentation_url").asString
   lazy val openapi_url: String = json.select("openapi_url").asString
+  lazy val isLlm: Boolean = json.select("category").asOpt[String].exists(_.toLowerCase().contains("llm"))
+  lazy val isAvailable: Boolean = json.select("available").asOpt[Boolean].getOrElse(false)
 }
 
 object OVHAiEndpointsApi {
@@ -70,21 +67,21 @@ object OVHAiEndpointsApi {
   val cache = Scaffeine().expireAfterWrite(1.hour).build[String, JsValue]()
   val apikey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJpc3MiOiAic3VwYWJhc2UiLAogICJpYXQiOiAxNzEwNzE2NDAwLAogICJleHAiOiAxODY4NDgyODAwCn0.Jty_eO4oWqLm4Lx_LfbpRW5WESXYXtT2humbBq2Pal8" // good until 2029
 
-  def getModelsList()(implicit ec: ExecutionContext, env: Env): Future[Either[String, List[OVHAiEndpointsApiModelRef]]] = {
+  def getModelsList()(implicit ec: ExecutionContext, env: Env): Future[Either[String, List[OVHAiEndpointsApiModel]]] = {
     val key = "all_models"
     cache.getIfPresent(key) match {
       case Some(models) =>
-        models.as[List[JsObject]].map(o => OVHAiEndpointsApiModelRef(o)).rightf
+        models.as[List[JsObject]].map(o => OVHAiEndpointsApiModel(o)).rightf
       case None => {
         env.Ws
-          .url("https://endpoints-backend.ai.cloud.ovh.net/rest/v1/models_v2?select=id%2Cname%2Cavailable&category=eq.Assistant&available=eq.true")
+          .url("https://endpoints-backend.ai.cloud.ovh.net/rest/v1/models_v2?select=*")
           .withHttpHeaders("apikey"-> apikey)
           .withRequestTimeout(5.seconds)
           .get()
           .map { resp =>
             if (resp.status == 200) {
               cache.put(key, resp.json)
-              val modelsList = resp.json.as[List[JsObject]].map(o => OVHAiEndpointsApiModelRef(o))
+              val modelsList = resp.json.as[List[JsObject]].map(o => OVHAiEndpointsApiModel(o))
               modelsList.right
             } else {
               Left("Bad response status when fetching models list")
@@ -142,19 +139,14 @@ object OVHAiEndpointsApi {
         OVHAiEndpointsApi.getModelsList().flatMap {
           case Left(err) => ().vfuture
           case Right(list) => {
-            list.mapAsync { ref =>
-              OVHAiEndpointsApi.getModel(ref.name).flatMap {
-                case Left(err) => None.vfuture
-                case Right(model) => {
-                  env.Ws.url(model.documentation_url).get().map { r =>
-                    val models = r.body.split("\n").toSeq.filter { line =>
-                      line.contains("\"model\": \"") || line.contains("\"model\":\"")
-                    }.map { line =>
-                      line.replaceFirst("\"model\": \"", "").replaceFirst("\"model\":\"", "").replaceFirst("\",", "").trim
-                    }
-                    models.headOption.map(m => (m, model.gradio_url))
-                  }
+            list.filter(v => v.isLlm && v.isAvailable).mapAsync { model =>
+              env.Ws.url(model.documentation_url).get().map { r =>
+                val models = r.body.split("\n").toSeq.filter { line =>
+                  line.contains("\"model\": \"") || line.contains("\"model\":\"")
+                }.map { line =>
+                  line.replaceFirst("\"model\": \"", "").replaceFirst("\"model\":\"", "").replaceFirst("\",", "").trim
                 }
+                models.headOption.map(m => (m, model.gradio_url))
               }
             }.map(_.flatten).map { tuples =>
               cache.put("model_urls_map", JsObject(tuples.toMap.mapValues(_.json)))
@@ -182,67 +174,6 @@ object OVHAiEndpointsApi {
         OVHAiEndpointsModels.backup_model_urls.get(modelName).toRight("model not found").vfuture
     }
   }
-
-  /*def getUrlFromModel(modelName: String)(implicit ec: ExecutionContext, env: Env): Future[Either[String, String]] = {
-    val key = s"${modelName}_url"
-    cache.getIfPresent(key) match {
-      case Some(models) =>
-        models.asString.rightf
-      case None => {
-        getModelsList().flatMap {
-          case Left(err) => {
-            AiExtension.logger.error(s"error while fetch OVH models list: ${err}")
-            OVHAiEndpointsModels.modelUrls.get(modelName) match {
-              case None => s"model url not found for '${modelName}'".leftf
-              case Some(url) => {
-                cache.put(key, url.json)
-                url.rightf
-              }
-            }
-          }
-          case Right(modelRefs) => {
-            modelRefs.find(_.name == modelName) match {
-              case None => s"model url not found in model refs for '${modelName}'".leftf
-              case Some(ref) => {
-                env.Ws
-                  .url(s"https://endpoints-backend.ai.cloud.ovh.net/rest/v1/models_v2?select=*&id=eq.${ref.id}")
-                  .withHttpHeaders("apikey"-> apikey)
-                  .withRequestTimeout(5.seconds)
-                  .get()
-                  .map { resp =>
-                    if (resp.status == 200) {
-                      val model = OVHAiEndpointsApiModel(resp.json.as[Seq[JsObject]].head)
-                      cache.put(modelName, model.json)
-                      cache.put(key, model.gradio_url.json)
-                      model.gradio_url.right
-                    } else {
-                      OVHAiEndpointsModels.modelUrls.get(modelName) match {
-                        case None => s"model url not found for '${modelName}' after bad response status when fetching mode".left
-                        case Some(url) => {
-                          cache.put(key, url.json)
-                          url.right
-                        }
-                      }
-                    }
-                  }
-                  .recover {
-                    case t: Throwable => OVHAiEndpointsModels.modelUrls.get(modelName) match {
-                      case None =>
-                        AiExtension.logger.error("error while fetching ovh model", t)
-                        s"model url not found for '${modelName}' after ${t.getMessage}".left
-                      case Some(url) => {
-                        cache.put(key, url.json)
-                        url.right
-                      }
-                    }
-                  }
-              }
-            }
-          }
-        }
-      }
-    }
-  }*/
 }
 
 class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token: String, timeout: FiniteDuration = 10.seconds, val env: Env) {
