@@ -9,7 +9,7 @@ import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
+import play.api.libs.json.{JsArray, JsObject, JsValue, Json, __}
 import play.api.libs.ws.WSResponse
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -168,10 +168,15 @@ object OVHAiEndpointsApi {
 
   def getUrlFromModel(modelName: String)(implicit ec: ExecutionContext, env: Env): Future[Either[String, String]] = {
     cache.getIfPresent("model_urls_map") match {
-      case Some(obj) => obj.asObject.value.get(modelName).map(_.asString).toRight("model not found").vfuture
+      case Some(obj) =>
+        obj.asObject.value.get(modelName).map(_.asString).orElse(
+          obj.asObject.value.find(t => t._1.toLowerCase == modelName.toLowerCase).map(_._2.asString)
+        ).toRight("model not found").vfuture
       case None =>
         extractModelUrlsMap()
-        OVHAiEndpointsModels.backup_model_urls.get(modelName).toRight("model not found").vfuture
+        OVHAiEndpointsModels.backup_model_urls.get(modelName).orElse(
+          OVHAiEndpointsModels.backup_model_urls.find(t => t._1.toLowerCase == modelName.toLowerCase).map(_._2)
+        ).toRight("model not found").vfuture
     }
   }
 }

@@ -9,7 +9,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, In
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
 import otoroshi.models._
-import otoroshi.next.extensions._
+import otoroshi.next.extensions.{AdminExtensionBackofficeAuthRoute, _}
 import otoroshi.utils.TypedMap
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits._
@@ -333,6 +333,36 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
+  def handleFunctionTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body:  Option[Source[ByteString, _]]): Future[Result] = {
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val mat = env.otoroshiMaterializer
+    implicit val ev = env
+    (body match {
+      case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
+      case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
+        val bodyJson = bodyRaw.utf8String.parseJson
+        bodyJson.select("function").asOpt[JsObject] match {
+          case None => Results.Ok(Json.obj("done" -> false, "error" -> "no provider")).vfuture
+          case Some(function) => LlmToolFunction.format.reads(function) match {
+            case JsError(err) => Results.Ok(Json.obj("done" -> false, "error" -> "bad function format")).vfuture
+            case JsSuccess(function, _) => {
+              val params = bodyJson.select("parameters").asOptString.getOrElse("")
+              function.call(params).map { res =>
+                Results.Ok(Json.obj("done" -> true, "result" -> res))
+              }.recover {
+                case t: Throwable => Results.Ok(Json.obj("done" -> false, "error" -> t.getMessage))
+              }
+            }
+          }
+        }
+      }
+    }).recover {
+      case e: Throwable => {
+        Results.Ok(Json.obj("done" -> false, "error" -> e.getMessage))
+      }
+    }
+  }
+
   def handleProviderModelsFetch(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body:  Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val mat = env.otoroshiMaterializer
@@ -417,6 +447,12 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/extensions/cloud-apim/extensions/ai-extension/providers/_models",
       wantsBody = true,
       handle = handleProviderModelsFetch
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = "/extensions/cloud-apim/extensions/ai-extension/functions/_test",
+      wantsBody = true,
+      handle = handleFunctionTest
     )
   )
 
@@ -444,6 +480,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    const Table     = dependencies.Components.Inputs.Table;
             |    const Form      = dependencies.Components.Inputs.Form;
             |    const SelectInput = dependencies.Components.Inputs.SelectInput;
+            |    const LazyCodeInput = dependencies.Components.Inputs.LazyCodeInput;
             |    const BackOfficeServices = dependencies.BackOfficeServices;
             |    const BaseUrls = {
             |      openai: '${OpenAiApi.baseUrl}',

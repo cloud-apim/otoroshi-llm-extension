@@ -7,6 +7,76 @@ function tryOrTrue(f) {
   }
 }
 
+class FunctionTester extends Component {
+  state = {
+    calling: false,
+    input: '{\n  "arg1": "foo",\n  "arg2": "bar"\n}\n',
+    result: null,
+    error: false,
+  }
+  send = () => {
+    const input = this.state.input;
+    if (!this.state.calling) {
+      this.setState({ calling: true })
+      fetch('/extensions/cloud-apim/extensions/ai-extension/functions/_test', {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          function: this.props.rawValue,
+          parameters: this.state.input,
+        })
+      }).then(r => r.json()).then(r => {
+        if (r.error) {
+          this.setState({ result: r.error, calling: false, error: true })
+        } else {
+          this.setState({ result: r.result, calling: false })
+        }
+      }).catch(ex => {
+        this.setState({ calling: false, error: true, result: ex.message })
+      })
+    }
+  }
+  render() {
+    return [
+      React.createElement('div', { className: 'row mb-3' },
+        React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, ''),
+        React.createElement('div', { className: 'col-sm-10', style: { display: 'flex' } },
+          React.createElement('div', { style: { display: 'flex', width: '100%', flexDirection: 'column' }},
+
+            React.createElement(React.Suspense, { fallback: "Loading..." },
+              React.createElement(LazyCodeInput, {
+                editorOnly: true,
+                value: this.state.input,
+                onChange: input => this.setState({ input })
+              }),
+            ),
+
+            React.createElement('div', { style: { width: '100%', padding: 5, display: 'flex', justifyContent: 'flex-end' }, className: 'input-group'},
+              React.createElement('button', { type: 'button', className: 'btn btn-sm btn-success', style: { marginTop: 15 }, onClick: this.send, disabled: this.state.calling },
+                React.createElement('i', { className: 'fas fa-play' }),
+                React.createElement('span', null, ' Test'),
+              ),
+            ),
+
+            (this.state.result && React.createElement(React.Suspense, { fallback: "Loading..." },
+              React.createElement(LazyCodeInput, {
+                editorOnly: true,
+                value: this.state.result,
+                onChange: input => this.setState({ input })
+              })
+            ))
+          )
+        )
+      )
+    ];
+  }
+}
+
+
 class ToolFunctionsPage extends Component {
 
   formSchema = {
@@ -131,6 +201,9 @@ class ToolFunctionsPage extends Component {
           // { label: 'Route call', value: 'Route' },
         ]
       }
+    },
+    tester: {
+      type: FunctionTester,
     }
   };
 
@@ -172,6 +245,9 @@ class ToolFunctionsPage extends Component {
     'strict',
     'parameters',
     'required',
+    '>>>Tester',
+    'tester'
+
   ].filter(i => !!i);
 
   componentDidMount() {
