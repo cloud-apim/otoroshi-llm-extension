@@ -625,12 +625,16 @@ object OpenAiEmbeddingModelClientOptions {
 
 class OpenAiEmbeddingModelClient(val api: OpenAiApi, val options: OpenAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
 
-  override def embed(input: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
-    api.rawCall("POST", "/embeddings", (options.raw ++ Json.obj("input" -> input)).some).map { resp =>
+  override def embed(input: Seq[String], modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    val finalModel: String = modelOpt.getOrElse(options.model)
+    api.rawCall("POST", "/embeddings", (options.raw ++ Json.obj("input" -> input, "model" -> finalModel)).some).map { resp =>
       if (resp.status == 200) {
         Right(EmbeddingResponse(
+          model = finalModel,
           embeddings = resp.json.select("data").as[Seq[JsObject]].map(o => Embedding(o.select("embedding").as[Array[Float]])),
-          metadata = EmbeddingResponseMetadata(),
+          metadata = EmbeddingResponseMetadata(
+            resp.json.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L)
+          ),
         ))
       } else {
         Left(Json.obj("status" -> resp.status, "body" -> resp.json))

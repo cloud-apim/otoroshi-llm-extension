@@ -28,6 +28,7 @@ class EmbeddingModelsPage extends Component {
       props: { label: 'Provider', possibleValues: [
           { label: 'OpenAI', value: "openai" },
           { label: 'Ollama', value: "ollama" },
+          { label: 'Mistral', value: "mistral" },
           { label: 'All MiniLM L6 V2 (embedded)', value: "all-minilm-l6-v2" },
       ] }
     },

@@ -44,6 +44,11 @@ case class EmbeddingModel(
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       }
+      case "mistral" => {
+        val api = new MistralAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
+        val opts = MistralAiEmbeddingModelClientOptions.fromJson(options)
+        new MistralAiEmbeddingModelClient(api, opts, id).some
+      }
       case "ollama" => {
         val api = new OllamaAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(10.seconds), env = env)
         val opts = OllamaEmbeddingModelClientOptions.fromJson(options)

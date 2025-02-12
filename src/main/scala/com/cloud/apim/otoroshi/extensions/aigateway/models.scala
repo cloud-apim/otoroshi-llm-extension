@@ -9,6 +9,7 @@ import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
 
+import java.util.Base64
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
@@ -586,15 +587,47 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
   def openaiCompletionEventSource: ByteString = s"data: ${openaiCompletionJson.stringify}\n\n".byteString
 }
 
-case class Embedding(vector: Array[Float])
-case class EmbeddingResponseMetadata()
+case class Embedding(vector: Array[Float]) {
+  def toOpenAiJson(format: String, index: Int): JsValue = {
+    val vectorJson: JsValue = if (format == "base64") {
+      val byteBuffer = java.nio.ByteBuffer.allocate(4 * vector.length)
+      vector.foreach(float => byteBuffer.putFloat(float))
+      Base64.getEncoder.encodeToString(byteBuffer.array).json
+    } else {
+      Json.toJson(vector)
+    }
+    Json.obj(
+      "object" -> "embedding",
+      "index" -> index,
+      "embedding" -> vectorJson,
+    )
+  }
+}
+case class EmbeddingResponseMetadata(tokenUsage: Long) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "prompt_tokens" -> tokenUsage,
+      "total_tokens" -> tokenUsage,
+    )
+  }
+}
 case class EmbeddingResponse(
+  model: String,
   embeddings: Seq[Embedding],
   metadata: EmbeddingResponseMetadata,
-)
+) {
+  def toOpenAiJson(format: String): JsValue = {
+    Json.obj(
+      "object" -> "list",
+      "data" -> JsArray(embeddings.zipWithIndex.map(t => t._1.toOpenAiJson(format, t._2))),
+      "model" -> model,
+      "usage" -> metadata.toOpenAiJson
+    )
+  }
+}
 
 trait EmbeddingModelClient {
-  def embed(input: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]]
+  def embed(input: Seq[String], model: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]]
 }
 
 case class EmbeddingSearchMatch(score: Double, id: String, embedding: Embedding, embedded: String)

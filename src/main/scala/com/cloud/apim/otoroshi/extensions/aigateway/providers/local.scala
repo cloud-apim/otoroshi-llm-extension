@@ -27,12 +27,13 @@ class AllMiniLmL6V2EmbeddingModelClient(val options: JsObject, id: String) exten
 
   lazy val embeddingModel = new dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel()
 
-  override def embed(input: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(input: Seq[String], model: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val r = embeddingModel.embedAll(seqAsJavaList(input.map(s => TextSegment.from(s))))
     try {
       Right(EmbeddingResponse(
+        model = "all-minilm-l6-v2",
         embeddings = r.content().asScala.map(e => Embedding(e.vector())),
-        metadata = EmbeddingResponseMetadata(),
+        metadata = EmbeddingResponseMetadata(-1L),
       )).vfuture
     } catch {
       case e: Throwable => Left(Json.obj("message" -> e.getMessage)).vfuture

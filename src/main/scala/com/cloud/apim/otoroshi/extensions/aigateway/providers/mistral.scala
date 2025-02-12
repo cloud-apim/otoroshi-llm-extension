@@ -448,3 +448,31 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
   }
 
 }
+
+case class MistralAiEmbeddingModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("mistral-embed")
+}
+
+object MistralAiEmbeddingModelClientOptions {
+  def fromJson(raw: JsObject): MistralAiEmbeddingModelClientOptions = MistralAiEmbeddingModelClientOptions(raw)
+}
+
+class MistralAiEmbeddingModelClient(val api: MistralAiApi, val options: MistralAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
+
+  override def embed(input: Seq[String], modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    val finalModel: String = modelOpt.getOrElse(options.model)
+    api.rawCall("POST", "/v1/embeddings", (options.raw ++ Json.obj("input" -> input, "model" -> finalModel)).some).map { resp =>
+      if (resp.status == 200) {
+        Right(EmbeddingResponse(
+          model = finalModel,
+          embeddings = resp.json.select("data").as[Seq[JsObject]].map(o => Embedding(o.select("embedding").as[Array[Float]])),
+          metadata = EmbeddingResponseMetadata(
+            resp.json.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L)
+          ),
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}
