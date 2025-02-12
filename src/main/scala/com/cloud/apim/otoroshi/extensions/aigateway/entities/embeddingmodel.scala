@@ -44,6 +44,26 @@ case class EmbeddingModel(
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       }
+      case "scaleway" => {
+        val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Scaleway", env = env)
+        val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
+        new OpenAiEmbeddingModelClient(api, opts, id).some
+      }
+      case "deepseek" => {
+        val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Deepseek", env = env)
+        val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
+        new OpenAiEmbeddingModelClient(api, opts, id).some
+      }
+      case "gemini" => {
+        val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "gemini", env = env)
+        val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
+        new OpenAiEmbeddingModelClient(api, opts, id).some
+      }
+      case "huggingface" => {
+        val api = new OpenAiApi(baseUrl.getOrElse(HuggingfaceApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "huggingface", env = env)
+        val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
+        new OpenAiEmbeddingModelClient(api, opts, id).some
+      }
       case "mistral" => {
         val api = new MistralAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
         val opts = MistralAiEmbeddingModelClientOptions.fromJson(options)
@@ -53,6 +73,16 @@ case class EmbeddingModel(
         val api = new OllamaAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(10.seconds), env = env)
         val opts = OllamaEmbeddingModelClientOptions.fromJson(options)
         new OllamaEmbeddingModelClient(api, opts, id).some
+      }
+      case "x-ai" => {
+        val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val opts = XAiEmbeddingModelClientOptions.fromJson(options)
+        new XAiEmbeddingModelClient(api, opts, id).some
+      }
+      case "cohere" => {
+        val api = new CohereAiApi(baseUrl.getOrElse(CohereAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val opts = CohereAiEmbeddingModelClientOptions.fromJson(options)
+        new CohereAiEmbeddingModelClient(api, opts, id).some
       }
       case "all-minilm-l6-v2" => new AllMiniLmL6V2EmbeddingModelClient(options, id).some
       case _ => None

@@ -25,12 +25,18 @@ class EmbeddingModelsPage extends Component {
     },
     provider: {
       'type': 'select',
-      props: { label: 'Provider', possibleValues: [
+      props: { label: 'Provider', possibleValues: _.sortBy([
           { label: 'OpenAI', value: "openai" },
           { label: 'Ollama', value: "ollama" },
           { label: 'Mistral', value: "mistral" },
+          { label: 'Scaleway', value: "scaleway" },
+          { label: 'Deepseek', value: "deepseek" },
+          { label: 'X.AI', value: "x-ai" },
+          { label: 'Gemini', value: "gemini" },
+          { label: 'Cohere', value: "cohere" },
+          { label: 'Huggingface', value: "huggingface" },
           { label: 'All MiniLM L6 V2 (embedded)', value: "all-minilm-l6-v2" },
-      ] }
+      ], i => i.label) }
     },
     config: {
       type: "jsonobjectcode",

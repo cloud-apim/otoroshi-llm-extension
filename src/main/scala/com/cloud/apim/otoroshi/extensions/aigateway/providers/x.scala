@@ -442,3 +442,32 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     }
   }
 }
+
+case class XAiEmbeddingModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("v1")
+}
+
+object XAiEmbeddingModelClientOptions {
+  def fromJson(raw: JsObject): XAiEmbeddingModelClientOptions = XAiEmbeddingModelClientOptions(raw)
+}
+
+class XAiEmbeddingModelClient(val api: XAiApi, val options: XAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
+
+  override def embed(input: Seq[String], modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    val finalModel: String = modelOpt.getOrElse(options.model)
+    api.rawCall("POST", "/v1/embeddings", (options.raw ++ Json.obj("input" -> input, "model" -> finalModel)).some).map { resp =>
+      if (resp.status == 200) {
+        Right(EmbeddingResponse(
+          model = finalModel,
+          embeddings = resp.json.select("data").as[Seq[JsObject]].map(o => Embedding(o.select("embedding").as[Array[Float]])),
+          metadata = EmbeddingResponseMetadata(
+            resp.json.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L)
+          ),
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}
+

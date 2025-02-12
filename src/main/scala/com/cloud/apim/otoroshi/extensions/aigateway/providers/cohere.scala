@@ -473,3 +473,32 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
     }
   }
 }
+
+case class CohereAiEmbeddingModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("embed-multilingual-v3.0")
+}
+
+object CohereAiEmbeddingModelClientOptions {
+  def fromJson(raw: JsObject): CohereAiEmbeddingModelClientOptions = CohereAiEmbeddingModelClientOptions(raw)
+}
+
+class CohereAiEmbeddingModelClient(val api: CohereAiApi, val options: CohereAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
+
+  override def embed(input: Seq[String], modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    val finalModel: String = modelOpt.getOrElse(options.model)
+    api.rawCall("POST", "/v2/embed", (options.raw ++ Json.obj("texts" -> input, "model" -> finalModel, "input_type" -> "classification", "embedding_types" -> Json.arr("float"))).some).map { resp =>
+      if (resp.status == 200) {
+        Right(EmbeddingResponse(
+          model = finalModel,
+          embeddings = resp.json.select("embeddings").select("floats").as[Seq[JsArray]].map(arr => Embedding(arr.as[Array[Float]])),
+          metadata = EmbeddingResponseMetadata(
+            resp.json.select("meta").select("billed_units").select("input_tokens").asOpt[Long].getOrElse(-1L)
+          ),
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}
+
