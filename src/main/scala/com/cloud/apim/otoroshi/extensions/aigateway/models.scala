@@ -9,6 +9,7 @@ import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
 
+import java.nio.ByteOrder
 import java.util.Base64
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ExecutionContext, Future}
@@ -591,6 +592,7 @@ case class Embedding(vector: Array[Float]) {
   def toOpenAiJson(format: String, index: Int): JsValue = {
     val vectorJson: JsValue = if (format == "base64") {
       val byteBuffer = java.nio.ByteBuffer.allocate(4 * vector.length)
+      byteBuffer.order(ByteOrder.LITTLE_ENDIAN)
       vector.foreach(float => byteBuffer.putFloat(float))
       Base64.getEncoder.encodeToString(byteBuffer.array).json
     } else {
