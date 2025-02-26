@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
+import akka.http.scaladsl.util.FastFuture
 import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage}
@@ -86,7 +87,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
     // val request = attrs.get(otoroshi.plugins.Keys.RequestKey)
-    chatClient.stream(prompt, attrs, originalBody).andThen {
+    chatClient.stream(prompt, attrs, originalBody).transformWith {
       case Failure(exception) => {
         AuditEvent.generic("LLMUsageAudit") {
           Json.obj(
@@ -103,6 +104,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
           )
         }.toAnalytics()
+        FastFuture.failed(exception)
       }
       case Success(value) => value match {
         case Left(err) => {
@@ -119,10 +121,11 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
               //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
             )
           }.toAnalytics()
+          FastFuture.successful(Left(err))
         }
         case Right(value) => {
           var seq = Seq.empty[ChatResponseChunk]
-          value
+          val source = value
             .alsoTo(Sink.foreach { chunk =>
               seq = seq :+ chunk
             })
@@ -143,6 +146,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                 )
               }.toAnalytics()
             })
+          FastFuture.successful(Right(source))
         }
       }
     }

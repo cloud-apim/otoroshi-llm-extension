@@ -1351,3 +1351,115 @@ class OvhModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   }
 
 }
+
+class StreamingWithAuditingSuite extends LLmExtensionSuite {
+
+  val port: Int = freePort
+  var otoroshi: Otoroshi = _
+  var client: OtoroshiClient = _
+  implicit var ec: ExecutionContext = _
+  implicit var mat: Materializer = _
+
+  override def beforeAll(): Unit = {
+    otoroshi = startOtoroshiServer(port)
+    client = clientFor(port)
+    ec = otoroshi.executionContext
+    mat = otoroshi.materializer
+  }
+
+  override def afterAll(): Unit = {
+    otoroshi.stop()
+  }
+
+  def testChatCompletionStreamingWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(implicit ec: ExecutionContext, mat: Materializer): Unit = {
+    val token = sys.env(provider.envToken)
+    val port = client.port
+    val providerId = s"provider_${UUID.randomUUID().toString}"
+    val routeChatId = s"route_${UUID.randomUUID().toString}"
+
+    val llmprovider = AiProvider(
+      id = providerId,
+      name = s"${provider.name} provider",
+      provider = provider.name,
+      connection = provider.baseUrl match {
+        case None => Json.obj(
+          "token" -> token,
+          "timeout" -> 30000
+        )
+        case Some(url) => Json.obj(
+          "base_url" -> url,
+          "token" -> token,
+          "timeout" -> 30000
+        )
+      },
+      options = provider.options,
+    )
+    LlmProviderUtils.upsertProvider(client)(llmprovider)
+    val routeChat = client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertRaw(routeChatId, Json.parse(
+      s"""{
+         |  "id": "${routeChatId}",
+         |  "name": "openai",
+         |  "frontend": {
+         |    "domains": [
+         |      "${provider.name}.oto.tools/chat"
+         |    ]
+         |  },
+         |  "backend": {
+         |    "targets": [
+         |      {
+         |        "id": "target_1",
+         |        "hostname": "request.otoroshi.io",
+         |        "port": 443,
+         |        "tls": true
+         |      }
+         |    ],
+         |    "root": "/",
+         |    "rewrite": false,
+         |    "load_balancing": {
+         |      "type": "RoundRobin"
+         |    }
+         |  },
+         |  "plugins": [
+         |    {
+         |      "enabled": true,
+         |      "plugin": "cp:otoroshi.next.plugins.OverrideHost"
+         |    },
+         |    {
+         |      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
+         |      "config": {
+         |        "refs": [
+         |          "${providerId}"
+         |        ]
+         |      }
+         |    }
+         |  ]
+         |}""".stripMargin)).awaitf(awaitFor)
+    assert(routeChat.created, s"[${provider.name}] route chat has not been created")
+    await(1300.millis)
+    val resp = client.stream("POST", s"http://${provider.name}.oto.tools:${port}/chat?stream=true", Map.empty, Some(Json.parse(
+      s"""{
+         |  "messages": [
+         |    {
+         |      "role": "user",
+         |      "content": "hey, how are you ?"
+         |    }
+         |  ]
+         |}""".stripMargin))).awaitf(awaitFor)
+    if (resp.status != 200 && resp.status != 201) {
+      println(resp.chunks)
+    }
+    assertEquals(resp.status, 200, s"[${provider.name}] chat route did not respond with 200")
+    assert(resp.chunks.nonEmpty, s"[${provider.name}] no chunks")
+    assert(resp.message.nonEmpty, s"[${provider.name}] no message")
+    println(s"[${provider.name}] message: ${resp.message}")
+    client.forLlmEntity("providers").deleteEntity(llmprovider)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
+    await(1300.millis)
+  }
+
+  val provider = LlmProviders.ollama
+
+  test(s"provider '${provider.name}' should support chat/completions stream") {
+    testChatCompletionStreamingWith(provider, client, 30.seconds)
+  }
+}
