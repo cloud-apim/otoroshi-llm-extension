@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 import akka.http.scaladsl.util.FastFuture
 import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, OutputChatMessage}
 import otoroshi.env.Env
 import otoroshi.events.AuditEvent
 import otoroshi.utils.TypedMap
@@ -140,7 +140,24 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
                   "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                   "input_prompt" -> prompt.json,
-                  "output" -> JsArray(seq.map(_.json)),
+                  "output_stream" -> JsArray(seq.map(_.json)),
+                  "output" -> ChatResponse(
+                    generations = Seq(ChatGeneration(OutputChatMessage("assistant", seq.flatMap(_.choices.flatMap(_.delta.content)).mkString(""), None, Json.obj()))),
+                    metadata = ChatResponseMetadata(
+                      rateLimit =  ChatResponseMetadataRateLimit(
+                        requestsLimit = usageSlug.select("rate_limit").select("requests_limit").asOptLong.getOrElse(-1L),
+                        requestsRemaining = usageSlug.select("rate_limit").select("requests_remaining").asOptLong.getOrElse(-1L),
+                        tokensLimit = usageSlug.select("rate_limit").select("tokens_limit").asOptLong.getOrElse(-1L),
+                        tokensRemaining = usageSlug.select("rate_limit").select("tokens_remaining").asOptLong.getOrElse(-1L),
+                      ),
+                      usage = ChatResponseMetadataUsage(
+                        promptTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L),
+                        generationTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L),
+                        reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L),
+                      ),
+                      cache = None
+                    )
+                  ).json.debug(_.prettify.debugPrintln),
                   "provider_details" -> originalProvider.json //provider.map(_.json).getOrElse(JsNull).asValue,
                   //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                 )
