@@ -5,7 +5,8 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import play.api.libs.json.JsValue
+import otoroshi.utils.syntax.implicits._
+import play.api.libs.json.{JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -22,38 +23,37 @@ object ChatClientWithModelConstraints {
 class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    chatClient.call(prompt, attrs, originalBody)
+    originalBody.select("model").asOptString.orElse(chatClient.model) match {
+      case Some(model) if originalProvider.models.matches(model) => chatClient.call(prompt, attrs, originalBody)
+      case _ => Json.obj("error" -> "you can't use this model").leftf
+    }
   }
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    chatClient.stream(prompt, attrs, originalBody)
+    originalBody.select("model").asOptString.orElse(chatClient.model) match {
+      case Some(model) if originalProvider.models.matches(model) => chatClient.stream(prompt, attrs, originalBody)
+      case _ => Json.obj("error" -> "you can't use this model").leftf
+    }
   }
 
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    chatClient.completion(prompt, attrs, originalBody)
+    originalBody.select("model").asOptString.orElse(chatClient.model) match {
+      case Some(model) if originalProvider.models.matches(model) => chatClient.completion(prompt, attrs, originalBody)
+      case _ => Json.obj("error" -> "you can't use this model").leftf
+    }
   }
 
   override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    chatClient.completionStream(prompt, attrs, originalBody)
+    originalBody.select("model").asOptString.orElse(chatClient.model) match {
+      case Some(model) if originalProvider.models.matches(model) => chatClient.completionStream(prompt, attrs, originalBody)
+      case _ => Json.obj("error" -> "you can't use this model").leftf
+    }
   }
 
   override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     chatClient.listModels(raw).map {
       case Left(err) => Left(err)
-      case Right(models) => {
-        val include = originalProvider.models.include
-        val exclude = originalProvider.models.exclude
-        Right(models.filter { model =>
-          if (!(include.isEmpty && exclude.isEmpty)) {
-            val canpass    = if (include.isEmpty) true else include.exists(p => otoroshi.utils.RegexPool.regex(p).matches(model))
-            val cannotpass =
-              if (exclude.isEmpty) false else exclude.exists(p => otoroshi.utils.RegexPool.regex(p).matches(model))
-            canpass && !cannotpass
-          } else {
-            true
-          }
-        })
-      }
+      case Right(models) => Right(models.filter(m => originalProvider.models.matches(m)))
     }
   }
 }
