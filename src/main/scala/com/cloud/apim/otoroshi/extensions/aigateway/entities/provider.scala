@@ -84,6 +84,54 @@ case class CacheSettings(
   score: Double = 0.8
 )
 
+case class ContextSettings(default: Option[String] = None, contexts: Seq[String] = Seq.empty) {
+  def json: JsValue = ContextSettings.format.writes(this)
+  def isDefined: Boolean = contexts.nonEmpty || default.nonEmpty
+}
+
+object ContextSettings {
+  val empty = ContextSettings()
+  val format = new Format[ContextSettings] {
+    override def reads(json: JsValue): JsResult[ContextSettings] = Try {
+      ContextSettings(
+        default = json.select("default").asOpt[String].filterNot(_.isBlank),
+        contexts = json.select("contexts").asOpt[Seq[String]].getOrElse(Seq.empty),
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+    override def writes(o: ContextSettings): JsValue = Json.obj(
+      "default" -> o.default.map(_.json).getOrElse(JsNull).asValue,
+      "contexts" -> o.contexts,
+    )
+  }
+}
+
+case class ModelSettings(include: Seq[String] = Seq.empty, exclude: Seq[String] = Seq.empty) {
+  def json: JsValue = ModelSettings.format.writes(this)
+  def isDefined: Boolean = include.nonEmpty || exclude.nonEmpty
+}
+
+object ModelSettings {
+  val empty = ModelSettings()
+  val format = new Format[ModelSettings] {
+    override def reads(json: JsValue): JsResult[ModelSettings] = Try {
+      ModelSettings(
+        exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty),
+        include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty),
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+    override def writes(o: ModelSettings): JsValue = Json.obj(
+      "include" -> o.include,
+      "exclude" -> o.exclude,
+    )
+  }
+}
+
 case class AiProvider(
                        location: EntityLocation = EntityLocation.default,
                        id: String,
@@ -97,6 +145,8 @@ case class AiProvider(
                        providerFallback: Option[String] = None,
                        cache: CacheSettings = CacheSettings(),
                        guardrails: Guardrails = Guardrails.empty,
+                       context: ContextSettings = ContextSettings.empty,
+                       models: ModelSettings = ModelSettings.empty,
                      ) extends EntityLocationSupport {
   override def internalId: String               = id
   override def json: JsValue                    = AiProvider.format.writes(this)
@@ -205,27 +255,23 @@ case class AiProvider(
 
 object AiProvider {
   val format = new Format[AiProvider] {
-    override def writes(o: AiProvider): JsValue             = o.location.jsonWithKey ++ Json.obj(
-      "id"               -> o.id,
-      "name"             -> o.name,
-      "description"      -> o.description,
-      "metadata"         -> o.metadata,
-      "tags"             -> JsArray(o.tags.map(JsString.apply)),
-      "provider"         -> o.provider,
-      "connection"       -> o.connection,
-      "options"          -> o.options,
+    override def writes(o: AiProvider): JsValue = o.location.jsonWithKey ++ Json.obj(
+      "id"                -> o.id,
+      "name"              -> o.name,
+      "description"       -> o.description,
+      "metadata"          -> o.metadata,
+      "tags"              -> JsArray(o.tags.map(JsString.apply)),
+      "provider"          -> o.provider,
+      "connection"        -> o.connection,
+      "options"           -> o.options,
       "provider_fallback" -> o.providerFallback.map(_.json).getOrElse(JsNull).asValue,
-      // "regex_validation" -> Json.obj(
-      //   "allow" -> o.regexValidation.allow,
-      //   "deny" -> o.regexValidation.deny,
-      // ),
-      // "llm_validation" -> o.llmValidation.json,
-      // "http_validation" -> o.httpValidation.json,
-      "guardrails" -> o.guardrails.json,
+      "context"           -> o.context.json,
+      "models"            -> o.models.json,
+      "guardrails"        -> o.guardrails.json,
       "cache" -> Json.obj(
         "strategy" -> o.cache.strategy,
-        "ttl" -> o.cache.ttl.toMillis,
-        "score" -> o.cache.score
+        "ttl"      -> o.cache.ttl.toMillis,
+        "score"    -> o.cache.score
       )
     )
     override def reads(json: JsValue): JsResult[AiProvider] = Try {
@@ -240,13 +286,9 @@ object AiProvider {
         connection = (json \ "connection").asOpt[JsObject].getOrElse(Json.obj()),
         options = (json \ "options").asOpt[JsObject].getOrElse(Json.obj()),
         providerFallback = (json \ "provider_fallback").asOpt[String],
-        // regexValidation = RegexValidationSettings(
-        //   allow = (json \ "regex_validation" \ "allow").asOpt[Seq[String]].getOrElse(Seq.empty),
-        //   deny = (json \ "regex_validation" \ "deny").asOpt[Seq[String]].getOrElse(Seq.empty),
-        // ),
-        // llmValidation = json.select("llm_validation").asOpt[JsObject].flatMap(o => LlmValidationSettings.format.reads(o).asOpt).getOrElse(LlmValidationSettings()),
-        // httpValidation = json.select("http_validation").asOpt[JsObject].flatMap(o => HttpValidationSettings.format.reads(o).asOpt).getOrElse(HttpValidationSettings()),
         guardrails = json.select("guardrails").asOpt[JsArray].orElse(json.select("fences").asOpt[JsArray]).flatMap(seq => Guardrails.format.reads(seq).asOpt).getOrElse(Guardrails.empty),
+        context = json.select("context").asOpt[JsObject].flatMap(o => ContextSettings.format.reads(o).asOpt).getOrElse(ContextSettings.empty),
+        models = json.select("models").asOpt[JsObject].flatMap(o => ModelSettings.format.reads(o).asOpt).getOrElse(ModelSettings.empty),
         cache = CacheSettings(
           strategy = (json \ "cache" \ "strategy").asOpt[String].getOrElse("none"),
           ttl = (json \ "cache" \ "ttl").asOpt[Long].map(v => FiniteDuration(v, TimeUnit.MILLISECONDS)).getOrElse(24.hours),

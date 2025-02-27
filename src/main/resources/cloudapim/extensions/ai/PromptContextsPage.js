@@ -94,6 +94,60 @@ class AiContextTester extends Component {
   }
 }
 
+class ContextMessage extends Component {
+  state = {
+    error: null
+  }
+  onChange = (name, value) => {
+    const newItem = { ...this.props.itemValue, [name]: value };
+    const idx = this.props.idx;
+    const array = this.props.value;
+    array[idx] = newItem;
+    this.props.onChange(array);
+  }
+  componentDidCatch(error, info) {
+    this.setState({ error: error });
+  }
+  render() {
+    const item = this.props.itemValue;
+    if (this.state.error) {
+      return  React.createElement('div',  {}, `error: ${this.state.error}`);
+    }
+    return (
+      React.createElement('div',  {},
+        React.createElement('div', {className: "row mb-3 "},
+          React.createElement('label', { htmlFor: "input-role", className: "col-xs-12 col-sm-2 col-form-label"},
+            'Role'
+          ),
+          React.createElement('div', { className: "col-sm-10", style: { display: 'flex' } },
+            React.createElement('input', {
+              type: "text",
+              className: "form-control",
+              id: "input-role",
+              value: item.role || this.props.initRole || 'system',
+              onChange: (e) => this.onChange('role', e.target.value)
+            })
+          )
+        ),
+        React.createElement('div', {className: "row mb-3 "},
+          React.createElement('label', { htmlFor: "input-content", className: "col-xs-12 col-sm-2 col-form-label"},
+            'Content'
+          ),
+          React.createElement('div', { className: "col-sm-10", style: { display: 'flex' } },
+            React.createElement('textarea', {
+              className: "form-control",
+              id: "input-content",
+              value: item.content || '',
+              rows: 5,
+              onChange: (e) => this.onChange('content', e.target.value)
+            })
+          )
+        )
+      )
+    )
+  }
+}
+
 class PromptContextsPage extends Component {
 
   formSchema = {
@@ -101,10 +155,10 @@ class PromptContextsPage extends Component {
       type: 'location',
       props: {},
     },
-    id: { type: 'string', disabled: true, props: { label: 'Id', placeholder: '---' } },
+    id: {type: 'string', disabled: true, props: {label: 'Id', placeholder: '---'}},
     name: {
       type: 'string',
-      props: { label: 'Name', placeholder: 'My Awesome Context' },
+      props: {label: 'Name', placeholder: 'My Awesome Context' },
     },
     description: {
       type: 'string',
@@ -115,12 +169,14 @@ class PromptContextsPage extends Component {
       props: { label: 'Metadata' },
     },
     'pre_messages': {
-      'type': 'jsonobjectcode',
-      props: { label: 'Context pre messages' }
+      //'type': 'jsonobjectcode',
+      type: 'array',
+      props: { label: 'Context pre messages', component: ContextMessage, initRole: 'system' }
     },
     'post_messages': {
-      'type': 'jsonobjectcode',
-      props: { label: 'Context post messages' }
+      //'type': 'jsonobjectcode',
+      type: 'array',
+      props: { label: 'Context post messages', component: ContextMessage, initRole: 'user' }
     },
     tags: {
       type: 'array',
@@ -176,7 +232,8 @@ class PromptContextsPage extends Component {
           description: 'A prompt Context',
           tags: [],
           metadata: {},
-          messages: [],
+          pre_messages: [],
+          post_messages: [],
         }),
         itemName: "LLM Prompt Context",
         formSchema: this.formSchema,

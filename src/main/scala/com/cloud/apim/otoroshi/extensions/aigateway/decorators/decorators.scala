@@ -12,11 +12,13 @@ import scala.concurrent.{ExecutionContext, Future}
 object ChatClientDecorators {
 
   val possibleDecorators: Seq[Function[(AiProvider, ChatClient), ChatClient]] = Seq(
+    ChatClientWithModelConstraints.applyIfPossible,
     ChatClientWithProviderFallback.applyIfPossible,
     ChatClientWithSemanticCache.applyIfPossible,
     ChatClientWithSimpleCache.applyIfPossible,
     ChatClientWithGuardrailsValidation.applyIfPossible,
     ChatClientWithAuditing.applyIfPossible,
+    ChatClientWithContext.applyIfPossible
   )
 
   def apply(provider: AiProvider, client: ChatClient): ChatClient = {
