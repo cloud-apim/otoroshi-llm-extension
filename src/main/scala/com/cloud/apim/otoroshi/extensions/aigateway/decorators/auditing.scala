@@ -34,7 +34,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
-            "usage" -> "chat/completion/blocking",
+            "consumed_using" -> "chat/completion/blocking",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
             "route" -> route.map(_.json).getOrElse(JsNull).asValue,
@@ -50,7 +50,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
               "error" -> err,
-              "usage" -> "chat/completion/blocking",
+              "consumed_using" -> "chat/completion/blocking",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
@@ -67,7 +67,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           AuditEvent.generic("LLMUsageAudit") {
             usageSlug ++ Json.obj(
               "error" -> JsNull,
-              "usage" -> "chat/completion/blocking",
+              "consumed_using" -> "chat/completion/blocking",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
@@ -94,7 +94,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
-            "usage" -> "chat/completion/streaming",
+            "consumed_using" -> "chat/completion/streaming",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
             "route" -> route.map(_.json).getOrElse(JsNull).asValue,
@@ -111,7 +111,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
               "error" -> err,
-              "usage" -> "chat/completion/streaming",
+              "consumed_using" -> "chat/completion/streaming",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
@@ -135,7 +135,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
               AuditEvent.generic("LLMUsageAudit") {
                 usageSlug ++ Json.obj(
                   "error" -> JsNull,
-                  "usage" -> "chat/completion/streaming",
+                  "consumed_using" -> "chat/completion/streaming",
                   "user" -> user.map(_.json).getOrElse(JsNull).asValue,
                   "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
                   "route" -> route.map(_.json).getOrElse(JsNull).asValue,
@@ -180,7 +180,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
-            "usage" -> "completion/blocking",
+            "consumed_using" -> "completion/blocking",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
             "route" -> route.map(_.json).getOrElse(JsNull).asValue,
@@ -196,7 +196,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
               "error" -> err,
-              "usage" -> "completion/blocking",
+              "consumed_using" -> "completion/blocking",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
@@ -213,7 +213,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           AuditEvent.generic("LLMUsageAudit") {
             usageSlug ++ Json.obj(
               "error" -> JsNull,
-              "usage" -> "completion/blocking",
+              "consumed_using" -> "completion/blocking",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
@@ -239,7 +239,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
-            "usage" -> "completion/streaming",
+            "consumed_using" -> "completion/streaming",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
             "route" -> route.map(_.json).getOrElse(JsNull).asValue,
@@ -255,7 +255,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
               "error" -> err,
-              "usage" -> "completion/streaming",
+              "consumed_using" -> "completion/streaming",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
@@ -278,7 +278,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
               AuditEvent.generic("LLMUsageAudit") {
                 usageSlug ++ Json.obj(
                   "error" -> JsNull,
-                  "usage" -> "completion/streaming",
+                  "consumed_using" -> "completion/streaming",
                   "user" -> user.map(_.json).getOrElse(JsNull).asValue,
                   "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
                   "route" -> route.map(_.json).getOrElse(JsNull).asValue,
