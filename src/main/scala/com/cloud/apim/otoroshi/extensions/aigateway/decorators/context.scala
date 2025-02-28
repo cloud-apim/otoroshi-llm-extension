@@ -23,17 +23,22 @@ object ChatClientWithContext {
 
 class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  private def getContext(ref: String)(implicit env: Env): Option[PromptContext] = {
-    val ext = env.adminExtensions.extension[AiExtension].get
-    ext.states.context(ref)
-      .orElse(ext.states.allContexts().find(_.name == ref))
+  private def getContext(ref: String, possibleContextsById: Map[String, PromptContext], possibleContextsByName: Map[String, PromptContext]): Option[PromptContext] = {
+    possibleContextsById.get(ref)
+      .orElse {
+        possibleContextsByName.get(ref)
+      }
   }
 
   private def getNewPrompt(prompt: ChatPrompt, originalBody: JsValue)(implicit env: Env): ChatPrompt = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val possibleContextList = originalProvider.context.contexts.flatMap(ref => ext.states.context(ref))
+    lazy val possibleContextById = possibleContextList.map(c => (c.id, c)).toMap
+    lazy val possibleContextByName = possibleContextList.map(c => (c.name, c)).toMap
     val maybeContextFromProvider = originalProvider.context.default
-    val maybeContextFromPrompt = originalBody.select("context").asOpt[String].filter(ref => originalProvider.context.contexts.contains(ref))
+    val maybeContextFromPrompt = originalBody.select("context").asOpt[String]
     maybeContextFromPrompt match {
-      case Some(ref) => getContext(ref).map { ctx =>
+      case Some(ref) => getContext(ref, possibleContextById, possibleContextByName).map { ctx =>
         val messages = (ctx.preMessages ++ prompt.messages.map(_.json(ChatMessageContentFlavor.Common)) ++ ctx.postMessages).map { obj =>
           val role = obj.select("role").asOpt[String].getOrElse("user")
           val content = obj.select("content").asOpt[String].getOrElse("")
@@ -43,7 +48,7 @@ class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatCl
         prompt.copy(messages = messages)
       }.getOrElse(prompt)
       case None => maybeContextFromProvider match {
-        case Some(ref) => getContext(ref).map { ctx =>
+        case Some(ref) => ext.states.context(ref).map { ctx =>
           val messages = (ctx.preMessages ++ prompt.messages.map(_.json(ChatMessageContentFlavor.Common)) ++ ctx.postMessages).map { obj =>
             val role = obj.select("role").asOpt[String].getOrElse("user")
             val content = obj.select("content").asOpt[String].getOrElse("")

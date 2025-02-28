@@ -68,7 +68,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val context1 = PromptContext(
       location = EntityLocation.default,
       id = UUID.randomUUID().toString,
-      name = "test ctx",
+      name = "test ctx 1",
       description = "test ctx",
       tags = Seq.empty,
       metadata = Map.empty,
@@ -79,11 +79,22 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val context2 = PromptContext(
       location = EntityLocation.default,
       id = UUID.randomUUID().toString,
-      name = "test ctx",
+      name = "test ctx 2",
       description = "test ctx",
       tags = Seq.empty,
       metadata = Map.empty,
       preMessages = Seq(Json.obj("role" -> "system", "content" -> "You are an engineer, and you will respond to any question as such")),
+      postMessages = Seq.empty,
+    )
+
+    val context3 = PromptContext(
+      location = EntityLocation.default,
+      id = UUID.randomUUID().toString,
+      name = "test ctx 3",
+      description = "test ctx",
+      tags = Seq.empty,
+      metadata = Map.empty,
+      preMessages = Seq(Json.obj("role" -> "system", "content" -> "You are a mathematician, and you will respond to any question as such")),
       postMessages = Seq.empty,
     )
 
@@ -113,6 +124,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").upsertEntity(llmProvider1).awaitf(10.seconds)
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").upsertEntity(context1).awaitf(10.seconds)
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").upsertEntity(context2).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").upsertEntity(context3).awaitf(10.seconds)
     client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(route).awaitf(10.seconds)
     await(2.seconds)
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -151,12 +163,47 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(responses("latest").size, 2, "there should be 2 messages")
     assert(responses("latest").head.stringify.contains("engineer"), "there should be a engineer")
     responses.clear()
+
+    client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
+      "context" -> context2.name,
+      "messages" -> Json.arr(Json.obj(
+        "role" -> "user",
+        "content" -> "How an llm works ?"
+      ))
+    ))).awaitf(30.seconds)
+    assertEquals(responses("latest").size, 2, "there should be 2 messages")
+    assert(responses("latest").head.stringify.contains("engineer"), "there should be a engineer")
+    responses.clear()
+
+    client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
+      "context" -> context3.id,
+      "messages" -> Json.arr(Json.obj(
+        "role" -> "user",
+        "content" -> "How an llm works ?"
+      ))
+    ))).awaitf(30.seconds)
+    assertEquals(responses("latest").size, 1, "there should be 1 messages")
+    assert(!responses("latest").head.stringify.contains("mathematician"), "there should not be a mathematician")
+    responses.clear()
+
+    client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
+      "context" -> context3.name,
+      "messages" -> Json.arr(Json.obj(
+        "role" -> "user",
+        "content" -> "How an llm works ?"
+      ))
+    ))).awaitf(30.seconds)
+    assertEquals(responses("latest").size, 1, "there should be 1 messages")
+    assert(!responses("latest").head.stringify.contains("mathematician"), "there should not be a mathematician")
+    responses.clear()
+
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /////////                                  teardown                                                      ///////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").deleteEntity(llmProvider1).awaitf(10.seconds)
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").deleteEntity(context1).awaitf(10.seconds)
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").deleteEntity(context2).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").deleteEntity(context3).awaitf(10.seconds)
     client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
     await(2.seconds)
   }
