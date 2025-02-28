@@ -72,7 +72,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       description = "test ctx",
       tags = Seq.empty,
       metadata = Map.empty,
-      preMessages = Seq(Json.obj("role" -> "system", "content" -> "You are an english buttler, and you will respond to any question as such")),
+      preMessages = Seq(Json.obj("role" -> "system", "content" -> "You are an english butler, and you will respond to any question as such")),
       postMessages = Seq.empty,
     )
 
@@ -138,7 +138,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       ))
     ))).awaitf(30.seconds)
     assertEquals(responses("latest").size, 2, "there should be 2 messages")
-    assert(responses("latest").head.stringify.contains("buttler"), "there should be a buttler")
+    assert(responses("latest").head.stringify.contains("butler"), "there should be a butler")
     responses.clear()
 
     client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
@@ -173,7 +173,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       description = "test ctx",
       tags = Seq.empty,
       metadata = Map.empty,
-      preMessages = Seq(Json.obj("role" -> "system", "content" -> "You are an english buttler, and you will respond to any question as such")),
+      preMessages = Seq(Json.obj("role" -> "system", "content" -> "You are an english butler, and you will respond to any question as such")),
       postMessages = Seq.empty,
     )
 
@@ -229,7 +229,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       ))
     ))).awaitf(30.seconds)
     assertEquals(responses("latest").size, 2, "there should be 2 messages")
-    assert(responses("latest").head.stringify.contains("buttler"), "there should be a buttler")
+    assert(responses("latest").head.stringify.contains("butler"), "there should be a butler")
     responses.clear()
 
     client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
