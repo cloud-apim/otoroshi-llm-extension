@@ -166,6 +166,8 @@ class Guardrail extends Component {
     if (id === 'racial_bias') return [...def, 'config.provider', ...tail];
     if (id === 'gender_bias') return [...def, 'config.provider', ...tail];
     if (id === 'personal_health_information') return [...def, 'config.provider', ...tail];
+    if (id === 'wasm') return [...def, 'config.plugin_ref', ...tail];
+    if (id === 'quickjs') return [...def, 'config.quickjs_path', ...tail];
     return [...def, ...tail];
   }
   render() {
@@ -212,6 +214,8 @@ class Guardrail extends Component {
                 {label: 'Characters count', value: 'characters'},
                 {label: 'Text contains', value: 'contains'},
                 {label: 'Semantic contains', value: 'semantic_contains'},
+                {label: 'QuickJS', value: 'quickjs'},
+                {label: 'Wasm', value: 'wasm'},
               ]
             }
           },
@@ -257,6 +261,16 @@ class Guardrail extends Component {
                 label: a.name,
               }),
             } },
+          'config.plugin_ref': { type: 'select', props: {
+              label: 'LLM Prompt',
+              placeholder: 'Select a Wasm plugin',
+              valuesFrom: "/bo/api/proxy/apis/plugins.otoroshi.io/v1/wasm-plugins",
+              transformer: (item) => ({ label: item.name, value: item.id }),
+            } },
+          'config.quickjs_path': {
+            type: 'code',
+            label: 'QuickJS code path',
+          }
         },
         value: this.props.itemValue,
         onChange: i => {
@@ -321,6 +335,8 @@ class Guardrail extends Component {
             if (i.id === 'characters') this.props.value[this.props.idx].config = { min: 20, max: 300 };
             if (i.id === 'contains') this.props.value[this.props.idx].config = { operation: 'contains_all', values: [] };
             if (i.id === 'semantic_contains') this.props.value[this.props.idx].config = { operation: 'contains_all', values: [], score: 0.8 };
+            if (i.id === 'wasm') this.props.value[this.props.idx].config = { plugin_ref: '' };
+            if (i.id === 'quickjs') this.props.value[this.props.idx].config = { quickjs_path: '\'inline module\';\n\nexports.guardrail_call = function(args) {\n  const { messages } = JSON.parse(args);\n  return JSON.stringify({ \n    pass: true, \n    reason: "none" \n  });\n};' };
           }
           this.props.onChange(this.props.value)
         }

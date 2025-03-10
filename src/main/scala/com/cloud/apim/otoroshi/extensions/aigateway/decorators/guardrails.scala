@@ -47,6 +47,8 @@ object Guardrails {
     "characters" -> new CharactersCountGuardrail(),
     "contains" -> new ContainsGuardrail(),
     "semantic_contains" -> new SemanticContainsGuardrail(),
+    "wasm" -> new WasmGuardrail(),
+    "quickjs" -> new QuickJsGuardrail(),
   )
 /*
 [

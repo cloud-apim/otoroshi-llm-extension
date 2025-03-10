@@ -102,7 +102,7 @@ object LlmToolFunctionBackendOptions {
       }
   }
 
-  private def getDefaultCode()(implicit env: Env, ec: ExecutionContext): Future[String] = {
+  def getDefaultToolCallCode(): Future[String] = {
     s"""'inline module';
        |exports.tool_call = function(args_str) {
        |  const args = JSON.parse(args_str);
@@ -111,7 +111,7 @@ object LlmToolFunctionBackendOptions {
        |""".stripMargin.vfuture
   }
 
-  private def getCode(path: String, headers: Map[String, String])(implicit env: Env, ec: ExecutionContext): Future[String] = {
+  def getCode(path: String, headers: Map[String, String], defaultCode: () => Future[String])(implicit env: Env, ec: ExecutionContext): Future[String] = {
 
     LlmToolFunction.modulesCache.getIfPresent(path) match {
       case Some(code) => code.vfuture
@@ -127,7 +127,7 @@ object LlmToolFunctionBackendOptions {
                 LlmToolFunction.modulesCache.put(path, response.body)
                 response.body.vfuture
               } else {
-                getDefaultCode().map { code =>
+                defaultCode().map { code =>
                   LlmToolFunction.modulesCache.put(path, code)
                   code
                 }
@@ -140,7 +140,7 @@ object LlmToolFunctionBackendOptions {
             LlmToolFunction.modulesCache.put(path, code)
             code.vfuture
           } else {
-            getDefaultCode().map { code =>
+            defaultCode().map { code =>
               LlmToolFunction.modulesCache.put(path, code)
               code
             }
@@ -154,7 +154,7 @@ object LlmToolFunctionBackendOptions {
           fileContent(path.replaceFirst("s3://", ""), config)(env.otoroshiExecutionContext, env.otoroshiMaterializer).flatMap {
             case None => {
               LlmToolFunction.logger.info(s"unable to fetch from S3: ${path}")
-              getDefaultCode().map { code =>
+              defaultCode().map { code =>
                 LlmToolFunction.modulesCache.put(path, code)
                 code
               }
@@ -167,14 +167,14 @@ object LlmToolFunctionBackendOptions {
           }.recoverWith {
             case t: Throwable => {
               LlmToolFunction.logger.error(s"error when fetch from S3: ${path}", t)
-              getDefaultCode().map { code =>
+              defaultCode().map { code =>
                 LlmToolFunction.modulesCache.put(path, code)
                 code
               }
             }
           }
         } else {
-          getDefaultCode().map { code =>
+          defaultCode().map { code =>
             LlmToolFunction.modulesCache.put(path, code)
             code
           }
@@ -201,7 +201,7 @@ object LlmToolFunctionBackendOptions {
       jsPath match {
         case None => "error, not wasm plugin ref".vfuture
         case Some(path) => {
-          getCode(path, Map.empty).flatMap { code =>
+          getCode(path, Map.empty, LlmToolFunctionBackendOptions.getDefaultToolCallCode).flatMap { code =>
             env.wasmIntegration.wasmVmFor(LlmToolFunction.wasmConfigRef).flatMap {
               case None => "unable to create wasm vm".vfuture
               case Some((vm, localconfig)) => {

@@ -148,6 +148,41 @@ function cloud_apim_module_plugin_execute_tool_call() {
   }
 }
 
+function isString(value) {
+  return typeof value === 'string' || value instanceof String
+}
+
+function cloud_apim_module_plugin_execute_guardrail_call() {
+  try {
+    const inputStr = Host.inputString();
+    const inputJson = JSON.parse(inputStr);
+    const code = inputJson.code;
+    const arguments = inputJson.arguments;
+    const exps = eval_source(code, {});
+    const result = exps.guardrail_call(arguments)
+    if (result) {
+      if (result.then && result.value) {
+        if (isString(result.value)) {
+          Host.outputString(result.value);
+        } else {
+          Host.outputString(JSON.stringify(result.value));
+        }
+      } else {
+        if (isString(result)) {
+          Host.outputString(result);
+        } else {
+          Host.outputString(JSON.stringify(result));
+        }
+      }
+    } else {
+      Host.outputString(JSON.stringify({ error: "no_result_error" }));
+    }
+  } catch(e) {
+    Host.outputString(JSON.stringify({ error: "caught_error: " + e.message }));
+  }
+}
+
 module.exports = {
   cloud_apim_module_plugin_execute_tool_call: cloud_apim_module_plugin_execute_tool_call,
+  cloud_apim_module_plugin_execute_guardrail_call: cloud_apim_module_plugin_execute_guardrail_call,
 };
