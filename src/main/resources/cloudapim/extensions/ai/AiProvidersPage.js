@@ -166,6 +166,7 @@ class Guardrail extends Component {
     if (id === 'racial_bias') return [...def, 'config.provider', ...tail];
     if (id === 'gender_bias') return [...def, 'config.provider', ...tail];
     if (id === 'personal_health_information') return [...def, 'config.provider', ...tail];
+    if (id === 'prompt_injection') return [...def, 'config.provider', 'config.max_injection_score', ...tail];
     if (id === 'wasm') return [...def, 'config.plugin_ref', ...tail];
     if (id === 'quickjs') return [...def, 'config.quickjs_path', ...tail];
     return [...def, ...tail];
@@ -209,6 +210,7 @@ class Guardrail extends Component {
                 {label: 'No racial bias', value: 'racial_bias'},
                 {label: 'No gender bias', value: 'gender_bias'},
                 {label: 'No personal health information', value: 'personal_health_information'},
+                {label: 'No prompt injection/prompt jailbreak', value: 'prompt_injection'},
                 {label: 'Sentences count', value: 'sentences'},
                 {label: 'Words count', value: 'words'},
                 {label: 'Characters count', value: 'characters'},
@@ -220,6 +222,7 @@ class Guardrail extends Component {
             }
           },
           config: { type: 'jsonobjectcode', props: { label: 'Config.', height: '150px' } },
+          'config.max_injection_score': { type: 'number', props: { label: 'Max injection detection score' } },
           'config.min': { type: 'number', props: { label: 'Minimum' } },
           'config.max': { type: 'number', props: { label: 'Maximum' } },
           'config.deny': { type: 'array', props: { label: 'Denied expressions' } },
@@ -286,6 +289,7 @@ class Guardrail extends Component {
             if (i.id === 'gender_bias') this.props.value[this.props.idx].config = { provider: null };
             if (i.id === 'personal_health_information') this.props.value[this.props.idx].config = { provider: null };
             if (i.id === 'auto_secrets_leakage') this.props.value[this.props.idx].config = { provider: null };
+            if (i.id === 'prompt_injection') this.props.value[this.props.idx].config = { provider: null, max_injection_score: 90 };
             if (i.id === 'pif') this.props.value[this.props.idx].config = { provider: null, pif_items: [
                 "EMAIL_ADDRESS",
                 "PHONE_NUMBER",

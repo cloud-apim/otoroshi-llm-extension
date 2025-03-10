@@ -37,6 +37,7 @@ object Guardrails {
     "pif" -> new PersonalInformationsGuardrail(),
     "moderation" -> new LanguageModerationGuardrail(),
     "secrets_leakage" -> new SecretsLeakageGuardrail(),
+    "prompt_injection" -> new PromptInjectionGuardrail(),
     "auto_secrets_leakage" -> new AutoSecretsLeakageGuardrail(),
     "toxic_language" -> new ToxicLanguageGuardrail(),
     "racial_bias" -> new RacialBiasGuardrail(),
