@@ -155,6 +155,7 @@ case class AiProvider(
                        providerFallback: Option[String] = None,
                        cache: CacheSettings = CacheSettings(),
                        guardrails: Guardrails = Guardrails.empty,
+                       guardrailsFailOnDeny: Boolean = false,
                        context: ContextSettings = ContextSettings.empty,
                        models: ModelSettings = ModelSettings.empty,
                      ) extends EntityLocationSupport {
@@ -278,6 +279,7 @@ object AiProvider {
       "context"           -> o.context.json,
       "models"            -> o.models.json,
       "guardrails"        -> o.guardrails.json,
+      "guardrails_fail_on_deny" -> o.guardrailsFailOnDeny,
       "cache" -> Json.obj(
         "strategy" -> o.cache.strategy,
         "ttl"      -> o.cache.ttl.toMillis,
@@ -297,6 +299,7 @@ object AiProvider {
         options = (json \ "options").asOpt[JsObject].getOrElse(Json.obj()),
         providerFallback = (json \ "provider_fallback").asOpt[String],
         guardrails = json.select("guardrails").asOpt[JsArray].orElse(json.select("fences").asOpt[JsArray]).flatMap(seq => Guardrails.format.reads(seq).asOpt).getOrElse(Guardrails.empty),
+        guardrailsFailOnDeny = json.select("guardrails_fail_on_deny").asOpt[Boolean].getOrElse(false),
         context = json.select("context").asOpt[JsObject].flatMap(o => ContextSettings.format.reads(o).asOpt).getOrElse(ContextSettings.empty),
         models = json.select("models").asOpt[JsObject].flatMap(o => ModelSettings.format.reads(o).asOpt).getOrElse(ModelSettings.empty),
         cache = CacheSettings(

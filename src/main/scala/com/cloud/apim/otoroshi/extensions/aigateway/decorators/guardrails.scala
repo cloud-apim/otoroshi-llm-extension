@@ -179,6 +179,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
   override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
       case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
+      case GuardrailResult.GuardrailDenied(msg) if originalProvider.guardrailsFailOnDeny => Left(Json.obj("error" -> "guardrail_denied", "error_description" -> msg, "phase" -> "before")).vfuture
       case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
         Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
         ChatResponseMetadata.empty,
@@ -189,6 +190,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
           case Right(r) => {
             originalProvider.guardrails.call(GuardrailsCallPhase.After, r.generations.map(_.message), originalProvider, chatClient, attrs).flatMap {
               case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "after")).vfuture
+              case GuardrailResult.GuardrailDenied(msg) if originalProvider.guardrailsFailOnDeny => Left(Json.obj("error" -> "guardrail_denied", "error_description" -> msg, "phase" -> "after")).vfuture
               case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
                 Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
                 ChatResponseMetadata.empty,

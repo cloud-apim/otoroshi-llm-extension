@@ -806,6 +806,13 @@ class AiProvidersPage extends Component {
       type: 'jsonobjectcode',
       props: { label: 'Guardrails config.' }
     },
+    guardrails_fail_on_deny: {
+      type: 'bool',
+      props: {
+        label: 'Fail request on deny',
+        help: 'if enabled, then the request to the API will return an error instead of an error message in the conversation'
+      }
+    },
     guardrails: {
       type: 'array',
       props: {
@@ -857,6 +864,7 @@ class AiProvidersPage extends Component {
         'cache.ttl',
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
         'guardrails',
         '>>>Metadata and tags',
         'tags',
@@ -920,6 +928,7 @@ class AiProvidersPage extends Component {
         'cache.ttl',
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
         'guardrails',
         '>>>Tools',
         'options.wasm_tools',
@@ -966,6 +975,7 @@ class AiProvidersPage extends Component {
         'cache.ttl',
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
         'guardrails',
         '>>>Tools',
         'options.wasm_tools',
@@ -1013,6 +1023,7 @@ class AiProvidersPage extends Component {
         'cache.ttl',
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
         'guardrails',
         '>>>Tools',
         'options.wasm_tools',
@@ -1058,6 +1069,7 @@ class AiProvidersPage extends Component {
         'cache.ttl',
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
         'guardrails',
         '>>>Tools',
         'options.wasm_tools',
@@ -1103,6 +1115,7 @@ class AiProvidersPage extends Component {
         'cache.ttl',
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
         'guardrails',
         '>>>Tools',
         'options.wasm_tools',
@@ -1148,6 +1161,7 @@ class AiProvidersPage extends Component {
         'cache.ttl',
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
         'guardrails',
         '>>>Tools',
         'options.wasm_tools',
@@ -1192,6 +1206,7 @@ class AiProvidersPage extends Component {
         'cache.ttl',
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
         'guardrails',
         '>>>Tools',
         'options.wasm_tools',
@@ -1237,6 +1252,7 @@ class AiProvidersPage extends Component {
         'cache.ttl',
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
         'guardrails',
         // Tools not supported
         '>>>Tester',
@@ -1280,6 +1296,7 @@ class AiProvidersPage extends Component {
         'cache.ttl',
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
         'guardrails',
         // tools not supported
         '>>>Tester',
@@ -1321,6 +1338,7 @@ class AiProvidersPage extends Component {
         'cache.ttl',
         state.cache.strategy === 'semantic' ? 'cache.score' : null,
         '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
         'guardrails',
         // tools not supported
         '>>>Tester',
@@ -1363,6 +1381,7 @@ class AiProvidersPage extends Component {
       'cache.ttl',
       state.cache.strategy === 'semantic' ? 'cache.score' : null,
       '>>>Guardrails validation',
+      'guardrails_fail_on_deny',
       'guardrails',
       '>>>Tools',
       'options.wasm_tools',
