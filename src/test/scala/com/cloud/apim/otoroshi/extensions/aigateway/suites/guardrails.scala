@@ -72,6 +72,7 @@ class QuickJsGuardrailSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         "model" -> "llama3.2",
         "num_predict" -> 256,
       ),
+      guardrailsFailOnDeny = false,
       guardrails = Guardrails(Seq(GuardrailItem(
         enabled = true,
         before = true,
@@ -165,6 +166,26 @@ class QuickJsGuardrailSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       assert(pointer.get.asString.nonEmpty, s"no message")
       val message = pointer.asString
       println(s"message: ${message}")
+      assertEquals(message, "you cant say dummy bro !", "should be equals to you cant say dummy bro !")
+    }
+
+    {
+      LlmProviderUtils.upsertProvider(client)(llmprovider.copy(guardrailsFailOnDeny = true))
+      await(1300.millis)
+      val resp2 = client.call("POST", s"http://ollama.oto.tools:${port}/chat", Map.empty, Some(Json.parse(
+        s"""{
+           |  "messages": [
+           |    {
+           |      "role": "user",
+           |      "content": "hey dummy, how are you ?"
+           |    }
+           |  ]
+           |}""".stripMargin))).awaitf(30.seconds)
+      assertEquals(resp2.status, 400, s"chat route did not respond with 400")
+      val pointer = resp2.json.at("error_description")
+      assert(pointer.get.asString.nonEmpty, s"no error_description")
+      val message = pointer.asString
+      println(s"error_description: ${message}")
       assertEquals(message, "you cant say dummy bro !", "should be equals to you cant say dummy bro !")
     }
 
