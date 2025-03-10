@@ -278,7 +278,7 @@ abstract class HardCodedLLMGuardrail extends Guardrail {
                 if (NumberUtils.isDigits(content)) {
                   val score = content.toInt
                   val threshold = config.select("max_injection_score").asOpt[Int].getOrElse(90)
-                  if (score > threshold) {
+                  if (score < threshold) {
                     pass()
                   } else {
                     fail(6, config)
