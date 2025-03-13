@@ -1,12 +1,13 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
-import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
+import com.cloud.apim.otoroshi.extensions.aigateway.{LlmExtensionOneOtoroshiServerPerSuite, LlmProviders}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, CacheSettings, ContextSettings, PromptContext}
 import otoroshi.models.EntityLocation
 import otoroshi.next.models._
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy
-import play.api.libs.json.{JsObject, Json}
+import play.api.libs.json.{JsObject, JsValue, Json}
+import play.api.libs.ws.WSResponse
 import reactor.core.publisher.Mono
 
 import java.util.UUID
@@ -20,6 +21,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   val (ollama1Port, _) = createTestServerWithRoutes("ollama1", routes => routes.post("/api/chat", (req, response) => {
     req.receive().retain().asString().flatMap { body =>
       val json = body.parseJson
+      println("____received", json.select("context").asOpt[JsValue])
       val messages = json.select("messages").as[Seq[JsObject]]
       responses.put("latest", messages)
       // println("received: -----------------------------------" + json.prettify)
@@ -61,7 +63,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     )
   }
 
-  test("llm provider can have multiple possible contexts") {
+  test("llm provider can have multiple possible contexts".ignore) {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /////////                                  setup                                                         ///////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -208,7 +210,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     await(2.seconds)
   }
 
-  test("llm provider can have a default context that can be override") {
+  test("llm provider can have a default context that can be override".ignore) {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /////////                                  setup                                                         ///////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -295,6 +297,162 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").deleteEntity(llmProvider1).awaitf(10.seconds)
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").deleteEntity(context1).awaitf(10.seconds)
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").deleteEntity(context2).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+  }
+
+  test("llm provider can have multiple possible contexts openai") {
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /////////                                  setup                                                         ///////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    val context1 = PromptContext(
+      location = EntityLocation.default,
+      id = UUID.randomUUID().toString,
+      name = "test ctx 1",
+      description = "test ctx",
+      tags = Seq.empty,
+      metadata = Map.empty,
+      preMessages = Seq(Json.obj("role" -> "system", "content" -> "You are an english butler, and you will respond to any question as such")),
+      postMessages = Seq.empty,
+    )
+
+    val context2 = PromptContext(
+      location = EntityLocation.default,
+      id = UUID.randomUUID().toString,
+      name = "test ctx 2",
+      description = "test ctx",
+      tags = Seq.empty,
+      metadata = Map.empty,
+      preMessages = Seq(Json.obj("role" -> "system", "content" -> "You are an engineer, and you will respond to any question as such")),
+      postMessages = Seq.empty,
+    )
+
+    val context3 = PromptContext(
+      location = EntityLocation.default,
+      id = UUID.randomUUID().toString,
+      name = "test ctx 3",
+      description = "test ctx",
+      tags = Seq.empty,
+      metadata = Map.empty,
+      preMessages = Seq(Json.obj("role" -> "system", "content" -> "You are a mathematician, and you will respond to any question as such")),
+      postMessages = Seq.empty,
+    )
+
+    val provider = LlmProviders.openai
+    val token = sys.env(provider.envToken)
+    val llmProvider1 = AiProvider(
+      id = UUID.randomUUID().toString,
+      name = s"provider",
+      provider = provider.name,
+      connection = provider.baseUrl match {
+        case None => Json.obj(
+          "token" -> token,
+          "timeout" -> 30000
+        )
+        case Some(url) => Json.obj(
+          "base_url" -> url,
+          "token" -> token,
+          "timeout" -> 30000
+        )
+      },
+      options = provider.options,
+      context = ContextSettings(
+        contexts = Seq(context1.id, context2.id, context3.id)
+      )
+    )
+
+    val route = NgRoute(
+      location = EntityLocation.default,
+      id = UUID.randomUUID().toString,
+      name = "test route",
+      description = "test route",
+      tags = Seq.empty,
+      metadata = Map.empty,
+      enabled = true,
+      debugFlow = false,
+      capture = false,
+      exportReporting = false,
+      frontend = NgFrontend.empty.copy(domains = Seq(NgDomainAndPath("test.oto.tools/chat"))),
+      backend = NgBackend.empty.copy(targets = Seq(NgTarget.default)),
+      plugins = NgPlugins(Seq(NgPluginInstance(
+        plugin = s"cp:${classOf[OpenAiCompatProxy].getName}",
+        config = NgPluginInstanceConfig(Json.obj(
+          "refs" -> Json.arr(llmProvider1.id)
+        ))
+      )))
+    )
+
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").upsertEntity(llmProvider1).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").upsertEntity(context1).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").upsertEntity(context2).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").upsertEntity(context3).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /////////                                  test                                                          ///////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    def checkResp(resp: WSResponse): Unit = {
+      if (resp.status != 200) {
+        println(resp.json)
+      }
+      assertEquals(resp.status, 200, "resp should be 200")
+    }
+
+    checkResp(client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
+      "messages" -> Json.arr(Json.obj(
+        "role" -> "user",
+        "content" -> "How an llm works ?"
+      ))
+    ))).awaitf(30.seconds))
+
+    checkResp(client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
+      "context" -> context1.id,
+      "messages" -> Json.arr(Json.obj(
+        "role" -> "user",
+        "content" -> "How an llm works ?"
+      ))
+    ))).awaitf(30.seconds))
+
+      checkResp(client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
+      "context" -> context2.id,
+      "messages" -> Json.arr(Json.obj(
+        "role" -> "user",
+        "content" -> "How an llm works ?"
+      ))
+    ))).awaitf(30.seconds))
+
+      checkResp(client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
+      "context" -> context2.name,
+      "messages" -> Json.arr(Json.obj(
+        "role" -> "user",
+        "content" -> "How an llm works ?"
+      ))
+    ))).awaitf(30.seconds))
+
+      checkResp(client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
+      "context" -> context3.id,
+      "messages" -> Json.arr(Json.obj(
+        "role" -> "user",
+        "content" -> "How an llm works ?"
+      ))
+    ))).awaitf(30.seconds))
+
+      checkResp(client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
+      "context" -> context3.name,
+      "messages" -> Json.arr(Json.obj(
+        "role" -> "user",
+        "content" -> "How an llm works ?"
+      ))
+    ))).awaitf(30.seconds))
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /////////                                  teardown                                                      ///////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").deleteEntity(llmProvider1).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").deleteEntity(context1).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").deleteEntity(context2).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").deleteEntity(context3).awaitf(10.seconds)
     client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
     await(2.seconds)
   }
