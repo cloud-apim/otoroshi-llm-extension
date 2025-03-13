@@ -5,7 +5,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ModelS
 import otoroshi.models.EntityLocation
 import otoroshi.next.models._
 import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatModels
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{OpenAiCompatModels, OpenAiCompatProxy}
 import play.api.libs.json.{JsObject, Json}
 
 import java.util.UUID
@@ -110,5 +110,92 @@ class ProviderModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
     await(2.seconds)
   }
+}
 
+class ProviderModelsOverrideSuite extends LlmExtensionOneOtoroshiServerPerSuite {
+
+  def ollamaProvider(name: String, model: String): AiProvider = {
+    AiProvider(
+      id = UUID.randomUUID().toString,
+      name = name,
+      provider = "ollama",
+      connection = Json.obj(
+        "timeout" -> 30000
+      ),
+      options = Json.obj(
+        "model" -> model,
+      ),
+    )
+  }
+
+  test("llm provider can have its model dynamically changed") {
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /////////                                  setup                                                         ///////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    val llmProvider1 = ollamaProvider("ollama", "phi3:latest")
+
+    val route = NgRoute(
+      location = EntityLocation.default,
+      id = UUID.randomUUID().toString,
+      name = "test route",
+      description = "test route",
+      tags = Seq.empty,
+      metadata = Map.empty,
+      enabled = true,
+      debugFlow = false,
+      capture = false,
+      exportReporting = false,
+      frontend = NgFrontend.empty.copy(domains = Seq(NgDomainAndPath("test.oto.tools/chat"))),
+      backend = NgBackend.empty.copy(targets = Seq(NgTarget.default)),
+      plugins = NgPlugins(Seq(NgPluginInstance(
+        plugin = s"cp:${classOf[OpenAiCompatProxy].getName}",
+        config = NgPluginInstanceConfig(Json.obj(
+          "refs" -> Json.arr(llmProvider1.id)
+        ))
+      )))
+    )
+
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").upsertEntity(llmProvider1).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /////////                                  test                                                          ///////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+    {
+      val resp = client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.parse(
+        s"""{
+           |  "model": "phi3:latest",
+           |  "messages": [
+           |    {
+           |      "role": "user",
+           |      "content": "What is your name"
+           |    }
+           |  ]
+           |}""".stripMargin))).awaitf(30.seconds)
+      println(resp.json.prettify)
+    }
+    {
+      val resp = client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.parse(
+        s"""{
+           |  "model": "llama3.2:latest",
+           |  "messages": [
+           |    {
+           |      "role": "user",
+           |      "content": "What is your name"
+           |    }
+           |  ]
+           |}""".stripMargin))).awaitf(30.seconds)
+      println(resp.json.prettify)
+    }
+
+
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    /////////                                  teardown                                                      ///////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").deleteEntity(llmProvider1).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+  }
 }

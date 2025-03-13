@@ -272,18 +272,19 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
+    val finalModel: String = mergedOptions.select("model").asOptString.getOrElse(options.model)
     val mergedOptionsWithoutModel = mergedOptions - "model"
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(
-        "model" -> mergedOptions.select("model").asOptString.getOrElse(options.model).asInstanceOf[String],
+        "model" -> finalModel,
         "stream" -> false,
         "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
         "options" -> mergedOptionsWithoutModel,
       ) ++ tools), options.mcpConnectors)
     } else {
       api.call("POST", "/api/chat", Some(Json.obj(
-        "model" -> options.model,
+        "model" -> finalModel,
         "stream" -> false,
         "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
         "options" -> mergedOptions
@@ -311,7 +312,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         "provider_kind" -> "ollama",
         "provider" -> id,
         "duration" -> duration,
-        "model" -> options.model.json,
+        "model" -> finalModel,
         "rate_limit" -> usage.rateLimit.json,
         "usage" -> usage.usage.json
       ).applyOnWithOpt(usage.cache) {
@@ -337,9 +338,10 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
+    val finalModel: String = mergedOptions.select("model").asOptString.getOrElse(options.model)
     val mergedOptionsWithoutModel = mergedOptions - "model"
     api.stream("POST", "/api/chat", Some(Json.obj(
-      "model" -> mergedOptions.select("model").asOptString.getOrElse(options.model).asInstanceOf[String],
+      "model" -> finalModel,
       "stream" -> true,
       "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
       "options" -> mergedOptionsWithoutModel
@@ -368,7 +370,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
                 "provider_kind" -> "ollama",
                 "provider" -> id,
                 "duration" -> duration,
-                "model" -> options.model.json,
+                "model" -> finalModel,
                 "rate_limit" -> usage.rateLimit.json,
                 "usage" -> usage.usage.json
               ).applyOnWithOpt(usage.cache) {
@@ -411,6 +413,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
+    val finalModel: String = mergedOptions.select("model").asOptString.getOrElse(options.model)
     val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
     callF.map {
       case Left(err) => err.left
@@ -434,7 +437,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         "provider_kind" -> "ollama",
         "provider" -> id,
         "duration" -> duration,
-        "model" -> options.model.json,
+        "model" -> finalModel,
         "rate_limit" -> usage.rateLimit.json,
         "usage" -> usage.usage.json
       ).applyOnWithOpt(usage.cache) {
