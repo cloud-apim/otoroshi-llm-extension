@@ -124,7 +124,9 @@ class OpenAiCompatProxy extends NgBackendCall {
           val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
           call(jsonBody, config, ctx)
         } catch {
-          case e: Throwable => NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> e.getMessage))).leftf
+          case e: Throwable =>
+            e.printStackTrace()
+            NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> e.getMessage))).leftf
         }
       }
     } else {

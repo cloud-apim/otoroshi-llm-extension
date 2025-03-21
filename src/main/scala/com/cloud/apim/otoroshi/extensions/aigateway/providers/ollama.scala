@@ -287,7 +287,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         "model" -> finalModel,
         "stream" -> false,
         "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
-        "options" -> mergedOptions
+        "options" -> mergedOptionsWithoutModel
       )))
     }
     callF.map {
@@ -414,7 +414,11 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel: String = mergedOptions.select("model").asOptString.getOrElse(options.model)
-    val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
+    val headMessage = prompt.messages.head
+    val images = headMessage.images
+    val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj(
+      "prompt" -> headMessage.content
+    ).applyOnIf(images.value.nonEmpty)(_ ++ Json.obj("images" -> images))))
     callF.map {
       case Left(err) => err.left
       case Right(resp) =>

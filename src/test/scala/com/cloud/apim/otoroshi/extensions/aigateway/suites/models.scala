@@ -167,6 +167,7 @@ class ProviderModelsOverrideSuite extends LlmExtensionOneOtoroshiServerPerSuite 
       val resp = client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.parse(
         s"""{
            |  "model": "phi3:latest",
+           |  "stream": true,
            |  "messages": [
            |    {
            |      "role": "user",
@@ -174,12 +175,13 @@ class ProviderModelsOverrideSuite extends LlmExtensionOneOtoroshiServerPerSuite 
            |    }
            |  ]
            |}""".stripMargin))).awaitf(30.seconds)
-      println(resp.json.prettify)
+      println(resp.body)
     }
     {
       val resp = client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.parse(
         s"""{
            |  "model": "llama3.2:latest",
+           |  "stream": true,
            |  "messages": [
            |    {
            |      "role": "user",
@@ -187,7 +189,7 @@ class ProviderModelsOverrideSuite extends LlmExtensionOneOtoroshiServerPerSuite 
            |    }
            |  ]
            |}""".stripMargin))).awaitf(30.seconds)
-      println(resp.json.prettify)
+      println(resp.body)
     }
 
 

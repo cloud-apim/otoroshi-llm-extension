@@ -38,6 +38,7 @@ object ChatMessageContentFlavor {
   case object Ollama extends ChatMessageContentFlavor
 }
 sealed trait ChatMessageContent { self =>
+  def isSimpleText: Boolean = false
   def json(flavor: ChatMessageContentFlavor): JsValue
   def transformContent(f: String => String): ChatMessageContent = {
     self
@@ -90,6 +91,7 @@ object ChatMessageContent {
   }
 
   case class TextContent(text: String) extends ChatMessageContent {
+    override def isSimpleText: Boolean = true
     override def json(flavor: ChatMessageContentFlavor): JsValue = flavor match {
       case _ => Json.obj("type" -> "text", "text" -> text)
     }
@@ -270,7 +272,9 @@ object InputChatMessage {
         name = json.select("name").asOptString,
       )
     } match {
-      case Failure(e) => JsError(e.getMessage)
+      case Failure(e) =>
+        e.printStackTrace()
+        JsError(e.getMessage)
       case Success(e) => JsSuccess(e)
     }
 
@@ -292,7 +296,14 @@ case class InputChatMessage(role: String, contentParts: Seq[ChatMessageContent],
   }.applyOnWithOpt(name) {
     case (obj, name) => obj ++ Json.obj("name" -> name)
   }.applyOnIf(flavor == ChatMessageContentFlavor.Ollama && hasImage) { obj =>
-    obj ++ Json.obj("images" -> images)
+    val aggContent = contentParts.collect {
+      case ChatMessageContent.TextContent(text) => text
+    }
+    if (aggContent.isEmpty) {
+      (obj - "content") ++ Json.obj("images" -> images)
+    } else {
+      (obj - "content") ++ Json.obj("images" -> images, "content" -> aggContent.mkString(". "))
+    }
   }
 
   def content: String = singleTextContentUnsafe

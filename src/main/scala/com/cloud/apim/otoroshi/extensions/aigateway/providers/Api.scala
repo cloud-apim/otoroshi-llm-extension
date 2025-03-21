@@ -52,7 +52,7 @@ object ProviderHelpers {
   }
   def logCall(from: String, method: String, url: String, body: Option[JsValue] = None, opts: Map[String, String] = Map.empty)(implicit env: Env): Unit = {
     if (env.isDev || AiExtension.logger.isDebugEnabled) {
-      val msg = s"calling provider '${from}' - ${method} - ${url} - ${opts} - ${body.map(_.stringify).getOrElse("")}"
+      val msg = s"calling provider '${from}' - ${method} - ${url} - ${opts} - ${body.map(_.prettify).getOrElse("")}"
       if (env.isDev) {
         AiExtension.logger.info(msg)
       } else if (AiExtension.logger.isDebugEnabled) {
@@ -62,7 +62,7 @@ object ProviderHelpers {
   }
   def logStream(from: String, method: String, url: String, body: Option[JsValue] = None, opts: Map[String, String] = Map.empty)(implicit env: Env): Unit = {
     if (env.isDev || AiExtension.logger.isDebugEnabled) {
-      val msg = s"stream provider '${from}' - ${method} - ${url} - ${opts} - ${body.map(_.stringify).getOrElse("")}"
+      val msg = s"stream provider '${from}' - ${method} - ${url} - ${opts} - ${body.map(_.prettify).getOrElse("")}"
       if (env.isDev) {
         AiExtension.logger.info(msg)
       } else if (AiExtension.logger.isDebugEnabled) {
