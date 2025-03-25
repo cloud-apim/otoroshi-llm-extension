@@ -1,0 +1,31 @@
+---
+sidebar_position: 2
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Set Up a LLM Provider
+
+Open your Otoroshi admin web UI on [otoroshi.oto.tools:8080](http://otoroshi.oto.tools:8080/bo/dashboard/extensions/cloud-apim/ai-gateway/providers)
+
+In the `categories` section click on `AI - LLM` and then select `LLM Providers`
+
+Click on `Add item` to create a new LLM provider.
+
+![](/img/llm-provider-add-item.png)
+
+Then, choose the provider you would like to use among [this list](#available-providers)
+
+![](/img/choose-provider.png)
+
+After choosing a provider, you can set up your secret API token and other settings if needed.
+
+![](/img/add-provider-token.png)
+
+Now you can click on `Create provider` to save your changes and use it into an Otoroshi Route.
+
+[Create a new route](http://otoroshi.oto.tools:8080/bo/dashboard/routes/new?tab=informations)
+
+## Demo
+
+<iframe width="956" height="538" src="https://www.youtube.com/embed/8fPrwLhsb3g?si=eJ6btGUo84yJ1pmO" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
