@@ -21,19 +21,22 @@ Otoroshi LLM Extension is set of Otoroshi plugins and resources to interact with
 
 ## Supported LLM providers
 
-* Anthropic
+All supported providers are available [here](https://cloud-apim.github.io/otoroshi-llm-extension/docs/providers/providers-list)
+
+* Anthropic 
 * Azure OpenAI
 * Cloudflare
 * Cohere
 * Gemini
 * Groq
-* Huggingface
-* Mistral
-* Ollama
+* Huggingface 🇫🇷 🇪🇺
+* Mistral 🇫🇷 🇪🇺
+* Ollama (Local Models)
 * OpenAI
-* OVH AI Endpoints
-* Scaleway
+* OVH AI Endpoints 🇫🇷 🇪🇺
+* Scaleway 🇫🇷 🇪🇺
 * X.ai
+* Deepseek
 
 ## Requirements
 
