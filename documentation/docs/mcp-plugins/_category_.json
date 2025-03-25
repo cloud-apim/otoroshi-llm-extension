@@ -1,0 +1,8 @@
+{
+  "label": "MCP Plugins",
+  "position": 12,
+  "link": {
+      "type": "generated-index",
+      "description": "All MCP Plugins"
+  }
+}
