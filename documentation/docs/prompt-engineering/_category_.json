@@ -1,0 +1,8 @@
+{
+  "label": "Prompt Engineering",
+  "position": 9,
+  "link": {
+      "type": "generated-index",
+      "description": "All documentation to use our prompt engineering plugins"
+  }
+}
