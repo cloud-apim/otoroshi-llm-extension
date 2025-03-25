@@ -6,10 +6,34 @@ import Terminal from '@site/src/components/Terminal';
 
 # Install
 
-you can download the latest release of `otoroshi-llm-extension` from https://github.com/cloud-apim/otoroshi-llm-extension/releases/latest
+## Download Otoroshi
 
-TODO
+[ ![Download](https://img.shields.io/github/release/MAIF/otoroshi.svg) ](https://github.com/MAIF/otoroshi/releases/download/v16.24.0/otoroshi.jar)
 
-# Cloud APIM
+First, download the Otoroshi jar file:
 
-TODO
+```sh
+curl -L -o otoroshi.jar 'https://github.com/MAIF/otoroshi/releases/download/v16.24.0/otoroshi.jar'
+```
+
+## Download the Biscuit Studio Extension
+
+[ ![Download the latest release of the Otoroshi LLM Extension](https://img.shields.io/github/release/cloud-apim/otoroshi-llm-extension.svg) ](https://github.com/cloud-apim/otoroshi-llm-extension/releases/download/0.0.42/otoroshi-llm-extension_2.12-0.0.42.jar)
+
+Download the latest release of the `Otoroshi LLM Extension` from [here](https://github.com/cloud-apim/otoroshi-llm-extension/releases/latest).
+
+```sh
+curl -L -o otoroshi-llm-extension.jar 'https://github.com/cloud-apim/otoroshi-llm-extension/releases/download/0.0.42/otoroshi-llm-extension_2.12-0.0.42.jar'
+```
+
+## Run Otoroshi with the Biscuit Studio Extension
+
+Run Otoroshi with the Biscuit Studio extension by executing the following command:
+
+```sh
+java -cp "./otoroshi-llm-extension.jar:./otoroshi.jar" -Dotoroshi.adminLogin=admin -Dotoroshi.adminPassword=password -Dotoroshi.storage=file play.core.server.ProdServerStart
+```
+
+This will start the Otoroshi API Gateway.
+
+You can access the Otoroshi UI by opening [http://otoroshi.oto.tools:8080/](http://otoroshi.oto.tools:8080/) in your browser.
