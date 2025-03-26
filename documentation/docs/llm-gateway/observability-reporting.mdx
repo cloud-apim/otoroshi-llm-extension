@@ -36,6 +36,17 @@ you can use [otoroshi data exporters](https://maif.github.io/otoroshi/manual/ent
 
 ![lb](/img/llm-data-exporter.png)
 
+just make sure to filter events on
+
+```json
+{
+  "include": [{
+    "audit": "LLMUsageAudit"
+  }],
+  "exclude": []
+}
+```
+
 ## LLMUsageAudit event
 
 ```json
