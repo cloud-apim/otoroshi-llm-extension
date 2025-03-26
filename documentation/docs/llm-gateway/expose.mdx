@@ -6,18 +6,98 @@ import Terminal from '@site/src/components/Terminal';
 
 # Expose your LLM Provider
 
-now that your provider is fully setup, you can expose it to your organization.
+now that your provider is fully setup, you can expose it to your organization. The idea here is to do it through an [Otoroshi route](https://maif.github.io/otoroshi/manual/entities/routes.html)
+with a plugin of type `backend` that will handle passing incoming request to the actual LLM provider.
 
 ## OpenAI compatible plugins
 
+we provide a set of plugin capable of exposing any supported LLM provider through a [compatible OpenAI API](https://platform.openai.com/docs/api-reference/chat).
+This is the official way of doing LLM exposition.
+
 ### LLM OpenAI compatible chat/completions proxy
 
-### LLM OpenAI compatible completions proxy
+this plugins is compatible with the [OpenAI chat completion API](https://platform.openai.com/docs/api-reference/chat/create), also in [streaming style](https://platform.openai.com/docs/api-reference/chat-streaming)
+
+![](/img/openai-chat-completion.png)
+
+you can directly call it this way:
+
+```shell
+curl https://my-own-llm-endpoint.on.otoroshi/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello how are you!"
+      }
+    ]
+  }'
+```
+
+with a response looking like
+
+```json
+{
+  "id": "chatcmpl-B9MBs8CjcvOU2jLn4n570S5qMJKcT",
+  "object": "chat.completion",
+  "created": 1741569952,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello! How can I assist you today?",
+        "refusal": null,
+        "annotations": []
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 19,
+    "completion_tokens": 10,
+    "total_tokens": 29
+  }
+}
+```
 
 ### LLM OpenAI compatible models list
 
-## Custom otoroshi API plugins
+there is also a plugin to expose the provider models list compatible with the [OpenAI API](https://platform.openai.com/docs/api-reference/models)
 
-### LLM Proxy
 
-### LLM Models list
+![](/img/openai-models.png)
+
+you can directly call it this way:
+
+```shell
+curl https://my-own-llm-endpoint.on.otoroshi/v1/models \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY"
+```
+
+with a response looking like
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "o1-mini",
+      "object": "model",
+      "created": 1686935002,
+      "owned_by": "openai"
+    },
+    {
+      "id": "gpt-4",
+      "object": "model",
+      "created": 1686935002,
+      "owned_by": "openai"
+    }
+  ]
+}
+```
