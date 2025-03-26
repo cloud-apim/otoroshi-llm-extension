@@ -8,24 +8,23 @@ import Terminal from '@site/src/components/Terminal';
 
 ![](/img/egress-proxy-pattern.png)
 
-The main idea behind the AI Gateway / LLM gateway is to use the Egress Proxy Pattern to allows organizations to securely route outgoing traffic from their infrastructure to external LLM providers while maintaining strict control over network access, security policies, and compliance requirements.
+The main idea behind the AI Gateway / LLM gateway is to use the Egress Proxy Pattern to allows organizations to securely
+route outgoing traffic from their infrastructure to external LLM providers while maintaining strict control over network access,
+security policies, and compliance requirements.
 
-Key Benefits
+As any request going to a LLM Provider API pass through the LLM Gateway, you can decide who can do the call, when, to which provider,
+if you need to block the call based on it's content.
 
-Security & Compliance: Enforce security policies and restrict outbound traffic to authorized destinations.
+## Key Benefits
 
-Logging & Auditing: Monitor all outgoing requests for auditing and compliance.
+- Security & Compliance: Enforce security policies and restrict outbound traffic to authorized destinations.
+- Logging & Auditing: Monitor all outgoing requests for auditing and compliance.
+- Performance Optimization: Cache responses where applicable to reduce redundant network calls and improve speed.
+- Centralized Control: Manage API keys, access control, and provider selection centrally.
 
-Performance Optimization: Cache responses where applicable to reduce redundant network calls and improve speed.
+## How It Works
 
-Centralized Control: Manage API keys, access control, and provider selection centrally.
-
-How It Works
-
-All outgoing requests to LLM providers pass through an Egress Proxy.
-
-The proxy applies authentication, authorization, and logging before forwarding the request.
-
-Optionally, caching can be enabled for frequently accessed responses.
-
-The proxy integrates with Otoroshi’s key vault to manage API keys securely.
+- All outgoing requests to LLM providers pass through an Egress Proxy.
+- The proxy applies authentication, authorization, and logging before forwarding the request.
+- Optionally, caching can be enabled for frequently accessed responses.
+- The proxy integrates with Otoroshi’s key vault to manage API keys securely.
