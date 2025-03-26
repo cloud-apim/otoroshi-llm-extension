@@ -1,6 +1,6 @@
 {
-  "label": "Providers",
   "position": 3,
+  "label": "LLM Gateway",
   "link": {
       "type": "generated-index",
       "description": "All documentation to use our LLM Providers entities"
