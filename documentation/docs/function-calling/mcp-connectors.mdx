@@ -8,7 +8,7 @@ import Terminal from '@site/src/components/Terminal';
 
 ![](/img/mcp-connectors-1.png)
 
-## Default config 
+### Default config 
 
 ```js
 {
@@ -21,3 +21,53 @@ import Terminal from '@site/src/components/Terminal';
   }
 }
 ```
+
+## Example with Filesystem MCP Server
+
+### Filesystem MCP Connector configuration
+
+```js
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-filesystem",
+    "/Users/your-user/Desktop"
+  ]
+}
+```
+
+## Example with Github MCP Server
+
+![](/img/mcp-connector-with-vault.png)
+
+To use the Github MCP server you will need to generate a Github access token.
+
+Then, we will put the token into our local vault.
+
+Go to [your Otoroshi danger zone](http://otoroshi.oto.tools:8080/bo/dashboard/dangerzone) and go to `Global Metadata` section.
+
+Right after, you can create a new KEY, VALUE pair like this example (in the Otoroshi environment) :
+
+```js
+{
+  "mcp-github-token": "YOUR_GITHUB_TOKEN_HERE"
+}
+```
+
+### Github MCP Connector configuration
+
+```js
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-github"
+  ],
+  "env": {
+    "GITHUB_PERSONAL_ACCESS_TOKEN": "${vault://local/mcp-github-token}"
+  }
+}
+```
+
+Now you can use Github MCP server's functions to Create issues, list all issues, list pull requests and much more with your favorite LLMs !
