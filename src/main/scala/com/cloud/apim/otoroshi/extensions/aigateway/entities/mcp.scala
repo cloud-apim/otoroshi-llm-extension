@@ -38,16 +38,29 @@ import scala.util.{Failure, Success, Try}
 sealed trait McpConnectorTransportKind {
   def name: String
 }
+
 object McpConnectorTransportKind {
-  case object Stdio extends McpConnectorTransportKind { def name: String = "stdio" }
-  case object Sse extends McpConnectorTransportKind { def name: String = "sse" }
-  case object Websocket extends McpConnectorTransportKind { def name: String = "ws" }
-  case object Http extends McpConnectorTransportKind { def name: String = "http" }
   def apply(str: String): McpConnectorTransportKind = str.toLowerCase match {
     case "sse" => Sse
     case "ws" => Websocket
     case "http" => Http
     case _ => Stdio
+  }
+
+  case object Stdio extends McpConnectorTransportKind {
+    def name: String = "stdio"
+  }
+
+  case object Sse extends McpConnectorTransportKind {
+    def name: String = "sse"
+  }
+
+  case object Websocket extends McpConnectorTransportKind {
+    def name: String = "ws"
+  }
+
+  case object Http extends McpConnectorTransportKind {
+    def name: String = "http"
   }
 }
 
@@ -66,12 +79,14 @@ case class McpConnectorTransportSseOption(raw: JsObject) {
 }
 
 case class McpConnectorTransport(kind: McpConnectorTransportKind = McpConnectorTransportKind.Stdio, options: JsObject = Json.obj()) {
-  def json: JsValue = McpConnectorTransport.format.writes(this)
   lazy val isStdio: Boolean = kind == McpConnectorTransportKind.Stdio
   lazy val isSse: Boolean = kind == McpConnectorTransportKind.Sse
   lazy val stdioOptions: McpConnectorTransportStdioOption = McpConnectorTransportStdioOption(options)
   lazy val sseOptions: McpConnectorTransportSseOption = McpConnectorTransportSseOption(options)
+
+  def json: JsValue = McpConnectorTransport.format.writes(this)
 }
+
 object McpConnectorTransport {
   val format = new Format[McpConnectorTransport] {
     override def reads(json: JsValue): JsResult[McpConnectorTransport] = Try {
@@ -80,9 +95,10 @@ object McpConnectorTransport {
         options = json.select("options").asOpt[JsObject].getOrElse(Json.obj()),
       )
     } match {
-      case Failure(ex)    => JsError(ex.getMessage)
+      case Failure(ex) => JsError(ex.getMessage)
       case Success(value) => JsSuccess(value)
     }
+
     override def writes(o: McpConnectorTransport): JsValue = Json.obj(
       "kind" -> o.kind.name,
       "options" -> o.options,
@@ -95,20 +111,24 @@ case class McpConnectorPoolSettings(size: Int = 1) {
 }
 
 case class McpConnector(
-                           location: EntityLocation = EntityLocation.default,
-                           id: String,
-                           name: String,
-                           description: String = "",
-                           tags: Seq[String] = Seq.empty,
-                           metadata: Map[String, String] = Map.empty,
-                           pool: McpConnectorPoolSettings = McpConnectorPoolSettings(),
-                           transport: McpConnectorTransport = McpConnectorTransport(),
-                         ) extends EntityLocationSupport {
-  override def internalId: String               = id
-  override def json: JsValue                    = McpConnector.format.writes(this)
-  override def theName: String                  = name
-  override def theDescription: String           = description
-  override def theTags: Seq[String]             = tags
+  location: EntityLocation = EntityLocation.default,
+  id: String,
+  name: String,
+  description: String = "",
+  tags: Seq[String] = Seq.empty,
+  metadata: Map[String, String] = Map.empty,
+  pool: McpConnectorPoolSettings = McpConnectorPoolSettings(),
+  transport: McpConnectorTransport = McpConnectorTransport(),
+  strict: Boolean = true
+) extends EntityLocationSupport {
+  override def internalId: String = id
+
+  override def theName: String = name
+
+  override def theDescription: String = description
+
+  override def theTags: Seq[String] = tags
+
   override def theMetadata: Map[String, String] = metadata
 
   def isClientInCache(): Boolean = {
@@ -140,53 +160,7 @@ case class McpConnector(
     }
   }
 
-  private def withClient[T](f: DefaultMcpClient => T)(implicit ec: ExecutionContext, env: Env): Future[T] = {
-    //f(McpConnector.connectorsCache.get(id).get._1.peek()).vfuture
-    val promise = Promise.apply[T]()
-    McpConnector.connectorsCache.get(id) match {
-      case None => {
-        clientPool()
-        withClient(f).andThen {
-          case Failure(e) => promise.tryFailure(e)
-          case Success(e) => promise.trySuccess(e)
-        }
-      }
-      case Some((queue, counter, _, _)) => {
-        val item = queue.poll()
-        if (item == null) {
-          if (counter.get() < pool.size) {
-            counter.incrementAndGet()
-            val cli = buildClient()
-            try {
-              val r = f(cli)
-              promise.trySuccess(r)
-            } catch {
-              case e: Throwable => promise.tryFailure(e)
-            } finally {
-              queue.add(cli)
-            }
-          } else {
-            env.otoroshiScheduler.scheduleOnce(100.millis) {
-              withClient(f).andThen {
-                case Failure(e) => promise.tryFailure(e)
-                case Success(e) => promise.trySuccess(e)
-              }
-            }
-          }
-        } else {
-          try {
-            val r = f(item)
-            promise.trySuccess(r)
-          } catch {
-            case e: Throwable => promise.tryFailure(e)
-          } finally {
-            queue.add(item)
-          }
-        }
-      }
-    }
-    promise.future
-  }
+  override def json: JsValue = McpConnector.format.writes(this)
 
   private def buildClient(): DefaultMcpClient = {
     val trsprt = transport.kind match {
@@ -237,20 +211,70 @@ case class McpConnector(
     val request = ToolExecutionRequest.builder().id(UUID.randomUUID().toString()).name(name).arguments(args).build()
     withClient(_.executeTool(request))
   }
+
+  private def withClient[T](f: DefaultMcpClient => T)(implicit ec: ExecutionContext, env: Env): Future[T] = {
+    //f(McpConnector.connectorsCache.get(id).get._1.peek()).vfuture
+    val promise = Promise.apply[T]()
+    McpConnector.connectorsCache.get(id) match {
+      case None => {
+        clientPool()
+        withClient(f).andThen {
+          case Failure(e) => promise.tryFailure(e)
+          case Success(e) => promise.trySuccess(e)
+        }
+      }
+      case Some((queue, counter, _, _)) => {
+        val item = queue.poll()
+        if (item == null) {
+          if (counter.get() < pool.size) {
+            counter.incrementAndGet()
+            val cli = buildClient()
+            try {
+              val r = f(cli)
+              promise.trySuccess(r)
+            } catch {
+              case e: Throwable => promise.tryFailure(e)
+            } finally {
+              queue.add(cli)
+            }
+          } else {
+            env.otoroshiScheduler.scheduleOnce(100.millis) {
+              withClient(f).andThen {
+                case Failure(e) => promise.tryFailure(e)
+                case Success(e) => promise.trySuccess(e)
+              }
+            }
+          }
+        } else {
+          try {
+            val r = f(item)
+            promise.trySuccess(r)
+          } catch {
+            case e: Throwable => promise.tryFailure(e)
+          } finally {
+            queue.add(item)
+          }
+        }
+      }
+    }
+    promise.future
+  }
 }
 
 object McpConnector {
   val connectorsCache = new TrieMap[String, (ConcurrentLinkedQueue[DefaultMcpClient], AtomicInteger, String, Long)]()
   val format = new Format[McpConnector] {
-    override def writes(o: McpConnector): JsValue             = o.location.jsonWithKey ++ Json.obj(
-      "id"           -> o.id,
-      "name"         -> o.name,
-      "description"  -> o.description,
-      "metadata"     -> o.metadata,
-      "tags"         -> JsArray(o.tags.map(JsString.apply)),
-      "pool"         -> o.pool.json,
-      "transport"    -> o.transport.json,
+    override def writes(o: McpConnector): JsValue = o.location.jsonWithKey ++ Json.obj(
+      "id" -> o.id,
+      "name" -> o.name,
+      "description" -> o.description,
+      "metadata" -> o.metadata,
+      "tags" -> JsArray(o.tags.map(JsString.apply)),
+      "pool" -> o.pool.json,
+      "transport" -> o.transport.json,
+      "strict" -> o.strict,
     )
+
     override def reads(json: JsValue): JsResult[McpConnector] = Try {
       McpConnector(
         location = otoroshi.models.EntityLocation.readFromKey(json),
@@ -261,12 +285,14 @@ object McpConnector {
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         pool = McpConnectorPoolSettings((json \ "pool" \ "size").asOpt[Int].filter(_ > 0).getOrElse(1)),
         transport = (json \ "transport").asOpt(McpConnectorTransport.format).getOrElse(McpConnectorTransport()),
+        strict = (json \ "strict").asOpt[Boolean].getOrElse(true),
       )
     } match {
-      case Failure(ex)    => JsError(ex.getMessage)
+      case Failure(ex) => JsError(ex.getMessage)
       case Success(value) => JsSuccess(value)
     }
   }
+
   def resource(env: Env, datastores: AiGatewayExtensionDatastores, states: AiGatewayExtensionState): Resource = {
     Resource(
       "McpConnector",
@@ -320,10 +346,13 @@ trait McpConnectorsDataStore extends BasicStore[McpConnector]
 class KvMcpConnectorsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
   extends McpConnectorsDataStore
     with RedisLikeStore[McpConnector] {
-  override def fmt: Format[McpConnector]                  = McpConnector.format
+  override def fmt: Format[McpConnector] = McpConnector.format
+
   override def redisLike(implicit env: Env): RedisLike = redisCli
-  override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:mcpconntr:$id"
-  override def extractId(value: McpConnector): String    = value.id
+
+  override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:mcpconntr:$id"
+
+  override def extractId(value: McpConnector): String = value.id
 }
 
 object McpSupportImplicits {
@@ -332,41 +361,49 @@ object McpSupportImplicits {
       Option(node.description()).getOrElse("")
     }
   }
+
   implicit class BetterJsonEnumSchema(val node: JsonEnumSchema) extends AnyVal {
     def safeDescription(): String = {
       Option(node.description()).getOrElse("")
     }
   }
+
   implicit class BetterJsonIntegerSchema(val node: JsonIntegerSchema) extends AnyVal {
     def safeDescription(): String = {
       Option(node.description()).getOrElse("")
     }
   }
+
   implicit class BetterJsonNumberSchema(val node: JsonNumberSchema) extends AnyVal {
     def safeDescription(): String = {
       Option(node.description()).getOrElse("")
     }
   }
+
   implicit class BetterJsonStringSchema(val node: JsonStringSchema) extends AnyVal {
     def safeDescription(): String = {
       Option(node.description()).getOrElse("")
     }
   }
+
   implicit class BetterJsonObjectSchema(val node: JsonObjectSchema) extends AnyVal {
     def safeDescription(): String = {
       Option(node.description()).getOrElse("")
     }
   }
+
   implicit class BetterJsonAnyOfSchema(val node: JsonAnyOfSchema) extends AnyVal {
     def safeDescription(): String = {
       Option(node.description()).getOrElse("")
     }
   }
+
   implicit class BetterJsonArraySchema(val node: JsonArraySchema) extends AnyVal {
     def safeDescription(): String = {
       Option(node.description()).getOrElse("")
     }
   }
+
   implicit class BetterToolSpecification(val node: ToolSpecification) extends AnyVal {
     def safeDescription(): String = {
       Option(node.description()).getOrElse("")
@@ -399,12 +436,12 @@ object McpSupport {
 
   def schemaToJson(el: JsonSchemaElement): JsObject = {
     el match {
-      case s: JsonBooleanSchema   => Json.obj("description" -> s.safeDescription(), "type" -> "boolean")
-      case s: JsonEnumSchema      => Json.obj("description" -> s.safeDescription(), "type" -> "string", "enum" -> (s.enumValues().asScala.toSeq))
-      case s: JsonIntegerSchema   => Json.obj("description" -> s.safeDescription(), "type" -> "integer")
-      case s: JsonNumberSchema    => Json.obj("description" -> s.safeDescription(), "type" -> "number")
-      case s: JsonStringSchema    => Json.obj("description" -> s.safeDescription(), "type" -> "string")
-      case s: JsonObjectSchema    => {
+      case s: JsonBooleanSchema => Json.obj("description" -> s.safeDescription(), "type" -> "boolean")
+      case s: JsonEnumSchema => Json.obj("description" -> s.safeDescription(), "type" -> "string", "enum" -> (s.enumValues().asScala.toSeq))
+      case s: JsonIntegerSchema => Json.obj("description" -> s.safeDescription(), "type" -> "integer")
+      case s: JsonNumberSchema => Json.obj("description" -> s.safeDescription(), "type" -> "number")
+      case s: JsonStringSchema => Json.obj("description" -> s.safeDescription(), "type" -> "string")
+      case s: JsonObjectSchema => {
         val additionalProperties: scala.Boolean = Option(s.additionalProperties()).map(_.booleanValue()).getOrElse(false)
         val required: Seq[String] = Option(s.required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
         val properties: JsObject = JsObject(Option(s.properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
@@ -422,8 +459,8 @@ object McpSupport {
           "additionalProperties" -> additionalProperties,
         )
       }
-      case s: JsonAnyOfSchema     => Json.obj("description" -> s.safeDescription(), "anyOf" -> JsArray(s.anyOf().asScala.toSeq.map(schemaToJson)))
-      case s: JsonArraySchema     => Json.obj("description" -> s.safeDescription(), "type" -> "array", "items" ->schemaToJson(s.items()))
+      case s: JsonAnyOfSchema => Json.obj("description" -> s.safeDescription(), "anyOf" -> JsArray(s.anyOf().asScala.toSeq.map(schemaToJson)))
+      case s: JsonArraySchema => Json.obj("description" -> s.safeDescription(), "type" -> "array", "items" -> schemaToJson(s.items()))
       case s: JsonReferenceSchema => Json.obj("$ref" -> s.reference())
       case _ => Json.parse(gson.toJson(el)).asObject
     }
@@ -448,7 +485,7 @@ object McpSupport {
               //"name" -> s"mcp___${connector.id}___${function.name()}",
               "name" -> s"mcp___${idx}___${function.name()}",
               "description" -> function.safeDescription(),
-              "strict" -> true,
+              "strict" -> connector.strict,
               "parameters" -> Json.obj(
                 "type" -> "object",
                 "required" -> required,
@@ -477,14 +514,14 @@ object McpSupport {
             schemaToJson(el)
           })
           val fname = ("mcp___" + s"${idx}___${function.name()}".sha256)
-          map.put(s"${idx}___${function.name()}".sha256,  s"${idx}___${function.name()}")
+          map.put(s"${idx}___${function.name()}".sha256, s"${idx}___${function.name()}")
           Json.obj(
             "type" -> "function",
             "function" -> Json.obj(
               //"name" -> s"mcp___${connector.id}___${function.name()}",
               "name" -> fname,
               "description" -> function.safeDescription(),
-              "strict" -> true,
+              "strict" -> connector.strict,
               "parameters" -> Json.obj(
                 "type" -> "object",
                 "required" -> required,
@@ -526,30 +563,32 @@ object McpSupport {
     }
   }
 
-  private def callTool(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    Source(functions.toList)
-      .mapAsync(1) { toolCall =>
-        val cid = toolCall.function.connectorId
-        val connectorId = connectors(cid)
-        val functionName = toolCall.function.connectorFunctionName
-        val ext = env.adminExtensions.extension[AiExtension].get
-        ext.states.mcpConnector(connectorId) match {
-          case None => (s"undefined mcp connector ${connectorId}", toolCall).some.vfuture
-          case Some(function) => {
-            println(s"calling mcp function '${functionName}' with args: '${toolCall.function.arguments}'")
-            function.call(functionName, toolCall.function.arguments).map { r =>
-              (r, toolCall).some
-            }
-          }
-        }
+  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callTool(functions, connectors) { (resp, tc) =>
+      Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
+        "role" -> "tool",
+        "content" -> resp,
+        "tool_call_id" -> tc.id
+      ))).applyOnIf(providerName.toLowerCase().contains("deepseek")) { s => // temporary fix for https://github.com/deepseek-ai/DeepSeek-V3/issues/15
+        s.concat(Source(List(
+          Json.obj("role" -> "user", "content" -> resp)
+        )))
       }
-      .collect {
-        case Some(t) => t
+    }
+  }
+
+  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String, fmap: Map[String, String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callToolCohere(functions, connectors, fmap) { (resp, tc) =>
+      Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
+        "role" -> "tool",
+        "content" -> resp,
+        "tool_call_id" -> tc.id
+      ))).applyOnIf(providerName.toLowerCase().contains("deepseek")) { s => // temporary fix for https://github.com/deepseek-ai/DeepSeek-V3/issues/15
+        s.concat(Source(List(
+          Json.obj("role" -> "user", "content" -> resp)
+        )))
       }
-      .flatMapConcat {
-        case (resp, tc) => f(resp, tc)
-      }
-      .runWith(Sink.seq)(env.otoroshiMaterializer)
+    }
   }
 
   private def callToolCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], fmap: Map[String, String])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
@@ -582,6 +621,23 @@ object McpSupport {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
+  def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callAnthropic(functions, connectors) { (resp, tc) =>
+      Source(List(
+        Json.obj("role" -> "assistant", "content" -> Json.arr(Json.obj(
+          "type" -> "tool_use",
+          "id" -> tc.id,
+          "name" -> tc.name,
+          "input" -> tc.input,
+        ))),
+        Json.obj("role" -> "user", "content" -> Json.arr(Json.obj(
+          "type" -> "tool_result",
+          "tool_use_id" -> tc.id,
+          "content" -> resp
+        )))))
+    }
+  }
+
   private def callAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], connectors: Seq[String])(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
@@ -609,51 +665,6 @@ object McpSupport {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
-  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    callTool(functions, connectors) { (resp, tc) =>
-      Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
-        "role" -> "tool",
-        "content" -> resp,
-        "tool_call_id" -> tc.id
-      ))).applyOnIf(providerName.toLowerCase().contains("deepseek")) { s => // temporary fix for https://github.com/deepseek-ai/DeepSeek-V3/issues/15
-        s.concat(Source(List(
-          Json.obj("role" -> "user", "content" -> resp)
-        )))
-      }
-    }
-  }
-
-  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String, fmap: Map[String, String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    callToolCohere(functions, connectors, fmap) { (resp, tc) =>
-      Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
-        "role" -> "tool",
-        "content" -> resp,
-        "tool_call_id" -> tc.id
-      ))).applyOnIf(providerName.toLowerCase().contains("deepseek")) { s => // temporary fix for https://github.com/deepseek-ai/DeepSeek-V3/issues/15
-        s.concat(Source(List(
-          Json.obj("role" -> "user", "content" -> resp)
-        )))
-      }
-    }
-  }
-
-  def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    callAnthropic(functions, connectors) { (resp, tc) =>
-      Source(List(
-        Json.obj("role" -> "assistant", "content" -> Json.arr(Json.obj(
-          "type" -> "tool_use",
-          "id" -> tc.id,
-          "name" -> tc.name,
-          "input" -> tc.input,
-        ))),
-        Json.obj("role" -> "user", "content" -> Json.arr(Json.obj(
-          "type" -> "tool_result",
-          "tool_use_id" -> tc.id,
-          "content" -> resp
-        )))))
-    }
-  }
-
   def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     callTool(functions, connectors) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "content" -> "", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
@@ -661,6 +672,32 @@ object McpSupport {
         "content" -> resp,
       )))
     }
+  }
+
+  private def callTool(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    Source(functions.toList)
+      .mapAsync(1) { toolCall =>
+        val cid = toolCall.function.connectorId
+        val connectorId = connectors(cid)
+        val functionName = toolCall.function.connectorFunctionName
+        val ext = env.adminExtensions.extension[AiExtension].get
+        ext.states.mcpConnector(connectorId) match {
+          case None => (s"undefined mcp connector ${connectorId}", toolCall).some.vfuture
+          case Some(function) => {
+            println(s"calling mcp function '${functionName}' with args: '${toolCall.function.arguments}'")
+            function.call(functionName, toolCall.function.arguments).map { r =>
+              (r, toolCall).some
+            }
+          }
+        }
+      }
+      .collect {
+        case Some(t) => t
+      }
+      .flatMapConcat {
+        case (resp, tc) => f(resp, tc)
+      }
+      .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 }
 
@@ -678,38 +715,6 @@ class WebsocketHttpTransport(wsUrl: String, logRequests: Boolean, logResponses: 
   private val websocket = new AtomicReference[WebSocket]()
   private val websocketOpen = new AtomicBoolean(false)
   private val handler = new AtomicReference[McpOperationHandler]()
-
-  private def initWebSocket(): Unit = {
-    val request = new Request.Builder()
-      .url(wsUrl)
-      .get()
-      .build()
-    val ws: WebSocket = client.newWebSocket(request, new WebSocketListener {
-      override def onMessage(webSocket: WebSocket, bytes: ByteString): Unit = onWebsocketMessage(bytes.utf8().parseJson)
-      override def onMessage(webSocket: WebSocket, text: String): Unit = onWebsocketMessage(text.parseJson)
-      override def onOpen(webSocket: WebSocket, response: Response): Unit = websocketOpen.set(true)
-      override def onClosed(webSocket: WebSocket, code: Int, reason: String): Unit = websocketOpen.set(false)
-      override def onClosing(webSocket: WebSocket, code: Int, reason: String): Unit = ()
-      override def onFailure(webSocket: WebSocket, t: Throwable, response: Response): Unit = ()
-    })
-    websocket.set(ws)
-  }
-
-  private def websocketClient(): WebSocket = synchronized {
-    if (!websocketOpen.get()) {
-      initWebSocket()
-    }
-    websocket.get()
-  }
-
-  private def onWebsocketMessage(message: JsValue): Unit = {
-    val payload = OBJECT_MAPPER.readTree(message.stringify)
-    if (logResponses) {
-      log.info("response: {}", message.stringify)
-    }
-    handler.get().handle(payload)
-  }
-
 
   override def start(messageHandler: McpOperationHandler): Unit = {
     initWebSocket()
@@ -736,6 +741,42 @@ class WebsocketHttpTransport(wsUrl: String, logRequests: Boolean, logResponses: 
     }
     websocketClient().send(payload)
     future
+  }
+
+  private def websocketClient(): WebSocket = synchronized {
+    if (!websocketOpen.get()) {
+      initWebSocket()
+    }
+    websocket.get()
+  }
+
+  private def initWebSocket(): Unit = {
+    val request = new Request.Builder()
+      .url(wsUrl)
+      .get()
+      .build()
+    val ws: WebSocket = client.newWebSocket(request, new WebSocketListener {
+      override def onMessage(webSocket: WebSocket, bytes: ByteString): Unit = onWebsocketMessage(bytes.utf8().parseJson)
+
+      override def onMessage(webSocket: WebSocket, text: String): Unit = onWebsocketMessage(text.parseJson)
+
+      override def onOpen(webSocket: WebSocket, response: Response): Unit = websocketOpen.set(true)
+
+      override def onClosed(webSocket: WebSocket, code: Int, reason: String): Unit = websocketOpen.set(false)
+
+      override def onClosing(webSocket: WebSocket, code: Int, reason: String): Unit = ()
+
+      override def onFailure(webSocket: WebSocket, t: Throwable, response: Response): Unit = ()
+    })
+    websocket.set(ws)
+  }
+
+  private def onWebsocketMessage(message: JsValue): Unit = {
+    val payload = OBJECT_MAPPER.readTree(message.stringify)
+    if (logResponses) {
+      log.info("response: {}", message.stringify)
+    }
+    handler.get().handle(payload)
   }
 
   override def executeTool(request: McpCallToolRequest): CompletableFuture[JsonNode] = {
@@ -794,6 +835,32 @@ class OtoroshiHttpTransport(httpUrl: String, logRequests: Boolean, logResponses:
     }
   }
 
+  private def execute(request: Request, id: Long): CompletableFuture[JsonNode] = {
+    val future = new CompletableFuture[JsonNode]()
+    handler.get().startOperation(id, future)
+    client.newCall(request).enqueue(new Callback() {
+      override def onFailure(call: Call, e: IOException): Unit = {
+        future.completeExceptionally(e)
+      }
+
+      override def onResponse(call: Call, response: Response): Unit = {
+        val statusCode = response.code
+        if (!isExpectedStatusCode(statusCode)) {
+          future.completeExceptionally(new RuntimeException("Unexpected status code: " + statusCode))
+        } else {
+          val payload = response.body().byteString().utf8()
+          if (logResponses) {
+            log.info("response: {}", payload)
+          }
+          handler.get().handle(OBJECT_MAPPER.readTree(payload))
+        }
+      }
+    })
+    future
+  }
+
+  private def isExpectedStatusCode(statusCode: Int) = statusCode >= 200 && statusCode < 300
+
   override def listTools(request: McpListToolsRequest): CompletableFuture[JsonNode] = {
     try {
       val payload = OBJECT_MAPPER.writeValueAsString(request)
@@ -831,31 +898,6 @@ class OtoroshiHttpTransport(httpUrl: String, logRequests: Boolean, logResponses:
   override def cancelOperation(operationId: Long): Unit = {
     ()
   }
-
-  private def execute(request: Request, id: Long): CompletableFuture[JsonNode] = {
-    val future = new CompletableFuture[JsonNode]()
-    handler.get().startOperation(id, future)
-    client.newCall(request).enqueue(new Callback() {
-      override def onFailure(call: Call, e: IOException): Unit = {
-        future.completeExceptionally(e)
-      }
-      override def onResponse(call: Call, response: Response): Unit = {
-        val statusCode = response.code
-        if (!isExpectedStatusCode(statusCode)) {
-          future.completeExceptionally(new RuntimeException("Unexpected status code: " + statusCode))
-        } else {
-          val payload = response.body().byteString().utf8()
-          if (logResponses) {
-            log.info("response: {}", payload)
-          }
-          handler.get().handle(OBJECT_MAPPER.readTree(payload))
-        }
-      }
-    })
-    future
-  }
-
-  private def isExpectedStatusCode(statusCode: Int) = statusCode >= 200 && statusCode < 300
 
   override def close(): Unit = {
     client.dispatcher.executorService.shutdown()
