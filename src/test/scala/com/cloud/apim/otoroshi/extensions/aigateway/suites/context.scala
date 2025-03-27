@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ContextSettings, PromptContext}
 import com.cloud.apim.otoroshi.extensions.aigateway.{LlmExtensionOneOtoroshiServerPerSuite, LlmProviders}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, CacheSettings, ContextSettings, PromptContext}
 import otoroshi.models.EntityLocation
 import otoroshi.next.models._
 import otoroshi.utils.syntax.implicits._
@@ -63,7 +63,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     )
   }
 
-  test("llm provider can have multiple possible contexts".ignore) {
+  test("llm provider can have multiple possible contexts") {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /////////                                  setup                                                         ///////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -210,7 +210,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     await(2.seconds)
   }
 
-  test("llm provider can have a default context that can be override".ignore) {
+  test("llm provider can have a default context that can be override") {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /////////                                  setup                                                         ///////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
