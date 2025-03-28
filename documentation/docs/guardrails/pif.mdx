@@ -1,0 +1,30 @@
+import Terminal from '@site/src/components/Terminal';
+
+# Personal information
+
+![](/img/guardrails-pif.png)
+
+### Configuration
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": true,
+    "id": "pif",
+    "config": {
+      "provider": "provider_28ccfcf1-85b0-4e8d-b505-6793d07c0ee3",
+      "pif_items": [
+        "EMAIL_ADDRESS",
+        "PHONE_NUMBER",
+        "LOCATION_ADDRESS",
+        "NAME",
+        "IP_ADDRESS",
+        "CREDIT_CARD",
+        "SSN"
+      ]
+    }
+  }
+]
+```
