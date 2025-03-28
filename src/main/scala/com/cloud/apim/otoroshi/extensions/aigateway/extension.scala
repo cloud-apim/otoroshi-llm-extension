@@ -2,7 +2,7 @@ package otoroshi_plugins.com.cloud.apim.extensions.aigateway
 
 import akka.stream.scaladsl.{Source, StreamConverters}
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{LLMImpacts, LLMImpactsSettings}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsTracking, CostsTrackingSettings, LLMImpacts, LLMImpactsSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities._
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHardcodedItems
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
@@ -104,6 +104,9 @@ class AiExtension(val env: Env) extends AdminExtension {
 
   val llmImpactsSettings = LLMImpactsSettings(configuration.getOptional[Configuration]("impacts").getOrElse(Configuration.empty))
   val llmImpacts = new LLMImpacts(llmImpactsSettings, env)
+
+  val costsTrackingSettings = CostsTrackingSettings(configuration.getOptional[Configuration]("costs-tracking").getOrElse(Configuration.empty))
+  val costsTracking = new CostsTracking(costsTrackingSettings, env)
 
   val logger = AiExtension.logger
 

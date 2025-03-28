@@ -64,6 +64,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
         case Right(value) => {
           val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
           val impacts = attrs.get(ChatClientWithEcoImpact.key)
+          val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
           val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
           AuditEvent.generic("LLMUsageAudit") {
@@ -77,6 +78,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
               "output" -> value.json(env),
               "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
               "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+              "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
               //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
             )
           }.toAnalytics()
@@ -135,6 +137,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             .alsoTo(Sink.onComplete { _ =>
               val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
               val impacts = attrs.get(ChatClientWithEcoImpact.key)
+              val costs = attrs.get(ChatClientWithCostsTracking.key)
               val ext = env.adminExtensions.extension[AiExtension].get
               val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
               AuditEvent.generic("LLMUsageAudit") {
@@ -165,6 +168,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   ).json(env).debug(_.prettify.debugPrintln),
                   "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                   "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+                  "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                   //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                 )
               }.toAnalytics()
@@ -216,6 +220,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
         case Right(value) => {
           val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
           val impacts = attrs.get(ChatClientWithEcoImpact.key)
+          val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
           val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
           AuditEvent.generic("LLMUsageAudit") {
@@ -229,6 +234,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
               "output" -> value.json(env),
               "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
               "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+              "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
             //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
             )
           }.toAnalytics()
@@ -284,6 +290,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             .alsoTo(Sink.onComplete { _ =>
               val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
               val impacts = attrs.get(ChatClientWithEcoImpact.key)
+              val costs = attrs.get(ChatClientWithCostsTracking.key)
               val ext = env.adminExtensions.extension[AiExtension].get
               val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
               AuditEvent.generic("LLMUsageAudit") {
@@ -297,6 +304,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   "output" -> JsArray(seq.map(_.json)),
                   "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                   "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+                  "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                   //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                 )
               }.toAnalytics()

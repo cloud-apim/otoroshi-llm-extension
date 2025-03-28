@@ -1,0 +1,325 @@
+---
+sidebar_position: 2
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# 💲 Costs tracking
+
+If you want to track the costs of your LLM Usage, you can enable it in the Otoroshi LLM Extension (it should be enabled by default)
+
+```conf
+costs-tracking {
+  enabled = true
+  enabled = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_ENABLED}
+  embed-costs-tracking-in-responses = false
+  embed-costs-tracking-in-responses = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_EMBED_COSTS_TRACKING_IN_RESPONSES}
+}
+```
+
+Once it's enabled, audit events of kind `LLMUsageAudit` will have an `costs`.
+You can also embed the `costs` value in your LLM responses using the `impacts.embed-impacts-in-responses` config.
+
+The costs tracking  computation is based on project [LitLLM](https://docs.litellm.ai/) models price dictionnary and only supports right now the following providers
+
+- openai
+- deepseek
+- x-ai
+- azure-openai
+- cloudflare
+- gemini
+- mistral
+- ollama
+- cohere
+- anthropic
+- groq
+
+but if you're okay with approximations, you can set some metadata on your providers to use supported providers / models
+
+- `costs-tracking-provider`: the provider used for costs tracking computation
+- `eco-impacts-model`: the model used for eco costs tracking computation
+
+## Example of costs tracking embed in responses
+
+```sh
+$ curl --request POST \
+  --url 'http://ecologits.oto.tools:9999/v1/chat/completions?embed_=true&embed_costs=true' \
+  --header 'authorization: Bearer otoapk_mqXJ9YrgVM0rcGZy_0a35ab6e5b5407cc7200f94f43f60c583928d372ef43b99a28b93243c3c90153' \
+  --header 'content-type: application/json' \
+  --data '{
+  "messages": [
+    {
+      "role": "user",
+      "content": "tell me a joke"
+    }
+  ]
+}'
+
+{
+  "id": "chatcmpl-VRyJP4WKPFG2bWODCKp0yXn3UkwtpdnQ",
+  "object": "chat.completion",
+  "created": 1743169375,
+  "model": "gpt-4o-mini",
+  "system_fingerprint": "fp-CGPX1MTbpRo7OvGCR0MPPwZiXz9sm8N0",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Why did the scarecrow win an award?\n\nBecause he was outstanding in his field!"
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 11,
+    "completion_tokens": 18,
+    "total_tokens": 29,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  },
+  "costs": {
+    "input_cost": 0.00000165,
+    "output_cost": 0.0000108,
+    "reasoning_cost": 0,
+    "total_cost": 0.00001245,
+    "currency": "dollar"
+  }
+}
+```
+
+## Example of LLMUsageAudit event with costs tracking
+
+```json
+{
+  "@id" : "1905616593920983819",
+  "@timestamp" : 1743169375292,
+  "@type" : "AuditEvent",
+  "@product" : "otoroshi",
+  "@serviceId" : "",
+  "@service" : "Otoroshi",
+  "@env" : "dev",
+  "audit" : "LLMUsageAudit",
+  "provider_kind" : "openai",
+  "provider" : "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
+  "duration" : 415,
+  "model" : "gpt-4o-mini",
+  "rate_limit" : {
+    "requests_limit" : 10000,
+    "requests_remaining" : 9999,
+    "tokens_limit" : 200000,
+    "tokens_remaining" : 199993
+  },
+  "usage" : {
+    "prompt_tokens" : 11,
+    "generation_tokens" : 18,
+    "reasoning_tokens" : 0
+  },
+  "error" : null,
+  "consumed_using" : "chat/completion/blocking",
+  "user" : null,
+  "apikey" : null,
+  "route" : {
+    "_loc" : {
+      "tenant" : "default",
+      "teams" : [ "default" ]
+    },
+    "id" : "route_e4a9d6cb3-d859-4203-a860-8d1dd6d09557",
+    "name" : "ecologits",
+    "description" : "A new route",
+    "tags" : [ ],
+    "metadata" : {
+      "created_at" : "2025-03-28T10:10:19.448+01:00",
+      "updated_at" : "2025-03-28T10:48:48.218+01:00"
+    },
+    "enabled" : true,
+    "debug_flow" : false,
+    "export_reporting" : false,
+    "capture" : false,
+    "groups" : [ "default" ],
+    "bound_listeners" : [ ],
+    "frontend" : {
+      "domains" : [ "test.oto.tools" ],
+      "strip_path" : true,
+      "exact" : false,
+      "headers" : { },
+      "query" : { },
+      "methods" : [ ]
+    },
+    "backend" : {
+      "targets" : [ {
+        "id" : "target_1",
+        "hostname" : "request.otoroshi.io",
+        "port" : 443,
+        "tls" : true,
+        "weight" : 1,
+        "backup" : false,
+        "predicate" : {
+          "type" : "AlwaysMatch"
+        },
+        "protocol" : "HTTP/1.1",
+        "ip_address" : null,
+        "tls_config" : {
+          "certs" : [ ],
+          "trusted_certs" : [ ],
+          "enabled" : false,
+          "loose" : false,
+          "trust_all" : false
+        }
+      } ],
+      "root" : "/",
+      "rewrite" : false,
+      "load_balancing" : {
+        "type" : "RoundRobin"
+      },
+      "client" : {
+        "retries" : 1,
+        "max_errors" : 20,
+        "retry_initial_delay" : 50,
+        "backoff_factor" : 2,
+        "call_timeout" : 30000,
+        "call_and_stream_timeout" : 120000,
+        "connection_timeout" : 10000,
+        "idle_timeout" : 60000,
+        "global_timeout" : 30000,
+        "sample_interval" : 2000,
+        "proxy" : { },
+        "custom_timeouts" : [ ],
+        "cache_connection_settings" : {
+          "enabled" : false,
+          "queue_size" : 2048
+        }
+      },
+      "health_check" : {
+        "enabled" : false,
+        "url" : "",
+        "timeout" : 5000,
+        "healthyStatuses" : [ ],
+        "unhealthyStatuses" : [ ]
+      }
+    },
+    "backend_ref" : null,
+    "plugins" : [ {
+      "enabled" : true,
+      "debug" : false,
+      "plugin" : "cp:otoroshi.next.plugins.OverrideHost",
+      "include" : [ ],
+      "exclude" : [ ],
+      "config" : { },
+      "bound_listeners" : [ ],
+      "plugin_index" : {
+        "transform_request" : 0
+      }
+    }, {
+      "enabled" : true,
+      "debug" : false,
+      "plugin" : "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
+      "include" : [ ],
+      "exclude" : [ ],
+      "config" : {
+        "refs" : [ "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691" ]
+      },
+      "bound_listeners" : [ ],
+      "plugin_index" : { }
+    } ]
+  },
+  "input_prompt" : [ {
+    "role" : "user",
+    "content" : "tell me a joke"
+  } ],
+  "output" : {
+    "generations" : [ {
+      "message" : {
+        "role" : "assistant",
+        "content" : "Why did the scarecrow win an award?\n\nBecause he was outstanding in his field!"
+      }
+    } ],
+    "metadata" : {
+      "rate_limit" : {
+        "requests_limit" : 10000,
+        "requests_remaining" : 9999,
+        "tokens_limit" : 200000,
+        "tokens_remaining" : 199993
+      },
+      "usage" : {
+        "prompt_tokens" : 11,
+        "generation_tokens" : 18,
+        "reasoning_tokens" : 0
+      },
+      "costs" : {
+        "input_cost" : 0.00000165,
+        "output_cost" : 0.0000108,
+        "reasoning_cost" : 0,
+        "total_cost" : 0.00001245,
+        "currency" : "dollar"
+      }
+    }
+  },
+  "provider_details" : {
+    "_loc" : {
+      "tenant" : "default",
+      "teams" : [ "default" ]
+    },
+    "id" : "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
+    "name" : "OpenAI clean",
+    "description" : "An OpenAI LLM api provider",
+    "metadata" : {
+      "created_at" : "2025-03-28T10:10:51.558+01:00"
+    },
+    "tags" : [ ],
+    "provider" : "openai",
+    "connection" : {
+      "base_url" : "https://api.openai.com/v1",
+      "token" : "xxx",
+      "timeout" : 30000
+    },
+    "options" : {
+      "model" : "gpt-4o-mini",
+      "frequency_penalty" : null,
+      "logit_bias" : null,
+      "logprobs" : null,
+      "top_logprobs" : null,
+      "max_tokens" : null,
+      "n" : 1,
+      "presence_penalty" : null,
+      "response_format" : null,
+      "seed" : null,
+      "stop" : null,
+      "stream" : false,
+      "temperature" : 1,
+      "top_p" : 1,
+      "tools" : null,
+      "tool_choice" : null,
+      "user" : null,
+      "wasm_tools" : [ ],
+      "mcp_connectors" : [ ],
+      "allow_config_override" : true
+    },
+    "provider_fallback" : null,
+    "context" : {
+      "default" : null,
+      "contexts" : [ ]
+    },
+    "models" : {
+      "include" : [ ],
+      "exclude" : [ ]
+    },
+    "guardrails" : [ ],
+    "guardrails_fail_on_deny" : false,
+    "cache" : {
+      "strategy" : "none",
+      "ttl" : 300000,
+      "score" : 0.8
+    }
+  },
+  "costs": {
+    "input_cost": 0.00000165,
+    "output_cost": 0.0000108,
+    "reasoning_cost": 0,
+    "total_cost": 0.00001245,
+    "currency": "dollar"
+  }
+}
+```

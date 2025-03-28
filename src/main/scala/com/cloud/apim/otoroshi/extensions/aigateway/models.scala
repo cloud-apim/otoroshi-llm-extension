@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ImpactsOutput
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsOutput, ImpactsOutput}
 import otoroshi.env.Env
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
@@ -446,6 +446,8 @@ case class ChatResponse(
     "usage" -> metadata.usage.openaiJson,
   ).applyOnWithOpt(metadata.impacts) {
     case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(metadata.costs) {
+    case (o, costs) => o ++ Json.obj("costs" -> costs.json)
   }
   def openaiCompletionJson(model: String, echo: Boolean, prompt: String, env: Env): JsValue = Json.obj(
     "id" -> s"cmpl-${IdGenerator.token(32)}",
@@ -457,6 +459,8 @@ case class ChatResponse(
     "usage" -> metadata.usage.openaiJson,
   ).applyOnWithOpt(metadata.impacts) {
     case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(metadata.costs) {
+    case (o, costs) => o ++ Json.obj("costs" -> costs.json)
   }
   def toSource(model: String): Source[ChatResponseChunk, _] = {
     val id = s"chatgen-${IdGenerator.token(32)}"
@@ -496,7 +500,7 @@ case class ChatResponseCache(status: ChatResponseCacheStatus, key: String, ttl: 
   )
 }
 
-case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage, cache: Option[ChatResponseCache], impacts: Option[ImpactsOutput] = None) {
+case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage, cache: Option[ChatResponseCache], impacts: Option[ImpactsOutput] = None, costs: Option[CostsOutput] = None) {
   def cacheHeaders: Map[String, String] = cache match {
     case None => Map.empty
     case Some(cache) => cache.toHeaders()
@@ -508,6 +512,8 @@ case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage:
     case(obj, cache) => obj ++ Json.obj("cache" -> cache.json)
   }.applyOnWithOpt(impacts) {
     case(obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(costs) {
+    case(obj, costs) => obj ++ Json.obj("costs" -> costs.json)
   }
 }
 
