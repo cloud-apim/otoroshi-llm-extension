@@ -4,7 +4,8 @@ import akka.stream.scaladsl.{Sink, Source, StreamConverters}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.Types.ValueOrRange
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta}
+import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -16,7 +17,7 @@ import play.api.libs.typedmap.TypedKey
 import java.util.concurrent.atomic.AtomicReference
 import scala.collection.mutable
 import scala.concurrent.duration.DurationInt
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.math._
 import scala.util._
 
@@ -594,6 +595,10 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
       .getOrElse(s"'resource ${path} not found !'")
   }
 
+  def canHandle(provider: String, modelName: String): Boolean = {
+    models_by_provider_name.contains(s"${provider}-${modelName}")
+  }
+
   def llmImpacts(
                   provider: String,
                   modelName: String,
@@ -690,6 +695,64 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
     }
   }
 
+  private def handleStream(attrs: TypedMap, originalBody: JsValue)(f: => Future[Either[JsValue, Source[ChatResponseChunk, _]]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    getProvider() match {
+      case None => f // unsupported provider
+      case Some(provider) => {
+        val start = System.currentTimeMillis()
+        f.map {
+          case Left(err) => Left(err)
+          case Right(resp) => {
+            val promise = Promise.apply[Option[ChatResponseChunk]]()
+            val ext = env.adminExtensions.extension[AiExtension].get
+            val finalProvider = originalProvider.metadata.getOrElse("eco-impacts-provider", provider)
+            val modelName = originalProvider.metadata.getOrElse("eco-impacts-model", getModel(originalBody))
+            val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_impacts")).contains("true")
+            val addCostsInResp = ext.llmImpactsSettings.embedImpactsInResponses || enableInRequest
+            if (ext.llmImpacts.canHandle(finalProvider, modelName)) {
+              resp.applyOnIf(addCostsInResp) { src =>
+                src.map(r => r.copy(choices = r.choices.map(c => c.copy(finishReason = None))))
+              }.alsoTo(Sink.onComplete { _ =>
+                val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+                val generationTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L)
+                val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
+                val ext = env.adminExtensions.extension[AiExtension].get
+                ext.llmImpacts.llmImpacts(
+                  provider = finalProvider,
+                  modelName = modelName,
+                  outputTokenCount = (generationTokens + reasoningTokens).toInt,
+                  requestLatency = System.currentTimeMillis() - start,
+                  electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
+                ) match {
+                  case Left(_) => promise.trySuccess(None)
+                  case Right(impacts) if !addCostsInResp =>
+                    attrs.put(ChatClientWithEcoImpact.key -> impacts)
+                    promise.trySuccess(None)
+                  case Right(impacts) =>
+                    attrs.put(ChatClientWithEcoImpact.key -> impacts)
+                    promise.trySuccess(ChatResponseChunk(
+                      id = s"chatcmpl-${ULID.random().toLowerCase()}",
+                      created = (System.currentTimeMillis() / 1000L),
+                      model = modelName,
+                      choices = Seq(ChatResponseChunkChoice(
+                        index = 0L,
+                        delta = ChatResponseChunkChoiceDelta(None),
+                        finishReason = "stop".some,
+                      )),
+                      impacts = impacts.some
+                    ).some)
+                }
+              }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right
+            } else {
+              resp.right
+            }
+
+          }
+        }
+      }
+    }
+  }
+
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     getProvider() match {
       case None => chatClient.call(prompt, attrs, originalBody) // unsupported provider
@@ -726,32 +789,8 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
   }
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    getProvider() match {
-      case None => chatClient.stream(prompt, attrs, originalBody) // unsupported provider
-      case Some(provider) => {
-        val start = System.currentTimeMillis()
-        chatClient.stream(prompt, attrs, originalBody).map {
-          case Left(err) => Left(err)
-          case Right(resp) => {
-            resp.alsoTo(Sink.onComplete { _ =>
-              val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-              val generationTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L)
-              val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
-              val ext = env.adminExtensions.extension[AiExtension].get
-              ext.llmImpacts.llmImpacts(
-                provider = originalProvider.metadata.getOrElse("eco-impacts-provider", provider),
-                modelName = originalProvider.metadata.getOrElse("eco-impacts-model", getModel(originalBody)),
-                outputTokenCount = (generationTokens + reasoningTokens).toInt,
-                requestLatency = System.currentTimeMillis() - start,
-                electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
-              ).foreach { impacts =>
-                attrs.put(ChatClientWithEcoImpact.key -> impacts)
-                // impacts.json(ext.llmImpactsSettings.embedDescriptionInJson).prettify.debugPrintln
-              }
-            }).right
-          }
-        }
-      }
+    handleStream(attrs, originalBody) {
+      chatClient.stream(prompt, attrs, originalBody)
     }
   }
 
@@ -791,34 +830,9 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
   }
 
   override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    getProvider() match {
-      case None => chatClient.completionStream(prompt, attrs, originalBody) // unsupported provider
-      case Some(provider) => {
-        val start = System.currentTimeMillis()
-        chatClient.completionStream(prompt, attrs, originalBody).map {
-          case Left(err) => Left(err)
-          case Right(resp) => {
-            resp.alsoTo(Sink.onComplete { _ =>
-              val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-              val generationTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L)
-              val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
-              val ext = env.adminExtensions.extension[AiExtension].get
-              ext.llmImpacts.llmImpacts(
-                provider = originalProvider.metadata.getOrElse("eco-impacts-provider", provider),
-                modelName = originalProvider.metadata.getOrElse("eco-impacts-model", getModel(originalBody)),
-                outputTokenCount = (generationTokens + reasoningTokens).toInt,
-                requestLatency = System.currentTimeMillis() - start,
-                electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
-              ).foreach { impacts =>
-                attrs.put(ChatClientWithEcoImpact.key -> impacts)
-                // impacts.json(ext.llmImpactsSettings.embedDescriptionInJson).prettify.debugPrintln
-              }
-            }).right
-          }
-        }
-      }
+    handleStream(attrs, originalBody) {
+      chatClient.completionStream(prompt, attrs, originalBody)
     }
   }
-
 }
 

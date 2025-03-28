@@ -591,32 +591,40 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
   )
 }
 
-case class ChatResponseChunk(id: String, created: Long, model: String, choices: Seq[ChatResponseChunkChoice]) {
+case class ChatResponseChunk(id: String, created: Long, model: String, choices: Seq[ChatResponseChunkChoice], costs: Option[CostsOutput] = None, impacts: Option[ImpactsOutput] = None) {
   def json: JsValue = Json.obj(
     "id" -> id,
     "created" -> created,
     "model" -> model,
     "choices" -> JsArray(choices.map(_.json))
   )
-  def openaiJson: JsValue = Json.obj(
+  def openaiJson(env: Env): JsValue = Json.obj(
     "id" -> id,
     "object" -> "chat.completion.chunk",
     "created" -> created,
     "model" -> model,
     "system_fingerprint" -> JsNull,
     "choices" -> JsArray(choices.map(_.openaiJson))
-  )
-  def openaiCompletionJson: JsValue = Json.obj(
+  ).applyOnWithOpt(costs) {
+    case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+  }.applyOnWithOpt(impacts) {
+    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }
+  def openaiCompletionJson(env: Env): JsValue = Json.obj(
     "id" -> id,
     "object" -> "text_completion",
     "created" -> created,
     "model" -> model,
     "system_fingerprint" -> JsNull,
     "choices" -> JsArray(choices.map(_.openaiCompletionJson))
-  )
+  ).applyOnWithOpt(costs) {
+    case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+  }.applyOnWithOpt(impacts) {
+    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }
   def eventSource: ByteString = s"data: ${json.stringify}\n\n".byteString
-  def openaiEventSource: ByteString = s"data: ${openaiJson.stringify}\n\n".byteString
-  def openaiCompletionEventSource: ByteString = s"data: ${openaiCompletionJson.stringify}\n\n".byteString
+  def openaiEventSource(env: Env): ByteString = s"data: ${openaiJson(env).stringify}\n\n".byteString
+  def openaiCompletionEventSource(env: Env): ByteString = s"data: ${openaiCompletionJson(env).stringify}\n\n".byteString
 }
 
 case class Embedding(vector: Array[Float]) {

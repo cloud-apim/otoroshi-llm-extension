@@ -2,8 +2,9 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.{Sink, Source, StreamConverters}
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import play.api.Configuration
@@ -13,7 +14,7 @@ import play.api.libs.json.{JsObject, JsValue, Json}
 import play.api.libs.typedmap.TypedKey
 
 import java.util.concurrent.atomic.AtomicReference
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.concurrent.duration.DurationInt
 
 case class CostsTrackingSettings(configuration: Configuration) {
@@ -76,6 +77,10 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
     env.environment.resourceAsStream(path)
       .map(stream => StreamConverters.fromInputStream(() => stream).runFold(ByteString.empty)(_++_).awaitf(10.seconds).utf8String)
       .getOrElse(s"'resource ${path} not found !'")
+  }
+
+  def canHandle(provider: String, modelName: String): Boolean = {
+    models.contains(s"${provider}-${modelName}")
   }
 
   def computeCosts(
@@ -141,6 +146,62 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     }
   }
 
+  private def handleStream(attrs: TypedMap, originalBody: JsValue)(f: => Future[Either[JsValue, Source[ChatResponseChunk, _]]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    getProvider() match {
+      case None => f // unsupported provider
+      case Some(provider) => {
+        f.map {
+          case Left(err) => Left(err)
+          case Right(resp) => {
+            val promise = Promise.apply[Option[ChatResponseChunk]]()
+            val ext = env.adminExtensions.extension[AiExtension].get
+            val finalProvider = originalProvider.metadata.getOrElse("costs-tracking-provider", provider)
+            val model = originalProvider.metadata.getOrElse("costs-tracking-model", getModel(originalBody))
+            val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_costs")).contains("true")
+            val addCostsInResp = ext.costsTrackingSettings.embedCostsTrackingInResponses || enableInRequest
+            if (ext.costsTracking.canHandle(finalProvider, model)) {
+              resp.applyOnIf(addCostsInResp) { src =>
+                src.map(r => r.copy(choices = r.choices.map(c => c.copy(finishReason = None))))
+              }.alsoTo(Sink.onComplete { _ =>
+                val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+                val inputTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L)
+                val outputTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L)
+                val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
+                ext.costsTracking.computeCosts(
+                  provider = finalProvider,
+                  modelName = model,
+                  inputTokens = inputTokens,
+                  outputTokens = outputTokens,
+                  reasoningTokens = reasoningTokens
+                ) match {
+                  case Left(_) => promise.trySuccess(None)
+                  case Right(costs) if !addCostsInResp =>
+                    attrs.put(ChatClientWithCostsTracking.key -> costs)
+                    promise.trySuccess(None)
+                  case Right(costs) =>
+                    attrs.put(ChatClientWithCostsTracking.key -> costs)
+                    promise.trySuccess(ChatResponseChunk(
+                      id = s"chatcmpl-${ULID.random().toLowerCase()}",
+                      created = (System.currentTimeMillis() / 1000L),
+                      model = model,
+                      choices = Seq(ChatResponseChunkChoice(
+                        index = 0L,
+                        delta = ChatResponseChunkChoiceDelta(None),
+                        finishReason = "stop".some,
+                      )),
+                      costs = costs.some
+                    ).some)
+                }
+              }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right
+            } else {
+              resp.right
+            }
+          }
+        }
+      }
+    }
+  }
+
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     getProvider() match {
       case None => chatClient.call(prompt, attrs, originalBody) // unsupported provider
@@ -175,31 +236,8 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
   }
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    getProvider() match {
-      case None => chatClient.stream(prompt, attrs, originalBody) // unsupported provider
-      case Some(provider) => {
-        chatClient.stream(prompt, attrs, originalBody).map {
-          case Left(err) => Left(err)
-          case Right(resp) => {
-            resp.alsoTo(Sink.onComplete { _ =>
-              val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-              val inputTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L)
-              val outputTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L)
-              val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
-              val ext = env.adminExtensions.extension[AiExtension].get
-              ext.costsTracking.computeCosts(
-                provider = originalProvider.metadata.getOrElse("costs-tracking-provider", provider),
-                modelName = originalProvider.metadata.getOrElse("costs-tracking-model", getModel(originalBody)),
-                inputTokens = inputTokens,
-                outputTokens = outputTokens,
-                reasoningTokens = reasoningTokens
-              ).foreach { costs =>
-                attrs.put(ChatClientWithCostsTracking.key -> costs)
-              }
-            }).right
-          }
-        }
-      }
+    handleStream(attrs, originalBody) {
+      chatClient.stream(prompt, attrs, originalBody)
     }
   }
 
@@ -237,31 +275,8 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
   }
 
   override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    getProvider() match {
-      case None => chatClient.completionStream(prompt, attrs, originalBody) // unsupported provider
-      case Some(provider) => {
-        chatClient.completionStream(prompt, attrs, originalBody).map {
-          case Left(err) => Left(err)
-          case Right(resp) => {
-            resp.alsoTo(Sink.onComplete { _ =>
-              val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-              val inputTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L)
-              val outputTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L)
-              val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
-              val ext = env.adminExtensions.extension[AiExtension].get
-              ext.costsTracking.computeCosts(
-                provider = originalProvider.metadata.getOrElse("costs-tracking-provider", provider),
-                modelName = originalProvider.metadata.getOrElse("costs-tracking-model", getModel(originalBody)),
-                inputTokens = inputTokens,
-                outputTokens = outputTokens,
-                reasoningTokens = reasoningTokens
-              ).foreach { costs =>
-                attrs.put(ChatClientWithCostsTracking.key -> costs)
-              }
-            }).right
-          }
-        }
-      }
+    handleStream(attrs, originalBody) {
+      chatClient.completionStream(prompt, attrs, originalBody)
     }
   }
 }
