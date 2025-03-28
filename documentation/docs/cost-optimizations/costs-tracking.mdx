@@ -37,13 +37,13 @@ The costs tracking  computation is based on project [LitLLM](https://docs.litell
 but if you're okay with approximations, you can set some metadata on your providers to use supported providers / models
 
 - `costs-tracking-provider`: the provider used for costs tracking computation
-- `costs-tracking-model`: the model used for eco costs tracking computation
+- `costs-tracking-model`: the model used for costs tracking computation
 
 ## Example of costs tracking embed in responses
 
 ```sh
 $ curl --request POST \
-  --url 'http://ecologits.oto.tools:9999/v1/chat/completions?embed_=true&embed_costs=true' \
+  --url 'http://test.oto.tools:9999/v1/chat/completions?embed_=true&embed_costs=true' \
   --header 'authorization: Bearer otoapk_mqXJ9YrgVM0rcGZy_0a35ab6e5b5407cc7200f94f43f60c583928d372ef43b99a28b93243c3c90153' \
   --header 'content-type: application/json' \
   --data '{
@@ -127,7 +127,7 @@ $ curl --request POST \
       "teams" : [ "default" ]
     },
     "id" : "route_e4a9d6cb3-d859-4203-a860-8d1dd6d09557",
-    "name" : "ecologits",
+    "name" : "test",
     "description" : "A new route",
     "tags" : [ ],
     "metadata" : {
