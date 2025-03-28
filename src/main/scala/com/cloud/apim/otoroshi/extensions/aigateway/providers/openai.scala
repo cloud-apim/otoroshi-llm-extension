@@ -563,7 +563,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val _mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
-    val finalModel = _mergedOptions.select("model").asString
+    val finalModel = _mergedOptions.select("model").asString 
     val mergedOptions = if (finalModel.contains("search")) (_mergedOptions - "n" - "top_p" - "temperature") else _mergedOptions
     val callF = api.call("POST", "/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
     callF.map {
