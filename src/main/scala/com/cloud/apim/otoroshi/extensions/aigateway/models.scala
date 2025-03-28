@@ -244,8 +244,8 @@ trait ChatMessage {
 }
 
 object ChatMessage {
-  def input(role: String, content: String, prefix: Option[Boolean]): InputChatMessage = {
-    InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None)
+  def input(role: String, content: String, prefix: Option[Boolean], raw: JsObject): InputChatMessage = {
+    InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None, raw)
   }
   def output(role: String, content: String, prefix: Option[Boolean], raw: JsObject): OutputChatMessage = {
     OutputChatMessage(role, content, prefix, raw)
@@ -272,6 +272,7 @@ object InputChatMessage {
         contentParts = content,
         prefix = json.select("prefix").asOptBoolean,
         name = json.select("name").asOptString,
+        raw = json.asObject,
       )
     } match {
       case Failure(e) =>
@@ -283,7 +284,7 @@ object InputChatMessage {
     override def writes(o: InputChatMessage): JsValue = o.json(ChatMessageContentFlavor.Common)
   }
 }
-case class InputChatMessage(role: String, contentParts: Seq[ChatMessageContent], prefix: Option[Boolean], name: Option[String]) extends ChatMessage {
+case class InputChatMessage(role: String, contentParts: Seq[ChatMessageContent], prefix: Option[Boolean], name: Option[String], raw: JsObject) extends ChatMessage {
 
   def json(flavor: ChatMessageContentFlavor): JsValue = Json.obj(
     "role" -> role,
@@ -393,6 +394,8 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
     .orElse(raw.at("content.reasoning").asOpt[String])
   lazy val hasReasoningDetails = reasoningDetails.isDefined
 
+  lazy val annotations = raw.select("message").select("annotations").asOpt[Seq[JsObject]]
+
   def json: JsValue = Json.obj(
     "role" -> role,
     "content" -> content,
@@ -402,9 +405,11 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
     case (obj, citations) => obj ++ Json.obj("citations" -> citations)
   }.applyOnWithOpt(reasoningDetails) {
     case (obj, reasoningDetails) => obj ++ Json.obj("reasoning_details" -> reasoningDetails)
+  }.applyOnWithOpt(annotations) {
+    case (obj, annotations) => obj ++ Json.obj("annotations" -> annotations)
   }
 
-  def toInput(): InputChatMessage = InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None)
+  def toInput(): InputChatMessage = InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None, json.asObject)
 
   def transformContent(f: String => String): OutputChatMessage = {
     copy(content = f(content))

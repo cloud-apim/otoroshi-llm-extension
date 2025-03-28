@@ -7,7 +7,7 @@ import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.JsValue
+import play.api.libs.json.{JsObject, JsValue}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -43,7 +43,7 @@ class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatCl
           val role = obj.select("role").asOpt[String].getOrElse("user")
           val content = obj.select("content").asOpt[String].getOrElse("")
           val prefix = obj.select("prefix").asOptBoolean
-          ChatMessage.input(role, content, prefix)
+          ChatMessage.input(role, content, prefix, obj.asObject)
         }
         prompt.copy(messages = messages)
       }.getOrElse(prompt)
@@ -53,7 +53,7 @@ class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatCl
             val role = obj.select("role").asOpt[String].getOrElse("user")
             val content = obj.select("content").asOpt[String].getOrElse("")
             val prefix = obj.select("prefix").asOptBoolean
-            ChatMessage.input(role, content, prefix)
+            ChatMessage.input(role, content, prefix, obj.asObject)
           }
           prompt.copy(messages = messages)
         }.getOrElse(prompt)

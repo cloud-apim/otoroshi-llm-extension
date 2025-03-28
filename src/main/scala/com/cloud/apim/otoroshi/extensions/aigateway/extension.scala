@@ -284,7 +284,7 @@ class AiExtension(val env: Env) extends AdminExtension {
                   case Some(client) => {
                     val context = bodyJson.select("ctx").asOpt[JsObject].getOrElse(Json.obj())
                     val messagesRaw = AiLlmProxy.applyTemplate(template, context)
-                    val messages = messagesRaw.map(m => ChatMessage.input(m.select("role").asOpt[String].getOrElse("system"), m.select("content").asOpt[String].getOrElse(""), m.select("prefix").asOptBoolean))
+                    val messages = messagesRaw.map(m => ChatMessage.input(m.select("role").asOpt[String].getOrElse("system"), m.select("content").asOpt[String].getOrElse(""), m.select("prefix").asOptBoolean, m.asObject))
                     client.call(ChatPrompt(messages), TypedMap.empty, Json.obj()).map {
                       case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                       case Right(response) => {
@@ -321,7 +321,7 @@ class AiExtension(val env: Env) extends AdminExtension {
               case None => Results.Ok(Json.obj("done" -> false, "error" -> "no client")).vfuture
               case Some(client) => {
                 val prompt = bodyJson.select("prompt").asOpt[String].getOrElse("")
-                val messages = Seq(ChatMessage.input("user", prompt, None))
+                val messages = Seq(ChatMessage.input("user", prompt, None, Json.obj()))
                 client.call(ChatPrompt(messages), TypedMap.empty, Json.obj()).map {
                   case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                   case Right(response) => {

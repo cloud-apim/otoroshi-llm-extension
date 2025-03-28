@@ -297,8 +297,8 @@ object OpenAiChatClientOptions {
       model = json.select("model").asOpt[String].getOrElse(OpenAiModels.GPT_4_O_MINI),
       max_tokens = json.select("max_tokens").asOpt[Int],
       n = json.select("n").asOpt[Int],
-      temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
-      topP = json.select("topP").asOpt[Float].orElse(json.select("top_p").asOpt[Float]).getOrElse(1.0f),
+      _temperature = json.select("temperature").asOpt[Float],
+      _topP = json.select("topP").asOpt[Float].orElse(json.select("top_p").asOpt[Float]),
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       frequency_penalty = json.select("frequency_penalty").asOpt[Double],
@@ -326,8 +326,8 @@ case class OpenAiChatClientOptions(
   presence_penalty: Option[Double] = None,
   response_format: Option[String] = None,
   stop: Option[String] = None,
-  temperature: Float = 1,
-  topP: Float = 1,
+  _temperature: Option[Float] = 1.0f.some,
+  _topP: Option[Float] = 1.0f.some,
   user: Option[String] = None,
   tools: Option[Seq[JsValue]] = None,
   tool_choice: Option[Seq[JsValue]] =  None,
@@ -335,6 +335,10 @@ case class OpenAiChatClientOptions(
   mcpConnectors: Seq[String] = Seq.empty,
   allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
+
+  override def temperature: Float = _temperature.getOrElse(1.0f)
+
+  override def topP: Float = _topP.getOrElse(1.0f)
 
   override def topK: Int = 0
 
@@ -345,14 +349,14 @@ case class OpenAiChatClientOptions(
     "logprobs" -> logprobs,
     "top_logprobs" -> top_logprobs,
     "max_tokens" -> max_tokens,
-    "n" -> n.getOrElse(1).json,
+    "n" -> n,
     "presence_penalty" -> presence_penalty,
     "response_format" -> response_format,
     "seed" -> seed,
     "stop" -> stop,
     "stream" -> stream,
-    "temperature" -> temperature,
-    "top_p" -> topP,
+    "temperature" -> _temperature,
+    "top_p" -> _topP,
     "tools" -> tools,
     "tool_choice" -> tool_choice,
     "user" -> user,

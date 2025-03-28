@@ -165,7 +165,7 @@ class AiResponseGenerator extends NgBackendCall {
       case Some(provider) => provider.getChatClient() match {
         case Some(client) => {
           // TODO: if hasBody, sink it ?
-          client.call(ChatPrompt(config.preChatMessages ++ Seq(ChatMessage.input("user", config.prompt, None)) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
+          client.call(ChatPrompt(config.preChatMessages ++ Seq(ChatMessage.input("user", config.prompt, None, Json.obj())) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
             case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> err)))) // TODO: rewrite error
             case Right(resp) if config.isResponse => {
               val response = Json.parse(resp.generations.head.message.content)

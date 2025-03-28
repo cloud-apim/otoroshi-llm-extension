@@ -40,8 +40,8 @@ class AiContextValidator extends NgAccessValidator {
         case None => false.vfuture // TODO: log it
         case Some(client) => {
           client.call(ChatPrompt(config.preChatMessages ++ Seq(
-            ChatMessage.input("system", config.prompt, None),
-            ChatMessage.input("user", ctx.json.stringify, None),
+            ChatMessage.input("system", config.prompt, None, Json.obj()),
+            ChatMessage.input("user", ctx.json.stringify, None, Json.obj()),
           ) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
             case Left(err) => false // TODO: log it
             case Right(resp) => {

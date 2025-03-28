@@ -195,7 +195,7 @@ class OpenAiCompletionProxy extends NgBackendCall {
             val role = obj.select("role").asOpt[String].getOrElse("user")
             val content = obj.select("content").asOpt[String].getOrElse("")
             val prefix = obj.select("prefix").asOptBoolean
-            ChatMessage.input(role, content, prefix)
+            ChatMessage.input(role, content, prefix, obj)
           }
           if (stream) {
             client.tryCompletionStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {

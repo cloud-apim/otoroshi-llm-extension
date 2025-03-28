@@ -42,7 +42,7 @@ class LLMGuardrail extends Guardrail {
                     case o: OutputChatMessage => o.toInput()
                   }
                   validationClient.call(ChatPrompt(Seq(
-                    ChatMessage.input("system", prompt.prompt, None)
+                    ChatMessage.input("system", prompt.prompt, None, Json.obj())
                   ) ++ messages), attrs, Json.obj()).flatMap {
                     case Left(err) => fail(2)
                     case Right(resp) => {

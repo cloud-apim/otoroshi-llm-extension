@@ -48,8 +48,8 @@ class AiWebsocketMessageValidator extends NgWebsocketValidatorPlugin {
             case None => Left(NgWebsocketError(CloseCodes.ProtocolError, "client not found")).vfuture
             case Some(client) => {
               client.call(ChatPrompt(config.preChatMessages ++ Seq(
-                ChatMessage.input("system", config.prompt, None),
-                ChatMessage.input("user", str, None),
+                ChatMessage.input("system", config.prompt, None, Json.obj()),
+                ChatMessage.input("user", str, None, Json.obj()),
               ) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
                 case Left(err) => Left(NgWebsocketError(CloseCodes.UnexpectedCondition, s"error: ${err.stringify}"))
                 case Right(resp) => {

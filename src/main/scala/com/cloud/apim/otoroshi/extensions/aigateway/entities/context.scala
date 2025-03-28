@@ -34,7 +34,7 @@ case class PromptContext(
       val role = message.select("role").asOpt[String].getOrElse("user")
       val content = message.select("content").asOpt[String].getOrElse("no input")
       val prefix = message.select("prefix").asOptBoolean
-      ChatMessage.input(role, content, prefix)
+      ChatMessage.input(role, content, prefix, message)
     }
   }
   def postChatMessages(): Seq[InputChatMessage] = {
@@ -42,7 +42,7 @@ case class PromptContext(
       val role = message.select("role").asOpt[String].getOrElse("user")
       val content = message.select("content").asOpt[String].getOrElse("no input")
       val prefix = message.select("prefix").asOptBoolean
-      ChatMessage.input(role, content, prefix)
+      ChatMessage.input(role, content, prefix, message)
     }
   }
 }
