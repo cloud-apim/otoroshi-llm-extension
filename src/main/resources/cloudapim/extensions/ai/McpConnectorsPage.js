@@ -41,7 +41,11 @@ class McpConnectorsPage extends Component {
       props: {
         label: 'Configuration'
       }
-    }
+    },
+    'strict': {
+      type: 'bool',
+      props: { label: 'Strict tool calls', placeholder: 'Strict tool calls' },
+    },
   };
 
   columns = [
@@ -58,7 +62,7 @@ class McpConnectorsPage extends Component {
   ];
 
   formFlow = [
-    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options'];
+    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options', 'strict'];
 
   componentDidMount() {
     this.props.setTitle(`MCP Connectors`);
@@ -90,7 +94,8 @@ class McpConnectorsPage extends Component {
                 TOKEN: "secret"
               }
             }
-          }
+          },
+          strict: true
         }),
         itemName: "MCP Connector",
         formSchema: this.formSchema,
