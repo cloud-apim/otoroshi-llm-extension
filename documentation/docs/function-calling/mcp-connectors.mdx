@@ -1,0 +1,457 @@
+---
+sidebar_position: 4
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# MCP Connectors
+
+MCP connectors are tools to connect to MCP servers. 
+
+You can find a list of pre-build MCP servers from [this repository](https://github.com/modelcontextprotocol/servers)
+
+We will add examples with pre-build entities from [our repository](https://github.com/cloud-apim/mcp-connectors-examples)
+
+Here is the `MCP connector` configuration :
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "id": "mcp-connector_23d9b4db-1593-426e-b205-b5f331f78f1d",
+  "name": "github-mcp",
+  "description": "github-mcp",
+  "metadata": {},
+  "tags": [],
+  "pool": {
+    "size": 1
+  },
+  "transport": {
+    "kind": "stdio",
+    "options": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${vault://local/mcp-github-token}"
+      }
+    }
+  },
+  "strict": false,
+  "kind": "ai-gateway.extensions.cloud-apim.com/McpConnector"
+}
+```
+
+Here is the `LLM Provider` configuration : 
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "id": "provider_480ec0b7-bc9e-487f-8376-b9b8111bfe5e",
+  "name": "OpenAI provider",
+  "description": "An OpenAI LLM api provider",
+  "metadata": {},
+  "tags": [],
+  "provider": "openai",
+  "connection": {
+    "base_url": "https://api.openai.com/v1",
+    "token": "${vault://local/openai-token}",
+    "timeout": 30000
+  },
+  "options": {
+    "model": "gpt-4o-mini",
+    "frequency_penalty": null,
+    "logit_bias": null,
+    "logprobs": null,
+    "top_logprobs": null,
+    "max_tokens": null,
+    "n": 1,
+    "presence_penalty": null,
+    "response_format": null,
+    "seed": null,
+    "stop": null,
+    "stream": false,
+    "temperature": 1,
+    "top_p": 1,
+    "tools": null,
+    "tool_choice": null,
+    "user": null,
+    "wasm_tools": [],
+    "mcp_connectors": [
+      "mcp-connector_23d9b4db-1593-426e-b205-b5f331f78f1d"
+    ],
+    "allow_config_override": true
+  },
+  "provider_fallback": null,
+  "context": {
+    "default": null,
+    "contexts": []
+  },
+  "models": {
+    "include": [],
+    "exclude": []
+  },
+  "guardrails": [],
+  "guardrails_fail_on_deny": false,
+  "cache": {
+    "strategy": "none",
+    "ttl": 300000,
+    "score": 0.8
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/Provider"
+}
+```
+
+Here is the `route` configuration :
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "id": "route_79c1d15ae-5e64-482c-9a29-4b7dcad36089",
+  "name": "mcp-openai",
+  "description": "mcp-openai",
+  "tags": [],
+  "metadata": {},
+  "enabled": true,
+  "debug_flow": false,
+  "export_reporting": false,
+  "capture": false,
+  "groups": [
+    "default"
+  ],
+  "bound_listeners": [],
+  "frontend": {
+    "domains": [
+      "mcp-openai.oto.tools"
+    ],
+    "strip_path": true,
+    "exact": false,
+    "headers": {},
+    "query": {},
+    "methods": []
+  },
+  "backend": {
+    "targets": [
+      {
+        "id": "target_1",
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true,
+        "weight": 1,
+        "predicate": {
+          "type": "AlwaysMatch"
+        },
+        "protocol": "HTTP/1.1",
+        "ip_address": null,
+        "tls_config": {
+          "certs": [],
+          "trusted_certs": [],
+          "enabled": false,
+          "loose": false,
+          "trust_all": false
+        }
+      }
+    ],
+    "root": "/",
+    "rewrite": false,
+    "load_balancing": {
+      "type": "RoundRobin"
+    },
+    "client": {
+      "retries": 1,
+      "max_errors": 20,
+      "retry_initial_delay": 50,
+      "backoff_factor": 2,
+      "call_timeout": 30000,
+      "call_and_stream_timeout": 120000,
+      "connection_timeout": 10000,
+      "idle_timeout": 60000,
+      "global_timeout": 30000,
+      "sample_interval": 2000,
+      "proxy": {},
+      "custom_timeouts": [],
+      "cache_connection_settings": {
+        "enabled": false,
+        "queue_size": 2048
+      }
+    },
+    "health_check": {
+      "enabled": false,
+      "url": "",
+      "timeout": 5000,
+      "healthyStatuses": [],
+      "unhealthyStatuses": []
+    }
+  },
+  "backend_ref": null,
+  "plugins": [
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "include": [],
+      "exclude": [],
+      "config": {},
+      "bound_listeners": [],
+      "plugin_index": {
+        "transform_request": 0
+      },
+      "nodeId": "cp:otoroshi.next.plugins.OverrideHost"
+    },
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
+      "include": [],
+      "exclude": [],
+      "config": {
+        "refs": [
+          "provider_480ec0b7-bc9e-487f-8376-b9b8111bfe5e"
+        ]
+      },
+      "bound_listeners": [],
+      "plugin_index": {},
+      "nodeId": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy"
+    }
+  ],
+  "kind": "proxy.otoroshi.io/Route"
+}
+```
+
+![](/img/mcp-connectors-1.png)
+
+## Default config
+
+```js
+{
+  "command": "node",
+  "args": [
+    "/foo/bar/server.js"
+  ],
+  "env": {
+    "TOKEN": "secret"
+  }
+}
+```
+
+## Example with Filesystem MCP Server
+
+### Filesystem MCP Connector configuration
+
+```js
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-filesystem",
+    "/Users/your-user/Desktop"
+  ]
+}
+```
+
+## Example with Github MCP Server
+
+![](/img/mcp-connector-with-vault.png)
+
+To use the Github MCP server you will need to generate a Github access token.
+
+Then, we will put the token into our local vault.
+
+Go to [your Otoroshi danger zone](http://otoroshi.oto.tools:8080/bo/dashboard/dangerzone) and go to `Global Metadata` section.
+
+Right after, you can create a new KEY, VALUE pair like this example (in the Otoroshi environment) :
+
+```js
+{
+  "mcp-github-token": "YOUR_GITHUB_TOKEN_HERE"
+}
+```
+
+### Github MCP Connector configuration
+
+```js
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-github"
+  ],
+  "env": {
+    "GITHUB_PERSONAL_ACCESS_TOKEN": "${vault://local/mcp-github-token}"
+  }
+}
+```
+
+Now you can use Github MCP server's functions to Create issues, list all issues, list pull requests and much more with your favorite LLMs !
+
+## Postgres MCP Server
+
+User prompt to the LLM
+
+```js
+{
+  "messages": [
+    {
+       "role": "user",
+       "content": "Could you list me all the users from the 'users' table please ?"
+    }
+  ]
+}
+```
+
+Curl request 
+
+```sh
+curl --request POST \
+  --url http://mcp-pg-openai.oto.tools:8080/ \
+  --header 'content-type: application/json' \
+  --data '{
+  "messages": [
+    {
+       "role": "user",
+       "content": "Could you list me all the users from the '\''users'\'' table please ?"
+    }
+  ]
+}'
+```
+
+LLM response :
+
+```js
+{
+  "id": "chatcmpl-3WFxjlu6MWpvw4ZaOGtyc4OqvFycGDP4",
+  "object": "chat.completion",
+  "created": 1743155603,
+  "model": "gpt-4o-mini",
+  "system_fingerprint": "fp-RvGvrs3QlRhPqmXM7NqGd61qeOPudtEZ",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Here are all the users from the 'users' table:\n\n1. **Alice Johnson**\n   - Email: alice@example.com\n   - Age: 30\n   - Address: 123 Main St, Springfield\n   - Phone: 123-456-7890\n   - Created At: 2025-03-28T09:47:34.121Z\n\n2. **Bob Smith**\n   - Email: bob@example.com\n   - Age: 25\n   - Address: 456 Elm St, Shelbyville\n   - Phone: 987-654-3210\n   - Created At: 2025-03-28T09:47:34.121Z\n\n3. **Charlie Brown**\n   - Email: charlie@example.com\n   - Age: 35\n   - Address: 789 Oak St, Capital City\n   - Phone: 555-123-4567\n   - Created At: 2025-03-28T09:47:34.121Z"
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 342,
+    "completion_tokens": 214,
+    "total_tokens": 556,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}
+```
+
+#### Enabling no personal information guardrail
+
+Response from the LLM : 
+
+
+```js
+
+```
+
+
+Full route configuration with guardrail : 
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "id": "provider_6bfe8012-1ccb-4884-bef2-00e307862e7e",
+  "name": "OpenAI provider + Postgres MCP",
+  "description": "OpenAI provider + Postgres MCP",
+  "metadata": {},
+  "tags": [],
+  "provider": "openai",
+  "connection": {
+    "base_url": "https://api.openai.com/v1",
+    "token": "${vault://local/openai-token}",
+    "timeout": 30000
+  },
+  "options": {
+    "model": "gpt-4o-mini",
+    "frequency_penalty": null,
+    "logit_bias": null,
+    "logprobs": null,
+    "top_logprobs": null,
+    "max_tokens": null,
+    "n": 1,
+    "presence_penalty": null,
+    "response_format": null,
+    "seed": null,
+    "stop": null,
+    "stream": false,
+    "temperature": 1,
+    "top_p": 1,
+    "tools": null,
+    "tool_choice": null,
+    "user": null,
+    "wasm_tools": [],
+    "mcp_connectors": [
+      "mcp-connector_c0451105-afd5-4ae5-9258-7cf96ef22cbf"
+    ],
+    "allow_config_override": true
+  },
+  "provider_fallback": null,
+  "context": {
+    "default": null,
+    "contexts": []
+  },
+  "models": {
+    "include": [],
+    "exclude": []
+  },
+  "guardrails": [
+    {
+      "enabled": true,
+      "before": true,
+      "after": true,
+      "id": "pif",
+      "config": {
+        "provider": "provider_6bfe8012-1ccb-4884-bef2-00e307862e7e",
+        "pif_items": [
+          "EMAIL_ADDRESS",
+          "PHONE_NUMBER",
+          "LOCATION_ADDRESS",
+          "NAME",
+          "IP_ADDRESS",
+          "CREDIT_CARD",
+          "SSN"
+        ]
+      }
+    }
+  ],
+  "guardrails_fail_on_deny": false,
+  "cache": {
+    "strategy": "none",
+    "ttl": 300000,
+    "score": 0.8
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/Provider"
+}
+```

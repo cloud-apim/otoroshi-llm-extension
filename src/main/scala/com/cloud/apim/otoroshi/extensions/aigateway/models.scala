@@ -2,10 +2,12 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsOutput, ImpactsOutput}
 import otoroshi.env.Env
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
 
@@ -430,11 +432,11 @@ case class ChatResponse(
   generations: Seq[ChatGeneration],
   metadata: ChatResponseMetadata,
 ) {
-  def json: JsValue = Json.obj(
+  def json(env: Env): JsValue = Json.obj(
     "generations" -> JsArray(generations.map(_.json)),
-    "metadata" -> metadata.json,
+    "metadata" -> metadata.json(env),
   )
-  def openaiJson(model: String): JsValue = Json.obj(
+  def openaiJson(model: String, env: Env): JsValue = Json.obj(
     "id" -> s"chatcmpl-${IdGenerator.token(32)}",
     "object" -> "chat.completion",
     "created" -> (System.currentTimeMillis() / 1000).toLong,
@@ -442,8 +444,12 @@ case class ChatResponse(
     "system_fingerprint" -> s"fp-${IdGenerator.token(32)}",
     "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiJson(t._2))),
     "usage" -> metadata.usage.openaiJson,
-  )
-  def openaiCompletionJson(model: String, echo: Boolean, prompt: String): JsValue = Json.obj(
+  ).applyOnWithOpt(metadata.impacts) {
+    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(metadata.costs) {
+    case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+  }
+  def openaiCompletionJson(model: String, echo: Boolean, prompt: String, env: Env): JsValue = Json.obj(
     "id" -> s"cmpl-${IdGenerator.token(32)}",
     "object" -> "text_completion",
     "created" -> (System.currentTimeMillis() / 1000).toLong,
@@ -451,7 +457,11 @@ case class ChatResponse(
     "system_fingerprint" -> s"fp_${IdGenerator.token(32)}",
     "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiCompletionJson(t._2))),
     "usage" -> metadata.usage.openaiJson,
-  )
+  ).applyOnWithOpt(metadata.impacts) {
+    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(metadata.costs) {
+    case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+  }
   def toSource(model: String): Source[ChatResponseChunk, _] = {
     val id = s"chatgen-${IdGenerator.token(32)}"
     Source(generations.toList)
@@ -490,16 +500,20 @@ case class ChatResponseCache(status: ChatResponseCacheStatus, key: String, ttl: 
   )
 }
 
-case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage, cache: Option[ChatResponseCache]) {
+case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage, cache: Option[ChatResponseCache], impacts: Option[ImpactsOutput] = None, costs: Option[CostsOutput] = None) {
   def cacheHeaders: Map[String, String] = cache match {
     case None => Map.empty
     case Some(cache) => cache.toHeaders()
   }
-  def json: JsValue = Json.obj(
+  def json(env: Env): JsValue = Json.obj(
     "rate_limit" -> rateLimit.json,
     "usage" -> usage.json,
   ).applyOnWithOpt(cache) {
     case(obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+  }.applyOnWithOpt(impacts) {
+    case(obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(costs) {
+    case(obj, costs) => obj ++ Json.obj("costs" -> costs.json)
   }
 }
 
@@ -507,6 +521,7 @@ object ChatResponseMetadata {
   val empty: ChatResponseMetadata = ChatResponseMetadata(
     ChatResponseMetadataRateLimit.empty,
     ChatResponseMetadataUsage.empty,
+    None,
     None
   )
 }

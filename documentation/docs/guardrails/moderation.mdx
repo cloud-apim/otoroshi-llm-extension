@@ -1,0 +1,34 @@
+import Terminal from '@site/src/components/Terminal';
+
+# Prompt contains gibberish guardrail
+
+![](/img/guardrails-language-moderation.png)
+
+### Configuration
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": true,
+    "id": "moderation",
+    "config": {
+      "provider": "provider_28ccfcf1-85b0-4e8d-b505-6793d07c0ee3",
+      "moderation_items": [
+        "hate",
+        "hate/threatening",
+        "harassment",
+        "harassment/threatening",
+        "self-harm",
+        "self-harm/intent",
+        "self-harm/instructions",
+        "sexual",
+        "sexual/minors",
+        "violence",
+        "violence/graphic"
+      ]
+    }
+  }
+]
+```

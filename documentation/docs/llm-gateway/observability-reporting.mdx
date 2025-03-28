@@ -1,0 +1,404 @@
+---
+sidebar_position: 7
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Observability
+
+Every interaction with a **Large Language Model (LLM)** generates crucial data that can be monitored, analyzed, and optimized. 
+
+Our **LLM Gateway** provides **real-time tracking, security, and performance insights**, acting as a **centralized observability layer** to streamline LLM interactions.
+
+A **gateway** is the **ultimate solution** for managing, analyzing, and securing LLM traffic. By routing all requests through our LLM gateway, you gain:
+
+## 📊 Key Metrics We Track
+
+Every LLM request logs **critical telemetry data**, including:
+
+- **LLM Provider** – Identify the AI service in use (e.g., OpenAI, Anthropic, Google Gemini).
+- **Model Version** – Track which model (GPT-4, Claude, Gemini) is processing requests.
+- **Prompt Data** – Log input prompts to analyze patterns & improve outputs.
+- **Response Data** – Capture AI-generated outputs for debugging & quality control.
+- **Token Usage Metrics** – Measure input/output token consumption to optimize performance.
+- **User Identity** – Associate API usage with specific users for accountability.
+- **API Key Tracking** – Monitor & secure API access to prevent unauthorized use.
+- **Authentication Tokens** – Ensure session integrity & compliance.
+- **Connected User Sessions** – Identify active users interacting with the model.
+
+Unlike traditional monitoring tools, a **gateway** provides **full-stack observability** by capturing **every LLM request before it reaches the provider**. 
+
+This enables **granular control, cost efficiency, and real-time insights**.
+
+## Using data exporter
+
+you can use [otoroshi data exporters](https://maif.github.io/otoroshi/manual/entities/data-exporters.html) to extract LLM usage informations and send it to anything you like
+
+![lb](/img/llm-data-exporter.png)
+
+just make sure to filter events on
+
+```json
+{
+  "include": [{
+    "audit": "LLMUsageAudit"
+  }],
+  "exclude": []
+}
+```
+
+## LLMUsageAudit event
+
+```json
+{
+    "@id": "1904913942551986550",
+    "@timestamp": 1743001850151,
+    "@type": "AuditEvent",
+    "@product": "otoroshi",
+    "@serviceId": "",
+    "@service": "Otoroshi",
+    "@env": "dev",
+    "audit": "LLMUsageAudit",
+    "provider_kind": "openai",
+    "provider": "provider_f98538b5-6d59-426c-8127-cb583a9fa763",
+    "duration": 960,
+    "model": "gpt-4o-mini",
+    "rate_limit": {
+        "requests_limit": 10000,
+        "requests_remaining": 9998,
+        "tokens_limit": 200000,
+        "tokens_remaining": 199992
+    },
+    "usage": {
+        "prompt_tokens": 14,
+        "generation_tokens": 39,
+        "reasoning_tokens": 0
+    },
+    "error": null,
+    "consumed_using": "chat/completion/blocking",
+    "user": null,
+    "apikey": {
+        "_loc": {
+            "tenant": "default",
+            "teams": [
+                "default"
+            ]
+        },
+        "clientId": "the_client_id",
+        "clientName": "default-apikey",
+        "description": "the default apikey",
+        "authorizedGroup": "default",
+        "authorizedEntities": [
+            "group_default"
+        ],
+        "authorizations": [
+            {
+                "kind": "group",
+                "id": "default"
+            }
+        ],
+        "enabled": true,
+        "readOnly": false,
+        "allowClientIdOnly": false,
+        "throttlingQuota": 1,
+        "dailyQuota": 100000,
+        "monthlyQuota": 10000000,
+        "constrainedServicesOnly": false,
+        "restrictions": {
+            "enabled": false,
+            "allowLast": true,
+            "allowed": [],
+            "forbidden": [],
+            "notFound": []
+        },
+        "rotation": {
+            "enabled": false,
+            "rotationEvery": 744,
+            "gracePeriod": 168,
+            "nextSecret": null
+        },
+        "validUntil": null,
+        "tags": [],
+        "metadata": {
+            "updated_at": "2023-10-05T10:45:39.082+02:00",
+            "llm_tokens_limit": "201",
+            "llm_tokens_reset_after": "15000"
+        }
+    },
+    "route": {
+        "_loc": {
+            "tenant": "default",
+            "teams": [
+                "default"
+            ]
+        },
+        "id": "route_ec4670a82-2ada-485a-955a-bb710a1d237c",
+        "name": "demo-llm-events",
+        "description": "A new route",
+        "tags": [],
+        "metadata": {
+            "created_at": "2025-03-26T16:04:40.661+01:00",
+            "updated_at": "2025-03-26T16:05:09.563+01:00"
+        },
+        "enabled": true,
+        "debug_flow": false,
+        "export_reporting": false,
+        "capture": false,
+        "groups": [
+            "default"
+        ],
+        "bound_listeners": [],
+        "frontend": {
+            "domains": [
+                "demo-llm-events.oto.tools"
+            ],
+            "strip_path": true,
+            "exact": false,
+            "headers": {},
+            "query": {},
+            "methods": []
+        },
+        "backend": {
+            "targets": [
+                {
+                    "id": "target_1",
+                    "hostname": "request.otoroshi.io",
+                    "port": 443,
+                    "tls": true,
+                    "weight": 1,
+                    "backup": false,
+                    "predicate": {
+                        "type": "AlwaysMatch"
+                    },
+                    "protocol": "HTTP/1.1",
+                    "ip_address": null,
+                    "tls_config": {
+                        "certs": [],
+                        "trusted_certs": [],
+                        "enabled": false,
+                        "loose": false,
+                        "trust_all": false
+                    }
+                }
+            ],
+            "root": "/",
+            "rewrite": false,
+            "load_balancing": {
+                "type": "RoundRobin"
+            },
+            "client": {
+                "retries": 1,
+                "max_errors": 20,
+                "retry_initial_delay": 50,
+                "backoff_factor": 2,
+                "call_timeout": 30000,
+                "call_and_stream_timeout": 120000,
+                "connection_timeout": 10000,
+                "idle_timeout": 60000,
+                "global_timeout": 30000,
+                "sample_interval": 2000,
+                "proxy": {},
+                "custom_timeouts": [],
+                "cache_connection_settings": {
+                    "enabled": false,
+                    "queue_size": 2048
+                }
+            },
+            "health_check": {
+                "enabled": false,
+                "url": "",
+                "timeout": 5000,
+                "healthyStatuses": [],
+                "unhealthyStatuses": []
+            }
+        },
+        "backend_ref": null,
+        "plugins": [
+            {
+                "enabled": true,
+                "debug": false,
+                "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+                "include": [],
+                "exclude": [],
+                "config": {},
+                "bound_listeners": [],
+                "plugin_index": {
+                    "transform_request": 0
+                }
+            },
+            {
+                "enabled": true,
+                "debug": false,
+                "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
+                "include": [],
+                "exclude": [],
+                "config": {
+                    "refs": [
+                        "provider_f98538b5-6d59-426c-8127-cb583a9fa763"
+                    ]
+                },
+                "bound_listeners": [],
+                "plugin_index": {}
+            },
+            {
+                "enabled": true,
+                "debug": false,
+                "plugin": "cp:otoroshi.next.plugins.ApikeyCalls",
+                "include": [],
+                "exclude": [],
+                "config": {
+                    "extractors": {
+                        "basic": {
+                            "enabled": true,
+                            "header_name": null,
+                            "query_name": null
+                        },
+                        "custom_headers": {
+                            "enabled": true,
+                            "client_id_header_name": null,
+                            "client_secret_header_name": null
+                        },
+                        "client_id": {
+                            "enabled": true,
+                            "header_name": null,
+                            "query_name": null
+                        },
+                        "jwt": {
+                            "enabled": true,
+                            "secret_signed": true,
+                            "keypair_signed": true,
+                            "include_request_attrs": false,
+                            "max_jwt_lifespan_sec": null,
+                            "header_name": null,
+                            "query_name": null,
+                            "cookie_name": null
+                        }
+                    },
+                    "routing": {
+                        "enabled": false
+                    },
+                    "validate": true,
+                    "mandatory": true,
+                    "pass_with_user": false,
+                    "wipe_backend_request": true,
+                    "update_quotas": true
+                },
+                "bound_listeners": [],
+                "plugin_index": {
+                    "validate_access": 0,
+                    "transform_request": 1,
+                    "match_route": 0
+                }
+            }
+        ]
+    },
+    "input_prompt": [
+        {
+            "role": "user",
+            "content": "tell me a joke"
+        }
+    ],
+    "output": {
+        "generations": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Why don't skeletons fight each other?\n\nThey don't have the guts! 😄"
+                }
+            }
+        ],
+        "metadata": {
+            "rate_limit": {
+                "requests_limit": 10000,
+                "requests_remaining": 9998,
+                "tokens_limit": 200000,
+                "tokens_remaining": 199992
+            },
+            "usage": {
+                "prompt_tokens": 14,
+                "generation_tokens": 39,
+                "reasoning_tokens": 0
+            }
+        }
+    },
+    "provider_details": {
+        "_loc": {
+            "tenant": "default",
+            "teams": [
+                "default"
+            ]
+        },
+        "id": "provider_f98538b5-6d59-426c-8127-cb583a9fa763",
+        "name": "OpenAI provider",
+        "description": "An OpenAI LLM api provider",
+        "metadata": {
+            "created_at": "2024-07-26T09:43:41.850+02:00",
+            "updated_at": "2025-02-28T12:06:21.250+01:00"
+        },
+        "tags": [],
+        "provider": "openai",
+        "connection": {
+            "base_url": "https://api.openai.com",
+            "token": "${vault://local/openai-token}",
+            "timeout": 30000
+        },
+        "options": {
+            "model": "gpt-4o-mini",
+            "frequency_penalty": null,
+            "logit_bias": null,
+            "logprobs": null,
+            "top_logprobs": null,
+            "max_tokens": "10000",
+            "n": 1,
+            "presence_penalty": null,
+            "response_format": null,
+            "seed": null,
+            "stop": null,
+            "stream": false,
+            "temperature": 1,
+            "top_p": 1,
+            "tools": null,
+            "tool_choice": null,
+            "user": null,
+            "wasm_tools": [],
+            "mcp_connectors": [],
+            "allow_config_override": false
+        },
+        "provider_fallback": null,
+        "context": {
+            "default": null,
+            "contexts": []
+        },
+        "models": {
+            "include": [],
+            "exclude": []
+        },
+        "guardrails": [],
+        "guardrails_fail_on_deny": false,
+        "cache": {
+            "strategy": "none",
+            "ttl": 86400000,
+            "score": 0.8
+        }
+    },
+    "user-agent-details": null,
+    "origin-details": null,
+    "instance-number": 0,
+    "instance-name": "dev",
+    "instance-zone": "local",
+    "instance-region": "local",
+    "instance-dc": "local",
+    "instance-provider": "local",
+    "instance-rack": "local",
+    "cluster-mode": "Leader",
+    "cluster-name": "otoroshi-leader-dev"
+}
+```
+
+## Dashboarding 
+
+We can use `LLMUsageAudit` events to build a dashboard.
+
+For example, we built a Grafana Dashboard to display some tokens consumption and other metrics.
+
+![](/img/grafana-dashboard.png)

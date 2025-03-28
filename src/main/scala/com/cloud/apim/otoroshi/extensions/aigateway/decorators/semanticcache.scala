@@ -46,7 +46,7 @@ object ChatClientWithSemanticCache {
     })
     .maximumSize(5000) // TODO: custom ?
     .build[String, (FiniteDuration, Function[String, Unit])]()
-  def applyIfPossible(tuple: (AiProvider, ChatClient)): ChatClient = {
+  def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
     if (tuple._1.cache.strategy.contains("semantic")) {
       new ChatClientWithSemanticCache(tuple._1, tuple._2)
     } else {

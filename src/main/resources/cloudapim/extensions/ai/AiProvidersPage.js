@@ -265,7 +265,7 @@ class Guardrail extends Component {
               }),
             } },
           'config.plugin_ref': { type: 'select', props: {
-              label: 'LLM Prompt',
+              label: 'WASM plugin',
               placeholder: 'Select a Wasm plugin',
               valuesFrom: "/bo/api/proxy/apis/plugins.otoroshi.io/v1/wasm-plugins",
               transformer: (item) => ({ label: item.name, value: item.id }),

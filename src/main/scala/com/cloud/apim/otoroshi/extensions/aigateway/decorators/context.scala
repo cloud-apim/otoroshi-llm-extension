@@ -12,7 +12,7 @@ import play.api.libs.json.JsValue
 import scala.concurrent.{ExecutionContext, Future}
 
 object ChatClientWithContext {
-  def applyIfPossible(tuple: (AiProvider, ChatClient)): ChatClient = {
+  def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
     if (tuple._1.context.isDefined) {
       new ChatClientWithContext(tuple._1, tuple._2)
     } else {

@@ -1,0 +1,75 @@
+---
+sidebar_position: 0
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Overview
+
+## 🚧 Enforcing Usage Limits
+
+Our guardrails help maintain fair usage and system stability by enforcing limits:
+- 📊 **Quota thresholds** prevent excessive API usage
+- ⏳ **Rate limiting** ensures smooth traffic flow
+- 🚨 **Automatic blocking** for anomalous behavior
+- 🔄 **Webhook support** for real-time monitoring and enforcement
+
+### Example:
+
+If a user exceeds their allocated quota, an automatic webhook can trigger an alert or temporarily restrict access until limits reset.
+
+## 🔐 Security and Compliance
+
+Optimize the privacy of your organization's data and the security of your users through a set of "guardrails" applied to prompts and/or responses. Our system ensures compliance with legal and organizational rules by leveraging:
+- 🔑 **Authentication & authorization** to prevent unauthorized access
+- 🔍 **Anomaly detection** for real-time threat monitoring
+- 🛠️ **Custom security rules** for industry-standard compliance
+- 🔎 **Regex, character count, word count, and sentence count validation** to filter inappropriate content
+- 📜 **Semantic filtering** to detect and prevent harmful or sensitive data sharing
+- 🚫 **No gibberish, no secret leakage, and no Personally Identifiable Information (PIF)**
+- 🌐 **Language moderation and semantic matching** for content accuracy
+
+### Example:
+A user prompt containing a credit card number or personal email can be automatically redacted or rejected before reaching the LLM.
+
+## Enable guardrails
+
+To enable guardrails, select a LLM provider, then go to `Guardrails validation` section.
+
+![](/img/guardrails-setup-1.png)
+
+Click on `+` button to display the list of all available Guardrails.
+
+![](/img/guardrails-setup-2.png)
+
+You can now choose from the list of available Guardrails. 
+
+![](/img/guardrails-setup-3.png)
+
+### Available Guardrails
+
+- [Secrets Leakage](/docs/guardrails/secrets_leakage)
+
+### Guardrail configuration
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": true,
+    "id": "secrets_leakage",
+    "config": {
+      "provider": "provider_480ec0b7-bc9e-487f-8376-b9b8111bfe5e",
+      "secrets_leakage_items": [
+        "APIKEYS",
+        "PASSWORDS",
+        "TOKENS",
+        "JWT_TOKENS",
+        "PRIVATE_KEYS",
+        "HUGE_RANDOM_VALUES"
+      ]
+    }
+  }
+]
+```

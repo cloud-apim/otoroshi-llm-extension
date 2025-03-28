@@ -151,7 +151,7 @@ case class GuardrailItem(enabled: Boolean, before: Boolean, after: Boolean, guar
 }
 
 object ChatClientWithGuardrailsValidation {
-  def applyIfPossible(tuple: (AiProvider, ChatClient)): ChatClient = {
+  def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
     if (tuple._1.guardrails.nonEmpty) {
       new ChatClientWithGuardrailsValidation(tuple._1, tuple._2)
     } else {

@@ -11,7 +11,7 @@ import play.api.libs.json.{JsValue, Json}
 import scala.concurrent.{ExecutionContext, Future}
 
 object ChatClientWithModelConstraints {
-  def applyIfPossible(tuple: (AiProvider, ChatClient)): ChatClient = {
+  def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
     if (tuple._1.models.isDefined) {
       new ChatClientWithModelConstraints(tuple._1, tuple._2)
     } else {

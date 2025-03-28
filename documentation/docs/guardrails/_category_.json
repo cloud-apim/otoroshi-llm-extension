@@ -1,0 +1,8 @@
+{
+  "label": "\uD83D\uDEE1\uFE0F Guardrails",
+  "position": 5,
+  "link": {
+    "type": "generated-index",
+    "description": "All guardrails rules"
+  }
+}

@@ -1,0 +1,507 @@
+---
+sidebar_position: 6
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# 🌿 Ecological impact
+
+If you want to track the ecological impact of your LLM Usage, you can enable it in the Otoroshi LLM Extension (it should be enabled by default)
+
+```conf
+impacts {
+  enabled = true
+  enabled = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_IMPACTS_ENABLED}
+  embed-description-in-json = true
+  embed-description-in-json = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_IMPACTS_EMBED_DESCRIPTION_IN_JSON}
+  electricity-mix = "WOR"
+  electricity-mix = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_IMPACTS_ELECTRICITY_MIX}
+  embed-impacts-in-responses = false
+  embed-impacts-in-responses = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_IMPACTS_EMBED_IMPACTS_IN_RESPONSES}
+}
+```
+
+Once it's enabled, audit events of kind `LLMUsageAudit` will have an `impacts`.
+You can also embed the `impacts` value in your LLM responses using the `impacts.embed-impacts-in-responses` config.
+Please remember that the `impacts` value is just an estimate of the real ecological impact of your LLM usage.
+
+The ecological impact computation is based on project [EcoLogits](https://ecologits.ai/latest/) and only supports right now the following providers
+
+- Mistral
+- Gemini
+- Anthropic
+- OpenAI
+- Cohere
+- HuggingFace
+
+but if you're okay with approximations, you can set some metadata on your providers to use supported providers / models
+
+- `eco-impacts-electricity-mix-zone`: the country where the model is hosted
+- `eco-impacts-provider`: the provider used for eco impacts computation
+- `eco-impacts-model`: the model used for eco impacts computation
+
+## Example of ecological impact embed in responses
+
+```sh
+$ curl --request POST \
+  --url 'http://test.oto.tools:8080/v1/chat/completions?embed_impacts=true' \
+  --header 'content-type: application/json' \
+  --data '{
+  "messages": [
+    {
+      "role": "user",
+      "content": "tell me a joke"
+    }
+  ]
+}'
+
+{
+  "id": "chatcmpl-POPo2920QC8UdFT6MEF8MnnMBOGXDNdg",
+  "object": "chat.completion",
+  "created": 1743161221,
+  "model": "gpt-4o-mini",
+  "system_fingerprint": "fp-8hSBjQkQnl3InFEJ88ckzfm3JUtNC2bH",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Why did the scarecrow win an award?\n\nBecause he was outstanding in his field!"
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 11,
+    "completion_tokens": 18,
+    "total_tokens": 29,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  },
+  "impacts": {
+    "energy": {
+      "value": {
+        "min": 0.000045859386,
+        "max": 0.000140325354,
+        "avg": 0.00009309237000000001
+      },
+      "unit": "kWh"
+    },
+    "gwp": {
+      "value": {
+        "min": 0.00002877619380504681,
+        "max": 0.00008550637626962295,
+        "avg": 0.00005714128503733488
+      },
+      "unit": "kgCO2eq"
+    },
+    "adpe": {
+      "value": {
+        "min": 1.183887945516329e-10,
+        "max": 1.8973743554267144e-10,
+        "avg": 1.5406311504715217e-10
+      },
+      "unit": "kgSbeq"
+    },
+    "pe": {
+      "value": {
+        "min": 0.00047959646949585386,
+        "max": 0.001435187811341041,
+        "avg": 0.0009573921404184475
+      },
+      "unit": "MJ"
+    },
+    "usage": {
+      "energy": {
+        "value": {
+          "min": 0.000045859386,
+          "max": 0.000140325354,
+          "avg": 0.00009309237000000001
+        },
+        "unit": "kWh"
+      },
+      "gwp": {
+        "value": {
+          "min": 0.000027078958526507997,
+          "max": 0.00008285903437921199,
+          "avg": 0.000054968996452859996
+        },
+        "unit": "kgCO2eq"
+      },
+      "adpe": {
+        "value": {
+          "min": 3.3830835927287995e-12,
+          "max": 1.0351913624863199e-11,
+          "avg": 6.8674986087959995e-12
+        },
+        "unit": "kgSbeq"
+      },
+      "pe": {
+        "value": {
+          "min": 0.000458043547368,
+          "max": 0.001401569635752,
+          "avg": 0.00092980659156
+        },
+        "unit": "MJ"
+      }
+    },
+    "embodied": {
+      "gwp": {
+        "value": {
+          "min": 0.0000016972352785388126,
+          "max": 0.000002647341890410959,
+          "avg": 0.0000021722885844748857
+        },
+        "unit": "kgCO2eq"
+      },
+      "adpe": {
+        "value": {
+          "min": 1.150057109589041e-10,
+          "max": 1.7938552191780823e-10,
+          "avg": 1.4719561643835617e-10
+        },
+        "unit": "kgSbeq"
+      },
+      "pe": {
+        "value": {
+          "min": 0.00002155292212785388,
+          "max": 0.0000336181755890411,
+          "avg": 0.00002758554885844749
+        },
+        "unit": "MJ"
+      }
+    },
+    "warnings": null
+  }
+}
+```
+
+## Example of LLMUsageAudit event with ecological impact
+
+```json
+{
+  "@id" : "1905575568334651655",
+  "@timestamp" : 1743159594030,
+  "@type" : "AuditEvent",
+  "@product" : "otoroshi",
+  "@serviceId" : "",
+  "@service" : "Otoroshi",
+  "@env" : "dev",
+  "audit" : "LLMUsageAudit",
+  "provider_kind" : "openai",
+  "provider" : "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
+  "duration" : 497,
+  "model" : "gpt-4o-mini",
+  "rate_limit" : {
+    "requests_limit" : 10000,
+    "requests_remaining" : 9998,
+    "tokens_limit" : 200000,
+    "tokens_remaining" : 199993
+  },
+  "usage" : {
+    "prompt_tokens" : 11,
+    "generation_tokens" : 18,
+    "reasoning_tokens" : 0
+  },
+  "error" : null,
+  "consumed_using" : "chat/completion/blocking",
+  "user" : null,
+  "apikey" : null,
+  "route" : {
+    "_loc" : {
+      "tenant" : "default",
+      "teams" : [ "default" ]
+    },
+    "id" : "route_e4a9d6cb3-d859-4203-a860-8d1dd6d09557",
+    "name" : "ecologits",
+    "description" : "A new route",
+    "tags" : [ ],
+    "metadata" : {
+      "created_at" : "2025-03-28T10:10:19.448+01:00",
+      "updated_at" : "2025-03-28T10:48:48.218+01:00"
+    },
+    "enabled" : true,
+    "debug_flow" : false,
+    "export_reporting" : false,
+    "capture" : false,
+    "groups" : [ "default" ],
+    "bound_listeners" : [ ],
+    "frontend" : {
+      "domains" : [ "test.oto.tools" ],
+      "strip_path" : true,
+      "exact" : false,
+      "headers" : { },
+      "query" : { },
+      "methods" : [ ]
+    },
+    "backend" : {
+      "targets" : [ {
+        "id" : "target_1",
+        "hostname" : "request.otoroshi.io",
+        "port" : 443,
+        "tls" : true,
+        "weight" : 1,
+        "backup" : false,
+        "predicate" : {
+          "type" : "AlwaysMatch"
+        },
+        "protocol" : "HTTP/1.1",
+        "ip_address" : null,
+        "tls_config" : {
+          "certs" : [ ],
+          "trusted_certs" : [ ],
+          "enabled" : false,
+          "loose" : false,
+          "trust_all" : false
+        }
+      } ],
+      "root" : "/",
+      "rewrite" : false,
+      "load_balancing" : {
+        "type" : "RoundRobin"
+      },
+      "client" : {
+        "retries" : 1,
+        "max_errors" : 20,
+        "retry_initial_delay" : 50,
+        "backoff_factor" : 2,
+        "call_timeout" : 30000,
+        "call_and_stream_timeout" : 120000,
+        "connection_timeout" : 10000,
+        "idle_timeout" : 60000,
+        "global_timeout" : 30000,
+        "sample_interval" : 2000,
+        "proxy" : { },
+        "custom_timeouts" : [ ],
+        "cache_connection_settings" : {
+          "enabled" : false,
+          "queue_size" : 2048
+        }
+      },
+      "health_check" : {
+        "enabled" : false,
+        "url" : "",
+        "timeout" : 5000,
+        "healthyStatuses" : [ ],
+        "unhealthyStatuses" : [ ]
+      }
+    },
+    "backend_ref" : null,
+    "plugins" : [ {
+      "enabled" : true,
+      "debug" : false,
+      "plugin" : "cp:otoroshi.next.plugins.OverrideHost",
+      "include" : [ ],
+      "exclude" : [ ],
+      "config" : { },
+      "bound_listeners" : [ ],
+      "plugin_index" : {
+        "transform_request" : 0
+      }
+    }, {
+      "enabled" : true,
+      "debug" : false,
+      "plugin" : "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
+      "include" : [ ],
+      "exclude" : [ ],
+      "config" : {
+        "refs" : [ "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691" ]
+      },
+      "bound_listeners" : [ ],
+      "plugin_index" : { }
+    } ]
+  },
+  "input_prompt" : [ {
+    "role" : "user",
+    "content" : "tell me a joke"
+  } ],
+  "output" : {
+    "generations" : [ {
+      "message" : {
+        "role" : "assistant",
+        "content" : "Why did the scarecrow win an award?\n\nBecause he was outstanding in his field!"
+      }
+    } ],
+    "metadata" : {
+      "rate_limit" : {
+        "requests_limit" : 10000,
+        "requests_remaining" : 9998,
+        "tokens_limit" : 200000,
+        "tokens_remaining" : 199993
+      },
+      "usage" : {
+        "prompt_tokens" : 11,
+        "generation_tokens" : 18,
+        "reasoning_tokens" : 0
+      }
+    }
+  },
+  "provider_details" : {
+    "_loc" : {
+      "tenant" : "default",
+      "teams" : [ "default" ]
+    },
+    "id" : "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
+    "name" : "OpenAI",
+    "description" : "An OpenAI LLM api provider",
+    "metadata" : {
+      "created_at" : "2025-03-28T10:10:51.558+01:00"
+    },
+    "tags" : [ ],
+    "provider" : "openai",
+    "connection" : {
+      "base_url" : "https://api.openai.com/v1",
+      "token" : "xxx",
+      "timeout" : 30000
+    },
+    "options" : {
+      "model" : "gpt-4o-mini",
+      "frequency_penalty" : null,
+      "logit_bias" : null,
+      "logprobs" : null,
+      "top_logprobs" : null,
+      "max_tokens" : null,
+      "n" : 1,
+      "presence_penalty" : null,
+      "response_format" : null,
+      "seed" : null,
+      "stop" : null,
+      "stream" : false,
+      "temperature" : 1,
+      "top_p" : 1,
+      "tools" : null,
+      "tool_choice" : null,
+      "user" : null,
+      "wasm_tools" : [ ],
+      "mcp_connectors" : [ ],
+      "allow_config_override" : true
+    },
+    "provider_fallback" : null,
+    "context" : {
+      "default" : null,
+      "contexts" : [ ]
+    },
+    "models" : {
+      "include" : [ ],
+      "exclude" : [ ]
+    },
+    "guardrails" : [ ],
+    "guardrails_fail_on_deny" : false,
+    "cache" : {
+      "strategy" : "none",
+      "ttl" : 300000,
+      "score" : 0.8
+    }
+  },
+  "impacts" : {
+    "energy" : {
+      "value" : {
+        "min" : 0.000045859386,
+        "max" : 0.000140325354,
+        "avg" : 0.00009309237000000001
+      },
+      "unit" : "kWh",
+      "description" : "Energy: related to the final electricity consumption in kWh"
+    },
+    "gwp" : {
+      "value" : {
+        "min" : 0.00002877619380504681,
+        "max" : 0.00008550637626962295,
+        "avg" : 0.00005714128503733488
+      },
+      "unit" : "kgCO2eq",
+      "description" : "Global Warming Potential (GWP): related to climate change, commonly known as GHG emissions in kgCO2eq"
+    },
+    "adpe" : {
+      "value" : {
+        "min" : 1.183887945516329E-10,
+        "max" : 1.8973743554267144E-10,
+        "avg" : 1.5406311504715217E-10
+      },
+      "unit" : "kgSbeq",
+      "description" : "Abiotic Depletion Potential for Elements (ADPe): related to the depletion of minerals and metals in kgSbeq"
+    },
+    "pe" : {
+      "value" : {
+        "min" : 0.00047959646949585386,
+        "max" : 0.001435187811341041,
+        "avg" : 0.0009573921404184475
+      },
+      "unit" : "MJ",
+      "description" : "Primary Energy (PE): related to the energy consumed from primary sources like oil, gas or coal in MJ"
+    },
+    "usage" : {
+      "energy" : {
+        "value" : {
+          "min" : 0.000045859386,
+          "max" : 0.000140325354,
+          "avg" : 0.00009309237000000001
+        },
+        "unit" : "kWh",
+        "description" : "Energy: related to the final electricity consumption in kWh"
+      },
+      "gwp" : {
+        "value" : {
+          "min" : 0.000027078958526507997,
+          "max" : 0.00008285903437921199,
+          "avg" : 0.000054968996452859996
+        },
+        "unit" : "kgCO2eq",
+        "description" : "Global Warming Potential (GWP): related to climate change, commonly known as GHG emissions in kgCO2eq"
+      },
+      "adpe" : {
+        "value" : {
+          "min" : 3.3830835927287995E-12,
+          "max" : 1.0351913624863199E-11,
+          "avg" : 6.8674986087959995E-12
+        },
+        "unit" : "kgSbeq",
+        "description" : "Abiotic Depletion Potential for Elements (ADPe): related to the depletion of minerals and metals in kgSbeq"
+      },
+      "pe" : {
+        "value" : {
+          "min" : 0.000458043547368,
+          "max" : 0.001401569635752,
+          "avg" : 0.00092980659156
+        },
+        "unit" : "MJ",
+        "description" : "Primary Energy (PE): related to the energy consumed from primary sources like oil, gas or coal in MJ"
+      },
+      "description" : "related to the impacts of the energy consumption during model execution"
+    },
+    "embodied" : {
+      "gwp" : {
+        "value" : {
+          "min" : 0.0000016972352785388126,
+          "max" : 0.000002647341890410959,
+          "avg" : 0.0000021722885844748857
+        },
+        "unit" : "kgCO2eq",
+        "description" : "Global Warming Potential (GWP): related to climate change, commonly known as GHG emissions in kgCO2eq"
+      },
+      "adpe" : {
+        "value" : {
+          "min" : 1.150057109589041E-10,
+          "max" : 1.7938552191780823E-10,
+          "avg" : 1.4719561643835617E-10
+        },
+        "unit" : "kgSbeq",
+        "description" : "Abiotic Depletion Potential for Elements (ADPe): related to the depletion of minerals and metals in kgSbeq"
+      },
+      "pe" : {
+        "value" : {
+          "min" : 0.00002155292212785388,
+          "max" : 0.0000336181755890411,
+          "avg" : 0.00002758554885844749
+        },
+        "unit" : "MJ",
+        "description" : "Primary Energy (PE): related to the energy consumed from primary sources like oil, gas or coal in MJ"
+      },
+      "description" : "related to resource extraction, manufacturing and transportation of the hardware"
+    },
+    "warnings" : null
+  }
+}
+```

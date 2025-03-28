@@ -1,6 +1,6 @@
 {
-  "label": "Http + LLM Plugins",
-  "position": 14,
+  "label": "HTTP + LLM Plugins",
+  "position": 8,
   "link": {
       "type": "generated-index",
       "description": "All Http + LLM Plugins"

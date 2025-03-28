@@ -32,7 +32,7 @@ object ChatClientWithSimpleCache {
     .maximumSize(5000)
     .build[String, (FiniteDuration, Seq[ChatResponseChunk], Long)]()
 
-  def applyIfPossible(tuple: (AiProvider, ChatClient)): ChatClient = {
+  def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
     if (tuple._1.cache.strategy.contains("simple")) {
       new ChatClientWithSimpleCache(tuple._1, tuple._2)
     } else {

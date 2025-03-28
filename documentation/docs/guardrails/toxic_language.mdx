@@ -1,0 +1,21 @@
+import Terminal from '@site/src/components/Terminal';
+
+# Toxic Language
+
+![](/img/guardrails-no-toxic-language.png)
+
+### Configuration
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": true,
+    "id": "toxic_language",
+    "config": {
+      "provider": null
+    }
+  }
+]
+```

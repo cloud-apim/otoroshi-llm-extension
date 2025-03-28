@@ -1,0 +1,15 @@
+---
+sidebar_position: 4
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Embedding plugins
+
+Otoroshi LLM extension provides a plugin called 'OpenAI compat. embedding' to expose embedding models on a route
+
+![](/img/embedding-plugin.png)
+
+when we call the route with this plugin, the response has the same format as [an OpenAI one](https://platform.openai.com/docs/api-reference/embeddings)
+
+![](/img/embedding-plugin-call.png)

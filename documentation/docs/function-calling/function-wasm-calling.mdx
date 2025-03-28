@@ -1,0 +1,38 @@
+---
+sidebar_position: 1
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Wasm Functions
+
+## 🤖 What Are Tool Calls in LLMs?
+Tool calls in Large Language Models (LLMs) allow the model to interact with external tools, APIs, or functions to fetch real-world data or perform tasks beyond its native capabilities.
+
+Instead of relying solely on pre-trained knowledge, LLMs can dynamically query functions like `get_flight_times` to provide accurate, real-time information.
+
+### 🔹 How Do Tool Calls Work?
+When an LLM identifies a request that matches a tool’s function, it formats the request into a structured call (like an API request) and processes the response before delivering it to the user.
+
+## ✈️ What is `get_flight_times`?
+The `get_flight_times` function is a tool call that helps you retrieve flight durations between two locations. By providing a departure and arrival destination, you can get accurate estimates of how long your flight will take.
+
+## 🛠️ How Does it Work?
+The function operates by taking in two key parameters:
+- **departure** 🛫 – The airport or city where your flight begins.
+- **arrival** 🛬 – The airport or city where your flight ends.
+
+Once you provide these details, `get_flight_times` fetches the estimated duration of direct and indirect flights between the specified locations. The function considers factors like average flight speeds, distances between airports, and typical air traffic conditions.
+
+## 📝 Example Usage
+Imagine you want to check the flight duration from **New York (JFK)** to **Los Angeles (LAX)**:
+```python
+get_flight_times(departure="JFK", arrival="LAX")
+```
+The function will return the estimated flight duration, such as `5h 30m` for a direct flight or longer if layovers are involved.
+
+![](/img/tool-calls-1.png)
+
+![](/img/tool-calls-2.png)
+
+![](/img/tool-calls-3.png)

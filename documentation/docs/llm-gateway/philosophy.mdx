@@ -1,0 +1,37 @@
+---
+sidebar_position: 1
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Philosophy
+
+![](/img/egress-proxy-pattern.png)
+
+Today, generative AI is simply unavoidable. It’s transforming industries, unlocking new possibilities, and accelerating innovation
+at an unprecedented pace. However, this revolution comes with serious challenges—especially for large organizations.
+Without proper governance, it’s easy to fall into the trap of "shadow AI," where employees use unapproved tools,
+potentially leaking sensitive data and introducing security risks. Costs can spiral out of control, usage becomes opaque,
+and maintaining compliance becomes a nightmare. To harness the true power of GenAI, enterprises need to act fast and
+establish guardrails before chaos sets in.
+
+The main idea behind the AI Gateway / LLM gateway is to use the Egress Proxy Pattern to allows organizations to securely
+route outgoing traffic from their infrastructure to external LLM providers while maintaining strict control over network access,
+security policies, and compliance requirements.
+
+As any request going to a LLM Provider API pass through the LLM Gateway, you can decide who can do the call, when, to which provider,
+if you need to block the call based on it's content. The central position of the gateway is the key of this whole architecture, the key to control.
+
+## Key Benefits
+
+- Security & Compliance: Enforce security policies and restrict outbound traffic to authorized destinations.
+- Logging & Auditing: Monitor all outgoing requests for auditing and compliance.
+- Performance Optimization: Cache responses where applicable to reduce redundant network calls and improve speed.
+- Centralized Control: Manage API keys, access control, and provider selection centrally.
+
+## How It Works
+
+- All outgoing requests to LLM providers pass through an Otoroshi instance before hitting the LLM provider.
+- The proxy applies authentication, authorization, observability and audit before forwarding the request.
+- Optionally, caching can be enabled for frequently accessed responses.
+- The proxy integrates with Otoroshi’s key vault to manage LLM API tokens securely.
