@@ -24,9 +24,38 @@ impacts {
 Once it's enabled, audit events of kind `LLMUsageAudit` will have an `impacts`.
 You can also embed the `impacts` value in your LLM responses using the `impacts.embed-impacts-in-responses` config.
 
+
+
+The ecological impact computation is based on project [EcoLogits](https://ecologits.ai/latest/) and only supports right now the following providers
+
+- Mistral
+- Gemini
+- Anthropic
+- OpenAI
+- Cohere
+- HuggingFace
+
+but if you're okay with approximations, you can set some metadata on your providers to use supported providers / models
+
+- `eco-impacts-electricity-mix-zone`: the country where the model is hosted
+- `eco-impacts-provider`: the provider used for eco impacts computation
+- `eco-impacts-model`: the model used for eco impacts computation
+
 ## Example of ecological impact embed in responses
 
-```json
+```sh
+$ curl --request POST \
+  --url 'http://test.oto.tools:8080/v1/chat/completions?embed_impacts=true' \
+  --header 'content-type: application/json' \
+  --data '{
+  "messages": [
+    {
+      "role": "user",
+      "content": "tell me a joke"
+    }
+  ]
+}'
+
 {
   "id": "chatcmpl-POPo2920QC8UdFT6MEF8MnnMBOGXDNdg",
   "object": "chat.completion",

@@ -7,6 +7,7 @@ import otoroshi.env.Env
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
 
@@ -431,11 +432,11 @@ case class ChatResponse(
   generations: Seq[ChatGeneration],
   metadata: ChatResponseMetadata,
 ) {
-  def json: JsValue = Json.obj(
+  def json(env: Env): JsValue = Json.obj(
     "generations" -> JsArray(generations.map(_.json)),
-    "metadata" -> metadata.json,
+    "metadata" -> metadata.json(env),
   )
-  def openaiJson(model: String): JsValue = Json.obj(
+  def openaiJson(model: String, env: Env): JsValue = Json.obj(
     "id" -> s"chatcmpl-${IdGenerator.token(32)}",
     "object" -> "chat.completion",
     "created" -> (System.currentTimeMillis() / 1000).toLong,
@@ -444,9 +445,9 @@ case class ChatResponse(
     "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiJson(t._2))),
     "usage" -> metadata.usage.openaiJson,
   ).applyOnWithOpt(metadata.impacts) {
-    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(false)) // TODO: use actual flag
+    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
   }
-  def openaiCompletionJson(model: String, echo: Boolean, prompt: String): JsValue = Json.obj(
+  def openaiCompletionJson(model: String, echo: Boolean, prompt: String, env: Env): JsValue = Json.obj(
     "id" -> s"cmpl-${IdGenerator.token(32)}",
     "object" -> "text_completion",
     "created" -> (System.currentTimeMillis() / 1000).toLong,
@@ -455,7 +456,7 @@ case class ChatResponse(
     "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiCompletionJson(t._2))),
     "usage" -> metadata.usage.openaiJson,
   ).applyOnWithOpt(metadata.impacts) {
-    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(false)) // TODO: use actual flag
+    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
   }
   def toSource(model: String): Source[ChatResponseChunk, _] = {
     val id = s"chatgen-${IdGenerator.token(32)}"
@@ -500,13 +501,13 @@ case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage:
     case None => Map.empty
     case Some(cache) => cache.toHeaders()
   }
-  def json: JsValue = Json.obj(
+  def json(env: Env): JsValue = Json.obj(
     "rate_limit" -> rateLimit.json,
     "usage" -> usage.json,
   ).applyOnWithOpt(cache) {
     case(obj, cache) => obj ++ Json.obj("cache" -> cache.json)
   }.applyOnWithOpt(impacts) {
-    case(obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(false)) // TODO: use actual flag !!!
+    case(obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
   }
 }
 

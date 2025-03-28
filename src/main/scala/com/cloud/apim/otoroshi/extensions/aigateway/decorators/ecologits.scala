@@ -477,12 +477,12 @@ case class ImpactsOutput(
     this.copy(warnings = Some(warnings.getOrElse(Nil) :+ warning))
 
   def json(desc: Boolean): JsValue = Json.obj(
+    "usage" -> usage.map(_.json(desc)).getOrElse(JsNull).asValue,
+    "embodied" -> embodied.map(_.json(desc)).getOrElse(JsNull).asValue,
     "energy" -> energy.map(_.json(desc)).getOrElse(JsNull).asValue,
     "gwp" -> gwp.map(_.json(desc)).getOrElse(JsNull).asValue,
     "adpe" -> adpe.map(_.json(desc)).getOrElse(JsNull).asValue,
     "pe" -> pe.map(_.json(desc)).getOrElse(JsNull).asValue,
-    "usage" -> usage.map(_.json(desc)).getOrElse(JsNull).asValue,
-    "embodied" -> embodied.map(_.json(desc)).getOrElse(JsNull).asValue,
     "warnings" -> warnings.map(v => JsArray(v.map(_.json))).getOrElse(JsNull).asValue,
   )
 }
@@ -599,6 +599,7 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
                   modelName: String,
                   outputTokenCount: Int,
                   requestLatency: Double,
+                  electricityMixZoneOpt: Option[String],
                 ): Either[String, ImpactsOutput] = {
 
     models_by_provider_name.get(s"${provider}-${modelName}") match {
@@ -609,7 +610,7 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
           case _ => (model.architecture.denseParameters.get, model.architecture.denseParameters.get)
         }
 
-        val mix = electricityMixes.getOrElse(settings.electricityMixZone, electricityMixes.head._2)
+        val mix = electricityMixes.getOrElse(electricityMixZoneOpt.getOrElse(settings.electricityMixZone), electricityMixes.head._2)
 
         val result = LLMImpactCalculator.computeLLMImpacts(
           modelActiveParams = activeParams,
@@ -700,10 +701,11 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
             val usage = resp.metadata.usage
             val ext = env.adminExtensions.extension[AiExtension].get
             ext.llmImpacts.llmImpacts(
-              provider = provider,
-              modelName = getModel(originalBody),
+              provider = originalProvider.metadata.getOrElse("eco-impacts-provider", provider),
+              modelName = originalProvider.metadata.getOrElse("eco-impacts-model", getModel(originalBody)),
               outputTokenCount = (usage.generationTokens + usage.reasoningTokens).toInt,
               requestLatency = System.currentTimeMillis() - start,
+              electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
             ) match {
               case Left(err) => Right(resp)
               case Right(impacts) => {
@@ -737,10 +739,11 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
               val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
               val ext = env.adminExtensions.extension[AiExtension].get
               ext.llmImpacts.llmImpacts(
-                provider = provider,
-                modelName = getModel(originalBody),
+                provider = originalProvider.metadata.getOrElse("eco-impacts-provider", provider),
+                modelName = originalProvider.metadata.getOrElse("eco-impacts-model", getModel(originalBody)),
                 outputTokenCount = (generationTokens + reasoningTokens).toInt,
                 requestLatency = System.currentTimeMillis() - start,
+                electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
               ).foreach { impacts =>
                 attrs.put(ChatClientWithEcoImpact.key -> impacts)
                 // impacts.json(ext.llmImpactsSettings.embedDescriptionInJson).prettify.debugPrintln
@@ -763,10 +766,11 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
             val usage = resp.metadata.usage
             val ext = env.adminExtensions.extension[AiExtension].get
             ext.llmImpacts.llmImpacts(
-              provider = provider,
-              modelName = getModel(originalBody),
+              provider = originalProvider.metadata.getOrElse("eco-impacts-provider", provider),
+              modelName = originalProvider.metadata.getOrElse("eco-impacts-model", getModel(originalBody)),
               outputTokenCount = (usage.generationTokens + usage.reasoningTokens).toInt,
               requestLatency = System.currentTimeMillis() - start,
+              electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
             ) match {
               case Left(err) => Right(resp)
               case Right(impacts) => {
@@ -800,10 +804,11 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
               val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
               val ext = env.adminExtensions.extension[AiExtension].get
               ext.llmImpacts.llmImpacts(
-                provider = provider,
-                modelName = getModel(originalBody),
+                provider = originalProvider.metadata.getOrElse("eco-impacts-provider", provider),
+                modelName = originalProvider.metadata.getOrElse("eco-impacts-model", getModel(originalBody)),
                 outputTokenCount = (generationTokens + reasoningTokens).toInt,
                 requestLatency = System.currentTimeMillis() - start,
+                electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
               ).foreach { impacts =>
                 attrs.put(ChatClientWithEcoImpact.key -> impacts)
                 // impacts.json(ext.llmImpactsSettings.embedDescriptionInJson).prettify.debugPrintln

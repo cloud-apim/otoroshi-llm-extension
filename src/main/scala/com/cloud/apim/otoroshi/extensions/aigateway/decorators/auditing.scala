@@ -74,7 +74,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_prompt" -> prompt.json,
-              "output" -> value.json,
+              "output" -> value.json(env),
               "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
               "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
               //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
@@ -162,7 +162,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                       ),
                       cache = None
                     )
-                  ).json.debug(_.prettify.debugPrintln),
+                  ).json(env).debug(_.prettify.debugPrintln),
                   "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                   "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                   //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
@@ -226,7 +226,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_prompt" -> prompt.json,
-              "output" -> value.json,
+              "output" -> value.json(env),
               "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
               "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
             //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
