@@ -2,6 +2,7 @@ package otoroshi_plugins.com.cloud.apim.extensions.aigateway
 
 import akka.stream.scaladsl.{Source, StreamConverters}
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{LLMImpacts, LLMImpactsSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities._
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHardcodedItems
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
@@ -14,7 +15,7 @@ import otoroshi.utils.TypedMap
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiLlmProxy
-import play.api.Logger
+import play.api.{Configuration, Logger}
 import play.api.libs.json.{JsArray, JsError, JsObject, JsSuccess, Json}
 import play.api.mvc.{RequestHeader, Result, Results}
 
@@ -97,9 +98,12 @@ object AiExtension {
 
 class AiExtension(val env: Env) extends AdminExtension {
 
-  private lazy val datastores = new AiGatewayExtensionDatastores(env, id)
+  private val datastores = new AiGatewayExtensionDatastores(env, id)
 
-  lazy val states = new AiGatewayExtensionState(env)
+  val states = new AiGatewayExtensionState(env)
+
+  val llmImpactsSettings = LLMImpactsSettings(configuration.getOptional[Configuration]("impacts").getOrElse(Configuration.empty))
+  val llmImpacts = new LLMImpacts(llmImpactsSettings, env)
 
   val logger = AiExtension.logger
 

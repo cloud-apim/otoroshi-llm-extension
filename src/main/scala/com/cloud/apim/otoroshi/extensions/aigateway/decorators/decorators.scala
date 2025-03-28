@@ -11,19 +11,20 @@ import scala.concurrent.{ExecutionContext, Future}
 
 object ChatClientDecorators {
 
-  val possibleDecorators: Seq[Function[(AiProvider, ChatClient), ChatClient]] = Seq(
+  val possibleDecorators: Seq[Function[(AiProvider, ChatClient, Env), ChatClient]] = Seq(
     ChatClientWithModelConstraints.applyIfPossible,
     ChatClientWithProviderFallback.applyIfPossible,
     ChatClientWithSemanticCache.applyIfPossible,
     ChatClientWithSimpleCache.applyIfPossible,
     ChatClientWithGuardrailsValidation.applyIfPossible,
+    ChatClientWithEcoImpact.applyIfPossible,
     ChatClientWithAuditing.applyIfPossible,
     ChatClientWithContext.applyIfPossible
   )
 
-  def apply(provider: AiProvider, client: ChatClient): ChatClient = {
+  def apply(provider: AiProvider, client: ChatClient, env: Env): ChatClient = {
     possibleDecorators.foldLeft(client) {
-      case (client, predicate) => predicate((provider, client))
+      case (client, predicate) => predicate((provider, client, env))
     }
   }
 }

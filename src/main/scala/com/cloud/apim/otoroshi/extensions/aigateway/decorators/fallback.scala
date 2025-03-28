@@ -12,7 +12,7 @@ import play.api.libs.json.{JsValue, Json}
 import scala.concurrent.{ExecutionContext, Future}
 
 object ChatClientWithProviderFallback {
-  def applyIfPossible(tuple: (AiProvider, ChatClient)): ChatClient = {
+  def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
     if (tuple._1.providerFallback.isDefined) {
       new ChatClientWithProviderFallback(tuple._1, tuple._2)
     } else {

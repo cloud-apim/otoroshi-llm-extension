@@ -260,7 +260,7 @@ case class AiProvider(
       case "loadbalancer" => new LoadBalancerChatClient(this).some
       case _ => None
     }
-    rawClient.map(c => ChatClientDecorators(this, c))
+    rawClient.map(c => ChatClientDecorators(this, c, env))
   }
 }
 

@@ -2,6 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ImpactsOutput
 import otoroshi.env.Env
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
@@ -442,7 +443,9 @@ case class ChatResponse(
     "system_fingerprint" -> s"fp-${IdGenerator.token(32)}",
     "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiJson(t._2))),
     "usage" -> metadata.usage.openaiJson,
-  )
+  ).applyOnWithOpt(metadata.impacts) {
+    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(false)) // TODO: use actual flag
+  }
   def openaiCompletionJson(model: String, echo: Boolean, prompt: String): JsValue = Json.obj(
     "id" -> s"cmpl-${IdGenerator.token(32)}",
     "object" -> "text_completion",
@@ -451,7 +454,9 @@ case class ChatResponse(
     "system_fingerprint" -> s"fp_${IdGenerator.token(32)}",
     "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiCompletionJson(t._2))),
     "usage" -> metadata.usage.openaiJson,
-  )
+  ).applyOnWithOpt(metadata.impacts) {
+    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(false)) // TODO: use actual flag
+  }
   def toSource(model: String): Source[ChatResponseChunk, _] = {
     val id = s"chatgen-${IdGenerator.token(32)}"
     Source(generations.toList)
@@ -490,7 +495,7 @@ case class ChatResponseCache(status: ChatResponseCacheStatus, key: String, ttl: 
   )
 }
 
-case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage, cache: Option[ChatResponseCache]) {
+case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage, cache: Option[ChatResponseCache], impacts: Option[ImpactsOutput] = None) {
   def cacheHeaders: Map[String, String] = cache match {
     case None => Map.empty
     case Some(cache) => cache.toHeaders()
@@ -500,6 +505,8 @@ case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage:
     "usage" -> usage.json,
   ).applyOnWithOpt(cache) {
     case(obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+  }.applyOnWithOpt(impacts) {
+    case(obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(false)) // TODO: use actual flag !!!
   }
 }
 
@@ -507,6 +514,7 @@ object ChatResponseMetadata {
   val empty: ChatResponseMetadata = ChatResponseMetadata(
     ChatResponseMetadataRateLimit.empty,
     ChatResponseMetadataUsage.empty,
+    None,
     None
   )
 }

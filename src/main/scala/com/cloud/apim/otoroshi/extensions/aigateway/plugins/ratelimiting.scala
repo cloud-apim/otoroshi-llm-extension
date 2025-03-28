@@ -141,7 +141,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     val expr  = computeExprAfter(defaultExpr, ctx, env)
     val windowMillis = computeExprAfter(qconf.windowMillis, ctx, env).trim.toLong
     ctx.attrs.get(ChatClient.ApiUsageKey).map { usage =>
-      val increment = usage.usage.promptTokens + usage.usage.generationTokens
+      val increment = usage.usage.promptTokens + usage.usage.generationTokens + usage.usage.reasoningTokens
       //println(s"incrementing '${env.storageRoot}:plugins:custom-throttling:${group}:second:$expr' of ${increment} in ${windowMillis} ms")
       env.clusterAgent.incrementCustomThrottling(expr, group, increment, windowMillis)
       NgCustomThrottling.updateQuotas(expr, group, increment, windowMillis)
