@@ -709,7 +709,8 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
               case Right(impacts) => {
                 attrs.put(ChatClientWithEcoImpact.key -> impacts)
                 // impacts.json(ext.llmImpactsSettings.embedDescriptionInJson).prettify.debugPrintln
-                if (ext.llmImpactsSettings.embedImpactsInResponses) {
+                val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_impacts")).contains("true")
+                if (ext.llmImpactsSettings.embedImpactsInResponses || enableInRequest) {
                   Right(resp.copy(metadata = resp.metadata.copy(impacts = impacts.some)))
                 } else {
                   Right(resp)
@@ -771,7 +772,8 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
               case Right(impacts) => {
                 attrs.put(ChatClientWithEcoImpact.key -> impacts)
                 // impacts.json(ext.llmImpactsSettings.embedDescriptionInJson).prettify.debugPrintln
-                if (ext.llmImpactsSettings.embedImpactsInResponses) {
+                val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_impacts")).contains("true")
+                if (ext.llmImpactsSettings.embedImpactsInResponses || enableInRequest) {
                   Right(resp.copy(metadata = resp.metadata.copy(impacts = impacts.some)))
                 } else {
                   Right(resp)
