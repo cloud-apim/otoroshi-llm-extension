@@ -4,7 +4,7 @@ sidebar_position: 0
 
 import Terminal from '@site/src/components/Terminal';
 
-# Overiew
+# Overview
 
 ## 🚧 Enforcing Usage Limits
 
@@ -31,3 +31,45 @@ Optimize the privacy of your organization's data and the security of your users 
 
 ### Example:
 A user prompt containing a credit card number or personal email can be automatically redacted or rejected before reaching the LLM.
+
+## Enable guardrails
+
+To enable guardrails, select a LLM provider, then go to `Guardrails validation` section.
+
+![](/img/guardrails-setup-1.png)
+
+Click on `+` button to display the list of all available Guardrails.
+
+![](/img/guardrails-setup-2.png)
+
+You can now choose from the list of available Guardrails. 
+
+![](/img/guardrails-setup-3.png)
+
+### Available Guardrails
+
+- [Secrets Leakage](/docs/guardrails/secrets_leakage)
+
+### Guardrail configuration
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": true,
+    "id": "secrets_leakage",
+    "config": {
+      "provider": "provider_480ec0b7-bc9e-487f-8376-b9b8111bfe5e",
+      "secrets_leakage_items": [
+        "APIKEYS",
+        "PASSWORDS",
+        "TOKENS",
+        "JWT_TOKENS",
+        "PRIVATE_KEYS",
+        "HUGE_RANDOM_VALUES"
+      ]
+    }
+  }
+]
+```
