@@ -41,9 +41,11 @@ but if you're okay with approximations, you can set some metadata on your provid
 
 ## Example of costs tracking embed in responses
 
+**NOTE**: you can embed costs tracking informations by using `embed_costs=true` query param
+
 ```sh
 $ curl --request POST \
-  --url 'http://test.oto.tools:9999/v1/chat/completions?embed_=true&embed_costs=true' \
+  --url 'http://test.oto.tools:9999/v1/chat/completions?embed_costs=true' \
   --header 'authorization: Bearer otoapk_mqXJ9YrgVM0rcGZy_0a35ab6e5b5407cc7200f94f43f60c583928d372ef43b99a28b93243c3c90153' \
   --header 'content-type: application/json' \
   --data '{
