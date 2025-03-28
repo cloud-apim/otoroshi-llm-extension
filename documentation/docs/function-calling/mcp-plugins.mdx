@@ -8,6 +8,262 @@ import Terminal from '@site/src/components/Terminal';
 
 ## MCP Http Plugin
 
+![](/img/mcp-http-server-exposition-plugins-list.png)
+
+![](/img/mcp-http-server-exposition-configuration.png)
+
+### Configuration
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "id": "route_2629d12c2-130b-42d5-aba5-b584b95961c9",
+  "name": "MCP HTTP server exposition",
+  "description": "MCP HTTP server exposition",
+  "tags": [],
+  "metadata": {},
+  "enabled": true,
+  "debug_flow": false,
+  "export_reporting": false,
+  "capture": false,
+  "groups": [
+    "default"
+  ],
+  "bound_listeners": [],
+  "frontend": {
+    "domains": [
+      "mcp-http-expo.oto.tools"
+    ],
+    "strip_path": true,
+    "exact": false,
+    "headers": {},
+    "query": {},
+    "methods": []
+  },
+  "backend": {
+    "targets": [
+      {
+        "id": "target_1",
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true,
+        "weight": 1,
+        "predicate": {
+          "type": "AlwaysMatch"
+        },
+        "protocol": "HTTP/1.1",
+        "ip_address": null,
+        "tls_config": {
+          "certs": [],
+          "trusted_certs": [],
+          "enabled": false,
+          "loose": false,
+          "trust_all": false
+        }
+      }
+    ],
+    "root": "/",
+    "rewrite": false,
+    "load_balancing": {
+      "type": "RoundRobin"
+    },
+    "client": {
+      "retries": 1,
+      "max_errors": 20,
+      "retry_initial_delay": 50,
+      "backoff_factor": 2,
+      "call_timeout": 30000,
+      "call_and_stream_timeout": 120000,
+      "connection_timeout": 10000,
+      "idle_timeout": 60000,
+      "global_timeout": 30000,
+      "sample_interval": 2000,
+      "proxy": {},
+      "custom_timeouts": [],
+      "cache_connection_settings": {
+        "enabled": false,
+        "queue_size": 2048
+      }
+    },
+    "health_check": {
+      "enabled": false,
+      "url": "",
+      "timeout": 5000,
+      "healthyStatuses": [],
+      "unhealthyStatuses": []
+    }
+  },
+  "backend_ref": null,
+  "plugins": [
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "include": [],
+      "exclude": [],
+      "config": {},
+      "bound_listeners": [],
+      "plugin_index": {
+        "transform_request": 0
+      },
+      "nodeId": "cp:otoroshi.next.plugins.OverrideHost"
+    },
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpRespEndpoint",
+      "include": [],
+      "exclude": [],
+      "config": {
+        "name": "first-mcp-http-server",
+        "version": "1.0.0",
+        "refs": [
+          "tool-function_0511ff44-0ce5-487d-aa1c-d1980ac9a4b8"
+        ],
+        "mcp_refs": []
+      },
+      "bound_listeners": [],
+      "plugin_index": {},
+      "nodeId": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpRespEndpoint"
+    }
+  ],
+  "kind": "proxy.otoroshi.io/Route"
+}
+```
+
 ## MCP SSE Plugin
+
+![](/img/mcp-sse-exposition-plugins-list.png)
+
+![](/img/mcp-sse-exposition-configuration.png)
+
+### Configuration
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "id": "route_73e79129a-1cc6-4473-970a-b80905e80c7b",
+  "name": "mcp-sse-exposition",
+  "description": "mcp-sse-exposition",
+  "tags": [],
+  "metadata": {},
+  "enabled": true,
+  "debug_flow": false,
+  "export_reporting": false,
+  "capture": false,
+  "groups": [
+    "default"
+  ],
+  "bound_listeners": [],
+  "frontend": {
+    "domains": [
+      "mcp-sse-exposition.oto.tools"
+    ],
+    "strip_path": true,
+    "exact": false,
+    "headers": {},
+    "query": {},
+    "methods": []
+  },
+  "backend": {
+    "targets": [
+      {
+        "id": "target_1",
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true,
+        "weight": 1,
+        "predicate": {
+          "type": "AlwaysMatch"
+        },
+        "protocol": "HTTP/1.1",
+        "ip_address": null,
+        "tls_config": {
+          "certs": [],
+          "trusted_certs": [],
+          "enabled": false,
+          "loose": false,
+          "trust_all": false
+        }
+      }
+    ],
+    "root": "/",
+    "rewrite": false,
+    "load_balancing": {
+      "type": "RoundRobin"
+    },
+    "client": {
+      "retries": 1,
+      "max_errors": 20,
+      "retry_initial_delay": 50,
+      "backoff_factor": 2,
+      "call_timeout": 30000,
+      "call_and_stream_timeout": 120000,
+      "connection_timeout": 10000,
+      "idle_timeout": 60000,
+      "global_timeout": 30000,
+      "sample_interval": 2000,
+      "proxy": {},
+      "custom_timeouts": [],
+      "cache_connection_settings": {
+        "enabled": false,
+        "queue_size": 2048
+      }
+    },
+    "health_check": {
+      "enabled": false,
+      "url": "",
+      "timeout": 5000,
+      "healthyStatuses": [],
+      "unhealthyStatuses": []
+    }
+  },
+  "backend_ref": null,
+  "plugins": [
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "include": [],
+      "exclude": [],
+      "config": {},
+      "bound_listeners": [],
+      "nodeId": "cp:otoroshi.next.plugins.OverrideHost",
+      "plugin_index": {
+        "transform_request": 0
+      }
+    },
+    {
+      "plugin_index": {},
+      "nodeId": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpSseEndpoint-0",
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpSseEndpoint",
+      "enabled": true,
+      "debug": false,
+      "include": [],
+      "exclude": [],
+      "bound_listeners": [],
+      "config": {
+        "name": "mcp-sse",
+        "version": "1.0.0",
+        "refs": [
+          "tool-function_0511ff44-0ce5-487d-aa1c-d1980ac9a4b8"
+        ],
+        "mcp_refs": []
+      }
+    }
+  ],
+  "kind": "proxy.otoroshi.io/Route"
+}
+```
 
 ## MCP WebSocket Plugin
