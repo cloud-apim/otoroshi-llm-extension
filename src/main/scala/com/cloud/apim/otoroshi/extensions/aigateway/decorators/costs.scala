@@ -35,6 +35,11 @@ case class CostModel(name: String, raw: JsValue) {
   lazy val max_output_tokens = raw.select("max_output_tokens").asOptLong.getOrElse(0L)
   lazy val input_cost_per_token = raw.select("input_cost_per_token").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val output_cost_per_token = raw.select("output_cost_per_token").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val input_cost_per_token_cache_hit = raw.select("input_cost_per_token_cache_hit").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val cache_read_input_token_cost = raw.select("cache_read_input_token_cost").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val cache_creation_input_token_cost = raw.select("cache_creation_input_token_cost").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val input_cost_per_token_batches = raw.select("input_cost_per_token_batches").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val output_cost_per_token_batches = raw.select("output_cost_per_token_batches").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val litellm_provider = raw.select("litellm_provider").asOptString.getOrElse("openai")
   lazy val mode = raw.select("mode").asOptString.getOrElse("completion")
   lazy val deprecation_date = raw.select("deprecation_date").asOpt[String]
