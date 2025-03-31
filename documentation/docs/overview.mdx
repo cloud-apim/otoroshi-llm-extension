@@ -18,15 +18,17 @@ Otoroshi LLM Extension is set of Otoroshi plugins and resources to interact with
   - [**Semantic cache**](/docs/cost-optimizations/semantic-cache): Speed up repeated queries, enhance response times, and reduce costs
   - [**Custom quotas**](/docs/cost-optimizations/quotas): Manage LLM tokens quotas per consumer and optimise costs
   - [**Key vault**](/docs/llm-gateway/secrets): securely store your LLM API keys in Otoroshi vault or any other secret vault supported by Otoroshi.
-  - **Observability and reporting**: every LLM request is audited with details about the consumer, the LLM provider and usage. All those audit events are exportable using multiple methods for further reporting
-  - **Fine grained authorizations**: Use Otoroshi advanced fine grained authorizations capabilities to constrains model usage based on whatever you want: user identity, apikey, consumer metadata, request details, etc
-  - **Prompt Fences**: Validate your prompts and prompts responses to avoid sensitive or personal informations leakage, irrelevant or unhelpful responses, gibberish content, etc
+  - **[Observability](/docs/llm-gateway/observability-reporting) and [reporting](/docs/reporting/)**: every LLM request is audited with details about the consumer, the LLM provider and usage. All those audit events are exportable using multiple methods for further reporting
+  - [**Fine grained authorizations**](/docs/llm-gateway/secure-provider): Use Otoroshi advanced fine grained authorizations capabilities to constrains model usage based on whatever you want: user identity, apikey, consumer metadata, request details, etc
   - [**Prompt engineering**](/docs/prompt-engineering/overview): enhance your experience by providing contextual information to your prompts, storing them in a library for reusability, and using prompt templates for increased efficiency
-  - [**Guardrails**](/docs/guardrails/overview)
+  - [**Guardrails**](/docs/guardrails/overview): Validate your prompts and prompts responses to avoid sensitive or personal informations leakage, irrelevant or unhelpful responses, gibberish content, etc
   - [**Cost Tracking**](/docs/cost-optimizations/cost-tracking)
   - [**MCP (Model Context protocol)**](/docs/function-calling/mcp)
   - [**MCP Connectors**](/docs/function-calling/mcp-connectors)
   - [**MCP Server exposition**](/docs/function-calling/mcp-plugins)
+  - [**Wasm functions (tool calls)**](/docs/function-calling/function-wasm-calling)
+  - [**Http functions (tool calls)**](/docs/function-calling/http-functions)
+  - [**Embeddings models**](/docs/embeddings/overview)
 
 ## Supported LLM providers
 
