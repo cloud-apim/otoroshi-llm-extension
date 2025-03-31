@@ -10,18 +10,20 @@ Otoroshi LLM Extension is set of Otoroshi plugins and resources to interact with
 
 **Connect, setup, secure and seamlessly manage LLM models using an Universal/OpenAI compatible API**
 
-  - **Unified interface**: Simplify interactions and minimize integration hassles
-  - **Use multiple providers**: 10+ LLM providers supported right now, a lot more coming
+  - [**Unified interface**](/docs/llm-gateway/philosophy): Simplify interactions and minimize integration hassles
+  - [**Use multiple providers**](/docs/llm-gateway/providers): 10+ LLM providers supported right now, a lot more coming
   - **Load balancing**: Ensure optimal performance by distributing workloads across multiple providers
   - **Fallbacks**: Automatically switch LLMs during failures to deliver uninterrupted & accurate performance
   - **Automatic retries**: LLM APIs often have inexplicable failures. You can rescue a substantial number of your requests with our in-built automatic retries feature.
-  - **Semantic cache**: Speed up repeated queries, enhance response times, and reduce costs
-  - **Custom quotas**: Manage LLM tokens quotas per consumer and optimise costs
-  - **Key vault**: securely store your LLM API keys in Otoroshi vault or any other secret vault supported by Otoroshi.
+  - [**Semantic cache**](/docs/cost-optimizations/semantic-cache): Speed up repeated queries, enhance response times, and reduce costs
+  - [**Custom quotas**](/docs/cost-optimizations/quotas): Manage LLM tokens quotas per consumer and optimise costs
+  - [**Key vault**](/docs/llm-gateway/secrets): securely store your LLM API keys in Otoroshi vault or any other secret vault supported by Otoroshi.
   - **Observability and reporting**: every LLM request is audited with details about the consumer, the LLM provider and usage. All those audit events are exportable using multiple methods for further reporting
   - **Fine grained authorizations**: Use Otoroshi advanced fine grained authorizations capabilities to constrains model usage based on whatever you want: user identity, apikey, consumer metadata, request details, etc
   - **Prompt Fences**: Validate your prompts and prompts responses to avoid sensitive or personal informations leakage, irrelevant or unhelpful responses, gibberish content, etc
   - **Prompt engineering**: enhance your experience by providing contextual information to your prompts, storing them in a library for reusability, and using prompt templates for increased efficiency
+  - [**Guardrails**](/docs/guardrails/overview)
+  - [**Cost Tracking**](/docs/cost-optimizations/cost-tracking)
 
 ## Supported LLM providers
 
