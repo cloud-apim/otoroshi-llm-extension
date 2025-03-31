@@ -366,6 +366,8 @@ LLM response :
 
 Using the [No personal information](/docs/guardrails/pif) guardrail will block all the requests mentioning personal information from the prompt to the LLM or from the response.
 
+Warning : To enable the guardrail, you will need to create another provider that will be used to apply the guardrail rule :
+
 Response from the LLM : 
 
 ```js
@@ -459,7 +461,7 @@ Full route configuration with guardrail :
       "after": true,
       "id": "pif",
       "config": {
-        "provider": "provider_6bfe8012-1ccb-4884-bef2-00e307862e7e",
+        "provider": "provider_fc0b30ef-35e2-4a5d-8286-8b0e24f0b028",
         "pif_items": [
           "EMAIL_ADDRESS",
           "PHONE_NUMBER",
