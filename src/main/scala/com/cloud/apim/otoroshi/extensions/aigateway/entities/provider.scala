@@ -327,7 +327,7 @@ object AiProvider {
         extractIdf = c => datastores.providersDatastore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p) => {
+        tmpl = (v, p, ctx) => {
           p.get("provider").map(_.toLowerCase()) match {
             case Some("openai") => AiProvider(
               id = IdGenerator.namedId("provider", env),

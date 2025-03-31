@@ -69,7 +69,7 @@ object Prompt {
         extractIdf = c => datastores.promptsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p) => {
+        tmpl = (v, p, ctx) => {
           Prompt(
             id = IdGenerator.namedId("prompt", env),
             name = "Prompt",

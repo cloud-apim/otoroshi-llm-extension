@@ -68,7 +68,7 @@ object PromptTemplate {
         extractIdf = c => datastores.promptTemplatesDatastore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p) => {
+        tmpl = (v, p, ctx) => {
           PromptTemplate(
             id = IdGenerator.namedId("prompt-template", env),
             name = "Prompt template",

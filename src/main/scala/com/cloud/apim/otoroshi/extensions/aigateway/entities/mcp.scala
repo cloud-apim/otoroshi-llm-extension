@@ -307,7 +307,7 @@ object McpConnector {
         extractIdf = c => datastores.mcpConnectorsDatastore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p) => {
+        tmpl = (v, p, ctx) => {
           McpConnector(
             id = IdGenerator.namedId("mcp-connector", env),
             name = "MCP Connector",

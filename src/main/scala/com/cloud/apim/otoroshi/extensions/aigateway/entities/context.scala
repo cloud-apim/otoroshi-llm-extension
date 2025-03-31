@@ -88,7 +88,7 @@ object PromptContext {
         extractIdf = c => datastores.promptContextDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p) => {
+        tmpl = (v, p, ctx) => {
           PromptContext(
             id = IdGenerator.namedId("prompt-context", env),
             name = "Prompt context",

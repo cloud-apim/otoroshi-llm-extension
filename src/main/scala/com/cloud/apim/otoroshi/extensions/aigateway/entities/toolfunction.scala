@@ -736,7 +736,7 @@ object LlmToolFunction {
         extractIdf = c => datastores.toolFunctionDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p) => {
+        tmpl = (v, p, ctx) => {
           LlmToolFunction(
             id = IdGenerator.namedId("tool-function", env),
             name = "tool function",

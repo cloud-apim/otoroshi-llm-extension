@@ -131,7 +131,7 @@ object EmbeddingModel {
         extractIdf = c => datastores.embeddingModelsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p) => {
+        tmpl = (v, p, ctx) => {
           p.get("kind").map(_.toLowerCase()) match {
             case Some("openai") => EmbeddingModel(
               id = IdGenerator.namedId("provider", env),
