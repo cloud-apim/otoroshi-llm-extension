@@ -4,6 +4,16 @@ import Terminal from '@site/src/components/Terminal';
 
 ![](/img/guardrails-personal-health-info.png)
 
+It's a safeguard that ensures the LLM does not process, store, or share any personal health-related details, protecting user privacy and compliance with regulations. 
+
+It can be applied before the LLM processes the request (blocking medical-related queries) and after to prevent responses that include health data.
+
+### Guardrail example
+
+If a user asks, "I have a medical condition, what medication should I take ?", the LLM will refuse to process the request.
+
+If the LLM generates a response with health advice, it will be filtered before reaching the user.
+
 ### Configuration
 
 ```js

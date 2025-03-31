@@ -3,3 +3,13 @@ import Terminal from '@site/src/components/Terminal';
 # Prompt contains gibberish guardrail
 
 ![](/img/guardrails-no-gibberish.png)
+
+This Guardrail acts like a filter that detects and manages inputs that are nonsensical, random, or meaningless, preventing the AI from generating irrelevant or low-quality responses. 
+ 
+ This can be applied before the LLM processes the input (blocking nonsense prompts) and after to filter out meaningless responses.
+
+### Guardrail example
+
+If a user inputs, "asdkjfhasd lkj3r2lkkj!!", the LLM will recognize it as gibberish and block the request.
+
+If the LLM generates a nonsensical response, it will be flagged and removed.

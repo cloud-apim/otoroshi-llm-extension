@@ -3,3 +3,11 @@ import Terminal from '@site/src/components/Terminal';
 # Prompt contains gender bias guardrail
 
 ![](/img/guardrails-gender-bias.png)
+
+A mechanism that identifies and reduces biased language related to gender in user prompts, promoting fairness and inclusivity in AI-generated content. It can be applied before the LLM receives the request (blocking biased prompts) and after to filter or rephrase biased responses.
+
+### Guardrail example
+
+If a user asks, "Why are women bad at driving ?", the LLM will either block the request or reframe it in a neutral way before processing it. 
+
+If a response contains gender bias, it will be adjusted before being displayed.
