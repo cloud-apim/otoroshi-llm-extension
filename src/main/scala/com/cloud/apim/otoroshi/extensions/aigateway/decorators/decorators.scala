@@ -20,7 +20,8 @@ object ChatClientDecorators {
     ChatClientWithCostsTracking.applyIfPossible,
     ChatClientWithEcoImpact.applyIfPossible,
     ChatClientWithAuditing.applyIfPossible,
-    ChatClientWithContext.applyIfPossible
+    ChatClientWithContext.applyIfPossible,
+    ChatClientWithStreamUsage.applyIfPossible,
   )
 
   def apply(provider: AiProvider, client: ChatClient, env: Env): ChatClient = {

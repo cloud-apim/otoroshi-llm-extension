@@ -591,13 +591,19 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
   )
 }
 
-case class ChatResponseChunk(id: String, created: Long, model: String, choices: Seq[ChatResponseChunkChoice], costs: Option[CostsOutput] = None, impacts: Option[ImpactsOutput] = None) {
-  def json: JsValue = Json.obj(
+case class ChatResponseChunk(id: String, created: Long, model: String, choices: Seq[ChatResponseChunkChoice], costs: Option[CostsOutput] = None, impacts: Option[ImpactsOutput] = None, usage: Option[ChatResponseMetadataUsage] = None) {
+  def json(env: Env): JsValue = Json.obj(
     "id" -> id,
     "created" -> created,
     "model" -> model,
     "choices" -> JsArray(choices.map(_.json))
-  )
+  ).applyOnWithOpt(usage) {
+    case (o, usage) => o ++ Json.obj("usage" -> usage.json)
+  }.applyOnWithOpt(costs) {
+    case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+  }.applyOnWithOpt(impacts) {
+    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }
   def openaiJson(env: Env): JsValue = Json.obj(
     "id" -> id,
     "object" -> "chat.completion.chunk",
@@ -605,7 +611,9 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
     "model" -> model,
     "system_fingerprint" -> JsNull,
     "choices" -> JsArray(choices.map(_.openaiJson))
-  ).applyOnWithOpt(costs) {
+  ).applyOnWithOpt(usage) {
+    case (o, usage) => o ++ Json.obj("usage" -> usage.openaiJson)
+  }.applyOnWithOpt(costs) {
     case (o, costs) => o ++ Json.obj("costs" -> costs.json)
   }.applyOnWithOpt(impacts) {
     case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
@@ -617,12 +625,14 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
     "model" -> model,
     "system_fingerprint" -> JsNull,
     "choices" -> JsArray(choices.map(_.openaiCompletionJson))
-  ).applyOnWithOpt(costs) {
+  ).applyOnWithOpt(usage) {
+    case (o, usage) => o ++ Json.obj("usage" -> usage.openaiJson)
+  }.applyOnWithOpt(costs) {
     case (o, costs) => o ++ Json.obj("costs" -> costs.json)
   }.applyOnWithOpt(impacts) {
     case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
   }
-  def eventSource: ByteString = s"data: ${json.stringify}\n\n".byteString
+  def eventSource(env: Env): ByteString = s"data: ${json(env).stringify}\n\n".byteString
   def openaiEventSource(env: Env): ByteString = s"data: ${openaiJson(env).stringify}\n\n".byteString
   def openaiCompletionEventSource(env: Env): ByteString = s"data: ${openaiCompletionJson(env).stringify}\n\n".byteString
 }

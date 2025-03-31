@@ -3,7 +3,8 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 import akka.http.scaladsl.util.FastFuture
 import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, OutputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, OutputChatMessage}
+import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.events.AuditEvent
 import otoroshi.utils.TypedMap
@@ -11,12 +12,19 @@ import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsArray, JsNull, JsObject, JsValue, Json}
 
-import scala.concurrent.{ExecutionContext, Future}
+import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success}
 
 object ChatClientWithAuditing {
   def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
     new ChatClientWithAuditing(tuple._1, tuple._2)
+  }
+}
+
+object ChatClientWithStreamUsage {
+  def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
+    new ChatClientWithStreamUsage(tuple._1, tuple._2)
   }
 }
 
@@ -148,7 +156,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
                   "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                   "input_prompt" -> prompt.json,
-                  "output_stream" -> JsArray(seq.map(_.json)),
+                  "output_stream" -> JsArray(seq.map(_.json(env))),
                   "output" -> ChatResponse(
                     generations = Seq(ChatGeneration(OutputChatMessage("assistant", seq.flatMap(_.choices.flatMap(_.delta.content)).mkString(""), None, Json.obj()))),
                     metadata = ChatResponseMetadata(
@@ -301,7 +309,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
                   "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                   "input_prompt" -> prompt.json,
-                  "output" -> JsArray(seq.map(_.json)),
+                  "output" -> JsArray(seq.map(_.json(env))),
                   "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                   "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                   "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
@@ -310,6 +318,72 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
               }.toAnalytics()
             })
         }
+      }
+    }
+  }
+}
+
+class ChatClientWithStreamUsage(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.call(prompt, attrs, originalBody)
+  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.completion(prompt, attrs, originalBody)
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    chatClient.stream(prompt, attrs, originalBody).map {
+      case Left(err) => Left(err)
+      case Right(resp) => {
+        val promise = Promise.apply[Option[ChatResponseChunk]]()
+        val ref = new AtomicReference[String](null)
+        resp
+          .map { chunk =>
+            if (ref.get() == null) {
+              ref.set(chunk.model)
+            }
+            chunk
+          }
+          .map(r => r.copy(choices = r.choices.map(c => c.copy(finishReason = None))))
+          .alsoTo(Sink.onComplete { _ =>
+            promise.trySuccess(ChatResponseChunk(
+              id = s"chatcmpl-${ULID.random().toLowerCase()}",
+              created = (System.currentTimeMillis() / 1000L),
+              model = ref.get(),
+              usage = attrs.get(ChatClient.ApiUsageKey).map(_.usage),
+              choices = Seq(ChatResponseChunkChoice(
+                index = 0L,
+                delta = ChatResponseChunkChoiceDelta(None),
+                finishReason = "stop".some,
+              )),
+            ).some)
+          }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right
+      }
+    }
+  }
+
+  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    chatClient.completionStream(prompt, attrs, originalBody).map {
+      case Left(err) => Left(err)
+      case Right(resp) => {
+        val promise = Promise.apply[Option[ChatResponseChunk]]()
+        val ref = new AtomicReference[String](null)
+        resp
+          .map { chunk =>
+            if (ref.get() == null) {
+              ref.set(chunk.model)
+            }
+            chunk
+          }
+          .map(r => r.copy(choices = r.choices.map(c => c.copy(finishReason = None))))
+          .alsoTo(Sink.onComplete { _ =>
+            promise.trySuccess(ChatResponseChunk(
+              id = s"chatcmpl-${ULID.random().toLowerCase()}",
+              created = (System.currentTimeMillis() / 1000L),
+              model = ref.get(),
+              usage = attrs.get(ChatClient.ApiUsageKey).map(_.usage),
+              choices = Seq(ChatResponseChunkChoice(
+                index = 0L,
+                delta = ChatResponseChunkChoiceDelta(None),
+                finishReason = "stop".some,
+              )),
+            ).some)
+          }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right
       }
     }
   }

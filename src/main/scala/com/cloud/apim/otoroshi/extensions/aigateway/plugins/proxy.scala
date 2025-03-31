@@ -102,7 +102,7 @@ class AiLlmProxy extends NgBackendCall {
             client.tryStream(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(source) => {
-                val finalSource = source.map(_.eventSource)
+                val finalSource = source.map(_.eventSource(env))
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
               }
             }
