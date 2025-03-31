@@ -48,28 +48,13 @@ You can now choose from the list of available Guardrails.
 
 ### Available Guardrails
 
+- [Personal information](/docs/guardrails/pif)
+- [Auto secrets leakage](/docs/guardrails/auto_secrets_leakage)
+- [Characters count](/docs/guardrails/characters)
+- [Prompt contains guardrail](/docs/guardrails/contains)
+- [Prompt contains gender bias guardrail](/docs/guardrails/gender_bias)
+- [Prompt contains gibberish guardrail](/docs/guardrails/gibberish)
+- [LLM Guardrail](/docs/guardrails/llm)
+- [Language moderation](/docs/guardrails/moderation)
+
 - [Secrets Leakage](/docs/guardrails/secrets_leakage)
-
-### Guardrail configuration
-
-```js
-"guardrails": [
-  {
-    "enabled": true,
-    "before": true,
-    "after": true,
-    "id": "secrets_leakage",
-    "config": {
-      "provider": "provider_480ec0b7-bc9e-487f-8376-b9b8111bfe5e",
-      "secrets_leakage_items": [
-        "APIKEYS",
-        "PASSWORDS",
-        "TOKENS",
-        "JWT_TOKENS",
-        "PRIVATE_KEYS",
-        "HUGE_RANDOM_VALUES"
-      ]
-    }
-  }
-]
-```
