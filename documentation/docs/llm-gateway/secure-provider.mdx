@@ -1,0 +1,106 @@
+---
+sidebar_position: 4
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# 🔐 Secure your LLM provider endpoint
+
+To secure your LLM provider endpoint [http://openai-demo.oto.tools:8080](http://openai-demo.oto.tools:8080) for example, you could add API keys.
+
+To do it so, add the API Keys plugin to your route :
+
+![](/img/apikeys-plugin.png)
+
+Once added you should see your route as : 
+
+![](/img/apikeys-plugin-added.png)
+
+Then, we will try to send a request to our endpoint [http://openai-demo.oto.tools:8080](http://openai-demo.oto.tools:8080)
+
+```sh
+curl http://openai-demo.oto.tools:8080 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello how are you ?"
+      }
+    ]
+  }'
+```
+
+The endpoint will return an error : 
+
+```js
+{
+  "Otoroshi-Error": "no apikey"
+}
+```
+That's good ! Because we just use our endpoint without any API Key and our request got rejected.
+
+## Create new API Key
+
+Go to [API Keys dashboard](http://otoroshi.oto.tools:8099/bo/dashboard/apikeys) and create a new Key
+
+![](/img/apikeys-create.png)
+
+Go to `Authorized On` section and select your route. `OpenAI Demo` in our example case.
+
+![](/img/apikeys-create-authorized-on.png)
+
+Copy the Bearer token that may look like :
+
+`otoapk_urjyypqbif8gr8wx_701cd2e99c0e2707e44bf6a7bb75518c90700a867d6c22f624020b22434cf7f9`
+
+And then re-send a new request with our Bearer token into our request headers.
+
+```sh
+ curl http://openai-demo.oto.tools:8080 \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer otoapk_urjyypqbif8gr8wx_701cd2e99c0e2707e44bf6a7bb75518c90700a867d6c22f624020b22434cf7f9" \
+  -d '{
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello how are you ?"
+      }
+    ]
+  }'
+```
+
+Ta-da ! 
+
+![](/img/apikeys-secure-good-response.png)
+
+Here is our real response from the LLM with our authorized API key :
+
+```js
+{
+  "id": "chatcmpl-SySPnMI3VzZKQZbvT42ko0H5YhrcIAVB",
+  "object": "chat.completion",
+  "created": 1743417992,
+  "model": "gpt-4o-mini",
+  "system_fingerprint": "fp-XfvVJ9gJ2viprCxZ1pyq508tukNbuz8u",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Hello! I'm just a computer program, so I don't have feelings, but I'm here and ready to help you. How can I assist you today?"
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 31,
+    "total_tokens": 43,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}
+```

@@ -4,7 +4,7 @@ sidebar_position: 4
 
 import Terminal from '@site/src/components/Terminal';
 
-# Expose your LLM Provider
+# 👀 Expose your LLM Provider
 
 now that your provider is fully setup, you can expose it to your organization. The idea here is to do it through an [Otoroshi route](https://maif.github.io/otoroshi/manual/entities/routes.html)
 with a plugin of type `backend` that will handle passing incoming request to the actual LLM provider.
@@ -22,7 +22,7 @@ this plugins is compatible with the [OpenAI chat completion API](https://platfor
 
 you can directly call it this way:
 
-```shell
+```sh
 curl https://my-own-llm-endpoint.on.otoroshi/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OTOROSHI_API_KEY" \
@@ -39,7 +39,7 @@ curl https://my-own-llm-endpoint.on.otoroshi/v1/chat/completions \
 
 with a response looking like
 
-```json
+```js
 {
   "id": "chatcmpl-B9MBs8CjcvOU2jLn4n570S5qMJKcT",
   "object": "chat.completion",
@@ -82,7 +82,7 @@ curl https://my-own-llm-endpoint.on.otoroshi/v1/models \
 
 with a response looking like
 
-```json
+```js
 {
   "object": "list",
   "data": [
@@ -99,5 +99,234 @@ with a response looking like
       "owned_by": "openai"
     }
   ]
+}
+```
+
+We can see in our API Key that the quotas for our API keys has been decreased due our request
+
+![](/img/apikeys-quota-consumption.png)
+
+### Full configuration
+
+Configuration for the API Key
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "clientId": "urjyypqbif8gr8wx",
+  "clientSecret": "5icbe4o94dbwere7nupoecfmgr5kbo3cgpp0iv94gf1kxak04ocfw9tvu4f9nrmd",
+  "clientName": "Hilario Flatley's api-key",
+  "description": "",
+  "authorizedGroup": null,
+  "authorizedEntities": [
+    "route_route_ca396e0a1-2bc6-41c5-a682-2a95c4ed0c24"
+  ],
+  "authorizations": [
+    {
+      "kind": "route",
+      "id": "route_ca396e0a1-2bc6-41c5-a682-2a95c4ed0c24"
+    }
+  ],
+  "enabled": true,
+  "readOnly": false,
+  "allowClientIdOnly": false,
+  "throttlingQuota": 10000000,
+  "dailyQuota": 10000000,
+  "monthlyQuota": 10000000,
+  "constrainedServicesOnly": false,
+  "restrictions": {
+    "enabled": false,
+    "allowLast": true,
+    "allowed": [],
+    "forbidden": [],
+    "notFound": []
+  },
+  "rotation": {
+    "enabled": false,
+    "rotationEvery": 744,
+    "gracePeriod": 168,
+    "nextSecret": null
+  },
+  "validUntil": null,
+  "tags": [],
+  "metadata": {
+    "created_at": "2025-03-31T12:42:40.194+02:00"
+  },
+  "bearer": "otoapk_urjyypqbif8gr8wx_701cd2e99c0e2707e44bf6a7bb75518c90700a867d6c22f624020b22434cf7f9",
+  "kind": "apim.otoroshi.io/ApiKey"
+}
+```
+
+Full route configuration with API Keys plugin :
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "id": "route_ca396e0a1-2bc6-41c5-a682-2a95c4ed0c24",
+  "name": "OpenAI Demo",
+  "description": "OpenAI Demo",
+  "tags": [],
+  "metadata": {},
+  "enabled": true,
+  "debug_flow": false,
+  "export_reporting": false,
+  "capture": false,
+  "groups": [
+    "default"
+  ],
+  "bound_listeners": [],
+  "frontend": {
+    "domains": [
+      "openai-demo.oto.tools"
+    ],
+    "strip_path": true,
+    "exact": false,
+    "headers": {},
+    "query": {},
+    "methods": []
+  },
+  "backend": {
+    "targets": [
+      {
+        "id": "target_1",
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true,
+        "weight": 1,
+        "predicate": {
+          "type": "AlwaysMatch"
+        },
+        "protocol": "HTTP/1.1",
+        "ip_address": null,
+        "tls_config": {
+          "certs": [],
+          "trusted_certs": [],
+          "enabled": false,
+          "loose": false,
+          "trust_all": false
+        }
+      }
+    ],
+    "root": "/",
+    "rewrite": false,
+    "load_balancing": {
+      "type": "RoundRobin"
+    },
+    "client": {
+      "retries": 1,
+      "max_errors": 20,
+      "retry_initial_delay": 50,
+      "backoff_factor": 2,
+      "call_timeout": 30000,
+      "call_and_stream_timeout": 120000,
+      "connection_timeout": 10000,
+      "idle_timeout": 60000,
+      "global_timeout": 30000,
+      "sample_interval": 2000,
+      "proxy": {},
+      "custom_timeouts": [],
+      "cache_connection_settings": {
+        "enabled": false,
+        "queue_size": 2048
+      }
+    },
+    "health_check": {
+      "enabled": false,
+      "url": "",
+      "timeout": 5000,
+      "healthyStatuses": [],
+      "unhealthyStatuses": []
+    }
+  },
+  "backend_ref": null,
+  "plugins": [
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "include": [],
+      "exclude": [],
+      "config": {},
+      "bound_listeners": [],
+      "plugin_index": {
+        "transform_request": 0
+      }
+    },
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
+      "include": [],
+      "exclude": [],
+      "config": {
+        "refs": [
+          "provider_7e618efb-9c2c-42ed-870a-58b1ec3c6264"
+        ]
+      },
+      "bound_listeners": [],
+      "plugin_index": {}
+    },
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi.next.plugins.ApikeyCalls",
+      "include": [],
+      "exclude": [],
+      "config": {
+        "extractors": {
+          "basic": {
+            "enabled": true,
+            "header_name": null,
+            "query_name": null
+          },
+          "custom_headers": {
+            "enabled": true,
+            "client_id_header_name": null,
+            "client_secret_header_name": null
+          },
+          "client_id": {
+            "enabled": true,
+            "header_name": null,
+            "query_name": null
+          },
+          "jwt": {
+            "enabled": true,
+            "secret_signed": true,
+            "keypair_signed": true,
+            "include_request_attrs": false,
+            "max_jwt_lifespan_sec": null,
+            "header_name": null,
+            "query_name": null,
+            "cookie_name": null
+          }
+        },
+        "routing": {
+          "enabled": false
+        },
+        "validate": true,
+        "mandatory": true,
+        "pass_with_user": false,
+        "wipe_backend_request": true,
+        "update_quotas": true
+      },
+      "bound_listeners": [],
+      "plugin_index": {
+        "validate_access": 0,
+        "transform_request": 1,
+        "match_route": 0
+      }
+    }
+  ],
+  "kind": "proxy.otoroshi.io/Route"
 }
 ```
