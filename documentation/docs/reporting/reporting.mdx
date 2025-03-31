@@ -12,3 +12,68 @@ In the following screenshot, we used an [Elasticsearch data exporter](https://ma
 `LLMUsageAudit` event to an elastic search instance and kibana to create a dashboard based on those events
 
 ![](/img/kibana.png)
+
+### Elastic data exporter example
+
+Go to [Data Exporters](http://otoroshi.oto.tools:8080/bo/dashboard/exporters) page and create a new one.
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "type": "elastic",
+  "enabled": true,
+  "id": "data_exporter_be7a6e21-152b-4c09-b384-15f9dbb8041f",
+  "name": "New elastic exporter config",
+  "desc": "New elastic exporter config",
+  "metadata": {},
+  "tags": [],
+  "bufferSize": 5000,
+  "jsonWorkers": 1,
+  "sendWorkers": 5,
+  "groupSize": 100,
+  "groupDuration": 30000,
+  "projection": {},
+  "filtering": {
+    "include": [
+      {
+        "audit": "LLMUsageAudit"
+      }
+    ],
+    "exclude": []
+  },
+  "config": {
+    "clusterUri": "http://localhost:9200",
+    "uris": [
+      "http://localhost:9200"
+    ],
+    "index": "otoroshi-llm",
+    "type": null,
+    "user": null,
+    "password": null,
+    "headers": {},
+    "indexSettings": {
+      "clientSide": true,
+      "interval": "Day",
+      "numberOfShards": 1,
+      "numberOfReplicas": 1
+    },
+    "mtlsConfig": {
+      "certs": [],
+      "trustedCerts": [],
+      "mtls": false,
+      "loose": false,
+      "trustAll": false
+    },
+    "applyTemplate": true,
+    "version": null,
+    "maxBulkSize": 100,
+    "sendWorkers": 4
+  },
+  "kind": "events.otoroshi.io/DataExporter"
+}
+```
