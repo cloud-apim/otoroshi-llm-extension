@@ -364,11 +364,37 @@ LLM response :
 
 #### Enabling no personal information guardrail
 
+Using the [No personal information](/docs/guardrails/pif) guardrail will block all the requests mentioning personal information from the prompt to the LLM or from the response.
+
 Response from the LLM : 
 
-
 ```js
-
+{
+  "id": "chatcmpl-5iTwZroMP6B3qKEWqfHLbvcVsQhucOHE",
+  "object": "chat.completion",
+  "created": 1743177176,
+  "model": "gpt-4o-mini",
+  "system_fingerprint": "fp-1HS2LIBA0cK0N8rBVi30YVUbayejNDAo",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "This message has been blocked by the 'personal-information' guardrail !"
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}
 ```
 
 
