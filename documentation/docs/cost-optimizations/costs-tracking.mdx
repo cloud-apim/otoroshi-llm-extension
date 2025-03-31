@@ -17,8 +17,9 @@ costs-tracking {
 }
 ```
 
-Once it's enabled, audit events of kind `LLMUsageAudit` will have an `costs`.
-You can also embed the `costs` value in your LLM responses using the `impacts.embed-impacts-in-responses` config.
+Once it's enabled, audit events of kind `LLMUsageAudit` will have a `costs` object.
+
+You can also embed the `costs` value in your LLM responses using the `costs-tracking.embed-costs-tracking-in-responses` config.
 
 The costs tracking  computation is based on project [LitLLM](https://docs.litellm.ai/) models price dictionnary and only supports right now the following providers
 
