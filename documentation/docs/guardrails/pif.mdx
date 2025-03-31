@@ -6,6 +6,8 @@ import Terminal from '@site/src/components/Terminal';
 
 ### Configuration
 
+The following configuration has to be placed in your LLM provider entity in the `Guardrail Validation` section.
+
 ```js
 "guardrails": [
   {
@@ -27,4 +29,71 @@ import Terminal from '@site/src/components/Terminal';
     }
   }
 ]
+```
+### **Field Explanations**  
+
+- **enabled**: `true` → The guardrail is active.  
+- **before**: `true` → The guardrail applies before processing data.  
+- **after**: `true` → The guardrail applies after LLM response.  
+- **id**: `"pif"` → The identifier for this guardrail
+
+#### **Config Section**  
+- **provider**: The LLM provider responsible for enforcing the guardrail.  
+
+- **pif_items**: A list of sensitive data types to be filtered or protected
+  Available **pif_items** :
+    - **EMAIL_ADDRESS**
+    - **PHONE_NUMBER**
+    - **LOCATION_ADDRESS**
+    - **NAME**
+    - **IP_ADDRESS**
+    - **CREDIT_CARD**
+    - **SS**
+
+### Prompt example
+
+```sh
+$ curl --request POST \
+  --url 'http://guardrail-pif.oto.tools:8080/v1/chat/completions' \
+  --header 'authorization: Bearer $BEARER_TOKEN' \
+  --header 'content-type: application/json' \
+  --data '{
+  "messages": [
+    {
+       "role": "user",
+       "content": "Could you tell me if the user email bob@example.com is present in the 'users' table please ?"
+    }
+  ]
+}'
+```
+
+### Response example
+
+```js
+{
+  "id": "chatcmpl-5iTwZroMP6B3qKEWqfHLbvcVsQhucOHE",
+  "object": "chat.completion",
+  "created": 1743177176,
+  "model": "gpt-4o-mini",
+  "system_fingerprint": "fp-1HS2LIBA0cK0N8rBVi30YVUbayejNDAo",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "This message has been blocked by the 'personal-information' guardrail !"
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}
 ```
