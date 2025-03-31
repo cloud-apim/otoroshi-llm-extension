@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.1.1">
 <title data-rh="true">Overview | Otoroshi LLM Extension</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://cloud-apim.github.io/otoroshi-llm-extension/img/otoroshi-llm-extension-logo.png"><meta data-rh="true" name="twitter:image" content="https://cloud-apim.github.io/otoroshi-llm-extension/img/otoroshi-llm-extension-logo.png"><meta data-rh="true" property="og:url" content="https://cloud-apim.github.io/otoroshi-llm-extension/docs/overview"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Overview | Otoroshi LLM Extension"><meta data-rh="true" name="description" content="Otoroshi LLM Extension is set of Otoroshi plugins and resources to interact with LLMs, let&#x27;s discover it !"><meta data-rh="true" property="og:description" content="Otoroshi LLM Extension is set of Otoroshi plugins and resources to interact with LLMs, let&#x27;s discover it !"><link data-rh="true" rel="icon" href="/otoroshi-llm-extension/img/otoroshi-llm-extension-logo.png"><link data-rh="true" rel="canonical" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/overview"><link data-rh="true" rel="alternate" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/overview" hreflang="en"><link data-rh="true" rel="alternate" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/overview" hreflang="x-default"><link rel="stylesheet" href="/otoroshi-llm-extension/assets/css/styles.24739b37.css">
-<script src="/otoroshi-llm-extension/assets/js/runtime~main.31a3f355.js" defer="defer"></script>
+<script src="/otoroshi-llm-extension/assets/js/runtime~main.be837092.js" defer="defer"></script>
 <script src="/otoroshi-llm-extension/assets/js/main.641b6bb8.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -12,18 +12,23 @@
 <p>Otoroshi LLM Extension is set of Otoroshi plugins and resources to interact with LLMs, let&#x27;s discover it !</p>
 <p><strong>Connect, setup, secure and seamlessly manage LLM models using an Universal/OpenAI compatible API</strong></p>
 <ul>
-<li><strong>Unified interface</strong>: Simplify interactions and minimize integration hassles</li>
-<li><strong>Use multiple providers</strong>: 10+ LLM providers supported right now, a lot more coming</li>
-<li><strong>Load balancing</strong>: Ensure optimal performance by distributing workloads across multiple providers</li>
-<li><strong>Fallbacks</strong>: Automatically switch LLMs during failures to deliver uninterrupted &amp; accurate performance</li>
-<li><strong>Automatic retries</strong>: LLM APIs often have inexplicable failures. You can rescue a substantial number of your requests with our in-built automatic retries feature.</li>
-<li><strong>Semantic cache</strong>: Speed up repeated queries, enhance response times, and reduce costs</li>
-<li><strong>Custom quotas</strong>: Manage LLM tokens quotas per consumer and optimise costs</li>
-<li><strong>Key vault</strong>: securely store your LLM API keys in Otoroshi vault or any other secret vault supported by Otoroshi.</li>
+<li><a href="/otoroshi-llm-extension/docs/llm-gateway/philosophy"><strong>Unified interface</strong></a>: Simplify interactions and minimize integration hassles</li>
+<li><a href="/otoroshi-llm-extension/docs/llm-gateway/providers"><strong>Use multiple providers</strong></a>: 10+ LLM providers supported right now, a lot more coming</li>
+<li><a href="/otoroshi-llm-extension/docs/llm-gateway/resilience"><strong>Load balancing</strong></a>: Ensure optimal performance by distributing workloads across multiple providers</li>
+<li><a href="/otoroshi-llm-extension/docs/docs/llm-gateway/resilience#provider-fallback"><strong>Fallbacks</strong></a>: Automatically switch LLMs during failures to deliver uninterrupted &amp; accurate performance</li>
+<li><a href="/otoroshi-llm-extension/docs/llm-gateway/resilience"><strong>Automatic retries</strong></a>: LLM APIs often have inexplicable failures. You can rescue a substantial number of your requests with our in-built automatic retries feature.</li>
+<li><a href="/otoroshi-llm-extension/docs/cost-optimizations/semantic-cache"><strong>Semantic cache</strong></a>: Speed up repeated queries, enhance response times, and reduce costs</li>
+<li><a href="/otoroshi-llm-extension/docs/cost-optimizations/quotas"><strong>Custom quotas</strong></a>: Manage LLM tokens quotas per consumer and optimise costs</li>
+<li><a href="/otoroshi-llm-extension/docs/llm-gateway/secrets"><strong>Key vault</strong></a>: securely store your LLM API keys in Otoroshi vault or any other secret vault supported by Otoroshi.</li>
 <li><strong>Observability and reporting</strong>: every LLM request is audited with details about the consumer, the LLM provider and usage. All those audit events are exportable using multiple methods for further reporting</li>
 <li><strong>Fine grained authorizations</strong>: Use Otoroshi advanced fine grained authorizations capabilities to constrains model usage based on whatever you want: user identity, apikey, consumer metadata, request details, etc</li>
 <li><strong>Prompt Fences</strong>: Validate your prompts and prompts responses to avoid sensitive or personal informations leakage, irrelevant or unhelpful responses, gibberish content, etc</li>
-<li><strong>Prompt engineering</strong>: enhance your experience by providing contextual information to your prompts, storing them in a library for reusability, and using prompt templates for increased efficiency</li>
+<li><a href="/otoroshi-llm-extension/docs/prompt-engineering/overview"><strong>Prompt engineering</strong></a>: enhance your experience by providing contextual information to your prompts, storing them in a library for reusability, and using prompt templates for increased efficiency</li>
+<li><a href="/otoroshi-llm-extension/docs/guardrails/overview"><strong>Guardrails</strong></a></li>
+<li><a href="/otoroshi-llm-extension/docs/cost-optimizations/cost-tracking"><strong>Cost Tracking</strong></a></li>
+<li><a href="/otoroshi-llm-extension/docs/function-calling/mcp"><strong>MCP (Model Context protocol)</strong></a></li>
+<li><a href="/otoroshi-llm-extension/docs/function-calling/mcp-connectors"><strong>MCP Connectors</strong></a></li>
+<li><a href="/otoroshi-llm-extension/docs/function-calling/mcp-plugins"><strong>MCP Server exposition</strong></a></li>
 </ul>
 <h2 class="anchor anchorWithStickyNavbar_LWe7" id="supported-llm-providers">Supported LLM providers<a href="#supported-llm-providers" class="hash-link" aria-label="Direct link to Supported LLM providers" title="Direct link to Supported LLM providers">​</a></h2>
 <p>All supported LLM providers are listed <a href="/otoroshi-llm-extension/docs/llm-gateway/providers">here</a></p>

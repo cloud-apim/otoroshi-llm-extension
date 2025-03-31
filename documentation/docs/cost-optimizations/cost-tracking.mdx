@@ -37,7 +37,7 @@ The costs tracking  computation is based on project [LitLLM](https://docs.litell
 - azure-openai
 - cloudflare
 - gemini
-- mistral
+- mistral 🇫🇷 🇪🇺
 - ollama
 - cohere
 - anthropic
@@ -65,7 +65,11 @@ $ curl --request POST \
     }
   ]
 }'
+```
 
+Response from the LLM :
+
+```js
 {
   "id": "chatcmpl-VRyJP4WKPFG2bWODCKp0yXn3UkwtpdnQ",
   "object": "chat.completion",
@@ -101,7 +105,7 @@ $ curl --request POST \
 }
 ```
 
-## Example of LLMUsageAudit event with costs tracking
+## Example of LLMUsageAudit event with cost tracking
 
 ```json
 {
