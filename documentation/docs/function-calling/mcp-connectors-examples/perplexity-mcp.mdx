@@ -1,0 +1,22 @@
+---
+sidebar_position: 12
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Perplexity ASK
+
+### Configuration
+
+```js
+{
+ "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-perplexity-ask"
+  ],
+  "env": {
+    "PERPLEXITY_API_KEY": "${vault://local/PERPLEXITY_API_KEY}"
+  }
+}
+```
