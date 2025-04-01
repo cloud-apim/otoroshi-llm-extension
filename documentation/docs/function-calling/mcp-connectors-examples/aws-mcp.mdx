@@ -1,0 +1,24 @@
+---
+sidebar_position: 5
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# AWS KB Retrieval
+
+### Configuration
+
+```js
+{
+ "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-aws-kb-retrieval"
+  ],
+  "env": {
+    "AWS_ACCESS_KEY_ID": "${vault://local/AWS_ACCESS_KEY_ID}",
+    "AWS_SECRET_ACCESS_KEY": "${vault://local/AWS_SECRET_ACCESS_KEY}",
+    "AWS_REGION": "${vault://local/AWS_REGION}"
+  }
+}
+```
