@@ -1,0 +1,26 @@
+---
+sidebar_position: 9
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Grafana
+
+### Prerequisites
+
+Follow [this guide](https://github.com/grafana/mcp-grafana) to install the Grafana MCP Server
+
+`GOBIN="$HOME/go/bin" go install github.com/grafana/mcp-grafana/cmd/mcp-grafana@latest`
+
+### Configuration
+
+```js
+{
+  "command": "mcp-grafana",
+  "args": [],
+  "env": {
+    "GRAFANA_URL": "${vault://local/GRAFANA_URL}",
+    "GRAFANA_API_KEY": "${vault://local/GRAFANA_API_KEY}"
+  }
+}
+```

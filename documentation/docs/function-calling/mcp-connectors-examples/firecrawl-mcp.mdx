@@ -1,0 +1,22 @@
+---
+sidebar_position: 8
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Firecrawl
+
+### Configuration
+
+```js
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "firecrawl-mcp"
+  ],
+  "env": {
+    "FIRECRAWL_API_KEY": "${vault://local/FIRECRAWL_API_KEY}"
+  }
+}
+```

@@ -1,0 +1,36 @@
+---
+sidebar_position: 10
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Mailgun
+
+### Prerequisites
+
+Follow [this guide](https://github.com/grafana/mcp-grafana) to install the MCP server.
+
+```sh
+git clone https://github.com/mailgun/mailgun-mcp-server.git
+cd mailgun-mcp-server
+```
+
+Then, install the dependencies 
+
+```sh
+npm install
+```
+
+### Configuration
+
+```js
+{
+  "command": "node",
+  "args": [
+    "CHANGE/THIS/PATH/TO/mailgun-mcp-server/src/mailgun-mcp.js"
+  ],
+  "env": {
+      "MAILGUN_API_KEY": "${vault://local/MAILGUN_API_KEY}"
+  }
+}
+```
