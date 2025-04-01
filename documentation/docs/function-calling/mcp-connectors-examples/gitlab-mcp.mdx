@@ -1,0 +1,24 @@
+---
+sidebar_position: 6
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Gitlab
+
+### Configuration
+
+```js
+{
+  "command": "npx",
+    "args": [
+      "-y",
+      "@modelcontextprotocol/server-gitlab"
+    ],
+    "env": {
+      "GITLAB_PERSONAL_ACCESS_TOKEN": "${vault://local/GITLAB_PERSONAL_ACCESS_TOKEN}",
+      "GITLAB_API_URL": "https://gitlab.com/api/v4" // Optional, for self-hosted instances
+    }
+  }
+}
+```
