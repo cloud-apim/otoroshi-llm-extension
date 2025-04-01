@@ -1,0 +1,68 @@
+# Stripe MCP Example
+
+In this tutorial, we will integrate the [Stripe MCP server](https://docs.stripe.com/building-with-llms).
+
+### Stripe MCP Connector configuration
+
+![](/img/stripe-mcp-connector.png)
+
+```js
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@stripe/mcp",
+    "--tools=all"
+  ],
+  "env": {
+    "STRIPE_SECRET_KEY": "${vault://local/STRIPE_SECRET_KEY}"
+  }
+}
+```
+
+### LLM Request example
+
+```sh
+curl --request POST \
+  --url http://stripe-mcp.oto.tools:8080/ \
+  --header 'content-type: application/json' \
+  --data '{
+  "messages": [
+    {
+       "role": "user",
+       "content": "Could you list the last 3 products created on my stripe please ?"
+    }
+  ]
+}'
+```
+
+Response from the LLM 
+
+```js
+{
+  "id": "chatcmpl-k0nuWu663tMy7iwfXq3kXOEpCyIrn1AT",
+  "object": "chat.completion",
+  "created": 1743500040,
+  "model": "gpt-4o-mini",
+  "system_fingerprint": "fp-CppYlabVFTg7pCqvY4IA85JayebA4JWU",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Here are the last 3 products created in your Stripe account:\n\n1. **Product Name:** Diamond\n   - **ID:** prod_PmMB20ERbk4OzR\n   - **Description:** For businesses\n   - **Default Price ID:** price_1OwnTIGOWObUcsRV66U9rimg\n   - **Created At:** Not specified, but is the latest product.\n\n2. **Product Name:** Gold\n   - **ID:** prod_PmMBlgONIPG7l0\n   - **Description:** Includes all the features of the silver plans + more quotas\n   - **Default Price ID:** price_1OwnSyGOWObUcsRVuao8v5Fm\n   - **Created At:** Not specified, but created before the Diamond product.\n\n3. **Product Name:** Silver\n   - **ID:** prod_PmMABDj8tuSLeT\n   - **Description:** All the features contained in the free plan and more quotas to play with\n   - **Default Price ID:** price_1OwnSdGOWObUcsRV6UEKr1GC\n   - **Created At:** Not specified, but created before the Gold product."
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1749,
+    "completion_tokens": 255,
+    "total_tokens": 2004,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}
+```
