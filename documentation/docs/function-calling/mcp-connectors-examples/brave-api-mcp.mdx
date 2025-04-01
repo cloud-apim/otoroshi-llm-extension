@@ -1,0 +1,22 @@
+---
+sidebar_position: 3
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Brave Search API
+
+### Configuration
+
+```js
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-brave-search"
+  ],
+  "env": {
+    "BRAVE_API_KEY": "${vault://local/BRAVE_API_KEY}"
+  }
+}
+```
