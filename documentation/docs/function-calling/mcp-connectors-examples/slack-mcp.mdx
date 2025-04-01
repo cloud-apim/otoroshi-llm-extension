@@ -1,0 +1,23 @@
+---
+sidebar_position: 4
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# 💬 Slack
+
+### Configuration
+
+```js
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-slack"
+  ],
+  "env": {
+    "SLACK_BOT_TOKEN": "${vault://local/SLACK_BOT_TOKEN}"
+    "SLACK_TEAM_ID": "${vault://local/SLACK_TEAM_ID}"
+  }
+}
+```
