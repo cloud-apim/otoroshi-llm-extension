@@ -1,0 +1,26 @@
+---
+sidebar_position: 13
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# EverArt
+
+### Set up secret API Key
+
+Before setting up your MCP connector entity, you can follow [this guide](/docs/llm-gateway/secrets) to add a secret `EVERART_API_KEY` to your local Otoroshi vault.
+
+### Configuration
+
+```js
+{
+ "command": "npx",
+  "args": [
+    "-y", 
+    "@modelcontextprotocol/server-everart"
+  ],
+  "env": {
+    "EVERART_API_KEY": "${vault://local/EVERART_API_KEY}"
+  }
+}
+```
