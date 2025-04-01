@@ -1,0 +1,29 @@
+---
+sidebar_position: 11
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# ScreenshotOne
+
+### Prerequisites
+
+`git clone https://github.com/screenshotone/mcp.git`
+
+Then, install dependencies and build it 
+
+`npm install && npm run build`
+
+### Configuration
+
+```js
+{
+  "command": "node",
+  "args": [
+    "path/to/screenshotone/mcp/build/index.js"
+  ],
+  "env": {
+      "SCREENSHOTONE_API_KEY": "${vault://local/SCREENSHOTONE_API_KEY}"
+  }
+}
+```
