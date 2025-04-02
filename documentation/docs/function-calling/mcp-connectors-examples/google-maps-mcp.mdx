@@ -1,0 +1,26 @@
+---
+sidebar_position: 15
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Google Maps
+
+### Set up secret API Key
+
+Before setting up your MCP connector entity, you can follow [this guide](/docs/llm-gateway/secrets) to add a secret `GOOGLE_MAPS_API_KEY` to your local Otoroshi vault.
+
+### Configuration
+
+```js
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "@modelcontextprotocol/server-google-maps"
+  ],
+  "env": {
+    "GOOGLE_MAPS_API_KEY": "${vault://local/GOOGLE_MAPS_API_KEY}"
+  }
+}
+```
