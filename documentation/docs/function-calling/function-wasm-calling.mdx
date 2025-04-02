@@ -36,3 +36,300 @@ The function will return the estimated flight duration, such as `5h 30m` for a d
 ![](/img/tool-calls-2.png)
 
 ![](/img/tool-calls-3.png)
+
+## Next flight function example
+
+In this example, we will create a tool call function named `next_flight` that will take two IATA codes (airport codes like CDG for Paris Charles-De-Gaulle) and will return the flight number and when the flight will take off from now.
+
+### Function configuration
+
+```js
+'inline module';
+
+exports.tool_call = function(args) {
+  const formattedArguments = JSON.parse(args);
+  return JSON.stringify({
+    nextflight: `flight ${parseInt(Math.random() * 10000)} from ${formattedArguments["departure"]} to ${formattedArguments["arrival"]} is taking off in ${parseInt(Math.random() * 10)} hours`
+  })
+}
+```
+
+Function parameters 
+
+```js
+{
+  "departure": {
+    "type": "string",
+    "description": "The departure airport (IATA airport Code)"
+  },
+  "arrival": {
+    "type": "string",
+    "description": "The arrival airport (IATA airport Code)"
+  }
+}
+```
+### Request to our endpoint
+```sh
+curl --request POST \
+  --url http://wasm-tool-function.oto.tools:8080/ \
+  --header 'content-type: application/json' \
+  --data '{
+  "messages": [
+    {
+       "role": "user",
+       "content": "Could you give me the next flight from CDG to DXB please ?"
+    }
+  ]
+}'
+```
+
+LLM Response with our tool function `next_flight`
+
+```js
+{
+  "id": "chatcmpl-FzOsLwlxF7cgTkpBfSPfhYEEvw53X274",
+  "object": "chat.completion",
+  "created": 1743519776,
+  "model": "gpt-4o-mini",
+  "system_fingerprint": "fp-Jz72gmHTIAQw2xYamDRy3Q8kMSPUsMb0",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "The next flight from CDG (Charles de Gaulle Airport) to DXB (Dubai International Airport) is flight 3755, which is taking off in 9 hours."
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 209,
+    "completion_tokens": 37,
+    "total_tokens": 246,
+    "completion_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}
+```
+
+### Full entity configuration
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "id": "tool-function_f6562221-1c0f-4f8e-aae6-279beb0144dd",
+  "name": "next_flight",
+  "description": "This function returns the next flight.",
+  "metadata": {},
+  "tags": [],
+  "strict": true,
+  "parameters": {
+    "departure": {
+      "type": "string",
+      "description": "The departure airport (IATA airport Code)"
+    },
+    "arrival": {
+      "type": "string",
+      "description": "The arrival airport (IATA airport Code)"
+    }
+  },
+  "required": null,
+  "backend": {
+    "kind": "QuickJs",
+    "options": {
+      "jsPath": "'inline module';\n\nexports.tool_call = function(args) {\n  const formattedArguments = JSON.parse(args);\n  return JSON.stringify({\n    nextflight: `flight ${parseInt(Math.random() * 10000)} from ${formattedArguments[\"departure\"]} to ${formattedArguments[\"arrival\"]} is taking off in ${parseInt(Math.random() * 10)} hours`\n  })\n}"
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/ToolFunction"
+}
+```
+
+### Provider configuration
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "id": "provider_6699f127-34d1-4fef-b3ad-6bcf592ed9c6",
+  "name": "OpenAI provider + tool wasm function",
+  "description": "An OpenAI LLM api provider",
+  "metadata": {},
+  "tags": [],
+  "provider": "openai",
+  "connection": {
+    "base_url": "https://api.openai.com/v1",
+    "token": "${vault://local/openai-token}",
+    "timeout": 30000
+  },
+  "options": {
+    "model": "gpt-4o-mini",
+    "frequency_penalty": null,
+    "logit_bias": null,
+    "logprobs": null,
+    "top_logprobs": null,
+    "max_tokens": null,
+    "n": 1,
+    "presence_penalty": null,
+    "response_format": null,
+    "seed": null,
+    "stop": null,
+    "stream": false,
+    "temperature": 1,
+    "top_p": 1,
+    "tools": null,
+    "tool_choice": null,
+    "user": null,
+    "wasm_tools": [
+      "tool-function_f6562221-1c0f-4f8e-aae6-279beb0144dd"
+    ],
+    "mcp_connectors": [],
+    "allow_config_override": true
+  },
+  "provider_fallback": null,
+  "context": {
+    "default": null,
+    "contexts": []
+  },
+  "models": {
+    "include": [],
+    "exclude": []
+  },
+  "guardrails": [],
+  "guardrails_fail_on_deny": false,
+  "cache": {
+    "strategy": "none",
+    "ttl": 300000,
+    "score": 0.8
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/Provider"
+}
+```
+
+### Endpoint configuration
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": [
+      "default"
+    ]
+  },
+  "id": "route_52b9e4b69-d161-4e26-9a32-4bcc4c25e2db",
+  "name": "wasm tool function example",
+  "description": "wasm tool function example",
+  "tags": [],
+  "metadata": {},
+  "enabled": true,
+  "debug_flow": false,
+  "export_reporting": false,
+  "capture": false,
+  "groups": [
+    "default"
+  ],
+  "bound_listeners": [],
+  "frontend": {
+    "domains": [
+      "wasm-tool-function.oto.tools"
+    ],
+    "strip_path": true,
+    "exact": false,
+    "headers": {},
+    "query": {},
+    "methods": []
+  },
+  "backend": {
+    "targets": [
+      {
+        "id": "target_1",
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true,
+        "weight": 1,
+        "predicate": {
+          "type": "AlwaysMatch"
+        },
+        "protocol": "HTTP/1.1",
+        "ip_address": null,
+        "tls_config": {
+          "certs": [],
+          "trusted_certs": [],
+          "enabled": false,
+          "loose": false,
+          "trust_all": false
+        }
+      }
+    ],
+    "root": "/",
+    "rewrite": false,
+    "load_balancing": {
+      "type": "RoundRobin"
+    },
+    "client": {
+      "retries": 1,
+      "max_errors": 20,
+      "retry_initial_delay": 50,
+      "backoff_factor": 2,
+      "call_timeout": 30000,
+      "call_and_stream_timeout": 120000,
+      "connection_timeout": 10000,
+      "idle_timeout": 60000,
+      "global_timeout": 30000,
+      "sample_interval": 2000,
+      "proxy": {},
+      "custom_timeouts": [],
+      "cache_connection_settings": {
+        "enabled": false,
+        "queue_size": 2048
+      }
+    },
+    "health_check": {
+      "enabled": false,
+      "url": "",
+      "timeout": 5000,
+      "healthyStatuses": [],
+      "unhealthyStatuses": []
+    }
+  },
+  "backend_ref": null,
+  "plugins": [
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "include": [],
+      "exclude": [],
+      "config": {},
+      "bound_listeners": [],
+      "plugin_index": {
+        "transform_request": 0
+      }
+    },
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
+      "include": [],
+      "exclude": [],
+      "config": {
+        "refs": [
+          "provider_6699f127-34d1-4fef-b3ad-6bcf592ed9c6"
+        ]
+      },
+      "bound_listeners": [],
+      "plugin_index": {}
+    }
+  ],
+  "kind": "proxy.otoroshi.io/Route"
+}
+```
