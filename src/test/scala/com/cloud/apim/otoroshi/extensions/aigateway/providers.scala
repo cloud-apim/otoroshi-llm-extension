@@ -176,6 +176,18 @@ object LlmProviders {
     supportsToolsStreaming = true,
   )
 
+  val azureAiFoundry = TestLlmProviderSettings( // TODO: no account
+    "azure-ai-foundry",
+    "AZURE_AI_FOUNDRY_TOKEN",
+    Json.obj("model" -> "mistral-large-2407", "max_tokens" -> maxTokens),
+    supportsModels = true,
+    supportsChatCompletion = true,
+    supportsCompletion = true,
+    supportsTools = true,
+    supportsStreaming = true,
+    supportsToolsStreaming = true,
+  )
+
   val cloudflare = TestLlmProviderSettings(  // TODO: no account
     "cloudflare",
     "CLOUDFLARE_TOKEN",
@@ -242,6 +254,7 @@ object LlmProviders {
     ovh,
 
     // azure,
+    // azureAiFoundry
     // cloudflare,
   )
 

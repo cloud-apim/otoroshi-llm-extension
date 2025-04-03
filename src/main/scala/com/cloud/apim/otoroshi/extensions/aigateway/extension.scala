@@ -491,6 +491,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    const BackOfficeServices = dependencies.BackOfficeServices;
             |    const BaseUrls = {
             |      openai: '${OpenAiApi.baseUrl}',
+            |      azureAiFoundry: '${AzureAiFoundry.baseUrl}',
             |      scaleway: '${ScalewayApi.baseUrl}',
             |      deepseek: '${DeepSeekApi.baseUrl}',
             |      xai: '${XAiApi.baseUrl}',
@@ -513,9 +514,10 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      groq: ${GroqChatClientOptions().json.stringify},
             |      gemini: ${OpenAiChatClientOptions().copy(model = "gemini-1.5-flash").json.stringify},
             |      'azure-openai': ${AzureOpenAiChatClientOptions().json.stringify},
+            |      'azureAiFoundry': ${OpenAiChatClientOptions().copy(model = "mistral-large-2407").json.stringify},
             |      'cohere': ${CohereAiChatClientOptions().json.stringify},
             |      ovh: ${OVHAiEndpointsChatClientOptions().json.stringify},
-            |      huggingface: ${OpenAiChatClientOptions().copy(model = "google/gemma-2-2b-it".json.stringify).json.stringify},
+            |      huggingface: ${OpenAiChatClientOptions().copy(model = "google/gemma-2-2b-it").json.stringify},
             |    };
             |    const GuardrailsOptions = {
             |      possibleModerationCategories: ${JsArray(LLMGuardrailsHardcodedItems.possibleModerationCategories.map(_.json)).stringify},

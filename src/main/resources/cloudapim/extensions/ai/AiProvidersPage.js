@@ -480,6 +480,7 @@ class AiProvidersPage extends Component {
 
   providerList = _.sortBy([
     { 'label': 'OpenAI', value: 'openai' },
+    { 'label': 'Azure AI Foundry', value: 'azure-ai-foundry' },
     { 'label': 'Azure OpenAI', value: 'azure-openai' },
     { 'label': 'Mistral', value: 'mistral' },
     { 'label': 'Ollama', value: 'ollama' },
@@ -1544,6 +1545,21 @@ class AiProvidersPage extends Component {
                   timeout: 30000,
                 },
                 options: ClientOptions.openai,
+              });
+            } else if (state.provider === 'azure-ai-foundry') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'azure-ai-foundry',
+                connection: {
+                  base_url: BaseUrls.azureAiFoundry,
+                  token: 'xxx',
+                  timeout: 30000,
+                },
+                options: ClientOptions.azureAiFoundry,
               });
             } else if (state.provider === 'deepseek') {
               update({

@@ -25,6 +25,7 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 
 * Anthropic 
 * Azure OpenAI
+* Azure AI Foundry
 * Cloudflare
 * Cohere
 * Gemini

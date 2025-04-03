@@ -114,6 +114,10 @@ object AzureOpenAiModels {
   val GPT_3_5_TURBO_1106 = "gpt-3.5-turbo-1106"
 }
 
+object AzureAiFoundry {
+  val baseUrl = "https://<resource>.services.ai.azure.com/models"
+}
+
 object AzureOpenAiApi {
   // POST https://{your-resource-name}.openai.azure.com/openai/deployments/{deployment-id}/completions?api-version={api-version}
   def url(resourceName: String, deploymentId: String, path: String): String = {

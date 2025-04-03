@@ -670,6 +670,7 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
       case "x-ai" => None
       case "ovh-ai-endpoints" => None
       case "azure-openai" => None
+      case "azure-ai-foundry" => None
       case "cloudflare" => None
       case "gemini" => "google".some
       case "huggingface" => "huggingface_hub".some

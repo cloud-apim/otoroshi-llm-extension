@@ -205,6 +205,11 @@ case class AiProvider(
         val opts = AzureOpenAiChatClientOptions.fromJson(options)
         new AzureOpenAiChatClient(api, opts, id).some
       }
+      case "azure-ai-foundry" => {
+        val api = new OpenAiApi(baseUrl.getOrElse(AzureAiFoundry.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Azure AI Foundry", env = env)
+        val opts = OpenAiChatClientOptions.fromJson(options)
+        new OpenAiChatClient(api, opts, id, "azure-ai-foundry", "/models").some
+      }
       case "cloudflare" => {
         val accountId = connection.select("account_id").as[String]
         val modelName = connection.select("model_name").as[String]

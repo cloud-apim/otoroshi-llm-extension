@@ -140,6 +140,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
       case "x-ai" => "xai".some
       case "ovh-ai-endpoints" => None
       case "azure-openai" => "azure".some
+      case "azure-ai-foundry" => "azure".some
       case "cloudflare" => "cloudflare".some
       case "gemini" => "gemini".some
       case "huggingface" => None
