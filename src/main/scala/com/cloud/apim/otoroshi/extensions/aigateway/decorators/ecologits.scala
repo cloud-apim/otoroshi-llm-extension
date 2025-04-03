@@ -33,51 +33,39 @@ import scala.util._
 
 object Types {
   type ValueOrRange = Either[Double, RangeValue]
+  def valueOrRangeJson(value: ValueOrRange): JsValue = {
+    value match {
+      case Left(v) => RangeValue(v, v).json //JsNumber(BigDecimal(v))
+      case Right(range) => range.json
+    }
+  }
 }
-
-// ----- Types de base -----
 
 // Global Warming Potential (GWP): related to climate change, commonly known as GHG emissions in kgCO2eq.
 case class GWP(value: ValueOrRange) {
   def json(desc: Boolean): JsValue = {
-    val v = value match {
-      case Left(v) => JsNumber(BigDecimal(v))
-      case Right(range) => range.json
-    }
-    Json.obj("value" -> v, "unit" -> "kgCO2eq")
+    Json.obj("value" -> Types.valueOrRangeJson(value), "unit" -> "kgCO2eq")
       .applyOnIf(desc)(o => o ++ Json.obj("description" -> "Global Warming Potential (GWP): related to climate change, commonly known as GHG emissions in kgCO2eq"))
   }
 }
 // Abiotic Depletion Potential for Elements (ADPe): related to the depletion of minerals and metals in kgSbeq.
 case class ADPe(value: ValueOrRange) {
   def json(desc: Boolean): JsValue = {
-    val v = value match {
-      case Left(v) => JsNumber(BigDecimal(v))
-      case Right(range) => range.json
-    }
-    Json.obj("value" -> v, "unit" -> "kgSbeq")
+    Json.obj("value" -> Types.valueOrRangeJson(value), "unit" -> "kgSbeq")
       .applyOnIf(desc)(o => o ++ Json.obj("description" -> "Abiotic Depletion Potential for Elements (ADPe): related to the depletion of minerals and metals in kgSbeq"))
   }
 }
 // Primary Energy (PE): related to the energy consumed from primary sources like oil, gas or coal in MJ.
 case class PE(value: ValueOrRange) {
   def json(desc: Boolean): JsValue = {
-    val v = value match {
-      case Left(v) => JsNumber(BigDecimal(v))
-      case Right(range) => range.json
-    }
-    Json.obj("value" -> v, "unit" -> "MJ")
+    Json.obj("value" -> Types.valueOrRangeJson(value), "unit" -> "MJ")
       .applyOnIf(desc)(o => o ++ Json.obj("description" -> "Primary Energy (PE): related to the energy consumed from primary sources like oil, gas or coal in MJ"))
   }
 }
 // Energy: related to the final electricity consumption in kWh.
 case class Energy(value: ValueOrRange) {
   def json(desc: Boolean): JsValue = {
-    val v = value match {
-      case Left(v) => JsNumber(BigDecimal(v))
-      case Right(range) => range.json
-    }
-    Json.obj("value" -> v, "unit" -> "kWh")
+    Json.obj("value" -> Types.valueOrRangeJson(value), "unit" -> "kWh")
       .applyOnIf(desc)(o => o ++ Json.obj("description" -> "Energy: related to the final electricity consumption in kWh"))
   }
 }
@@ -168,8 +156,6 @@ object ValueOrRange {
     case Right(x)  => Right(x / b)
   }
 }
-
-// ----- Constantes -----
 
 object Constants {
   val ModelQuantizationBits = 4
