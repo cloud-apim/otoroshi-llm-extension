@@ -16,6 +16,9 @@ import scala.concurrent.{ExecutionContext, Future}
 
 // https://learn.microsoft.com/en-us/azure/ai-services/openai/reference
 
+// TODO: support https://azure.microsoft.com/fr-fr/products/ai-foundry/ - https://learn.microsoft.com/en-us/rest/api/aifoundry/model-inference/get-chat-completions/get-chat-completions?view=rest-aifoundry-model-inference-2024-05-01-preview&tabs=HTTP
+// https://learn.microsoft.com/fr-fr/azure/ai-foundry/model-inference/how-to/use-chat-completions?context=%2Fazure%2Fai-foundry%2Fcontext%2Fcontext&pivots=programming-language-rest
+
 case class AzureOpenAiChatResponseChunkUsage(raw: JsValue) {
   lazy val completion_tokens: Long = raw.select("completion_tokens").asLong
   lazy val prompt_tokens: Long = raw.select("prompt_tokens").asLong
@@ -110,12 +113,14 @@ object AzureOpenAiModels {
   val GPT_3_5_TURBO_0125 = "gpt-3.5-turbo-0125"
   val GPT_3_5_TURBO_1106 = "gpt-3.5-turbo-1106"
 }
+
 object AzureOpenAiApi {
   // POST https://{your-resource-name}.openai.azure.com/openai/deployments/{deployment-id}/completions?api-version={api-version}
   def url(resourceName: String, deploymentId: String, path: String): String = {
     s"https://${resourceName}.openai.azure.com/openai/deployments/${deploymentId}${path}?api-version=2024-02-01"
   }
 }
+// https://learn.microsoft.com/en-us/azure/ai-services/openai/reference
 class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey: String, timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[AzureOpenAiApiResponse, AzureOpenAiChatResponseChunk] {
 
   override def supportsTools: Boolean = true
@@ -346,7 +351,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
   override def supportsCompletion: Boolean = api.supportsCompletion
 
   override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
-    api.rawCall("GET", "/v1/models", None).map { resp =>
+    api.rawCall("GET", "/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
       } else {
@@ -360,9 +365,9 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
-      api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors)
+      api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors)
     } else {
-      api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
+      api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
     }
     callF.map {
       case Left(err) => err.left
@@ -417,9 +422,9 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
-      api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors)
+      api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors)
     } else {
-      api.stream("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
+      api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
     }
     callF.map {
       case Left(err) => err.left
@@ -491,7 +496,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
-    val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
+    val callF = api.call("POST", "/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
     callF.map {
       case Left(err) => err.left
       case Right(resp) =>
