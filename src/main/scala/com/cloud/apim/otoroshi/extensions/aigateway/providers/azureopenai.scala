@@ -137,7 +137,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
     env.Ws
       .url(url)
       .withHttpHeaders(
-        "Authorization" -> s"api-key ${apikey}",
+        "api-key" -> apikey,
         "Accept" -> "application/json",
       ).applyOnWithOpt(body) {
         case (builder, body) => builder
@@ -190,7 +190,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
     env.Ws
       .url(url)
       .withHttpHeaders(
-        "Authorization" -> s"api-key ${apikey}",
+        "api-key" -> apikey,
         "Accept" -> "application/json",
       ).applyOnWithOpt(body) {
         case (builder, body) => builder
