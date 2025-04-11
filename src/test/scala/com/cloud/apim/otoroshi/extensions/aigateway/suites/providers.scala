@@ -1463,3 +1463,91 @@ class StreamingWithAuditingSuite extends LLmExtensionSuite {
     testChatCompletionStreamingWith(provider, client, 30.seconds)
   }
 }
+
+class MistralSuite extends LlmExtensionOneOtoroshiServerPerSuite {
+
+  test("should be able stream from mistral") {
+    val provider = LlmProviders.mistral
+    val token = sys.env(provider.envToken)
+    val port = client.port
+    val providerId = s"provider_${UUID.randomUUID().toString}"
+    val routeChatId = s"route_${UUID.randomUUID().toString}"
+    val awaitFor = 70.seconds
+
+    val llmprovider = AiProvider(
+      id = providerId,
+      name = s"${provider.name} provider",
+      provider = provider.name,
+      connection = Json.obj(
+        "token" -> token,
+        "timeout" -> 60000
+      ),
+      options = (provider.options - "max_tokens"),
+    )
+    LlmProviderUtils.upsertProvider(client)(llmprovider)
+    val routeChat = client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertRaw(routeChatId, Json.parse(
+      s"""{
+         |  "id": "${routeChatId}",
+         |  "name": "openai",
+         |  "frontend": {
+         |    "domains": [
+         |      "${provider.name}.oto.tools"
+         |    ]
+         |  },
+         |  "backend": {
+         |    "targets": [
+         |      {
+         |        "id": "target_1",
+         |        "hostname": "request.otoroshi.io",
+         |        "port": 443,
+         |        "tls": true
+         |      }
+         |    ],
+         |    "root": "/",
+         |    "rewrite": false,
+         |    "load_balancing": {
+         |      "type": "RoundRobin"
+         |    },
+         |    "client": {
+         |      "call_timeout": 70000,
+         |      "call_and_stream_timeout": 120000,
+         |      "connection_timeout": 10000,
+         |      "idle_timeout": 70000
+         |    }
+         |  },
+         |  "plugins": [
+         |    {
+         |      "enabled": true,
+         |      "plugin": "cp:otoroshi.next.plugins.OverrideHost"
+         |    },
+         |    {
+         |      "plugin": "cp:${classOf[OpenAiCompatProxy].getName}",
+         |      "include": ["/chat"],
+         |      "config": {
+         |        "refs": [
+         |          "${providerId}"
+         |        ]
+         |      }
+         |    }
+         |  ]
+         |}""".stripMargin)).awaitf(awaitFor)
+    assert(routeChat.created, s"[${provider.name}] route chat has not been created")
+    await(1300.millis)
+    val resp4 = client.call("POST", s"http://${provider.name}.oto.tools:${port}/chat", Map.empty, Some(
+      Json.obj(
+        "stream" -> true,
+        "messages" -> Json.arr(
+          Json.obj(
+            "role" -> "user",
+            "content" -> "hey who are you ?"
+          )
+        )
+      )
+    )).awaitf(awaitFor)
+    println(resp4.status, resp4.body)
+    client.forLlmEntity("providers").deleteEntity(llmprovider)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
+    await(1300.millis)
+  }
+}
+

@@ -495,6 +495,10 @@ object Architecture {
       typ = typ,
       denseParameters = json.select("parameters").asOpt[JsObject].filter(_ => typ == "dense").filter(o => o.select("total").isEmpty).map { o =>
         Right(RangeValue(o.select("min").asInt, o.select("max").asInt))
+      }.orElse {
+        json.select("parameters").asOpt[JsNumber].filter(_ => typ == "dense").map { number =>
+          Left(number.value.toDouble)
+        }
       },
       moeParameters = json.select("parameters").asOpt[JsObject].filter(_ => typ == "moe").filter(o => o.select("total").isDefined).map { o =>
         o.select("active").asOpt[JsValue] match {
@@ -598,7 +602,10 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
       case Some(model) => {
         val (totalParams, activeParams) = model.architecture.moeParameters match {
           case Some(moe) => (moe.total, moe.active)
-          case _ => (model.architecture.denseParameters.get, model.architecture.denseParameters.get)
+          case _ => model.architecture.denseParameters match {
+            case None => Left(s"Could read model denseParameters.")
+            case Some(denseParams) => (denseParams, denseParams)
+          }
         }
 
         val mix = electricityMixes.getOrElse(electricityMixZoneOpt.getOrElse(settings.electricityMixZone), electricityMixes.head._2)
