@@ -600,36 +600,34 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
     models_by_provider_name.get(s"${provider}-${modelName}") match {
       case None => Left(s"Could not find model `$modelName` for $provider provider.")
       case Some(model) => {
-        val (totalParams, activeParams) = model.architecture.moeParameters match {
-          case Some(moe) => (moe.total, moe.active)
+        def run(totalParams: ValueOrRange, activeParams: ValueOrRange): Either[String, ImpactsOutput] = {
+          val mix = electricityMixes.getOrElse(electricityMixZoneOpt.getOrElse(settings.electricityMixZone), electricityMixes.head._2)
+          val result = LLMImpactCalculator.computeLLMImpacts(
+            modelActiveParams = activeParams,
+            modelTotalParams = totalParams,
+            outputTokens = outputTokenCount,
+            requestLatency = Some(requestLatency),
+            ifElectricityMixAdpe = mix.adpe,
+            ifElectricityMixPe = mix.pe,
+            ifElectricityMixGwp = mix.gwp
+          )
+          val output = ImpactsOutput(
+            energy = Some(result.energy),
+            gwp = Some(result.gwp),
+            adpe = Some(result.adpe),
+            pe = Some(result.pe),
+            usage = Some(result.usage),
+            embodied = Some(result.embodied)
+          )
+          output.right
+        }
+        model.architecture.moeParameters match {
+          case Some(moe) => run(moe.total, moe.active)
           case _ => model.architecture.denseParameters match {
             case None => Left(s"Could read model denseParameters.")
-            case Some(denseParams) => (denseParams, denseParams)
+            case Some(denseParams) => run(denseParams, denseParams)
           }
         }
-
-        val mix = electricityMixes.getOrElse(electricityMixZoneOpt.getOrElse(settings.electricityMixZone), electricityMixes.head._2)
-
-        val result = LLMImpactCalculator.computeLLMImpacts(
-          modelActiveParams = activeParams,
-          modelTotalParams = totalParams,
-          outputTokens = outputTokenCount,
-          requestLatency = Some(requestLatency),
-          ifElectricityMixAdpe = mix.adpe,
-          ifElectricityMixPe = mix.pe,
-          ifElectricityMixGwp = mix.gwp
-        )
-
-        val output = ImpactsOutput(
-          energy = Some(result.energy),
-          gwp = Some(result.gwp),
-          adpe = Some(result.adpe),
-          pe = Some(result.pe),
-          usage = Some(result.usage),
-          embodied = Some(result.embodied)
-        )
-
-        output.right
       }
     }
   }
