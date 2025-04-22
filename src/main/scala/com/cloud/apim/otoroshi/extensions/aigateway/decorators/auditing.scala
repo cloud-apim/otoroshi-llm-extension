@@ -173,7 +173,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                       ),
                       cache = None
                     )
-                  ).json(env).debug(_.prettify.debugPrintln),
+                  ).json(env),
                   "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                   "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                   "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
