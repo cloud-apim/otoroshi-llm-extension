@@ -471,3 +471,45 @@ class XAiEmbeddingModelClient(val api: XAiApi, val options: XAiEmbeddingModelCli
   }
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                     Images Generation                                          ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class XAiImagesGenModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("gpt-image-1")
+  lazy val size: String = raw.select("size").asOpt[String].getOrElse("auto")
+}
+
+object XAiImagesGenModelClientOptions {
+  def fromJson(raw: JsObject): XAiImagesGenModelClientOptions = XAiImagesGenModelClientOptions(raw)
+}
+
+class XAiImagesGenModelClient(val api: XAiApi, val options: XAiImagesGenModelClientOptions, id: String) extends ImagesGenModelClient {
+
+  override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    val finalModel: String = modelOpt.getOrElse(options.model)
+    val finalSize: String = imgSizeOpt.getOrElse(options.size)
+    api.rawCall("POST", "/v1/images/generations", (options.raw ++
+      Json.obj(
+        "prompt" -> promptInput,
+        "size" -> finalSize,
+        "model" -> finalModel
+      )).some).map { resp =>
+      if (resp.status == 200) {
+        Right(ImagesGenResponse(
+          created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
+          images = resp.json.select("data").as[Seq[JsObject]].map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String])),
+          metadata = ImagesGenResponseMetadata(
+              totalTokens = resp.json.at("usage.total_tokens").asOpt[Long].getOrElse(-1L),
+              tokenInput = resp.json.at("usage.input_tokens").asOpt[Long].getOrElse(-1L),
+              tokenOutput = resp.json.at("usage.output_tokens").asOpt[Long].getOrElse(-1L),
+              tokenText = resp.json.at("usage.input_tokens_details.text_tokens").asOpt[Long].getOrElse(-1L),
+              tokenImage = resp.json.at("usage.input_tokens_details.image_tokens").asOpt[Long].getOrElse(-1L),
+            ).some
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}

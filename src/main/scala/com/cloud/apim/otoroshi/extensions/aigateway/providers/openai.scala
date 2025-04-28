@@ -682,7 +682,6 @@ class OpenAiImagesGenModelClient(val api: OpenAiApi, val options: OpenAiImagesGe
         "model" -> finalModel
       )).some).map { resp =>
       if (resp.status == 200) {
-        env.logger.info(s"got response from OPEN AI IMAGE = ${resp.json}")
         Right(ImagesGenResponse(
           created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
           images = resp.json.select("data").as[Seq[JsObject]].map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String])),

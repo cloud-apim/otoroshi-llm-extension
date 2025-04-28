@@ -44,6 +44,11 @@ case class ImagesGenModel(
         val opts = OpenAiImagesGenModelClientOptions.fromJson(options)
         new OpenAiImagesGenModelClient(api, opts, id).some
       }
+      case "x-ai" => {
+        val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val opts = XAiImagesGenModelClientOptions.fromJson(options)
+        new XAiImagesGenModelClient(api, opts, id).some
+      }
       case _ => None
     }
   }
