@@ -39,6 +39,14 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 * X.ai
 * Deepseek
 
+## Supported LLM Embeddings models
+
+## Supported Images generation models
+
+* OpenAI Dall-e 2
+* OpenAI Dall-e 3
+* OpenAI gpt-image-1
+
 ## Requirements
 
 **Run it on JDK17+**
