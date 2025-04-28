@@ -54,7 +54,7 @@ class EmbeddingStoresPage extends Component {
     '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config'];
 
   componentDidMount() {
-    this.props.setTitle(`Embedding model`);
+    this.props.setTitle(`Embedding store`);
   }
 
   client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'embedding-stores');
