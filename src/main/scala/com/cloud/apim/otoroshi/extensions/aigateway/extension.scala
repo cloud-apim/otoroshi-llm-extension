@@ -31,6 +31,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val embeddingModelsDataStore: EmbeddingModelsDataStore = new KvEmbeddingModelsDataStore(extensionId, env.datastores.redis, env)
   val embeddingStoresDataStore: EmbeddingStoresDataStore = new KvEmbeddingStoresDataStore(extensionId, env.datastores.redis, env)
   val mcpConnectorsDatastore: McpConnectorsDataStore = new KvMcpConnectorsDataStore(extensionId, env.datastores.redis, env)
+  val imagesGenModelsDataStore: ImagesGenModelsDataStore = new KvImagesGenModelsDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
@@ -89,6 +90,13 @@ class AiGatewayExtensionState(env: Env) {
   def allMcpConnectors(): Seq[McpConnector]          = _mcpConnectors.values.toSeq
   def updateMcpConnectors(values: Seq[McpConnector]): Unit = {
     _mcpConnectors.addAll(values.map(v => (v.id, v))).remAll(_mcpConnectors.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _imgGensModels = new UnboundedTrieMap[String, ImagesGenModel]()
+  def imgGensModels(id: String): Option[ImagesGenModel] = _imgGensModels.get(id)
+  def allImgGensModels(): Seq[ImagesGenModel]          = _imgGensModels.values.toSeq
+  def updateImgGensModels(values: Seq[ImagesGenModel]): Unit = {
+    _imgGensModels.addAll(values.map(v => (v.id, v))).remAll(_imgGensModels.keySet.toSeq.diff(values.map(_.id)))
   }
 }
 
@@ -165,6 +173,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val promptTemplatesPageCode = getResourceCode("cloudapim/extensions/ai/PromptTemplatesPage.js")
   lazy val promptContextsPageCode = getResourceCode("cloudapim/extensions/ai/PromptContextsPage.js")
   lazy val aiProvidersPageCode = getResourceCode("cloudapim/extensions/ai/AiProvidersPage.js")
+  lazy val imagesGenModelsPage = getResourceCode("cloudapim/extensions/ai/ImagesGenModelsPage.js")
   lazy val imgCode = getResourceCode("cloudapim/extensions/ai/undraw_visionary_technology_re_jfp7.svg")
 
   def handleProviderTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body:  Option[Source[ByteString, _]]): Future[Result] = {
@@ -533,6 +542,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    ${promptTemplatesPageCode}
             |    ${promptContextsPageCode}
             |    ${aiProvidersPageCode}
+            |    ${imagesGenModelsPage}
             |
             |    return {
             |      id: extensionId,
@@ -603,6 +613,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            link: '/extensions/cloud-apim/ai-gateway/mcp-connectors',
             |            display: () => true,
             |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'Images generation models',
+            |            description: 'All your Images generation models',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/images-gen',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
             |          }
             |        ]
             |      }],
@@ -670,6 +688,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          link: '/extensions/cloud-apim/ai-gateway/mcp-connectors',
             |          display: () => true,
             |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'Images generation models',
+            |          description: 'All your Images generation models',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/images-gen',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
             |        }
             |      ],
             |      sidebarItems: [
@@ -719,6 +745,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'MCP Connectors',
             |          text: 'All your MCP Connectors',
             |          path: 'extensions/cloud-apim/ai-gateway/mcp-connectors',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Images Generation Models',
+            |          text: 'All your MCP Connectors',
+            |          path: 'extensions/cloud-apim/ai-gateway/images-gen',
             |          icon: 'brain'
             |        }
             |      ],
@@ -786,6 +818,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'MCP Connectors',
             |          value: 'mcp-connectors',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/images-gen`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Images Generation Models',
+            |          value: 'images-gen',
             |        }
             |      ],
             |      routes: [
@@ -932,7 +972,25 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          component: (props) => {
             |            return React.createElement(McpConnectorsPage, props, null)
             |          }
-            |        }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/images-gen/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/images-gen/:taction',
+            |          component: (props) => {
+            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/images-gen',
+            |          component: (props) => {
+            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |          }
+            |        },
             |      ]
             |    }
             |  });
@@ -954,6 +1012,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       embeddingModels <- datastores.embeddingModelsDataStore.findAllAndFillSecrets()
       embeddingStores <- datastores.embeddingStoresDataStore.findAllAndFillSecrets()
       mcpConnectors <- datastores.mcpConnectorsDatastore.findAllAndFillSecrets()
+      imgGens <- datastores.imagesGenModelsDataStore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
@@ -963,6 +1022,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateEmbeddingModels(embeddingModels)
       states.updateEmbeddingStores(embeddingStores)
       states.updateMcpConnectors(mcpConnectors)
+      states.updateImgGensModels(imgGens)
       Future {
         McpSupport.restartConnectorsIfNeeded()
         McpSupport.stopConnectorsIfNeeded()
@@ -981,6 +1041,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(EmbeddingModel.resource(env, datastores, states)),
       AdminExtensionEntity(EmbeddingStore.resource(env, datastores, states)),
       AdminExtensionEntity(McpConnector.resource(env, datastores, states)),
+      AdminExtensionEntity(ImagesGenModel.resource(env, datastores, states)),
     )
   }
 }
