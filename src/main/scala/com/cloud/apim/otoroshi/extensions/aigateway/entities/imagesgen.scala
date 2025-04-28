@@ -49,6 +49,14 @@ case class ImagesGenModel(
         val opts = XAiImagesGenModelClientOptions.fromJson(options)
         new XAiImagesGenModelClient(api, opts, id).some
       }
+      case "azure-openai" => {
+        val resourceName = connection.select("resource_name").as[String]
+        val deploymentId = connection.select("deployment_id").as[String]
+        val apikey = connection.select("api_key").as[String]
+        val api = new AzureOpenAiApi(resourceName, deploymentId, apikey, timeout.getOrElse(10.seconds), env = env)
+        val opts = AzureOpenAiImagesGenModelClientOptions.fromJson(options)
+        new AzureOpenAiImagesGenModelClient(api, opts, id).some
+      }
       case _ => None
     }
   }
@@ -99,8 +107,8 @@ object ImagesGenModel {
           p.get("kind").map(_.toLowerCase()) match {
             case Some("openai") => ImagesGenModel(
               id = IdGenerator.namedId("provider", env),
-              name = "OpenAI text-embedding-3-small",
-              description = "An OpenAI embedding model",
+              name = "OpenAI gpt-image-1",
+              description = "An OpenAI images generation model",
               metadata = Map.empty,
               tags = Seq.empty,
               location = EntityLocation.default,
@@ -116,14 +124,33 @@ object ImagesGenModel {
                 )
               ),
             ).json
-            case _ => ImagesGenModel(
+            case Some("x-ai") => ImagesGenModel(
               id = IdGenerator.namedId("provider", env),
-              name = "Local embedding model",
-              description = "A Local embedding model",
+              name = "X-AI",
+              description = "X-AI Images generation model",
               metadata = Map.empty,
               tags = Seq.empty,
               location = EntityLocation.default,
-              provider = "all-minilm-l6-v2",
+              provider = "x-ai",
+              config = Json.obj(
+                "connection" -> Json.obj(
+                  "base_url" -> XAiApi.baseUrl,
+                  "token" -> "xxxxx",
+                  "timeout" -> 10000,
+                ),
+                "options" -> Json.obj(
+                  "model" -> "grok-2-image"
+                )
+              ),
+            ).json
+            case _ => ImagesGenModel(
+              id = IdGenerator.namedId("provider", env),
+              name = "Local images generation model",
+              description = "A Local images generation model",
+              metadata = Map.empty,
+              tags = Seq.empty,
+              location = EntityLocation.default,
+              provider = "local-images-gen-model",
               config = Json.obj(),
             ).json
           }

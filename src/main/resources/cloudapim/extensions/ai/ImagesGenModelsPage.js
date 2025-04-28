@@ -25,7 +25,8 @@ class ImagesGenModelsPage extends Component {
     provider: {
       'type': 'select',
       props: { label: 'Provider', possibleValues: _.sortBy([
-          { label: 'OpenAI', value: "openai" }
+          { label: 'OpenAI', value: "openai" },
+          { label: 'X-AI', value: "x-ai" }
       ], i => i.label) }
     },
     config: {

@@ -476,8 +476,7 @@ class XAiEmbeddingModelClient(val api: XAiApi, val options: XAiEmbeddingModelCli
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 case class XAiImagesGenModelClientOptions(raw: JsObject) {
-  lazy val model: String = raw.select("model").asOpt[String].getOrElse("gpt-image-1")
-  lazy val size: String = raw.select("size").asOpt[String].getOrElse("auto")
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("grok-2-image")
 }
 
 object XAiImagesGenModelClientOptions {
@@ -488,11 +487,9 @@ class XAiImagesGenModelClient(val api: XAiApi, val options: XAiImagesGenModelCli
 
   override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = modelOpt.getOrElse(options.model)
-    val finalSize: String = imgSizeOpt.getOrElse(options.size)
     api.rawCall("POST", "/v1/images/generations", (options.raw ++
       Json.obj(
         "prompt" -> promptInput,
-        "size" -> finalSize,
         "model" -> finalModel
       )).some).map { resp =>
       if (resp.status == 200) {
