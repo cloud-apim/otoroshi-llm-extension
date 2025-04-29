@@ -94,15 +94,34 @@ class OpenAICompatAudioModel extends NgBackendCall {
             m.some
           }
         }
+
         model.getAudioModelClient() match {
           case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
           case Some(client) => {
-            client.transcribe(modelStr).map {
-              case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
-              case Right(speech) => {
-                Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(speech.toOpenAiJson)), None))
+
+            model.mode.toLowerCase match {
+              case "transcription" => {
+                client.transcribe(modelStr).map {
+                  case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
+                  case Right(speech) => {
+                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(speech.toOpenAiJson)), None))
+                  }
+                }
               }
+
+              case "tts" => {
+                client.textToSpeech(inputFromBody, modelStr, voiceFromBody).map {
+                  case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
+                  case Right(speech) => {
+                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(speech)), None))
+                  }
+                }
+              }
+
+              case _ => NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> "Bad mode provided"))).leftf
             }
+
+
           }
         }
       } catch {

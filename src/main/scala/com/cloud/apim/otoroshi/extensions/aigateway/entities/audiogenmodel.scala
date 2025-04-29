@@ -23,6 +23,7 @@ case class AudioModel(
   tags: Seq[String],
   metadata: Map[String, String],
   provider: String,
+  mode: String,
   config: JsObject,
 ) extends EntityLocationSupport {
   override def internalId: String               = id
@@ -34,14 +35,15 @@ case class AudioModel(
   def getAudioModelClient()(implicit env: Env): Option[OpenAIAudioModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
-    val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
+    // val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val token = connection.select("token").asOpt[String].getOrElse("xxx")
+    val mode = connection.select("mode").asOpt[String].getOrElse("transcription")
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     provider.toLowerCase() match {
       case "openai" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
+        val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val opts = OpenAIAudioModelClientOptions.fromJson(options)
-        new OpenAIAudioModelClient(api, opts, id).some
+        new OpenAIAudioModelClient(api, opts, mode, id).some
       }
       case _ => None
     }
@@ -57,6 +59,7 @@ object AudioModel {
       "metadata"         -> o.metadata,
       "tags"             -> JsArray(o.tags.map(JsString.apply)),
       "provider"         -> o.provider,
+      "mode"             -> o.mode,
       "config"           -> o.config,
     )
     override def reads(json: JsValue): JsResult[AudioModel] = Try {
@@ -68,6 +71,7 @@ object AudioModel {
         metadata = (json \ "metadata").asOpt[Map[String, String]].getOrElse(Map.empty),
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         provider = (json \ "provider").as[String],
+        mode = (json \ "mode").as[String],
         config = (json \ "config").asOpt[JsObject].getOrElse(Json.obj()),
       )
     } match {
@@ -99,9 +103,9 @@ object AudioModel {
               tags = Seq.empty,
               location = EntityLocation.default,
               provider = "openai",
+              mode = "transcription",
               config = Json.obj(
                 "connection" -> Json.obj(
-                  "base_url" -> OpenAiApi.baseUrl,
                   "token" -> "xxxxx",
                   "timeout" -> 10000,
                 ),
@@ -118,6 +122,7 @@ object AudioModel {
               tags = Seq.empty,
               location = EntityLocation.default,
               provider = "all-minilm-l6-v2",
+              mode = "transcription",
               config = Json.obj(),
             ).json
           }

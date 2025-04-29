@@ -691,7 +691,7 @@ object OpenAIAudioModelClientOptions {
   def fromJson(raw: JsObject): OpenAIAudioModelClientOptions = OpenAIAudioModelClientOptions(raw)
 }
 
-class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelClientOptions, id: String) extends AudioModelClient {
+class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelClientOptions, mode: String, id: String) extends AudioModelClient {
 
   override def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val finalModel: String = modelOpt.getOrElse(options.transcriptionModel)
