@@ -43,9 +43,17 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 
 ## Supported Images generation models
 
-* OpenAI Dall-e 2
-* OpenAI Dall-e 3
-* OpenAI gpt-image-1
+* OpenAI 
+  * dall-e-2
+  * dall-e-3
+  * gpt-image-1
+
+
+* Azure OpenAI
+
+
+* Grok
+  * grok-2-image
 
 ## Requirements
 
