@@ -485,6 +485,16 @@ object XAiImagesGenModelClientOptions {
 
 class XAiImagesGenModelClient(val api: XAiApi, val options: XAiImagesGenModelClientOptions, id: String) extends ImagesGenModelClient {
 
+  def listImagesGenModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+    api.rawCall("GET", "/v1/image-generation-models", None).map { resp =>
+      if (resp.status == 200) {
+        Right(resp.json.select("models").as[List[JsObject]].map(obj => obj.select("id").asString))
+      } else {
+        Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
+      }
+    }
+  }
+
   override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = modelOpt.getOrElse(options.model)
     api.rawCall("POST", "/v1/images/generations", (options.raw ++

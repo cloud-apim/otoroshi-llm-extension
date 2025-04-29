@@ -27,7 +27,7 @@ class ImagesGenModelsPage extends Component {
             props: {
                 label: 'Provider', possibleValues: _.sortBy([
                     {label: 'OpenAI', value: "openai"},
-                    {label: 'X-AI', value: "x-ai"},
+                    {label: 'Grok (X-AI)', value: "x-ai"},
                     {label: 'Azure OpenAI', value: "azure-openai"}
                 ], i => i.label)
             }
@@ -127,8 +127,7 @@ class ImagesGenModelsPage extends Component {
                                         timeout: 30000
                                     },
                                     options: {
-                                        model: 'gpt-image-1',
-                                        size: "1024x1024",
+                                        model: 'grok-2-image',
                                         n: 1,
                                         response_format: "url"
                                     }
