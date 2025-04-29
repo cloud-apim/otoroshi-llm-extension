@@ -100,14 +100,14 @@ class OpenAICompatAudioModel extends NgBackendCall {
           case Some(client) => {
 
             model.mode.toLowerCase match {
-              case "transcription" => {
-                client.transcribe(modelStr).map {
-                  case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
-                  case Right(transcribedText) => {
-                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(transcribedText.toOpenAiJson)), None))
-                  }
-                }
-              }
+//              case "transcription" => {
+//                client.transcribe(modelStr).map {
+//                  case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
+//                  case Right(transcribedText) => {
+//                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(transcribedText.toOpenAiJson)), None))
+//                  }
+//                }
+//              }
 
               case "tts" => {
                 client.textToSpeech(inputFromBody, modelStr, voiceFromBody).map {

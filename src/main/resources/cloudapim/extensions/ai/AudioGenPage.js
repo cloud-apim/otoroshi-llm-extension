@@ -34,7 +34,7 @@ class AudioGenPage extends Component {
             'type': 'select',
             props: {
                 label: 'Mode', possibleValues: _.sortBy([
-                   // {label: 'Transcription', value: "transcription"},
+                    // {label: 'Transcription', value: "transcription"},
                     {label: 'Text to speech', value: "tts"},
                 ], i => i.label)
             }
@@ -82,17 +82,70 @@ class AudioGenPage extends Component {
                     tags: [],
                     metadata: {},
                     provider: 'openai',
-                    mode: 'transcription',
+                    mode: 'tts',
                     config: {
                         connection: {
                             token: 'xxxxxx',
                             timeout: 30000
                         },
                         options: {
-                            model: 'gpt-4o-transcribe'
+                            model: 'gpt-4o-transcribe',
+                            voice: 'alloy',
+                            response_format: 'mp3',
+                            speed: 1
                         }
                     }
                 }),
+                onStateChange: (state, oldState, update) => {
+                    this.setState(state)
+                    if (!_.isEqual(state.provider, oldState.provider)) {
+                        console.log("set default value", state.provider);
+                        if (state.provider === 'openai') {
+                            update({
+                                id: state.id,
+                                name: state.name,
+                                description: state.description,
+                                tags: state.tags,
+                                metadata: state.metadata,
+                                mode: state.mode,
+                                provider: 'openai',
+                                config: {
+                                    connection: {
+                                        token: 'xxxxx',
+                                        timeout: 30000,
+                                    },
+                                    options: {
+                                        model: state.mode === 'tts' ? 'gpt-4o-mini-tts' : 'gpt-4o-mini-transcribe',
+                                        voice: 'alloy',
+                                        response_format: 'mp3',
+                                        speed: 1
+                                    }
+                                }
+                            });
+                        } else if (state.provider === 'groq') {
+                            update({
+                                id: state.id,
+                                name: state.name,
+                                description: state.description,
+                                tags: state.tags,
+                                metadata: state.metadata,
+                                mode: state.mode,
+                                provider: 'groq',
+                                config: {
+                                    connection: {
+                                        token: 'xxxxx',
+                                        timeout: 30000,
+                                    },
+                                    options: {
+                                        model: state.mode === 'tts' ? 'playai-tts' : 'whisper-large-v3-turbo',
+                                        voice: 'Fritz-PlayAI',
+                                        response_format: 'wav'
+                                    }
+                                }
+                            });
+                        }
+                    }
+                },
                 itemName: "Audio model",
                 formSchema: this.formSchema,
                 formFlow: this.formFlow,
