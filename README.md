@@ -39,6 +39,18 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 * X.ai
 * Deepseek
 
+## Supported Audio Text-to-Speech models
+
+* OpenAI
+    * gpt-4o-mini-tts
+    * tts-1
+    * tts-1-hd
+
+
+* Groq
+    * playai-tts
+    * playai-tts-arabic
+
 ## Requirements
 
 **Run it on JDK17+**
