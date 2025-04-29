@@ -1,4 +1,4 @@
-package com.cloud.apim.otoroshi.extensions.aigateway.plugins
+package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
 import akka.util.ByteString
@@ -7,6 +7,7 @@ import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
+import play.api.http._
 import play.api.libs.json._
 import play.api.mvc.Results
 
@@ -49,9 +50,8 @@ object OpenAICompatAudioModelConfig {
 }
 
 class OpenAICompatAudioModel extends NgBackendCall {
-
-  override def name: String = "Cloud APIM - LLM OpenAI Compat. AudioModels"
-  override def description: Option[String] = "Delegates call to a LLM provider to generate AudioModels".some
+  override def name: String = "Cloud APIM - LLM OpenAI Compat. Audio models"
+  override def description: Option[String] = "Delegates call to a LLM provider to generate audio files or transcribe audio to text".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
@@ -103,8 +103,8 @@ class OpenAICompatAudioModel extends NgBackendCall {
               case "transcription" => {
                 client.transcribe(modelStr).map {
                   case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
-                  case Right(speech) => {
-                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(speech.toOpenAiJson)), None))
+                  case Right(transcribedText) => {
+                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(transcribedText.toOpenAiJson)), None))
                   }
                 }
               }
@@ -113,7 +113,9 @@ class OpenAICompatAudioModel extends NgBackendCall {
                 client.textToSpeech(inputFromBody, modelStr, voiceFromBody).map {
                   case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                   case Right(speech) => {
-                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(speech)), None))
+                    implicit val fileMimeTypes: FileMimeTypes =
+                      new DefaultFileMimeTypesProvider(FileMimeTypesConfiguration()).get
+                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Status(200).sendFile(speech)),None))
                   }
                 }
               }

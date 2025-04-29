@@ -25,7 +25,8 @@ class AudioGenPage extends Component {
             'type': 'select',
             props: {
                 label: 'Provider', possibleValues: _.sortBy([
-                    {label: 'OpenAI', value: "openai"}
+                    {label: 'OpenAI', value: "openai"},
+                    {label: 'Groq', value: "groq"}
                 ], i => i.label)
             }
         },
@@ -33,7 +34,7 @@ class AudioGenPage extends Component {
             'type': 'select',
             props: {
                 label: 'Mode', possibleValues: _.sortBy([
-                    {label: 'Transcription', value: "transcription"},
+                   // {label: 'Transcription', value: "transcription"},
                     {label: 'Text to speech', value: "tts"},
                 ], i => i.label)
             }

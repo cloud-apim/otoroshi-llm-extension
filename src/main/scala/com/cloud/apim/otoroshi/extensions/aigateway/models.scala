@@ -10,7 +10,9 @@ import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
+import play.api.libs.ws.WSResponse
 
+import java.io.File
 import java.nio.ByteOrder
 import java.util.Base64
 import scala.concurrent.duration.FiniteDuration
@@ -704,8 +706,8 @@ case class AudioTranscriptionResponse(
 }
 
 trait AudioModelClient {
-  def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]]
-  def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, JsValue]]
+//  def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]]
+  def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]]
 }
 
 trait ChatClient {

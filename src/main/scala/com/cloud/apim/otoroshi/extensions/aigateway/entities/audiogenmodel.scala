@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
+import com.cloud.apim.otoroshi.extensions.aigateway.AudioModelClient
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api._
 import otoroshi.env.Env
@@ -32,7 +33,7 @@ case class AudioModel(
   override def theDescription: String           = description
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
-  def getAudioModelClient()(implicit env: Env): Option[OpenAIAudioModelClient] = {
+  def getAudioModelClient()(implicit env: Env): Option[AudioModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
     // val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
@@ -44,6 +45,11 @@ case class AudioModel(
         val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val opts = OpenAIAudioModelClientOptions.fromJson(options)
         new OpenAIAudioModelClient(api, opts, mode, id).some
+      }
+      case "groq" => {
+        val api = new GroqApi(GroqApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
+        val opts = GroqAudioModelClientOptions.fromJson(options)
+        new GroqAudioModelClient(api, opts, mode, id).some
       }
       case _ => None
     }
