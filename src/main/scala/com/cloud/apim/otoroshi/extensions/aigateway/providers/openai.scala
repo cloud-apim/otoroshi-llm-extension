@@ -157,6 +157,31 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
       }
   }
 
+  def rawCallWithFile(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${baseUrl}${path}"
+    val uri = Uri(url)
+    ProviderHelpers.logCall(providerName, method, url, body)(env)
+    env.Ws
+      .url(url)
+      .withHttpHeaders(
+        "Authorization" -> s"Bearer ${token}",
+        "Accept" -> "application/json",
+        "Host" -> uri.authority.host.toString(),
+      ).applyOnWithOpt(body) {
+        case (builder, body) => builder
+          .addHttpHeaders("Content-Type" -> body.select("Content-Type").asOptString.getOrElse("application/json"))
+          .withBody(body)
+      }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .execute()
+      .map { resp =>
+        //println(s"resp: ${resp.status} - ${resp.body}")
+        //println("\n\n================================\n")
+        resp
+      }
+  }
+
   override def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
     rawCall(method, path, body).map(r => ProviderHelpers.wrapResponse(providerName, r, env) { resp =>
       OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
@@ -646,6 +671,54 @@ class OpenAiEmbeddingModelClient(val api: OpenAiApi, val options: OpenAiEmbeddin
             resp.json.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L)
           ),
         ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                             Audio generation and transcription                                 ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+case class OpenAIAudioModelClientOptions(raw: JsObject) {
+  lazy val speechModel: String = raw.select("model").asOpt[String].getOrElse("gpt-4o-mini-tts")
+  lazy val transcriptionModel: String = raw.select("model").asOpt[String].getOrElse("gpt-4o-transcribe")
+  lazy val voice: String = raw.select("voice").asOpt[String].getOrElse("alloy")
+}
+
+object OpenAIAudioModelClientOptions {
+  def fromJson(raw: JsObject): OpenAIAudioModelClientOptions = OpenAIAudioModelClientOptions(raw)
+}
+
+class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelClientOptions, id: String) extends AudioModelClient {
+
+  override def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    val finalModel: String = modelOpt.getOrElse(options.transcriptionModel)
+    api.rawCall("POST", "/audio/transcriptions", (
+      Json.obj("Content-Type" -> "multipart/form-data") ++
+      options.raw ++ Json.obj("model" -> finalModel)).some).map { resp =>
+      if (resp.status == 200) {
+        Right(AudioTranscriptionResponse(
+          transcribedText = resp.json.select("text").asOptString.getOrElse("")
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+
+  override def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, JsValue]] = {
+    val finalModel: String = modelOpt.getOrElse(options.speechModel)
+    val finalVoice: String = voiceOpt.getOrElse(options.voice)
+
+    api.rawCall("POST", "/audio/speech", (
+      Json.obj("Content-Type" -> "application/json") ++
+        options.raw ++ Json.obj("input" -> textInput, "voice" -> finalVoice, "model" -> finalModel)).some).map { resp =>
+      if (resp.status == 200) {
+        Right(
+          resp.json
+        )
       } else {
         Left(Json.obj("status" -> resp.status, "body" -> resp.json))
       }

@@ -690,6 +690,24 @@ trait EmbeddingStoreClient {
   def search(embedding: Embedding, maxResults: Int, minScore: Double)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]]
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                             Audio generation and transcription                                 ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+case class AudioTranscriptionResponse(
+                                       transcribedText: String
+                            ) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "text" -> transcribedText
+    )
+  }
+}
+
+trait AudioModelClient {
+  def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]]
+  def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, JsValue]]
+}
+
 trait ChatClient {
 
   def supportsStreaming: Boolean = false
