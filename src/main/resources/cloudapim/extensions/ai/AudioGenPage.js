@@ -89,7 +89,7 @@ class AudioGenPage extends Component {
                             timeout: 30000
                         },
                         options: {
-                            model: 'gpt-4o-transcribe',
+                            model: 'gpt-4o-mini-tts',
                             voice: 'alloy',
                             response_format: 'mp3',
                             speed: 1
@@ -114,12 +114,16 @@ class AudioGenPage extends Component {
                                         token: 'xxxxx',
                                         timeout: 30000,
                                     },
-                                    options: {
-                                        model: state.mode === 'tts' ? 'gpt-4o-mini-tts' : 'gpt-4o-mini-transcribe',
-                                        voice: 'alloy',
-                                        response_format: 'mp3',
-                                        speed: 1
-                                    }
+                                    options: state.mode === 'tts' ? {
+                                            model: 'gpt-4o-mini-tts',
+                                            voice: 'alloy',
+                                            response_format: 'mp3',
+                                            speed: 1
+                                        }
+                                        :
+                                        {
+                                            model: 'gpt-4o-mini-transcribe',
+                                        }
                                 }
                             });
                         } else if (state.provider === 'groq') {
@@ -136,11 +140,14 @@ class AudioGenPage extends Component {
                                         token: 'xxxxx',
                                         timeout: 30000,
                                     },
-                                    options: {
-                                        model: state.mode === 'tts' ? 'playai-tts' : 'whisper-large-v3-turbo',
-                                        voice: 'Fritz-PlayAI',
-                                        response_format: 'wav'
-                                    }
+                                    options: state.mode === 'tts' ? {
+                                            model: 'playai-tts',
+                                            voice: 'Fritz-PlayAI',
+                                            response_format: 'wav'
+                                        } :
+                                        {
+                                            model: 'whisper-large-v3-turbo',
+                                        }
                                 }
                             });
                         }
