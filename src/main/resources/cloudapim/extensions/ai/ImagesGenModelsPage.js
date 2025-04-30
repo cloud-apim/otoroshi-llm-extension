@@ -30,6 +30,8 @@ class ImagesGenModelsPage extends Component {
                     {label: 'Grok (X-AI)', value: "x-ai"},
                     {label: 'Azure OpenAI', value: "azure-openai"},
                     {label: 'Luma', value: "luma"},
+                    // {label: 'Leonardo AI', value: "leonardo-ai"},
+                    {label: 'Hive', value: "hive"}
                 ], i => i.label)
             }
         },
@@ -171,6 +173,46 @@ class ImagesGenModelsPage extends Component {
                                     options: {
                                         model: 'photon-1',
                                         aspect_ratio: '16:9'
+                                    }
+                                },
+                            });
+                        // } else if (state.provider === 'leonardo-ai') {
+                        //     update({
+                        //         id: state.id,
+                        //         name: state.name,
+                        //         description: state.description,
+                        //         tags: state.tags,
+                        //         metadata: state.metadata,
+                        //         provider: 'leonardo-ai',
+                        //         config: {
+                        //             connection: {
+                        //                 token: 'xxxxxx',
+                        //                 timeout: 30000
+                        //             },
+                        //             options: {
+                        //                 modelId: "6bef9f1b-29cb-40c7-b9df-32b51c1f67d3",
+                        //                 width: 512,
+                        //                 height: 512,
+                        //             }
+                        //         },
+                        //     });
+                        } else if (state.provider === 'hive') {
+                            update({
+                                id: state.id,
+                                name: state.name,
+                                description: state.description,
+                                tags: state.tags,
+                                metadata: state.metadata,
+                                provider: 'hive',
+                                config: {
+                                    connection: {
+                                        token: 'xxxxxx',
+                                        timeout: 30000
+                                    },
+                                    options: {
+                                        model: 'black-forest-labs/flux-schnell',
+                                        output_format: "jpeg",
+                                        output_quality: 90
                                     }
                                 },
                             });

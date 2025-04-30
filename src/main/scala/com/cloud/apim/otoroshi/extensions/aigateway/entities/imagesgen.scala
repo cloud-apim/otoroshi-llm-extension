@@ -62,6 +62,16 @@ case class ImagesGenModel(
         val opts = LumaImagesGenModelClientOptions.fromJson(options)
         new LumaImagesGenModelClient(api, opts, id).some
       }
+//      case "leonardo-ai" => {
+//        val api = new LeonardoAIApi(LeonardoAIApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
+//        val opts = LeonardoAIImagesGenModelClientOptions.fromJson(options)
+//        new LeonardoAIImagesGenModelClient(api, opts, id).some
+//      }
+      case "hive" => {
+        val api = new HiveApi(HiveApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
+        val opts = HiveImagesGenModelClientOptions.fromJson(options)
+        new HiveImagesGenModelClient(api, opts, id).some
+      }
       case _ => None
     }
   }
