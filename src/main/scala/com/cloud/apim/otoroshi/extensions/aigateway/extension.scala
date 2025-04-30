@@ -31,6 +31,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val embeddingModelsDataStore: EmbeddingModelsDataStore = new KvEmbeddingModelsDataStore(extensionId, env.datastores.redis, env)
   val embeddingStoresDataStore: EmbeddingStoresDataStore = new KvEmbeddingStoresDataStore(extensionId, env.datastores.redis, env)
   val mcpConnectorsDatastore: McpConnectorsDataStore = new KvMcpConnectorsDataStore(extensionId, env.datastores.redis, env)
+  val moderationModelsDataStore: ModerationModelsDataStore = new KvModerationModelsDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
@@ -89,6 +90,13 @@ class AiGatewayExtensionState(env: Env) {
   def allMcpConnectors(): Seq[McpConnector]          = _mcpConnectors.values.toSeq
   def updateMcpConnectors(values: Seq[McpConnector]): Unit = {
     _mcpConnectors.addAll(values.map(v => (v.id, v))).remAll(_mcpConnectors.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _moderationModels = new UnboundedTrieMap[String, ModerationModel]()
+  def moderationModel(id: String): Option[ModerationModel] = _moderationModels.get(id)
+  def allModerationModels(): Seq[ModerationModel]          = _moderationModels.values.toSeq
+  def updateModerationModels(values: Seq[ModerationModel]): Unit = {
+    _moderationModels.addAll(values.map(v => (v.id, v))).remAll(_moderationModels.keySet.toSeq.diff(values.map(_.id)))
   }
 }
 
@@ -165,6 +173,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val promptTemplatesPageCode = getResourceCode("cloudapim/extensions/ai/PromptTemplatesPage.js")
   lazy val promptContextsPageCode = getResourceCode("cloudapim/extensions/ai/PromptContextsPage.js")
   lazy val aiProvidersPageCode = getResourceCode("cloudapim/extensions/ai/AiProvidersPage.js")
+  lazy val moderationModelsPage = getResourceCode("cloudapim/extensions/ai/ModerationModelsPage.js")
   lazy val imgCode = getResourceCode("cloudapim/extensions/ai/undraw_visionary_technology_re_jfp7.svg")
 
   def handleProviderTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body:  Option[Source[ByteString, _]]): Future[Result] = {
@@ -533,6 +542,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    ${promptTemplatesPageCode}
             |    ${promptContextsPageCode}
             |    ${aiProvidersPageCode}
+            |    ${moderationModelsPage}
             |
             |    return {
             |      id: extensionId,
@@ -603,6 +613,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            link: '/extensions/cloud-apim/ai-gateway/mcp-connectors',
             |            display: () => true,
             |            icon: () => 'fa-brain',
+            |          },
+            |           {
+            |            title: 'Moderation Models',
+            |            description: 'All your Moderation Models',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/moderation-models',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
             |          }
             |        ]
             |      }],
@@ -670,6 +688,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          link: '/extensions/cloud-apim/ai-gateway/mcp-connectors',
             |          display: () => true,
             |          icon: () => 'fa-brain',
+            |        },
+            |         {
+            |          title: 'Moderation Models',
+            |          description: 'All your Moderation models',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/moderation-models',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
             |        }
             |      ],
             |      sidebarItems: [
@@ -719,6 +745,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'MCP Connectors',
             |          text: 'All your MCP Connectors',
             |          path: 'extensions/cloud-apim/ai-gateway/mcp-connectors',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Moderation Models',
+            |          text: 'All your Moderation models',
+            |          path: 'extensions/cloud-apim/ai-gateway/moderation-models',
             |          icon: 'brain'
             |        }
             |      ],
@@ -786,6 +818,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'MCP Connectors',
             |          value: 'mcp-connectors',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/moderation-models`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Moderation Models',
+            |          value: 'moderation-models',
             |        }
             |      ],
             |      routes: [
@@ -932,6 +972,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          component: (props) => {
             |            return React.createElement(McpConnectorsPage, props, null)
             |          }
+            |        },
+            |          {
+            |          path: '/extensions/cloud-apim/ai-gateway/moderation-models/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(ModerationModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/moderation-models/:taction',
+            |          component: (props) => {
+            |            return React.createElement(ModerationModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/moderation-models',
+            |          component: (props) => {
+            |            return React.createElement(ModerationModelsPage, props, null)
+            |          }
             |        }
             |      ]
             |    }
@@ -954,6 +1012,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       embeddingModels <- datastores.embeddingModelsDataStore.findAllAndFillSecrets()
       embeddingStores <- datastores.embeddingStoresDataStore.findAllAndFillSecrets()
       mcpConnectors <- datastores.mcpConnectorsDatastore.findAllAndFillSecrets()
+      moderationModels <- datastores.moderationModelsDataStore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
@@ -963,6 +1022,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateEmbeddingModels(embeddingModels)
       states.updateEmbeddingStores(embeddingStores)
       states.updateMcpConnectors(mcpConnectors)
+      states.updateModerationModels(moderationModels)
       Future {
         McpSupport.restartConnectorsIfNeeded()
         McpSupport.stopConnectorsIfNeeded()
@@ -981,6 +1041,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(EmbeddingModel.resource(env, datastores, states)),
       AdminExtensionEntity(EmbeddingStore.resource(env, datastores, states)),
       AdminExtensionEntity(McpConnector.resource(env, datastores, states)),
+      AdminExtensionEntity(ModerationModel.resource(env, datastores, states)),
     )
   }
 }

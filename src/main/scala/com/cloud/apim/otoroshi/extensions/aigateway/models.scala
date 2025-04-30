@@ -690,6 +690,36 @@ trait EmbeddingStoreClient {
   def search(embedding: Embedding, maxResults: Int, minScore: Double)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]]
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                        Moderation Models                                       ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class ModerationResult(flagged: Boolean, categories: JsObject, categoryScored: JsObject) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "flagged" -> flagged,
+      "categories" -> categories,
+      "category_scores" -> categoryScored
+    )
+  }
+}
+
+case class ModerationResponse(
+                              model: String,
+                              moderationResults: Seq[ModerationResult],
+                            ) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "results" -> moderationResults.map(_.toOpenAiJson),
+      "model" -> model
+    )
+  }
+}
+
+trait ModerationModelClient {
+  def moderate(promptInput: String, model: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]]
+}
+
 trait ChatClient {
 
   def supportsStreaming: Boolean = false

@@ -652,3 +652,36 @@ class OpenAiEmbeddingModelClient(val api: OpenAiApi, val options: OpenAiEmbeddin
     }
   }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                    OpenAI Moderation Models                                    ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class OpenAiModerationModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("omni-moderation-latest")
+}
+
+object OpenAiModerationModelClientOptions {
+  def fromJson(raw: JsObject): OpenAiModerationModelClientOptions = OpenAiModerationModelClientOptions(raw)
+}
+
+class OpenAiModerationModelClient(val api: OpenAiApi, val options: OpenAiModerationModelClientOptions, id: String) extends ModerationModelClient {
+
+  override def moderate(promptInput: String, modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
+    val finalModel: String = modelOpt.getOrElse(options.model)
+    api.rawCall("POST", "/moderations", (options.raw ++
+      Json.obj(
+        "input" -> promptInput,
+        "model" -> finalModel
+      )).some).map { resp =>
+      if (resp.status == 200) {
+        Right(ModerationResponse(
+          model = resp.json.select("model").asString,
+          moderationResults = resp.json.select("results").as[Seq[JsObject]].map(o => ModerationResult(o.select("flagged").asOpt[Boolean].getOrElse(false), o.select("categories").asOpt[JsObject].getOrElse(Json.obj()), o.select("category_scores").asOpt[JsObject].getOrElse(Json.obj()))),
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}
