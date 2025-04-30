@@ -35,17 +35,17 @@ case class ImagesGenModel(
   def getImagesGenModelClient()(implicit env: Env): Option[ImagesGenModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
-    val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
+    // val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val token = connection.select("token").asOpt[String].getOrElse("xxx")
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     provider.toLowerCase() match {
       case "openai" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
+        val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val opts = OpenAiImagesGenModelClientOptions.fromJson(options)
         new OpenAiImagesGenModelClient(api, opts, id).some
       }
       case "x-ai" => {
-        val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val api = new XAiApi(XAiApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
         val opts = XAiImagesGenModelClientOptions.fromJson(options)
         new XAiImagesGenModelClient(api, opts, id).some
       }
@@ -56,6 +56,11 @@ case class ImagesGenModel(
         val api = new AzureOpenAiApi(resourceName, deploymentId, apikey, timeout.getOrElse(10.seconds), env = env)
         val opts = AzureOpenAiImagesGenModelClientOptions.fromJson(options)
         new AzureOpenAiImagesGenModelClient(api, opts, id).some
+      }
+      case "luma" => {
+        val api = new LumaApi(LumaApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
+        val opts = LumaImagesGenModelClientOptions.fromJson(options)
+        new LumaImagesGenModelClient(api, opts, id).some
       }
       case _ => None
     }

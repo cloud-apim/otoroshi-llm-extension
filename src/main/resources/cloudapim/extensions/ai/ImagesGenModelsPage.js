@@ -28,7 +28,8 @@ class ImagesGenModelsPage extends Component {
                 label: 'Provider', possibleValues: _.sortBy([
                     {label: 'OpenAI', value: "openai"},
                     {label: 'Grok (X-AI)', value: "x-ai"},
-                    {label: 'Azure OpenAI', value: "azure-openai"}
+                    {label: 'Azure OpenAI', value: "azure-openai"},
+                    {label: 'Luma', value: "luma"},
                 ], i => i.label)
             }
         },
@@ -77,7 +78,6 @@ class ImagesGenModelsPage extends Component {
                     provider: 'openai',
                     config: {
                         connection: {
-                            base_url: "https://api.openai.com/v1",
                             token: 'xxxxxx',
                             timeout: 30000
                         },
@@ -101,7 +101,6 @@ class ImagesGenModelsPage extends Component {
                                 provider: 'openai',
                                 config: {
                                     connection: {
-                                        base_url: "https://api.openai.com/v1",
                                         token: 'xxxxxx',
                                         timeout: 30000
                                     },
@@ -122,7 +121,6 @@ class ImagesGenModelsPage extends Component {
                                 provider: 'x-ai',
                                 config: {
                                     connection: {
-                                        base_url: "https://api.x.ai",
                                         token: 'xxxxxx',
                                         timeout: 30000
                                     },
@@ -154,6 +152,25 @@ class ImagesGenModelsPage extends Component {
                                         n: 1,
                                         quality: "hd",
                                         style: "vivid"
+                                    }
+                                },
+                            });
+                        } else if (state.provider === 'luma') {
+                            update({
+                                id: state.id,
+                                name: state.name,
+                                description: state.description,
+                                tags: state.tags,
+                                metadata: state.metadata,
+                                provider: 'luma',
+                                config: {
+                                    connection: {
+                                        token: 'xxxxxx',
+                                        timeout: 30000
+                                    },
+                                    options: {
+                                        model: 'photon-1',
+                                        aspect_ratio: '16:9'
                                     }
                                 },
                             });
