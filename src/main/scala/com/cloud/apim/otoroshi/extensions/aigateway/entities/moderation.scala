@@ -17,21 +17,27 @@ import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.util.{Failure, Success, Try}
 
 case class ModerationModel(
-  location: EntityLocation,
-  id: String,
-  name: String,
-  description: String,
-  tags: Seq[String],
-  metadata: Map[String, String],
-  provider: String,
-  config: JsObject,
-) extends EntityLocationSupport {
-  override def internalId: String               = id
-  override def json: JsValue                    = ModerationModel.format.writes(this)
-  override def theName: String                  = name
-  override def theDescription: String           = description
-  override def theTags: Seq[String]             = tags
+                            location: EntityLocation,
+                            id: String,
+                            name: String,
+                            description: String,
+                            tags: Seq[String],
+                            metadata: Map[String, String],
+                            provider: String,
+                            config: JsObject,
+                          ) extends EntityLocationSupport {
+  override def internalId: String = id
+
+  override def json: JsValue = ModerationModel.format.writes(this)
+
+  override def theName: String = name
+
+  override def theDescription: String = description
+
+  override def theTags: Seq[String] = tags
+
   override def theMetadata: Map[String, String] = metadata
+
   def getModerationModelClient()(implicit env: Env): Option[ModerationModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
@@ -43,6 +49,11 @@ case class ModerationModel(
         val opts = OpenAiModerationModelClientOptions.fromJson(options)
         new OpenAiModerationModelClient(api, opts, id).some
       }
+      case "mistral" => {
+        val api = new MistralAiApi(MistralAiApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
+        val opts = MistralAiModerationModelClientOptions.fromJson(options)
+        new MistralAiModerationModelClient(api, opts, id).some
+      }
       case _ => None
     }
   }
@@ -50,15 +61,16 @@ case class ModerationModel(
 
 object ModerationModel {
   val format = new Format[ModerationModel] {
-    override def writes(o: ModerationModel): JsValue             = o.location.jsonWithKey ++ Json.obj(
-      "id"               -> o.id,
-      "name"             -> o.name,
-      "description"      -> o.description,
-      "metadata"         -> o.metadata,
-      "tags"             -> JsArray(o.tags.map(JsString.apply)),
-      "provider"         -> o.provider,
-      "config"           -> o.config,
+    override def writes(o: ModerationModel): JsValue = o.location.jsonWithKey ++ Json.obj(
+      "id" -> o.id,
+      "name" -> o.name,
+      "description" -> o.description,
+      "metadata" -> o.metadata,
+      "tags" -> JsArray(o.tags.map(JsString.apply)),
+      "provider" -> o.provider,
+      "config" -> o.config,
     )
+
     override def reads(json: JsValue): JsResult[ModerationModel] = Try {
       ModerationModel(
         location = otoroshi.models.EntityLocation.readFromKey(json),
@@ -71,10 +83,11 @@ object ModerationModel {
         config = (json \ "config").asOpt[JsObject].getOrElse(Json.obj()),
       )
     } match {
-      case Failure(ex)    => JsError(ex.getMessage)
+      case Failure(ex) => JsError(ex.getMessage)
       case Success(value) => JsSuccess(value)
     }
   }
+
   def resource(env: Env, datastores: AiGatewayExtensionDatastores, states: AiGatewayExtensionState): Resource = {
     Resource(
       "ModerationModel",
@@ -83,7 +96,7 @@ object ModerationModel {
       "ai-gateway.extensions.cloud-apim.com",
       ResourceVersion("v1", true, false, true),
       GenericResourceAccessApiWithState[ModerationModel](
-        format = ModerationModel.format ,
+        format = ModerationModel.format,
         clazz = classOf[ModerationModel],
         keyf = id => datastores.moderationModelsDataStore.key(id),
         extractIdf = c => datastores.moderationModelsDataStore.extractId(c),
@@ -160,8 +173,11 @@ trait ModerationModelsDataStore extends BasicStore[ModerationModel]
 class KvModerationModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
   extends ModerationModelsDataStore
     with RedisLikeStore[ModerationModel] {
-  override def fmt: Format[ModerationModel]                  = ModerationModel.format
+  override def fmt: Format[ModerationModel] = ModerationModel.format
+
   override def redisLike(implicit env: Env): RedisLike = redisCli
-  override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:embmods:$id"
-  override def extractId(value: ModerationModel): String    = value.id
+
+  override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:embmods:$id"
+
+  override def extractId(value: ModerationModel): String = value.id
 }
