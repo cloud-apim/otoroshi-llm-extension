@@ -51,6 +51,9 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
     * playai-tts
     * playai-tts-arabic
 
+
+* ElevenLabs
+
 ## Requirements
 
 **Run it on JDK17+**

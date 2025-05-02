@@ -26,7 +26,8 @@ class AudioGenPage extends Component {
             props: {
                 label: 'Provider', possibleValues: _.sortBy([
                     {label: 'OpenAI', value: "openai"},
-                    {label: 'Groq', value: "groq"}
+                    {label: 'Groq', value: "groq"},
+                    {label: 'ElevenLabs', value: "elevenlabs"}
                 ], i => i.label)
             }
         },
@@ -148,6 +149,27 @@ class AudioGenPage extends Component {
                                         {
                                             model: 'whisper-large-v3-turbo',
                                         }
+                                }
+                            });
+                        } else if (state.provider === 'elevenlabs') {
+                            update({
+                                id: state.id,
+                                name: state.name,
+                                description: state.description,
+                                tags: state.tags,
+                                metadata: state.metadata,
+                                mode: state.mode,
+                                provider: 'elevenlabs',
+                                config: {
+                                    connection: {
+                                        token: 'xxxxx',
+                                        timeout: 30000,
+                                    },
+                                    options: state.mode === 'tts' ? {
+                                        model_id: 'eleven_multilingual_v2',
+                                        voice_id: '21m00Tcm4TlvDq8ikWAM',
+                                        output_format: 'mp3_44100_128'
+                                    } : {}
                                 }
                             });
                         }

@@ -17,22 +17,28 @@ import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.util.{Failure, Success, Try}
 
 case class AudioModel(
-  location: EntityLocation,
-  id: String,
-  name: String,
-  description: String,
-  tags: Seq[String],
-  metadata: Map[String, String],
-  provider: String,
-  mode: String,
-  config: JsObject,
-) extends EntityLocationSupport {
-  override def internalId: String               = id
-  override def json: JsValue                    = AudioModel.format.writes(this)
-  override def theName: String                  = name
-  override def theDescription: String           = description
-  override def theTags: Seq[String]             = tags
+                       location: EntityLocation,
+                       id: String,
+                       name: String,
+                       description: String,
+                       tags: Seq[String],
+                       metadata: Map[String, String],
+                       provider: String,
+                       mode: String,
+                       config: JsObject,
+                     ) extends EntityLocationSupport {
+  override def internalId: String = id
+
+  override def json: JsValue = AudioModel.format.writes(this)
+
+  override def theName: String = name
+
+  override def theDescription: String = description
+
+  override def theTags: Seq[String] = tags
+
   override def theMetadata: Map[String, String] = metadata
+
   def getAudioModelClient()(implicit env: Env): Option[AudioModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
@@ -51,6 +57,11 @@ case class AudioModel(
         val opts = GroqAudioModelClientOptions.fromJson(options)
         new GroqAudioModelClient(api, opts, mode, id).some
       }
+      case "elevenlabs" => {
+        val api = new ElevenLabsApi(ElevenLabsApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
+        val opts = ElevenLabsAudioModelClientOptions.fromJson(options)
+        new ElevenLabsAudioModelClient(api, opts, mode, id).some
+      }
       case _ => None
     }
   }
@@ -58,16 +69,17 @@ case class AudioModel(
 
 object AudioModel {
   val format = new Format[AudioModel] {
-    override def writes(o: AudioModel): JsValue             = o.location.jsonWithKey ++ Json.obj(
-      "id"               -> o.id,
-      "name"             -> o.name,
-      "description"      -> o.description,
-      "metadata"         -> o.metadata,
-      "tags"             -> JsArray(o.tags.map(JsString.apply)),
-      "provider"         -> o.provider,
-      "mode"             -> o.mode,
-      "config"           -> o.config,
+    override def writes(o: AudioModel): JsValue = o.location.jsonWithKey ++ Json.obj(
+      "id" -> o.id,
+      "name" -> o.name,
+      "description" -> o.description,
+      "metadata" -> o.metadata,
+      "tags" -> JsArray(o.tags.map(JsString.apply)),
+      "provider" -> o.provider,
+      "mode" -> o.mode,
+      "config" -> o.config,
     )
+
     override def reads(json: JsValue): JsResult[AudioModel] = Try {
       AudioModel(
         location = otoroshi.models.EntityLocation.readFromKey(json),
@@ -81,10 +93,11 @@ object AudioModel {
         config = (json \ "config").asOpt[JsObject].getOrElse(Json.obj()),
       )
     } match {
-      case Failure(ex)    => JsError(ex.getMessage)
+      case Failure(ex) => JsError(ex.getMessage)
       case Success(value) => JsSuccess(value)
     }
   }
+
   def resource(env: Env, datastores: AiGatewayExtensionDatastores, states: AiGatewayExtensionState): Resource = {
     Resource(
       "AudioModel",
@@ -93,7 +106,7 @@ object AudioModel {
       "ai-gateway.extensions.cloud-apim.com",
       ResourceVersion("v1", true, false, true),
       GenericResourceAccessApiWithState[AudioModel](
-        format = AudioModel.format ,
+        format = AudioModel.format,
         clazz = classOf[AudioModel],
         keyf = id => datastores.AudioModelsDataStore.key(id),
         extractIdf = c => datastores.AudioModelsDataStore.extractId(c),
@@ -152,8 +165,11 @@ trait AudioModelsDataStore extends BasicStore[AudioModel]
 class KvAudioModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
   extends AudioModelsDataStore
     with RedisLikeStore[AudioModel] {
-  override def fmt: Format[AudioModel]                  = AudioModel.format
+  override def fmt: Format[AudioModel] = AudioModel.format
+
   override def redisLike(implicit env: Env): RedisLike = redisCli
-  override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:audiomodels:$id"
-  override def extractId(value: AudioModel): String    = value.id
+
+  override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:audiomodels:$id"
+
+  override def extractId(value: AudioModel): String = value.id
 }
