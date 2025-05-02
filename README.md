@@ -55,6 +55,15 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 * Grok
   * grok-2-image
 
+
+* Luma
+  * photon-1 (default)
+  * photon-flash-1
+
+
+* Hive
+  * black-forest-labs/flux-schnell
+
 ## Requirements
 
 **Run it on JDK17+**
