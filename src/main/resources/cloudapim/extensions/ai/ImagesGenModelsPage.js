@@ -193,6 +193,8 @@ class ImagesGenModelsPage extends Component {
                         //                 modelId: "6bef9f1b-29cb-40c7-b9df-32b51c1f67d3",
                         //                 width: 512,
                         //                 height: 512,
+                        //                 ultra: false,
+                        //                 enhancePrompt: true
                         //             }
                         //         },
                         //     });
@@ -211,6 +213,8 @@ class ImagesGenModelsPage extends Component {
                                     },
                                     options: {
                                         model: 'black-forest-labs/flux-schnell',
+                                        width: 1024,
+                                        height: 1024,
                                         output_format: "jpeg",
                                         output_quality: 90
                                     }

@@ -43,7 +43,7 @@ class HiveApi(baseUrl: String = HiveApi.baseUrl, token: String, timeout: FiniteD
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 case class HiveImagesGenModelClientOptions(raw: JsObject) {
-  lazy val model: String = raw.select("model").asOpt[String].getOrElse("photon-1")
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("black-forest-labs/flux-schnell")
 }
 
 object HiveImagesGenModelClientOptions {
@@ -54,17 +54,23 @@ class HiveImagesGenModelClient(val api: HiveApi, val options: HiveImagesGenModel
 
   override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = modelOpt.getOrElse(options.model)
-    api.rawCall("POST", "/generations", (options.raw ++
+    api.rawCall("POST", s"/${finalModel}", (options.raw ++
+      Json.obj(
+        "image_size" -> Json.obj(
+          "width" -> options.raw.select("width").asOpt[Int].getOrElse(1024),
+          "height" -> options.raw.select("height").asOpt[Int].getOrElse(1024)
+        )
+      ) ++
+      Json.obj(
+        "output_format" -> options.raw.select("output_format").asOptString.getOrElse("jpeg"),
+      ) ++
       Json.obj(
         "prompt" -> promptInput,
-        "model" -> finalModel
       )).some).map { resp =>
       if (resp.status == 200) {
-        val imageUrl = resp.json.at("assets.image").asOptString
-
         Right(ImagesGenResponse(
           created = resp.json.select("created_at").asOpt[Long].getOrElse(-1L),
-          images = Seq(ImagesGen(None, None, imageUrl)),
+          images = resp.json.select("output").as[Seq[JsObject]].map(o => ImagesGen(None, None, o.select("url").asOpt[String])),
           metadata = None
         ))
       } else {
