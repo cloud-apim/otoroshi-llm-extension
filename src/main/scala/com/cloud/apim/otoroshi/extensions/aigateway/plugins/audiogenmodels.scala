@@ -76,6 +76,7 @@ class OpenAICompatAudioModel extends NgBackendCall {
         val jsonBody = bodyRaw.utf8String.parseJson
         val inputFromBody: String = jsonBody.select("text").asOptString.getOrElse("")
         val voiceFromBody: Option[String] = jsonBody.select("voice").asOptString
+        val responseFormatFromBody: Option[String] = jsonBody.select("response_format").asOptString
         val modelFromBody = jsonBody.select("model").asOptString
         val config = ctx.cachedConfig(internalName)(OpenAICompatAudioModelConfig.format).getOrElse(OpenAICompatAudioModelConfig.default)
         val models = config.refs.flatMap(r => ext.states.AudioModel(r))
@@ -110,7 +111,7 @@ class OpenAICompatAudioModel extends NgBackendCall {
 //              }
 
               case "tts" => {
-                client.textToSpeech(inputFromBody, modelStr, voiceFromBody).map {
+                client.textToSpeech(inputFromBody, modelStr, voiceFromBody, responseFormatFromBody).map {
                   case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                   case Right(speech) => {
                     implicit val fileMimeTypes: FileMimeTypes =

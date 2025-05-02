@@ -705,9 +705,23 @@ case class AudioTranscriptionResponse(
   }
 }
 
+case class AudioGenVoice(
+  voiceId: String,
+  voiceName: String
+){
+  def toJson: JsValue = {
+    Json.obj(
+      "voice_id" -> voiceId,
+      "voice_name" -> voiceName
+    )
+  }
+}
+
 trait AudioModelClient {
 //  def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]]
-  def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]]
+  def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String], responseFormatFromBody: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]]
+
+  def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
 }
 
 trait ChatClient {

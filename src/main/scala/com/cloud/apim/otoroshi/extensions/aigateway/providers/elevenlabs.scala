@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.AudioModelClient
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenVoice, AudioModelClient}
 import otoroshi.env.Env
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
@@ -22,7 +22,6 @@ object ElevenLabsApi {
 }
 
 class ElevenLabsApi(baseUrl: String = ElevenLabsApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
-
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logCall("ElevenLabs", method, url, body)(env)
@@ -87,16 +86,26 @@ object ElevenLabsAudioModelClientOptions {
 
 class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val options: ElevenLabsAudioModelClientOptions, mode: String, id: String) extends AudioModelClient {
 
-  override def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]] = {
+  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+    api.rawCall("GET", "/v2/voices?include_total_count=true", None).map { resp =>
+      if (resp.status == 200) {
+        Right(resp.json.select("voices").as[List[JsObject]].map(obj => AudioGenVoice(obj.select("voice_id").asString, obj.select("name").asString))
+        )
+      } else {
+        Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
+      }
+    }
+  }
+
+  override def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String], formatOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]] = {
     val finalModel: String = modelOpt.getOrElse(options.model)
     val finalVoice: String = voiceOpt.getOrElse(options.voiceId)
-    val finalFormat: String = voiceOpt.getOrElse(options.format)
+    val finalFormat: String = formatOpt.getOrElse(options.format)
 
     api.rawCallTts("POST", s"/v1/text-to-speech/${finalVoice}?output_format=${finalFormat}", (
       options.raw ++
         Json.obj(
           "text" -> textInput,
-          "voice" -> finalVoice,
           "model_id" -> finalModel
         )
       ).some).map { resp =>

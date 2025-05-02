@@ -731,7 +731,17 @@ object OpenAIAudioModelClientOptions {
 
 class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelClientOptions, mode: String, id: String) extends AudioModelClient {
 
-//  override def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+    Right(
+      List(
+        AudioGenVoice("tts-1", "tts-1"),
+        AudioGenVoice("tts-1-hd", "tts-1-hd"),
+        AudioGenVoice("gpt-4o-mini-tts", "gpt-4o-mini-tts")
+      )
+    ).vfuture
+  }
+
+  //  override def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
 //    val finalModel: String = modelOpt.getOrElse(options.transcriptionModel)
 //    api.rawCall("POST", "/audio/transcriptions", (
 //      options.raw ++ Json.obj("model" -> finalModel)).some).map { resp =>
@@ -745,12 +755,20 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelCl
 //    }
 //  }
 
-  override def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]] = {
+  override def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String], formatOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]] = {
     val finalModel: String = modelOpt.getOrElse(options.speechModel)
     val finalVoice: String = voiceOpt.getOrElse(options.voice)
+    val finalFormat: String = formatOpt.getOrElse(options.format)
 
     api.rawCallTts("POST", "/audio/speech", (
-        options.raw ++ Json.obj("input" -> textInput, "voice" -> finalVoice, "model" -> finalModel)).some).map { resp =>
+        options.raw ++
+          Json.obj(
+            "input" -> textInput,
+            "voice" -> finalVoice,
+            "model" -> finalModel,
+            "response_format" -> finalFormat
+          )
+      ).some).map { resp =>
       if (resp.isFile) {
         Right(
           resp

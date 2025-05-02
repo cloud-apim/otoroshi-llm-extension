@@ -432,7 +432,18 @@ object GroqAudioModelClientOptions {
 
 class GroqAudioModelClient(val api: GroqApi, val options: GroqAudioModelClientOptions, mode: String, id: String) extends AudioModelClient {
 
-//  override def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+    Right(
+      List(
+        AudioGenVoice("Arista-PlayAI", "Arista-PlayAI"),
+        AudioGenVoice("Atlas-PlayAI", "Atlas-PlayAI"),
+        AudioGenVoice("Basil-PlayAI", "Basil-PlayAI")
+      )
+    ).vfuture
+  }
+
+
+  //  override def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
 //    val finalModel: String = modelOpt.getOrElse(options.transcriptionModel)
 //    api.rawCall("POST", "/openai/v1/audio/transcriptions", (
 //      options.raw ++ Json.obj("model" -> finalModel)).some).map { resp =>
@@ -446,12 +457,20 @@ class GroqAudioModelClient(val api: GroqApi, val options: GroqAudioModelClientOp
 //    }
 //  }
 
-  override def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]] = {
+  override def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String], formatOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]] = {
     val finalModel: String = modelOpt.getOrElse(options.speechModel)
     val finalVoice: String = voiceOpt.getOrElse(options.voice)
+    val finalFormat: String = voiceOpt.getOrElse(options.format)
 
     api.rawCallTts("POST", "/openai/v1/audio/speech", (
-      options.raw ++ Json.obj("input" -> textInput, "voice" -> finalVoice, "model" -> finalModel)).some).map { resp =>
+      options.raw ++
+        Json.obj(
+          "input" -> textInput,
+          "voice" -> finalVoice,
+          "model" -> finalModel,
+          "response_format" -> finalFormat
+        )
+      ).some).map { resp =>
       if (resp.isFile) {
         Right(
           resp

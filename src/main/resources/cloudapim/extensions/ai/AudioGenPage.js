@@ -1,5 +1,8 @@
 class AudioGenPage extends Component {
-    formSchema = {
+    state = {
+        dynamicVoices: null
+    }
+    formSchema = (state) => ({
         _loc: {
             type: 'location',
             props: {},
@@ -40,13 +43,80 @@ class AudioGenPage extends Component {
                 ], i => i.label)
             }
         },
+        voice: state?.provider === 'openai' ? {
+            'type': 'select',
+            props: {
+                label: 'Voice', possibleValues: _.sortBy([
+                    {label: 'Alloy', value: "alloy"},
+                    {label: 'Sage', value: "sage"},
+                    {label: 'Ash', value: "Ash"},
+                    {label: 'Ballad', value: "ballad"},
+                    {label: 'Corad', value: "corad"},
+                    {label: 'Echo', value: "echo"},
+                    {label: 'Fable', value: "fable"},
+                    {label: 'Onyx', value: "onyx"},
+                    {label: 'Nova', value: "nova"},
+                ], i => i.label)
+            }
+        } : state?.provider === 'groq' ? {
+                'type': 'select',
+                props: {
+                    label: 'Voice', possibleValues: _.sortBy([
+                        {label: 'Arista-PlayAI', value: "arista-PlayAI"},
+                        {label: 'Atlas-PlayAI', value: "Atlas-PlayAI"},
+                        {label: 'Basil-PlayAI', value: "Basil-PlayAI"},
+                        {label: 'Briggs-PlayAI,', value: "Briggs-PlayAI,"},
+                    ], i => i.label)
+                }
+            } :
+            state?.provider === 'elevenlab' ?
+                {
+                    'type': 'select',
+                    props: {
+                        label: 'Voice', possibleValues: _.sortBy([
+                            {label: 'Aria', value: "9BWtsMINqrJLrRacOk9x"},
+                            {label: 'Roger', value: "CwhRBWXzGAHq8TQ4Fs17"},
+                        ], i => i.label)
+                    }
+                } :
+                {
+                    'type': 'select',
+                    props: {
+                        label: 'Voice', possibleValues: _.sortBy([
+                            {label: 'Alloy', value: "alloy"},
+                        ], i => i.label)
+                    }
+                },
         config: {
             type: "jsonobjectcode",
             props: {
                 label: 'Configuration'
             }
         }
-    };
+    });
+
+
+    fetchVoices = (audioModel, force) => {
+        console.log("got provider from  fetchVoices  = ", audioModel)
+        fetch(`/extensions/cloud-apim/extensions/ai-extension/audios-gen/_voices`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(audioModel)
+        }).then(r => {
+            if (r.status === 200) {
+                r.json().then(body => {
+                    if (body.done) {
+                        console.log("fetching new Voices...", body.voices)
+                        this.setState({ dynamicVoices: body.voices })
+                    }
+                })
+            }
+        })
+    }
 
     columns = [
         {
@@ -59,10 +129,23 @@ class AudioGenPage extends Component {
             filterId: 'description',
             content: (item) => item.description,
         },
+        {
+            title: 'Provider',
+            filterId: 'provider',
+            content: (item) => item.provider,
+        },
     ];
 
-    formFlow = [
-        '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'mode', 'config'];
+
+    formFlow = (state) => {
+        console.log("statttee = ", state)
+        if (!state.provider) {
+            return [
+                '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'mode']
+        }
+        return [
+            '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'mode', 'voice', 'config']
+    };
 
     componentDidMount() {
         this.props.setTitle(`Audio model`);
@@ -71,36 +154,33 @@ class AudioGenPage extends Component {
     client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'audio-models');
 
     render() {
+        const formSchemaBuilder = this.formSchema(this.state || {});
+        const formFlowBuilder = this.formFlow(this.state || {});
         return (
             React.createElement(Table, {
                 parentProps: this.props,
                 selfUrl: "extensions/cloud-apim/ai-gateway/audio-models",
                 defaultTitle: "All Audio models",
                 defaultValue: () => ({
-                    id: 'audio-gen-model_' + uuid(),
+                    id: 'audio-model_' + uuid(),
                     name: 'Audio model',
                     description: 'An audio model',
                     tags: [],
                     metadata: {},
-                    provider: 'openai',
-                    mode: 'tts',
-                    config: {
-                        connection: {
-                            token: 'xxxxxx',
-                            timeout: 30000
-                        },
-                        options: {
-                            model: 'gpt-4o-mini-tts',
-                            voice: 'alloy',
-                            response_format: 'mp3',
-                            speed: 1
-                        }
-                    }
+                    mode: "tts"
                 }),
                 onStateChange: (state, oldState, update) => {
                     this.setState(state)
+
+                    if (!_.isEqual(state.voice, oldState.voice)) {
+                        console.log("NEW state.voice", state.voice)
+                    }
+
                     if (!_.isEqual(state.provider, oldState.provider)) {
                         console.log("set default value", state.provider);
+
+                        this.fetchVoices(state, false);
+
                         if (state.provider === 'openai') {
                             update({
                                 id: state.id,
@@ -109,6 +189,7 @@ class AudioGenPage extends Component {
                                 tags: state.tags,
                                 metadata: state.metadata,
                                 mode: state.mode,
+                                voice: null,
                                 provider: 'openai',
                                 config: {
                                     connection: {
@@ -117,7 +198,6 @@ class AudioGenPage extends Component {
                                     },
                                     options: state.mode === 'tts' ? {
                                             model: 'gpt-4o-mini-tts',
-                                            voice: 'alloy',
                                             response_format: 'mp3',
                                             speed: 1
                                         }
@@ -136,6 +216,7 @@ class AudioGenPage extends Component {
                                 metadata: state.metadata,
                                 mode: state.mode,
                                 provider: 'groq',
+                                voice: null,
                                 config: {
                                     connection: {
                                         token: 'xxxxx',
@@ -143,7 +224,6 @@ class AudioGenPage extends Component {
                                     },
                                     options: state.mode === 'tts' ? {
                                             model: 'playai-tts',
-                                            voice: 'Fritz-PlayAI',
                                             response_format: 'wav'
                                         } :
                                         {
@@ -159,6 +239,7 @@ class AudioGenPage extends Component {
                                 tags: state.tags,
                                 metadata: state.metadata,
                                 mode: state.mode,
+                                voice: null,
                                 provider: 'elevenlabs',
                                 config: {
                                     connection: {
@@ -167,7 +248,6 @@ class AudioGenPage extends Component {
                                     },
                                     options: state.mode === 'tts' ? {
                                         model_id: 'eleven_multilingual_v2',
-                                        voice_id: '21m00Tcm4TlvDq8ikWAM',
                                         output_format: 'mp3_44100_128'
                                     } : {}
                                 }
@@ -176,8 +256,8 @@ class AudioGenPage extends Component {
                     }
                 },
                 itemName: "Audio model",
-                formSchema: this.formSchema,
-                formFlow: this.formFlow,
+                formSchema: formSchemaBuilder,
+                formFlow: formFlowBuilder,
                 columns: this.columns,
                 stayAfterSave: true,
                 fetchItems: (paginationState) => this.client.findAll(),
