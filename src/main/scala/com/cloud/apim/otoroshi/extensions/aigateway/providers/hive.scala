@@ -59,12 +59,8 @@ class HiveImagesGenModelClient(val api: HiveApi, val options: HiveImagesGenModel
         "image_size" -> Json.obj(
           "width" -> options.raw.select("width").asOpt[Int].getOrElse(1024),
           "height" -> options.raw.select("height").asOpt[Int].getOrElse(1024)
-        )
-      ) ++
-      Json.obj(
+        ),
         "output_format" -> options.raw.select("output_format").asOptString.getOrElse("jpeg"),
-      ) ++
-      Json.obj(
         "prompt" -> promptInput,
       )).some).map { resp =>
       if (resp.status == 200) {
