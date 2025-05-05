@@ -57,6 +57,22 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 
 ## Supported LLM Embeddings models
 
+* OpenAI
+  * text-embedding-3-small
+  * text-embedding-3-large
+  * text-embedding-ada-002
+
+* Anthropic 
+  * voyage-3-large
+  * voyage-3
+  * voyage-3-lite
+  * voyage-code-3
+  * voyage-finance-2
+  * voyage-law-2 
+
+* Mistral 🇫🇷 🇪🇺
+  * mistral-embed
+
 ## Supported Images generation models
 
 * OpenAI 
