@@ -5,6 +5,9 @@ target/
 .idea
 .metals
 .vscode
+.env
+*.env
+.venv
 target
 node_modules
 /lib
