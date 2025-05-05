@@ -57,10 +57,10 @@ class HiveImagesGenModelClient(val api: HiveApi, val options: HiveImagesGenModel
     api.rawCall("POST", s"/${finalModel}", (options.raw ++
       Json.obj(
         "image_size" -> Json.obj(
-          "width" -> options.raw.select("width").asOpt[Int].getOrElse(1024),
-          "height" -> options.raw.select("height").asOpt[Int].getOrElse(1024)
+          "width" -> options.raw.select("width").asOpt[Int].getOrElse(1024).json,
+          "height" -> options.raw.select("height").asOpt[Int].getOrElse(1024).json
         ),
-        "output_format" -> options.raw.select("output_format").asOptString.getOrElse("jpeg"),
+        "output_format" -> options.raw.select("output_format").asOptString.getOrElse("jpeg").json,
         "prompt" -> promptInput,
       )).some).map { resp =>
       if (resp.status == 200) {

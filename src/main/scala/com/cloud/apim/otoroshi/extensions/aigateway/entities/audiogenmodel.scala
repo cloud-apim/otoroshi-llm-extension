@@ -153,7 +153,7 @@ object AudioModel {
         canDelete = true,
         canBulk = true,
         stateAll = () => states.allAudioModel(),
-        stateOne = id => states.AudioModel(id),
+        stateOne = id => states.audioModel(id),
         stateUpdate = values => states.updateAudioModel(values)
       )
     )

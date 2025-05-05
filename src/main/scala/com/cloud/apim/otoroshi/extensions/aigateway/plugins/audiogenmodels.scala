@@ -79,7 +79,7 @@ class OpenAICompatAudioModel extends NgBackendCall {
         val responseFormatFromBody: Option[String] = jsonBody.select("response_format").asOptString
         val modelFromBody = jsonBody.select("model").asOptString
         val config = ctx.cachedConfig(internalName)(OpenAICompatAudioModelConfig.format).getOrElse(OpenAICompatAudioModelConfig.default)
-        val models = config.refs.flatMap(r => ext.states.AudioModel(r))
+        val models = config.refs.flatMap(r => ext.states.audioModel(r))
         val model = modelFromBody.flatMap { m =>
           if (m.contains("/")) {
             val parts = m.split("/")
