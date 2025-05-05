@@ -1,0 +1,175 @@
+package com.cloud.apim.otoroshi.extensions.aigateway.entities
+
+import com.cloud.apim.otoroshi.extensions.aigateway.AudioModelClient
+import com.cloud.apim.otoroshi.extensions.aigateway.providers._
+import otoroshi.api._
+import otoroshi.env.Env
+import otoroshi.models._
+import otoroshi.next.extensions.AdminExtensionId
+import otoroshi.security.IdGenerator
+import otoroshi.storage._
+import otoroshi.utils.syntax.implicits._
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
+import play.api.libs.json._
+
+import java.util.concurrent.TimeUnit
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
+import scala.util.{Failure, Success, Try}
+
+case class AudioModel(
+                       location: EntityLocation,
+                       id: String,
+                       name: String,
+                       description: String,
+                       tags: Seq[String],
+                       metadata: Map[String, String],
+                       provider: String,
+                       mode: String,
+                       config: JsObject,
+                     ) extends EntityLocationSupport {
+  override def internalId: String = id
+
+  override def json: JsValue = AudioModel.format.writes(this)
+
+  override def theName: String = name
+
+  override def theDescription: String = description
+
+  override def theTags: Seq[String] = tags
+
+  override def theMetadata: Map[String, String] = metadata
+
+  def getAudioModelClient()(implicit env: Env): Option[AudioModelClient] = {
+    val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
+    val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
+    // val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
+    val token = connection.select("token").asOpt[String].getOrElse("xxx")
+    val mode = connection.select("mode").asOpt[String].getOrElse("transcription")
+    val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
+    provider.toLowerCase() match {
+      case "openai" => {
+        val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
+        val opts = OpenAIAudioModelClientOptions.fromJson(options)
+        new OpenAIAudioModelClient(api, opts, mode, id).some
+      }
+      case "groq" => {
+        val api = new GroqApi(GroqApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
+        val opts = GroqAudioModelClientOptions.fromJson(options)
+        new GroqAudioModelClient(api, opts, mode, id).some
+      }
+      case "elevenlabs" => {
+        val api = new ElevenLabsApi(ElevenLabsApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
+        val opts = ElevenLabsAudioModelClientOptions.fromJson(options)
+        new ElevenLabsAudioModelClient(api, opts, mode, id).some
+      }
+      case _ => None
+    }
+  }
+}
+
+object AudioModel {
+  val format = new Format[AudioModel] {
+    override def writes(o: AudioModel): JsValue = o.location.jsonWithKey ++ Json.obj(
+      "id" -> o.id,
+      "name" -> o.name,
+      "description" -> o.description,
+      "metadata" -> o.metadata,
+      "tags" -> JsArray(o.tags.map(JsString.apply)),
+      "provider" -> o.provider,
+      "mode" -> o.mode,
+      "config" -> o.config,
+    )
+
+    override def reads(json: JsValue): JsResult[AudioModel] = Try {
+      AudioModel(
+        location = otoroshi.models.EntityLocation.readFromKey(json),
+        id = (json \ "id").as[String],
+        name = (json \ "name").as[String],
+        description = (json \ "description").as[String],
+        metadata = (json \ "metadata").asOpt[Map[String, String]].getOrElse(Map.empty),
+        tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
+        provider = (json \ "provider").as[String],
+        mode = (json \ "mode").as[String],
+        config = (json \ "config").asOpt[JsObject].getOrElse(Json.obj()),
+      )
+    } match {
+      case Failure(ex) => JsError(ex.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+  }
+
+  def resource(env: Env, datastores: AiGatewayExtensionDatastores, states: AiGatewayExtensionState): Resource = {
+    Resource(
+      "AudioModel",
+      "audio-models",
+      "audio-models",
+      "ai-gateway.extensions.cloud-apim.com",
+      ResourceVersion("v1", true, false, true),
+      GenericResourceAccessApiWithState[AudioModel](
+        format = AudioModel.format,
+        clazz = classOf[AudioModel],
+        keyf = id => datastores.AudioModelsDataStore.key(id),
+        extractIdf = c => datastores.AudioModelsDataStore.extractId(c),
+        extractIdJsonf = json => json.select("id").asString,
+        idFieldNamef = () => "id",
+        tmpl = (v, p, ctx) => {
+          p.get("kind").map(_.toLowerCase()) match {
+            case Some("openai") => AudioModel(
+              id = IdGenerator.namedId("provider", env),
+              name = "OpenAI text-AudioGen-3-small",
+              description = "An OpenAI AudioGen model",
+              metadata = Map.empty,
+              tags = Seq.empty,
+              location = EntityLocation.default,
+              provider = "openai",
+              mode = "transcription",
+              config = Json.obj(
+                "connection" -> Json.obj(
+                  "token" -> "xxxxx",
+                  "timeout" -> 10000,
+                ),
+                "options" -> Json.obj(
+                  "model" -> "text-AudioGen-3-small"
+                )
+              ),
+            ).json
+            case _ => AudioModel(
+              id = IdGenerator.namedId("provider", env),
+              name = "Local AudioGen model",
+              description = "A Local AudioGen model",
+              metadata = Map.empty,
+              tags = Seq.empty,
+              location = EntityLocation.default,
+              provider = "all-minilm-l6-v2",
+              mode = "transcription",
+              config = Json.obj(),
+            ).json
+          }
+
+        },
+        canRead = true,
+        canCreate = true,
+        canUpdate = true,
+        canDelete = true,
+        canBulk = true,
+        stateAll = () => states.allAudioModel(),
+        stateOne = id => states.AudioModel(id),
+        stateUpdate = values => states.updateAudioModel(values)
+      )
+    )
+  }
+}
+
+trait AudioModelsDataStore extends BasicStore[AudioModel]
+
+class KvAudioModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
+  extends AudioModelsDataStore
+    with RedisLikeStore[AudioModel] {
+  override def fmt: Format[AudioModel] = AudioModel.format
+
+  override def redisLike(implicit env: Env): RedisLike = redisCli
+
+  override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:audiomodels:$id"
+
+  override def extractId(value: AudioModel): String = value.id
+}

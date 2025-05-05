@@ -10,7 +10,9 @@ import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
+import play.api.libs.ws.WSResponse
 
+import java.io.File
 import java.nio.ByteOrder
 import java.util.Base64
 import scala.concurrent.duration.FiniteDuration
@@ -692,6 +694,38 @@ trait EmbeddingStoreClient {
   def add(id: String, input: String, embedding: Embedding)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
   def remove(id: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
   def search(embedding: Embedding, maxResults: Int, minScore: Double)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]]
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                             Audio generation and transcription                                 ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+case class AudioTranscriptionResponse(
+                                       transcribedText: String
+                            ) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "text" -> transcribedText
+    )
+  }
+}
+
+case class AudioGenVoice(
+  voiceId: String,
+  voiceName: String
+){
+  def toJson: JsValue = {
+    Json.obj(
+      "voice_id" -> voiceId,
+      "voice_name" -> voiceName
+    )
+  }
+}
+
+trait AudioModelClient {
+//  def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]]
+  def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String], responseFormatFromBody: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]]
+
+  def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

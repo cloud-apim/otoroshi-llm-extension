@@ -1,0 +1,8 @@
+{
+  "label": "Audio Models",
+  "position": 10,
+  "link": {
+    "type": "generated-index",
+    "description": "Everything about audio generation models"
+  }
+}
