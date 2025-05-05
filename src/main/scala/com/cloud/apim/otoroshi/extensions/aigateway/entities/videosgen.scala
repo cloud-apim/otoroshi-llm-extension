@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
-import com.cloud.apim.otoroshi.extensions.aigateway.VideosGenModelClient
+import com.cloud.apim.otoroshi.extensions.aigateway.VideoModelClient
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api._
 import otoroshi.env.Env
@@ -32,7 +32,7 @@ case class VideoModel(
   override def theDescription: String           = description
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
-  def getVideosGenModelClient()(implicit env: Env): Option[VideosGenModelClient] = {
+  def getVideoModelClient()(implicit env: Env): Option[VideoModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
     // val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
@@ -41,8 +41,8 @@ case class VideoModel(
     provider.toLowerCase() match {
       case "luma" => {
         val api = new LumaApi(LumaApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
-        val opts = LumaVideosGenModelClientOptions.fromJson(options)
-        new LumaVideosGenModelClient(api, opts, id).some
+        val opts = LumaVideoModelClientOptions.fromJson(options)
+        new LumaVideoModelClient(api, opts, id).some
       }
       case _ => None
     }
@@ -86,8 +86,8 @@ object VideoModel {
       GenericResourceAccessApiWithState[VideoModel](
         format = VideoModel.format,
         clazz = classOf[VideoModel],
-        keyf = id => datastores.videosGenModelsDataStore.key(id),
-        extractIdf = c => datastores.videosGenModelsDataStore.extractId(c),
+        keyf = id => datastores.videoModelsDataStore.key(id),
+        extractIdf = c => datastores.videoModelsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
         tmpl = (v, p, ctx) => {
@@ -128,21 +128,21 @@ object VideoModel {
         canUpdate = true,
         canDelete = true,
         canBulk = true,
-        stateAll = () => states.allVideosGensModels(),
-        stateOne = id => states.videoGensModels(id),
-        stateUpdate = values => states.updateVideosGensModels(values)
+        stateAll = () => states.allVideoModels(),
+        stateOne = id => states.videoModel(id),
+        stateUpdate = values => states.updateVideoModels(values)
       )
     )
   }
 }
 
-trait VideosGenModelsDataStore extends BasicStore[VideoModel]
+trait VideoModelsDataStore extends BasicStore[VideoModel]
 
-class KvVideosGenModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
-  extends VideosGenModelsDataStore
+class KvVideoModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
+  extends VideoModelsDataStore
     with RedisLikeStore[VideoModel] {
   override def fmt: Format[VideoModel]                  = VideoModel.format
   override def redisLike(implicit env: Env): RedisLike = redisCli
-  override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:videosgen:$id"
+  override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:videomodels:$id"
   override def extractId(value: VideoModel): String    = value.id
 }

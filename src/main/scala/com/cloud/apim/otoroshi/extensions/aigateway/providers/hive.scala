@@ -42,15 +42,15 @@ class HiveApi(baseUrl: String = HiveApi.baseUrl, token: String, timeout: FiniteD
 /////////                                     Images Generation                                          ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-case class HiveImagesGenModelClientOptions(raw: JsObject) {
+case class HiveImageModelClientOptions(raw: JsObject) {
   lazy val model: String = raw.select("model").asOpt[String].getOrElse("black-forest-labs/flux-schnell")
 }
 
-object HiveImagesGenModelClientOptions {
-  def fromJson(raw: JsObject): HiveImagesGenModelClientOptions = HiveImagesGenModelClientOptions(raw)
+object HiveImageModelClientOptions {
+  def fromJson(raw: JsObject): HiveImageModelClientOptions = HiveImageModelClientOptions(raw)
 }
 
-class HiveImagesGenModelClient(val api: HiveApi, val options: HiveImagesGenModelClientOptions, id: String) extends ImagesGenModelClient {
+class HiveImageModelClient(val api: HiveApi, val options: HiveImageModelClientOptions, id: String) extends ImageModelClient {
 
   override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = modelOpt.getOrElse(options.model)

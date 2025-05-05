@@ -475,15 +475,15 @@ class XAiEmbeddingModelClient(val api: XAiApi, val options: XAiEmbeddingModelCli
 /////////                                     Images Generation                                          ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-case class XAiImagesGenModelClientOptions(raw: JsObject) {
+case class XAiImageModelClientOptions(raw: JsObject) {
   lazy val model: String = raw.select("model").asOpt[String].getOrElse("grok-2-image")
 }
 
-object XAiImagesGenModelClientOptions {
-  def fromJson(raw: JsObject): XAiImagesGenModelClientOptions = XAiImagesGenModelClientOptions(raw)
+object XAiImageModelClientOptions {
+  def fromJson(raw: JsObject): XAiImageModelClientOptions = XAiImageModelClientOptions(raw)
 }
 
-class XAiImagesGenModelClient(val api: XAiApi, val options: XAiImagesGenModelClientOptions, id: String) extends ImagesGenModelClient {
+class XAiImageModelClient(val api: XAiApi, val options: XAiImageModelClientOptions, id: String) extends ImageModelClient {
 
   def listImagesGenModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/v1/image-generation-models", None).map { resp =>

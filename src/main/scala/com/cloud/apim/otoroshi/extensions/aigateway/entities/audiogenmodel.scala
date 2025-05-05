@@ -135,8 +135,8 @@ object AudioModel {
             ).json
             case _ => AudioModel(
               id = IdGenerator.namedId("audio-model", env),
-              name = "Local AudioGen model",
-              description = "A Local AudioGen model",
+              name = "Local audio model",
+              description = "A Local audio model",
               metadata = Map.empty,
               tags = Seq.empty,
               location = EntityLocation.default,

@@ -821,16 +821,16 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelCl
 /////////                                     OpenAI Images Gen                                          ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-case class OpenAiImagesGenModelClientOptions(raw: JsObject) {
+case class OpenAiImageModelClientOptions(raw: JsObject) {
   lazy val model: String = raw.select("model").asOpt[String].getOrElse("gpt-image-1")
   lazy val size: String = raw.select("size").asOpt[String].getOrElse("auto")
 }
 
-object OpenAiImagesGenModelClientOptions {
-  def fromJson(raw: JsObject): OpenAiImagesGenModelClientOptions = OpenAiImagesGenModelClientOptions(raw)
+object OpenAiImageModelClientOptions {
+  def fromJson(raw: JsObject): OpenAiImageModelClientOptions = OpenAiImageModelClientOptions(raw)
 }
 
-class OpenAiImagesGenModelClient(val api: OpenAiApi, val options: OpenAiImagesGenModelClientOptions, id: String) extends ImagesGenModelClient {
+class OpenAiImageModelClient(val api: OpenAiApi, val options: OpenAiImageModelClientOptions, id: String) extends ImageModelClient {
 
   override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = modelOpt.getOrElse(options.model)

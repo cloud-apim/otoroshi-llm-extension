@@ -1,4 +1,4 @@
-class VideosGenModelsPage extends Component {
+class VideoModelsPage extends Component {
 
     formSchema = {
         _loc: {

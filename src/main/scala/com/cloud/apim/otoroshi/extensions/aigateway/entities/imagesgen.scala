@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
-import com.cloud.apim.otoroshi.extensions.aigateway.ImagesGenModelClient
+import com.cloud.apim.otoroshi.extensions.aigateway.ImageModelClient
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api._
 import otoroshi.env.Env
@@ -32,7 +32,7 @@ case class ImageModel(
   override def theDescription: String           = description
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
-  def getImagesGenModelClient()(implicit env: Env): Option[ImagesGenModelClient] = {
+  def getImageModelClient()(implicit env: Env): Option[ImageModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
     // val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
@@ -41,36 +41,36 @@ case class ImageModel(
     provider.toLowerCase() match {
       case "openai" => {
         val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
-        val opts = OpenAiImagesGenModelClientOptions.fromJson(options)
-        new OpenAiImagesGenModelClient(api, opts, id).some
+        val opts = OpenAiImageModelClientOptions.fromJson(options)
+        new OpenAiImageModelClient(api, opts, id).some
       }
       case "x-ai" => {
         val api = new XAiApi(XAiApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
-        val opts = XAiImagesGenModelClientOptions.fromJson(options)
-        new XAiImagesGenModelClient(api, opts, id).some
+        val opts = XAiImageModelClientOptions.fromJson(options)
+        new XAiImageModelClient(api, opts, id).some
       }
       case "azure-openai" => {
         val resourceName = connection.select("resource_name").as[String]
         val deploymentId = connection.select("deployment_id").as[String]
         val apikey = connection.select("api_key").as[String]
         val api = new AzureOpenAiApi(resourceName, deploymentId, apikey, timeout.getOrElse(10.seconds), env = env)
-        val opts = AzureOpenAiImagesGenModelClientOptions.fromJson(options)
-        new AzureOpenAiImagesGenModelClient(api, opts, id).some
+        val opts = AzureOpenAiImageModelClientOptions.fromJson(options)
+        new AzureOpenAiImageModelClient(api, opts, id).some
       }
       case "luma" => {
         val api = new LumaApi(LumaApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
-        val opts = LumaImagesGenModelClientOptions.fromJson(options)
-        new LumaImagesGenModelClient(api, opts, id).some
+        val opts = LumaImageModelClientOptions.fromJson(options)
+        new LumaImageModelClient(api, opts, id).some
       }
 //      case "leonardo-ai" => {
 //        val api = new LeonardoAIApi(LeonardoAIApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
-//        val opts = LeonardoAIImagesGenModelClientOptions.fromJson(options)
-//        new LeonardoAIImagesGenModelClient(api, opts, id).some
+//        val opts = LeonardoAIImagesModelClientOptions.fromJson(options)
+//        new LeonardoAIImagesModelClient(api, opts, id).some
 //      }
       case "hive" => {
         val api = new HiveApi(HiveApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
-        val opts = HiveImagesGenModelClientOptions.fromJson(options)
-        new HiveImagesGenModelClient(api, opts, id).some
+        val opts = HiveImageModelClientOptions.fromJson(options)
+        new HiveImageModelClient(api, opts, id).some
       }
       case _ => None
     }
@@ -114,8 +114,8 @@ object ImageModel {
       GenericResourceAccessApiWithState[ImageModel](
         format = ImageModel.format,
         clazz = classOf[ImageModel],
-        keyf = id => datastores.imagesGenModelsDataStore.key(id),
-        extractIdf = c => datastores.imagesGenModelsDataStore.extractId(c),
+        keyf = id => datastores.imageModelsDataStore.key(id),
+        extractIdf = c => datastores.imageModelsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
         tmpl = (v, p, ctx) => {
@@ -175,21 +175,21 @@ object ImageModel {
         canUpdate = true,
         canDelete = true,
         canBulk = true,
-        stateAll = () => states.allImgGensModels(),
-        stateOne = id => states.imgGensModels(id),
-        stateUpdate = values => states.updateImgGensModels(values)
+        stateAll = () => states.allImageModels(),
+        stateOne = id => states.imageModel(id),
+        stateUpdate = values => states.updateImageModels(values)
       )
     )
   }
 }
 
-trait ImagesGenModelsDataStore extends BasicStore[ImageModel]
+trait ImageModelsDataStore extends BasicStore[ImageModel]
 
-class KvImagesGenModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
-  extends ImagesGenModelsDataStore
+class KvImageModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
+  extends ImageModelsDataStore
     with RedisLikeStore[ImageModel] {
   override def fmt: Format[ImageModel]                  = ImageModel.format
   override def redisLike(implicit env: Env): RedisLike = redisCli
-  override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:imgensmds:$id"
+  override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:imagemodels:$id"
   override def extractId(value: ImageModel): String    = value.id
 }

@@ -1,4 +1,4 @@
-class AudioGenPage extends Component {
+class AudioModelsPage extends Component {
     state = {
         dynamicVoices: null
     }

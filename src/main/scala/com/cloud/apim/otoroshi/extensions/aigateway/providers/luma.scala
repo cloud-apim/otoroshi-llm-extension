@@ -42,15 +42,15 @@ class LumaApi(baseUrl: String = LumaApi.baseUrl, token: String, timeout: FiniteD
 /////////                                     Images Generation                                          ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-case class LumaImagesGenModelClientOptions(raw: JsObject) {
+case class LumaImageModelClientOptions(raw: JsObject) {
   lazy val model: String = raw.select("model").asOpt[String].getOrElse("photon-1")
 }
 
-object LumaImagesGenModelClientOptions {
-  def fromJson(raw: JsObject): LumaImagesGenModelClientOptions = LumaImagesGenModelClientOptions(raw)
+object LumaImageModelClientOptions {
+  def fromJson(raw: JsObject): LumaImageModelClientOptions = LumaImageModelClientOptions(raw)
 }
 
-class LumaImagesGenModelClient(val api: LumaApi, val options: LumaImagesGenModelClientOptions, id: String) extends ImagesGenModelClient {
+class LumaImageModelClient(val api: LumaApi, val options: LumaImageModelClientOptions, id: String) extends ImageModelClient {
 
   override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = modelOpt.getOrElse(options.model)
@@ -78,15 +78,15 @@ class LumaImagesGenModelClient(val api: LumaApi, val options: LumaImagesGenModel
 /////////                                     Videos Generation                                          ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-case class LumaVideosGenModelClientOptions(raw: JsObject) {
+case class LumaVideoModelClientOptions(raw: JsObject) {
   lazy val model: String = raw.select("model").asOpt[String].getOrElse("photon-1")
 }
 
-object LumaVideosGenModelClientOptions {
-  def fromJson(raw: JsObject): LumaVideosGenModelClientOptions = LumaVideosGenModelClientOptions(raw)
+object LumaVideoModelClientOptions {
+  def fromJson(raw: JsObject): LumaVideoModelClientOptions = LumaVideoModelClientOptions(raw)
 }
 
-class LumaVideosGenModelClient(val api: LumaApi, val options: LumaVideosGenModelClientOptions, id: String) extends VideosGenModelClient {
+class LumaVideoModelClient(val api: LumaApi, val options: LumaVideoModelClientOptions, id: String) extends VideoModelClient {
 
   override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
     val finalModel: String = modelOpt.getOrElse(options.model)

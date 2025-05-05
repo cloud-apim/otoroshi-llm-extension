@@ -33,8 +33,8 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val mcpConnectorsDatastore: McpConnectorsDataStore = new KvMcpConnectorsDataStore(extensionId, env.datastores.redis, env)
   val moderationModelsDataStore: ModerationModelsDataStore = new KvModerationModelsDataStore(extensionId, env.datastores.redis, env)
   val AudioModelsDataStore: AudioModelsDataStore = new KvAudioModelsDataStore(extensionId, env.datastores.redis, env)
-  val imagesGenModelsDataStore: ImagesGenModelsDataStore = new KvImagesGenModelsDataStore(extensionId, env.datastores.redis, env)
-  val videosGenModelsDataStore: VideosGenModelsDataStore = new KvVideosGenModelsDataStore(extensionId, env.datastores.redis, env)
+  val imageModelsDataStore: ImageModelsDataStore = new KvImageModelsDataStore(extensionId, env.datastores.redis, env)
+  val videoModelsDataStore: VideoModelsDataStore = new KvVideoModelsDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
@@ -133,18 +133,18 @@ class AiGatewayExtensionState(env: Env) {
     _audioModels.addAll(values.map(v => (v.id, v))).remAll(_audioModels.keySet.toSeq.diff(values.map(_.id)))
   }
   
-  private val _imgGensModels = new UnboundedTrieMap[String, ImageModel]()
-  def imgGensModels(id: String): Option[ImageModel] = _imgGensModels.get(id)
-  def allImgGensModels(): Seq[ImageModel]          = _imgGensModels.values.toSeq
-  def updateImgGensModels(values: Seq[ImageModel]): Unit = {
-    _imgGensModels.addAll(values.map(v => (v.id, v))).remAll(_imgGensModels.keySet.toSeq.diff(values.map(_.id)))
+  private val _imageModels = new UnboundedTrieMap[String, ImageModel]()
+  def imageModel(id: String): Option[ImageModel] = _imageModels.get(id)
+  def allImageModels(): Seq[ImageModel]          = _imageModels.values.toSeq
+  def updateImageModels(values: Seq[ImageModel]): Unit = {
+    _imageModels.addAll(values.map(v => (v.id, v))).remAll(_imageModels.keySet.toSeq.diff(values.map(_.id)))
   }
 
-  private val _videoGensModels = new UnboundedTrieMap[String, VideoModel]()
-  def videoGensModels(id: String): Option[VideoModel] = _videoGensModels.get(id)
-  def allVideosGensModels(): Seq[VideoModel]          = _videoGensModels.values.toSeq
-  def updateVideosGensModels(values: Seq[VideoModel]): Unit = {
-    _videoGensModels.addAll(values.map(v => (v.id, v))).remAll(_videoGensModels.keySet.toSeq.diff(values.map(_.id)))
+  private val _videoModels = new UnboundedTrieMap[String, VideoModel]()
+  def videoModel(id: String): Option[VideoModel] = _videoModels.get(id)
+  def allVideoModels(): Seq[VideoModel]          = _videoModels.values.toSeq
+  def updateVideoModels(values: Seq[VideoModel]): Unit = {
+    _videoModels.addAll(values.map(v => (v.id, v))).remAll(_videoModels.keySet.toSeq.diff(values.map(_.id)))
   }
 }
 
@@ -222,9 +222,9 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val promptContextsPageCode = getResourceCode("cloudapim/extensions/ai/PromptContextsPage.js")
   lazy val aiProvidersPageCode = getResourceCode("cloudapim/extensions/ai/AiProvidersPage.js")
   lazy val moderationModelsPage = getResourceCode("cloudapim/extensions/ai/ModerationModelsPage.js")
-  lazy val audioModelsPage = getResourceCode("cloudapim/extensions/ai/AudioGenPage.js")
-  lazy val imagesGenModelsPage = getResourceCode("cloudapim/extensions/ai/ImagesGenModelsPage.js")
-  lazy val videosGenModelsPage = getResourceCode("cloudapim/extensions/ai/VideosGenModelsPage.js")
+  lazy val audioModelsPage = getResourceCode("cloudapim/extensions/ai/AudioModelsPage.js")
+  lazy val imagesModelsPage = getResourceCode("cloudapim/extensions/ai/ImageModelsPage.js")
+  lazy val videoModelsPage = getResourceCode("cloudapim/extensions/ai/VideoModelsPage.js")
   lazy val imgCode = getResourceCode("cloudapim/extensions/ai/undraw_visionary_technology_re_jfp7.svg")
 
   def handleProviderTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
@@ -648,8 +648,8 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    ${promptContextsPageCode}
             |    ${aiProvidersPageCode}
             |    ${moderationModelsPage}
-            |    ${imagesGenModelsPage}
-            |    ${videosGenModelsPage}
+            |    ${imagesModelsPage}
+            |    ${videoModelsPage}
             |    ${audioModelsPage}
             |
             |    return {
@@ -1192,55 +1192,55 @@ class AiExtension(val env: Env) extends AdminExtension {
             |        {
             |          path: '/extensions/cloud-apim/ai-gateway/image-models/:taction/:titem',
             |          component: (props) => {
-            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |            return React.createElement(ImageModelsPage, props, null)
             |          }
             |        },
             |        {
             |          path: '/extensions/cloud-apim/ai-gateway/image-models/:taction',
             |          component: (props) => {
-            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |            return React.createElement(ImageModelsPage, props, null)
             |          }
             |        },
             |        {
             |          path: '/extensions/cloud-apim/ai-gateway/image-models',
             |          component: (props) => {
-            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |            return React.createElement(ImageModelsPage, props, null)
             |          }
             |        },
             |         {
             |          path: '/extensions/cloud-apim/ai-gateway/video-models/:taction/:titem',
             |          component: (props) => {
-            |            return React.createElement(VideosGenModelsPage, props, null)
+            |            return React.createElement(VideoModelsPage, props, null)
             |          }
             |        },
             |        {
             |          path: '/extensions/cloud-apim/ai-gateway/video-models/:taction',
             |          component: (props) => {
-            |            return React.createElement(VideosGenModelsPage, props, null)
+            |            return React.createElement(VideoModelsPage, props, null)
             |          }
             |        },
             |        {
             |          path: '/extensions/cloud-apim/ai-gateway/video-models',
             |          component: (props) => {
-            |            return React.createElement(VideosGenModelsPage, props, null)
+            |            return React.createElement(VideoModelsPage, props, null)
             |          }
             |        },
             |         {
             |          path: '/extensions/cloud-apim/ai-gateway/audio-models/:taction/:titem',
             |          component: (props) => {
-            |            return React.createElement(AudioGenPage, props, null)
+            |            return React.createElement(AudioModelsPage, props, null)
             |          }
             |        },
             |        {
             |          path: '/extensions/cloud-apim/ai-gateway/audio-models/:taction',
             |          component: (props) => {
-            |            return React.createElement(AudioGenPage, props, null)
+            |            return React.createElement(AudioModelsPage, props, null)
             |          }
             |        },
             |        {
             |          path: '/extensions/cloud-apim/ai-gateway/audio-models',
             |          component: (props) => {
-            |            return React.createElement(AudioGenPage, props, null)
+            |            return React.createElement(AudioModelsPage, props, null)
             |          },
             |        }
             |      ]
@@ -1266,8 +1266,8 @@ class AiExtension(val env: Env) extends AdminExtension {
       mcpConnectors <- datastores.mcpConnectorsDatastore.findAllAndFillSecrets()
       moderationModels <- datastores.moderationModelsDataStore.findAllAndFillSecrets()
       audioModels <- datastores.AudioModelsDataStore.findAllAndFillSecrets()
-      imgGens <- datastores.imagesGenModelsDataStore.findAllAndFillSecrets()
-      videosGens <- datastores.videosGenModelsDataStore.findAllAndFillSecrets()
+      imageModels <- datastores.imageModelsDataStore.findAllAndFillSecrets()
+      videosModels <- datastores.videoModelsDataStore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
@@ -1279,8 +1279,8 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateMcpConnectors(mcpConnectors)
       states.updateModerationModels(moderationModels)
       states.updateAudioModel(audioModels)
-      states.updateImgGensModels(imgGens)
-      states.updateVideosGensModels(videosGens)
+      states.updateImageModels(imageModels)
+      states.updateVideoModels(videosModels)
       Future {
         McpSupport.restartConnectorsIfNeeded()
         McpSupport.stopConnectorsIfNeeded()

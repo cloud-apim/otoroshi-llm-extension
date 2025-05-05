@@ -50,7 +50,7 @@ object LeonardoAIImagesGenModelClientOptions {
   def fromJson(raw: JsObject): LeonardoAIImagesGenModelClientOptions = LeonardoAIImagesGenModelClientOptions(raw)
 }
 
-class LeonardoAIImagesGenModelClient(val api: LeonardoAIApi, val options: LeonardoAIImagesGenModelClientOptions, id: String) extends ImagesGenModelClient {
+class LeonardoAIImageModelClient(val api: LeonardoAIApi, val options: LeonardoAIImagesGenModelClientOptions, id: String) extends ImageModelClient {
 
   override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = modelOpt.getOrElse(options.model)

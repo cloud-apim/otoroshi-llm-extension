@@ -127,7 +127,7 @@ class ModerationModelsPage extends Component {
                         }
                     }
                 },
-                itemName: "Moderation Model",
+                itemName: "Moderation Models",
                 formSchema: this.formSchema,
                 formFlow: this.formFlow,
                 columns: this.columns,

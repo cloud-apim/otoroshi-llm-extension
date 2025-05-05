@@ -81,7 +81,7 @@ class VideosGen extends NgBackendCall {
         val nFromBody = jsonBody.select("n").asOpt[Int].getOrElse(1)
 
         val config = ctx.cachedConfig(internalName)(VideosGenConfig.format).getOrElse(VideosGenConfig.default)
-        val models = config.refs.flatMap(r => ext.states.videoGensModels(r))
+        val models = config.refs.flatMap(r => ext.states.videoModel(r))
         val model = modelFromBody.flatMap { m =>
           if (m.contains("/")) {
             val parts = m.split("/")
@@ -97,7 +97,7 @@ class VideosGen extends NgBackendCall {
             m.some
           }
         }
-        model.getVideosGenModelClient() match {
+        model.getVideoModelClient() match {
           case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
           case Some(client) => {
             client.generate(promptFromBody.getOrElse(""), modelStr, sizeFromBody).map {

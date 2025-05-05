@@ -806,7 +806,7 @@ case class ImagesGenResponse(
   }
 }
 
-trait ImagesGenModelClient {
+trait ImageModelClient {
   def generate(promptInput: String, model: Option[String], size: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]]
 }
 
@@ -858,7 +858,7 @@ case class VideosGenResponse(
   }
 }
 
-trait VideosGenModelClient {
+trait VideoModelClient {
   def generate(promptInput: String, model: Option[String], size: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]]
 }
 

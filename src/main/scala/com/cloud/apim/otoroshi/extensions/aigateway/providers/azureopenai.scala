@@ -553,15 +553,15 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
 /////////                                     Images Generation                                          ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-case class AzureOpenAiImagesGenModelClientOptions(raw: JsObject) {
+case class AzureOpenAiImageModelClientOptions(raw: JsObject) {
   lazy val size: String = raw.select("size").asOpt[String].getOrElse("1024x1024")
 }
 
-object AzureOpenAiImagesGenModelClientOptions {
-  def fromJson(raw: JsObject): AzureOpenAiImagesGenModelClientOptions = AzureOpenAiImagesGenModelClientOptions(raw)
+object AzureOpenAiImageModelClientOptions {
+  def fromJson(raw: JsObject): AzureOpenAiImageModelClientOptions = AzureOpenAiImageModelClientOptions(raw)
 }
 
-class AzureOpenAiImagesGenModelClient(val api: AzureOpenAiApi, val options: AzureOpenAiImagesGenModelClientOptions, id: String) extends ImagesGenModelClient {
+class AzureOpenAiImageModelClient(val api: AzureOpenAiApi, val options: AzureOpenAiImageModelClientOptions, id: String) extends ImageModelClient {
 
   override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalSize: String = imgSizeOpt.getOrElse(options.size).toLowerCase match {

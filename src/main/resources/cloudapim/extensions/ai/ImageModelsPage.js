@@ -1,4 +1,4 @@
-class ImagesGenModelsPage extends Component {
+class ImageModelsPage extends Component {
 
     formSchema = {
         _loc: {

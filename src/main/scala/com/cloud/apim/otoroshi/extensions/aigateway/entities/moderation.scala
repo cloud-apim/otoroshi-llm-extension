@@ -177,7 +177,7 @@ class KvModerationModelsDataStore(extensionId: AdminExtensionId, redisCli: Redis
 
   override def redisLike(implicit env: Env): RedisLike = redisCli
 
-  override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:embmods:$id"
+  override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:moderationmodels:$id"
 
   override def extractId(value: ModerationModel): String = value.id
 }
