@@ -39,6 +39,7 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 * X.ai
 * Deepseek
 
+
 ## Supported Audio Text-to-Speech models
 
 * OpenAI
@@ -53,6 +54,31 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 
 
 * ElevenLabs
+
+## Supported LLM Embeddings models
+
+## Supported Images generation models
+
+* OpenAI 
+  * dall-e-2
+  * dall-e-3
+  * gpt-image-1
+
+
+* Azure OpenAI
+
+
+* Grok
+  * grok-2-image
+
+
+* Luma
+  * photon-1 (default)
+  * photon-flash-1
+
+
+* Hive
+  * black-forest-labs/flux-schnell
 
 ## Requirements
 

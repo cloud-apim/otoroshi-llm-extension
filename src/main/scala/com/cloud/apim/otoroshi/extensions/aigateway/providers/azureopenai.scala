@@ -547,5 +547,44 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
       Right(ChatResponse(messages, usage))
     }
   }
+}
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                     Images Generation                                          ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class AzureOpenAiImagesGenModelClientOptions(raw: JsObject) {
+  lazy val size: String = raw.select("size").asOpt[String].getOrElse("1024x1024")
+}
+
+object AzureOpenAiImagesGenModelClientOptions {
+  def fromJson(raw: JsObject): AzureOpenAiImagesGenModelClientOptions = AzureOpenAiImagesGenModelClientOptions(raw)
+}
+
+class AzureOpenAiImagesGenModelClient(val api: AzureOpenAiApi, val options: AzureOpenAiImagesGenModelClientOptions, id: String) extends ImagesGenModelClient {
+
+  override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    val finalSize: String = imgSizeOpt.getOrElse(options.size).toLowerCase match {
+      case "1024x1024" => "1024x1024"
+      case "1792x1024" => "1792x1024"
+      case "1024x1792" => "1024x1792"
+      case _ => "1024x1024"
+    }
+
+    api.rawCall("POST", "/images/generations", (options.raw ++
+      Json.obj(
+        "prompt" -> promptInput,
+        "size" -> finalSize
+      )).some).map { resp =>
+      if (resp.status == 200) {
+        Right(ImagesGenResponse(
+          created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
+          images = resp.json.select("data").as[Seq[JsObject]].map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String])),
+          metadata = None
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
 }

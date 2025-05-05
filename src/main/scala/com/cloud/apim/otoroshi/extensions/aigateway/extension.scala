@@ -32,6 +32,8 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val embeddingStoresDataStore: EmbeddingStoresDataStore = new KvEmbeddingStoresDataStore(extensionId, env.datastores.redis, env)
   val mcpConnectorsDatastore: McpConnectorsDataStore = new KvMcpConnectorsDataStore(extensionId, env.datastores.redis, env)
   val AudioModelsDataStore: AudioModelsDataStore = new KvAudioModelsDataStore(extensionId, env.datastores.redis, env)
+  val imagesGenModelsDataStore: ImagesGenModelsDataStore = new KvImagesGenModelsDataStore(extensionId, env.datastores.redis, env)
+  val videosGenModelsDataStore: VideosGenModelsDataStore = new KvVideosGenModelsDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
@@ -117,13 +119,24 @@ class AiGatewayExtensionState(env: Env) {
   }
 
   private val _AudioModels = new UnboundedTrieMap[String, AudioModel]()
-
   def AudioModel(id: String): Option[AudioModel] = _AudioModels.get(id)
-
   def allAudioModel(): Seq[AudioModel] = _AudioModels.values.toSeq
-
   def updateAudioModel(values: Seq[AudioModel]): Unit = {
     _AudioModels.addAll(values.map(v => (v.id, v))).remAll(_AudioModels.keySet.toSeq.diff(values.map(_.id)))
+  }
+  
+  private val _imgGensModels = new UnboundedTrieMap[String, ImagesGenModel]()
+  def imgGensModels(id: String): Option[ImagesGenModel] = _imgGensModels.get(id)
+  def allImgGensModels(): Seq[ImagesGenModel]          = _imgGensModels.values.toSeq
+  def updateImgGensModels(values: Seq[ImagesGenModel]): Unit = {
+    _imgGensModels.addAll(values.map(v => (v.id, v))).remAll(_imgGensModels.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _videoGensModels = new UnboundedTrieMap[String, VideosGenModel]()
+  def videoGensModels(id: String): Option[VideosGenModel] = _videoGensModels.get(id)
+  def allVideosGensModels(): Seq[VideosGenModel]          = _videoGensModels.values.toSeq
+  def updateVideosGensModels(values: Seq[VideosGenModel]): Unit = {
+    _videoGensModels.addAll(values.map(v => (v.id, v))).remAll(_videoGensModels.keySet.toSeq.diff(values.map(_.id)))
   }
 }
 
@@ -201,6 +214,8 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val promptContextsPageCode = getResourceCode("cloudapim/extensions/ai/PromptContextsPage.js")
   lazy val aiProvidersPageCode = getResourceCode("cloudapim/extensions/ai/AiProvidersPage.js")
   lazy val AudioModelsPage = getResourceCode("cloudapim/extensions/ai/AudioGenPage.js")
+  lazy val imagesGenModelsPage = getResourceCode("cloudapim/extensions/ai/ImagesGenModelsPage.js")
+  lazy val videosGenModelsPage = getResourceCode("cloudapim/extensions/ai/VideosGenModelsPage.js")
   lazy val imgCode = getResourceCode("cloudapim/extensions/ai/undraw_visionary_technology_re_jfp7.svg")
 
   def handleProviderTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
@@ -566,6 +581,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       handle = (ctx: AdminExtensionRouterContext[AdminExtensionAssetRoute], req: RequestHeader) => {
         Results.Ok(
           s"""(function() {
+///////////////////////////////////////////
              |  const extensionId = "${id.value}";
              |  Otoroshi.registerExtension(extensionId, false, (ctx) => {
              |
@@ -1078,6 +1094,570 @@ class AiExtension(val env: Env) extends AdminExtension {
              |  });
              |})();
              |""".stripMargin).as("application/javascript").vfuture
+
+///////////////////////////////////////////        
+            |  const extensionId = "${id.value}";
+            |  Otoroshi.registerExtension(extensionId, false, (ctx) => {
+            |
+            |    const dependencies = ctx.dependencies;
+            |
+            |    const React     = dependencies.react;
+            |    const _         = dependencies.lodash;
+            |    const Component = React.Component;
+            |    const uuid      = dependencies.uuid;
+            |    const Table     = dependencies.Components.Inputs.Table;
+            |    const Form      = dependencies.Components.Inputs.Form;
+            |    const SelectInput = dependencies.Components.Inputs.SelectInput;
+            |    const LazyCodeInput = dependencies.Components.Inputs.LazyCodeInput;
+            |    const BackOfficeServices = dependencies.BackOfficeServices;
+            |    const BaseUrls = {
+            |      openai: '${OpenAiApi.baseUrl}',
+            |      azureAiFoundry: '${AzureAiFoundry.baseUrl}',
+            |      scaleway: '${ScalewayApi.baseUrl}',
+            |      deepseek: '${DeepSeekApi.baseUrl}',
+            |      xai: '${XAiApi.baseUrl}',
+            |      mistral: '${MistralAiApi.baseUrl}',
+            |      ollama: '${OllamaAiApi.baseUrl}',
+            |      groq: '${GroqApi.baseUrl}',
+            |      anthropic: '${AnthropicApi.baseUrl}',
+            |      cohere: '${CohereAiApi.baseUrl}',
+            |      ovh: '${OVHAiEndpointsApi.baseDomain}',
+            |      hugging: ''
+            |    };
+            |    const ClientOptions = {
+            |      anthropic: ${AnthropicChatClientOptions().json.stringify},
+            |      openai: ${OpenAiChatClientOptions().json.stringify},
+            |      scaleway: ${OpenAiChatClientOptions().copy(model = "llama-3.1-8b-instruct").json.stringify},
+            |      deepseek: ${OpenAiChatClientOptions().copy(model = "deepseek-chat").json.stringify},
+            |      xai: ${XAiChatClientOptions().json.stringify},
+            |      mistral: ${MistralAiChatClientOptions().json.stringify},
+            |      ollama: ${OllamaAiChatClientOptions().json.stringify},
+            |      groq: ${GroqChatClientOptions().json.stringify},
+            |      gemini: ${OpenAiChatClientOptions().copy(model = "gemini-1.5-flash").json.stringify},
+            |      'azure-openai': ${AzureOpenAiChatClientOptions().json.stringify},
+            |      'azureAiFoundry': ${OpenAiChatClientOptions().copy(model = "mistral-large-2407").json.stringify},
+            |      'cohere': ${CohereAiChatClientOptions().json.stringify},
+            |      ovh: ${OVHAiEndpointsChatClientOptions().json.stringify},
+            |      huggingface: ${OpenAiChatClientOptions().copy(model = "google/gemma-2-2b-it").json.stringify},
+            |    };
+            |    const GuardrailsOptions = {
+            |      possibleModerationCategories: ${JsArray(LLMGuardrailsHardcodedItems.possibleModerationCategories.map(_.json)).stringify},
+            |      possiblePersonalInformations: ${JsArray(LLMGuardrailsHardcodedItems.possiblePersonalInformations.map(_.json)).stringify},
+            |      possibleSecretLeakage: ${JsArray(LLMGuardrailsHardcodedItems.possibleSecretLeakage.map(_.json)).stringify},
+            |    };
+            |
+            |    ${mcpConnectorsPageCode}
+            |    ${embeddingModelsPageCode}
+            |    ${embeddingStoresPageCode}
+            |    ${toolFunctionPageCode}
+            |    ${promptPageCode}
+            |    ${promptTemplatesPageCode}
+            |    ${promptContextsPageCode}
+            |    ${aiProvidersPageCode}
+            |    ${imagesGenModelsPage}
+            |    ${videosGenModelsPage}
+            |
+            |    return {
+            |      id: extensionId,
+            |      categories:[{
+            |        title: 'AI - LLM',
+            |        description: 'All the features provided the Cloud APIM AI - LLM extension',
+            |        features: [
+            |          {
+            |            title: 'LLM Providers',
+            |            description: 'All your LLM Providers',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/providers',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'LLM Prompt Templates',
+            |            description: 'All your LLM Prompt Templates',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/templates',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'LLM Prompt Contexts',
+            |            description: 'All your LLM Prompt Contexts',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/contexts',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'LLM Prompts',
+            |            description: 'All your LLM Prompts',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/prompts',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'LLM Tool Function',
+            |            description: 'All your LLM Tool functions',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/tool-functions',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'Embedding models',
+            |            description: 'All your embedding models',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/embedding-models',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'Embedding stores',
+            |            description: 'All your embedding stores',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/embedding-stores',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'MCP Connectors',
+            |            description: 'All your MCP Connectors',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/mcp-connectors',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'Images generation models',
+            |            description: 'All your Images generation models',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/images-gen',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |           {
+            |            title: 'Videos generation models',
+            |            description: 'All your Videos generation models',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/videos-gen',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          }
+            |        ]
+            |      }],
+            |      features: [
+            |        {
+            |          title: 'LLM Providers',
+            |          description: 'All your LLM Providers',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/providers',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'LLM Prompt Templates',
+            |          description: 'All your LLM Prompt Templates',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/templates',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'LLM Prompt Contexts',
+            |          description: 'All your LLM Prompt Contexts',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/contexts',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'LLM Prompts',
+            |          description: 'All your LLM Prompts',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/prompts',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'LLM Tool Functions',
+            |          description: 'All your LLM Tool Functions',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/tool-functions',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'Embedding models',
+            |          description: 'All your embedding models',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/embedding-models',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'Embedding stores',
+            |          description: 'All your embedding stores',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/embedding-stores',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'MCP Connectors',
+            |          description: 'All your MCP Connexctors',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/mcp-connectors',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'Images generation models',
+            |          description: 'All your Images generation models',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/images-gen',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'Videos generation models',
+            |          description: 'All your Videos generation models',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/videos-gen',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        }
+            |      ],
+            |      sidebarItems: [
+            |        {
+            |          title: 'LLM Providers',
+            |          text: 'All your LLM LLM Providers',
+            |          path: 'extensions/cloud-apim/ai-gateway/providers',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'LLM Prompt Templates',
+            |          text: 'All your LLM Prompt Templates',
+            |          path: 'extensions/cloud-apim/ai-gateway/templates',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'LLM Prompt Contexts',
+            |          text: 'All your LLM Prompt Contexts',
+            |          path: 'extensions/cloud-apim/ai-gateway/contexts',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'LLM Prompts',
+            |          text: 'All your LLM Prompts',
+            |          path: 'extensions/cloud-apim/ai-gateway/prompts',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'LLM Tool Function',
+            |          text: 'All your LLM Tool Functions',
+            |          path: 'extensions/cloud-apim/ai-gateway/tool-functions',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Embedding models',
+            |          text: 'All your embedding models',
+            |          path: 'extensions/cloud-apim/ai-gateway/embedding-models',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Embedding stores',
+            |          text: 'All your embedding stores',
+            |          path: 'extensions/cloud-apim/ai-gateway/embedding-stores',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'MCP Connectors',
+            |          text: 'All your MCP Connectors',
+            |          path: 'extensions/cloud-apim/ai-gateway/mcp-connectors',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Images Generation Models',
+            |          text: 'All your MCP Connectors',
+            |          path: 'extensions/cloud-apim/ai-gateway/images-gen',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Videos Generation Models',
+            |          text: 'All your MCP Connectors',
+            |          path: 'extensions/cloud-apim/ai-gateway/videos-gen',
+            |          icon: 'brain'
+            |        }
+            |      ],
+            |      searchItems: [
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/providers`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'LLM providers',
+            |          value: 'aillmproviders',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/templates`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'LLM Prompt Templates',
+            |          value: 'prompttemplates',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/contexts`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'LLM Prompt Contexts',
+            |          value: 'promptcontexts',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/prompts`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'LLM Prompts',
+            |          value: 'prompts',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/tool-functions`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'LLM Tool Functions',
+            |          value: 'tool-functions',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/embedding-models`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Embedding models',
+            |          value: 'embedding-models',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/embedding-stores`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Embedding stores',
+            |          value: 'embedding-stores',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/mcp-connectors`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'MCP Connectors',
+            |          value: 'mcp-connectors',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/images-gen`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Images Generation Models',
+            |          value: 'images-gen',
+            |        },
+            |         {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/videos-gen`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Videos Generation Models',
+            |          value: 'videos-gen',
+            |        }
+            |      ],
+            |      routes: [
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/providers/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(AiProvidersPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/providers/:taction',
+            |          component: (props) => {
+            |            return React.createElement(AiProvidersPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/providers',
+            |          component: (props) => {
+            |            return React.createElement(AiProvidersPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/templates/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(PromptTemplatesPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/templates/:taction',
+            |          component: (props) => {
+            |            return React.createElement(PromptTemplatesPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/templates',
+            |          component: (props) => {
+            |            return React.createElement(PromptTemplatesPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/contexts/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(PromptContextsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/contexts/:taction',
+            |          component: (props) => {
+            |            return React.createElement(PromptContextsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/contexts',
+            |          component: (props) => {
+            |            return React.createElement(PromptContextsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/prompts/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(PromptsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/prompts/:taction',
+            |          component: (props) => {
+            |            return React.createElement(PromptsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/prompts',
+            |          component: (props) => {
+            |            return React.createElement(PromptsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/tool-functions/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(ToolFunctionsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/tool-functions/:taction',
+            |          component: (props) => {
+            |            return React.createElement(ToolFunctionsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/tool-functions',
+            |          component: (props) => {
+            |            return React.createElement(ToolFunctionsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/embedding-models/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(EmbeddingModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/embedding-models/:taction',
+            |          component: (props) => {
+            |            return React.createElement(EmbeddingModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/embedding-models',
+            |          component: (props) => {
+            |            return React.createElement(EmbeddingModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/embedding-stores/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(EmbeddingStoresPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/embedding-stores/:taction',
+            |          component: (props) => {
+            |            return React.createElement(EmbeddingStoresPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/embedding-stores',
+            |          component: (props) => {
+            |            return React.createElement(EmbeddingStoresPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/mcp-connectors/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(McpConnectorsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/mcp-connectors/:taction',
+            |          component: (props) => {
+            |            return React.createElement(McpConnectorsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/mcp-connectors',
+            |          component: (props) => {
+            |            return React.createElement(McpConnectorsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/images-gen/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/images-gen/:taction',
+            |          component: (props) => {
+            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/images-gen',
+            |          component: (props) => {
+            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |          }
+            |        },
+            |         {
+            |          path: '/extensions/cloud-apim/ai-gateway/videos-gen/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(VideosGenModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/videos-gen/:taction',
+            |          component: (props) => {
+            |            return React.createElement(VideosGenModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/videos-gen',
+            |          component: (props) => {
+            |            return React.createElement(VideosGenModelsPage, props, null)
+            |          }
+            |        },
+            |      ]
+            |    }
+            |  });
+            |})();
+            |""".stripMargin).as("application/javascript").vfuture
+///////////////////////////////////////////
       }
     )
   )
@@ -1095,6 +1675,8 @@ class AiExtension(val env: Env) extends AdminExtension {
       embeddingStores <- datastores.embeddingStoresDataStore.findAllAndFillSecrets()
       mcpConnectors <- datastores.mcpConnectorsDatastore.findAllAndFillSecrets()
       audioModels <- datastores.AudioModelsDataStore.findAllAndFillSecrets()
+      imgGens <- datastores.imagesGenModelsDataStore.findAllAndFillSecrets()
+      videosGens <- datastores.videosGenModelsDataStore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
@@ -1105,6 +1687,8 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateEmbeddingStores(embeddingStores)
       states.updateMcpConnectors(mcpConnectors)
       states.updateAudioModel(audioModels)
+      states.updateImgGensModels(imgGens)
+      states.updateVideosGensModels(videosGens)
       Future {
         McpSupport.restartConnectorsIfNeeded()
         McpSupport.stopConnectorsIfNeeded()
@@ -1124,6 +1708,8 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(EmbeddingStore.resource(env, datastores, states)),
       AdminExtensionEntity(McpConnector.resource(env, datastores, states)),
       AdminExtensionEntity(AudioModel.resource(env, datastores, states)),
+      AdminExtensionEntity(ImagesGenModel.resource(env, datastores, states)),
+      AdminExtensionEntity(VideosGenModel.resource(env, datastores, states)),
     )
   }
 }

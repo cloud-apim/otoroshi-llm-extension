@@ -639,6 +639,10 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
   def openaiCompletionEventSource(env: Env): ByteString = s"data: ${openaiCompletionJson(env).stringify}\n\n".byteString
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                      Embedding                                                 ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 case class Embedding(vector: Array[Float]) {
   def toOpenAiJson(format: String, index: Int): JsValue = {
     val vectorJson: JsValue = if (format == "base64") {
@@ -722,6 +726,110 @@ trait AudioModelClient {
   def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String], responseFormatFromBody: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]]
 
   def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                       Images Gen                                               ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class ImagesGen(b64Json: Option[String], revisedPrompt: Option[String], url: Option[String]) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "b64_json" -> b64Json,
+      "revised_prompt" -> revisedPrompt,
+      "url" -> url,
+    )
+  }
+}
+
+case class ImagesGenResponseMetadata(totalTokens: Long,tokenInput: Long, tokenOutput: Long, tokenText: Long, tokenImage: Long) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "total_tokens" -> totalTokens,
+      "input_tokens" -> tokenInput,
+      "output_tokens" -> tokenOutput,
+      "input_tokens_details" -> Json.obj(
+        "text_tokens" -> tokenText,
+        "image_tokens" -> tokenImage
+      )
+    )
+  }
+}
+case class ImagesGenResponse(
+                              created: Long,
+                              images: Seq[ImagesGen],
+                              metadata: Option[ImagesGenResponseMetadata],
+                            ) {
+  def toOpenAiJson: JsValue = {
+    if(metadata.nonEmpty){
+      Json.obj(
+        "created" -> created,
+        "data" -> images.map(_.toOpenAiJson),
+        "usage" -> metadata.get.toOpenAiJson
+      )
+    }else{
+      Json.obj(
+        "created" -> created,
+        "data" -> images.map(_.toOpenAiJson)
+      )
+    }
+  }
+}
+
+trait ImagesGenModelClient {
+  def generate(promptInput: String, model: Option[String], size: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]]
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                       Videos Gen                                               ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class VideosGen(b64Json: Option[String], revisedPrompt: Option[String], url: Option[String]) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "b64_json" -> b64Json,
+      "revised_prompt" -> revisedPrompt,
+      "url" -> url,
+    )
+  }
+}
+
+case class VideosGenResponseMetadata(totalTokens: Long,tokenInput: Long, tokenOutput: Long, tokenText: Long, tokenImage: Long) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "total_tokens" -> totalTokens,
+      "input_tokens" -> tokenInput,
+      "output_tokens" -> tokenOutput,
+      "input_tokens_details" -> Json.obj(
+        "text_tokens" -> tokenText,
+        "image_tokens" -> tokenImage
+      )
+    )
+  }
+}
+case class VideosGenResponse(
+                              created: Long,
+                              videos: Seq[VideosGen],
+                              metadata: Option[VideosGenResponseMetadata],
+                            ) {
+  def toOpenAiJson: JsValue = {
+    if(metadata.nonEmpty){
+      Json.obj(
+        "created" -> created,
+        "data" -> videos.map(_.toOpenAiJson),
+        "usage" -> metadata.get.toOpenAiJson
+      )
+    }else{
+      Json.obj(
+        "created" -> created,
+        "data" -> videos.map(_.toOpenAiJson)
+      )
+    }
+  }
+}
+
+trait VideosGenModelClient {
+  def generate(promptInput: String, model: Option[String], size: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]]
 }
 
 trait ChatClient {
