@@ -125,17 +125,17 @@ class AiGatewayExtensionState(env: Env) {
     _audioModels.addAll(values.map(v => (v.id, v))).remAll(_audioModels.keySet.toSeq.diff(values.map(_.id)))
   }
   
-  private val _imgGensModels = new UnboundedTrieMap[String, ImagesGenModel]()
-  def imgGensModels(id: String): Option[ImagesGenModel] = _imgGensModels.get(id)
-  def allImgGensModels(): Seq[ImagesGenModel]          = _imgGensModels.values.toSeq
-  def updateImgGensModels(values: Seq[ImagesGenModel]): Unit = {
+  private val _imgGensModels = new UnboundedTrieMap[String, ImageModel]()
+  def imgGensModels(id: String): Option[ImageModel] = _imgGensModels.get(id)
+  def allImgGensModels(): Seq[ImageModel]          = _imgGensModels.values.toSeq
+  def updateImgGensModels(values: Seq[ImageModel]): Unit = {
     _imgGensModels.addAll(values.map(v => (v.id, v))).remAll(_imgGensModels.keySet.toSeq.diff(values.map(_.id)))
   }
 
-  private val _videoGensModels = new UnboundedTrieMap[String, VideosGenModel]()
-  def videoGensModels(id: String): Option[VideosGenModel] = _videoGensModels.get(id)
-  def allVideosGensModels(): Seq[VideosGenModel]          = _videoGensModels.values.toSeq
-  def updateVideosGensModels(values: Seq[VideosGenModel]): Unit = {
+  private val _videoGensModels = new UnboundedTrieMap[String, VideoModel]()
+  def videoGensModels(id: String): Option[VideoModel] = _videoGensModels.get(id)
+  def allVideosGensModels(): Seq[VideoModel]          = _videoGensModels.values.toSeq
+  def updateVideosGensModels(values: Seq[VideoModel]): Unit = {
     _videoGensModels.addAll(values.map(v => (v.id, v))).remAll(_videoGensModels.keySet.toSeq.diff(values.map(_.id)))
   }
 }
@@ -562,7 +562,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
-      path = "/extensions/cloud-apim/extensions/ai-extension/audios-gen/_voices",
+      path = "/extensions/cloud-apim/extensions/ai-extension/audio-models/_voices",
       wantsBody = true,
       handle = handleGenAudioVoicesFetch
     ),
@@ -713,24 +713,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            icon: () => 'fa-brain',
             |          },
             |          {
-            |            title: 'Images generation models',
-            |            description: 'All your Images generation models',
+            |            title: 'Image models',
+            |            description: 'All your Image models',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
-            |            link: '/extensions/cloud-apim/ai-gateway/images-gen',
+            |            link: '/extensions/cloud-apim/ai-gateway/image-models',
             |            display: () => true,
             |            icon: () => 'fa-brain',
             |          },
             |           {
-            |            title: 'Videos generation models',
-            |            description: 'All your Videos generation models',
+            |            title: 'Video models',
+            |            description: 'All your Video models',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
-            |            link: '/extensions/cloud-apim/ai-gateway/videos-gen',
+            |            link: '/extensions/cloud-apim/ai-gateway/video-models',
             |            display: () => true,
             |            icon: () => 'fa-brain',
             |          },
             |          {
-            |            title: 'Audio generation models',
-            |            description: 'All your Audio generation models',
+            |            title: 'Audio models',
+            |            description: 'All your Audio models',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |            link: '/extensions/cloud-apim/ai-gateway/audio-models',
             |            display: () => true,
@@ -804,24 +804,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          icon: () => 'fa-brain',
             |        },
             |        {
-            |          title: 'Images generation models',
-            |          description: 'All your Images generation models',
+            |          title: 'Image models',
+            |          description: 'All your Image models',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
-            |          link: '/extensions/cloud-apim/ai-gateway/images-gen',
+            |          link: '/extensions/cloud-apim/ai-gateway/image-models',
             |          display: () => true,
             |          icon: () => 'fa-brain',
             |        },
             |        {
-            |          title: 'Videos generation models',
-            |          description: 'All your Videos generation models',
+            |          title: 'Video models',
+            |          description: 'All your Video models',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
-            |          link: '/extensions/cloud-apim/ai-gateway/videos-gen',
+            |          link: '/extensions/cloud-apim/ai-gateway/video-models',
             |          display: () => true,
             |          icon: () => 'fa-brain',
             |        },
             |        {
-            |          title: 'Audio generation models',
-            |          description: 'All your Audio generation models',
+            |          title: 'Audio models',
+            |          description: 'All your Audio models',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |          link: '/extensions/cloud-apim/ai-gateway/audio-models',
             |          display: () => true,
@@ -878,20 +878,20 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          icon: 'brain'
             |        },
             |        {
-            |          title: 'Images Generation Models',
-            |          text: 'All your MCP Connectors',
-            |          path: 'extensions/cloud-apim/ai-gateway/images-gen',
+            |          title: 'Image Models',
+            |          text: 'All your image models',
+            |          path: 'extensions/cloud-apim/ai-gateway/image-models',
             |          icon: 'brain'
             |        },
             |        {
-            |          title: 'Videos Generation Models',
-            |          text: 'All your MCP Connectors',
-            |          path: 'extensions/cloud-apim/ai-gateway/videos-gen',
+            |          title: 'Video Models',
+            |          text: 'All your video models',
+            |          path: 'extensions/cloud-apim/ai-gateway/video-models',
             |          icon: 'brain'
             |        },
             |        {
-            |          title: 'Audio generation models',
-            |          text: 'All your Audio generation models',
+            |          title: 'Audio models',
+            |          text: 'All your Audio models',
             |          path: 'extensions/cloud-apim/ai-gateway/audio-models',
             |          icon: 'brain'
             |        }
@@ -963,26 +963,26 @@ class AiExtension(val env: Env) extends AdminExtension {
             |        },
             |        {
             |          action: () => {
-            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/images-gen`
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/image-models`
             |          },
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
-            |          label: 'Images Generation Models',
-            |          value: 'images-gen',
+            |          label: 'Image Models',
+            |          value: 'image-models',
             |        },
             |         {
             |          action: () => {
-            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/videos-gen`
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/video-models`
             |          },
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
-            |          label: 'Videos Generation Models',
-            |          value: 'videos-gen',
+            |          label: 'Video Models',
+            |          value: 'video-models',
             |        },
             |        {
             |          action: () => {
             |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/audio-models`
             |          },
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
-            |          label: 'Audio generation models',
+            |          label: 'Audio models',
             |          value: 'audio-models',
             |        }
             |      ],
@@ -1132,37 +1132,37 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          }
             |        },
             |        {
-            |          path: '/extensions/cloud-apim/ai-gateway/images-gen/:taction/:titem',
+            |          path: '/extensions/cloud-apim/ai-gateway/image-models/:taction/:titem',
             |          component: (props) => {
             |            return React.createElement(ImagesGenModelsPage, props, null)
             |          }
             |        },
             |        {
-            |          path: '/extensions/cloud-apim/ai-gateway/images-gen/:taction',
+            |          path: '/extensions/cloud-apim/ai-gateway/image-models/:taction',
             |          component: (props) => {
             |            return React.createElement(ImagesGenModelsPage, props, null)
             |          }
             |        },
             |        {
-            |          path: '/extensions/cloud-apim/ai-gateway/images-gen',
+            |          path: '/extensions/cloud-apim/ai-gateway/image-models',
             |          component: (props) => {
             |            return React.createElement(ImagesGenModelsPage, props, null)
             |          }
             |        },
             |         {
-            |          path: '/extensions/cloud-apim/ai-gateway/videos-gen/:taction/:titem',
+            |          path: '/extensions/cloud-apim/ai-gateway/video-models/:taction/:titem',
             |          component: (props) => {
             |            return React.createElement(VideosGenModelsPage, props, null)
             |          }
             |        },
             |        {
-            |          path: '/extensions/cloud-apim/ai-gateway/videos-gen/:taction',
+            |          path: '/extensions/cloud-apim/ai-gateway/video-models/:taction',
             |          component: (props) => {
             |            return React.createElement(VideosGenModelsPage, props, null)
             |          }
             |        },
             |        {
-            |          path: '/extensions/cloud-apim/ai-gateway/videos-gen',
+            |          path: '/extensions/cloud-apim/ai-gateway/video-models',
             |          component: (props) => {
             |            return React.createElement(VideosGenModelsPage, props, null)
             |          }
@@ -1240,8 +1240,8 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(EmbeddingStore.resource(env, datastores, states)),
       AdminExtensionEntity(McpConnector.resource(env, datastores, states)),
       AdminExtensionEntity(AudioModel.resource(env, datastores, states)),
-      AdminExtensionEntity(ImagesGenModel.resource(env, datastores, states)),
-      AdminExtensionEntity(VideosGenModel.resource(env, datastores, states)),
+      AdminExtensionEntity(ImageModel.resource(env, datastores, states)),
+      AdminExtensionEntity(VideoModel.resource(env, datastores, states)),
     )
   }
 }

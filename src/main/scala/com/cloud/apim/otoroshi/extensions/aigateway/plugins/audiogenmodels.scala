@@ -50,8 +50,8 @@ object OpenAICompatAudioModelConfig {
 }
 
 class OpenAICompatAudioModel extends NgBackendCall {
-  override def name: String = "Cloud APIM - LLM OpenAI Compat. Audio models"
-  override def description: Option[String] = "Delegates call to a LLM provider to generate audio files or transcribe audio to text".some
+  override def name: String = "Cloud APIM - LLM OpenAI Compat. Audio Text to Speech"
+  override def description: Option[String] = "Delegates call to a LLM provider to generate audio files from text".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
@@ -64,7 +64,7 @@ class OpenAICompatAudioModel extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'LLM OpenAI Compat. AudioModels' plugin is available !")
+      ext.logger.info("the 'LLM OpenAI Compat. Audio Text to Speech' plugin is available !")
     }
     ().vfuture
   }

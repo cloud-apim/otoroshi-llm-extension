@@ -98,7 +98,7 @@ class AudioGenPage extends Component {
 
     fetchVoices = (audioModel, force) => {
         console.log("got provider from  fetchVoices  = ", audioModel)
-        fetch(`/extensions/cloud-apim/extensions/ai-extension/audios-gen/_voices`, {
+        fetch(`/extensions/cloud-apim/extensions/ai-extension/audio-models/_voices`, {
             method: 'POST',
             credentials: 'include',
             headers: {
@@ -148,7 +148,7 @@ class AudioGenPage extends Component {
     };
 
     componentDidMount() {
-        this.props.setTitle(`Audio model`);
+        this.props.setTitle(`Audio models`);
     }
 
     client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'audio-models');

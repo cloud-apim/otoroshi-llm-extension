@@ -60,21 +60,21 @@ class ImagesGenModelsPage extends Component {
         '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config'];
 
     componentDidMount() {
-        this.props.setTitle(`Images Generation models`);
+        this.props.setTitle(`Image models`);
     }
 
-    client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'images-gen');
+    client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'image-models');
 
     render() {
         return (
             React.createElement(Table, {
                 parentProps: this.props,
-                selfUrl: "extensions/cloud-apim/ai-gateway/images-gen",
+                selfUrl: "extensions/cloud-apim/ai-gateway/image-models",
                 defaultTitle: "All Images generation models",
                 defaultValue: () => ({
-                    id: 'images-gen-model_' + uuid(),
-                    name: 'Images generation models',
-                    description: 'An image generation model',
+                    id: 'image-model_' + uuid(),
+                    name: 'Images models',
+                    description: 'An image model',
                     tags: [],
                     metadata: {},
                     provider: 'openai',
@@ -223,7 +223,7 @@ class ImagesGenModelsPage extends Component {
                         }
                     }
                 },
-                itemName: "Images Generation model",
+                itemName: "Image model",
                 formSchema: this.formSchema,
                 formFlow: this.formFlow,
                 columns: this.columns,
@@ -233,15 +233,15 @@ class ImagesGenModelsPage extends Component {
                 deleteItem: this.client.delete,
                 createItem: this.client.create,
                 navigateTo: (item) => {
-                    window.location = `/bo/dashboard/extensions/cloud-apim/ai-gateway/images-gen/edit/${item.id}`
+                    window.location = `/bo/dashboard/extensions/cloud-apim/ai-gateway/image-models/edit/${item.id}`
                 },
-                itemUrl: (item) => `/bo/dashboard/extensions/cloud-apim/ai-gateway/images-gen/edit/${item.id}`,
+                itemUrl: (item) => `/bo/dashboard/extensions/cloud-apim/ai-gateway/image-models/edit/${item.id}`,
                 showActions: true,
                 showLink: true,
                 rowNavigation: true,
                 extractKey: (item) => item.id,
                 export: true,
-                kubernetesKind: "ai-gateway.extensions.cloud-apim.com/ImagesGenModel"
+                kubernetesKind: "ai-gateway.extensions.cloud-apim.com/ImageModel"
             }, null)
         );
     }

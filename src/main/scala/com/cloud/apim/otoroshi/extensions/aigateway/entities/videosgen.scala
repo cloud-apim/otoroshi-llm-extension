@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.util.{Failure, Success, Try}
 
-case class VideosGenModel(
+case class VideoModel(
   location: EntityLocation,
   id: String,
   name: String,
@@ -27,7 +27,7 @@ case class VideosGenModel(
   config: JsObject,
 ) extends EntityLocationSupport {
   override def internalId: String               = id
-  override def json: JsValue                    = VideosGenModel.format.writes(this)
+  override def json: JsValue                    = VideoModel.format.writes(this)
   override def theName: String                  = name
   override def theDescription: String           = description
   override def theTags: Seq[String]             = tags
@@ -49,9 +49,9 @@ case class VideosGenModel(
   }
 }
 
-object VideosGenModel {
-  val format = new Format[VideosGenModel] {
-    override def writes(o: VideosGenModel): JsValue             = o.location.jsonWithKey ++ Json.obj(
+object VideoModel {
+  val format = new Format[VideoModel] {
+    override def writes(o: VideoModel): JsValue             = o.location.jsonWithKey ++ Json.obj(
       "id"               -> o.id,
       "name"             -> o.name,
       "description"      -> o.description,
@@ -60,8 +60,8 @@ object VideosGenModel {
       "provider"         -> o.provider,
       "config"           -> o.config,
     )
-    override def reads(json: JsValue): JsResult[VideosGenModel] = Try {
-      VideosGenModel(
+    override def reads(json: JsValue): JsResult[VideoModel] = Try {
+      VideoModel(
         location = otoroshi.models.EntityLocation.readFromKey(json),
         id = (json \ "id").as[String],
         name = (json \ "name").as[String],
@@ -78,22 +78,22 @@ object VideosGenModel {
   }
   def resource(env: Env, datastores: AiGatewayExtensionDatastores, states: AiGatewayExtensionState): Resource = {
     Resource(
-      "VideosGenModel",
-      "videos-gen",
-      "videos-gen",
+      "VideoModel",
+      "video-models",
+      "video-model",
       "ai-gateway.extensions.cloud-apim.com",
       ResourceVersion("v1", true, false, true),
-      GenericResourceAccessApiWithState[VideosGenModel](
-        format = VideosGenModel.format,
-        clazz = classOf[VideosGenModel],
+      GenericResourceAccessApiWithState[VideoModel](
+        format = VideoModel.format,
+        clazz = classOf[VideoModel],
         keyf = id => datastores.videosGenModelsDataStore.key(id),
         extractIdf = c => datastores.videosGenModelsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
         tmpl = (v, p, ctx) => {
           p.get("kind").map(_.toLowerCase()) match {
-            case Some("luma") => VideosGenModel(
-              id = IdGenerator.namedId("provider", env),
+            case Some("luma") => VideoModel(
+              id = IdGenerator.namedId("video-model", env),
               name = "OpenAI gpt-image-1",
               description = "An OpenAI videos generation model",
               metadata = Map.empty,
@@ -111,8 +111,8 @@ object VideosGenModel {
                 )
               ),
             ).json
-            case _ => VideosGenModel(
-              id = IdGenerator.namedId("provider", env),
+            case _ => VideoModel(
+              id = IdGenerator.namedId("video-model", env),
               name = "Local videos generation model",
               description = "A Local videos generation model",
               metadata = Map.empty,
@@ -136,13 +136,13 @@ object VideosGenModel {
   }
 }
 
-trait VideosGenModelsDataStore extends BasicStore[VideosGenModel]
+trait VideosGenModelsDataStore extends BasicStore[VideoModel]
 
 class KvVideosGenModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
   extends VideosGenModelsDataStore
-    with RedisLikeStore[VideosGenModel] {
-  override def fmt: Format[VideosGenModel]                  = VideosGenModel.format
+    with RedisLikeStore[VideoModel] {
+  override def fmt: Format[VideoModel]                  = VideoModel.format
   override def redisLike(implicit env: Env): RedisLike = redisCli
   override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:videosgen:$id"
-  override def extractId(value: VideosGenModel): String    = value.id
+  override def extractId(value: VideoModel): String    = value.id
 }

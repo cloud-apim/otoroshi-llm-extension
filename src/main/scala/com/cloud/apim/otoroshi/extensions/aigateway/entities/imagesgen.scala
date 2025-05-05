@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.util.{Failure, Success, Try}
 
-case class ImagesGenModel(
+case class ImageModel(
   location: EntityLocation,
   id: String,
   name: String,
@@ -27,7 +27,7 @@ case class ImagesGenModel(
   config: JsObject,
 ) extends EntityLocationSupport {
   override def internalId: String               = id
-  override def json: JsValue                    = ImagesGenModel.format.writes(this)
+  override def json: JsValue                    = ImageModel.format.writes(this)
   override def theName: String                  = name
   override def theDescription: String           = description
   override def theTags: Seq[String]             = tags
@@ -77,9 +77,9 @@ case class ImagesGenModel(
   }
 }
 
-object ImagesGenModel {
-  val format = new Format[ImagesGenModel] {
-    override def writes(o: ImagesGenModel): JsValue             = o.location.jsonWithKey ++ Json.obj(
+object ImageModel {
+  val format = new Format[ImageModel] {
+    override def writes(o: ImageModel): JsValue             = o.location.jsonWithKey ++ Json.obj(
       "id"               -> o.id,
       "name"             -> o.name,
       "description"      -> o.description,
@@ -88,8 +88,8 @@ object ImagesGenModel {
       "provider"         -> o.provider,
       "config"           -> o.config,
     )
-    override def reads(json: JsValue): JsResult[ImagesGenModel] = Try {
-      ImagesGenModel(
+    override def reads(json: JsValue): JsResult[ImageModel] = Try {
+      ImageModel(
         location = otoroshi.models.EntityLocation.readFromKey(json),
         id = (json \ "id").as[String],
         name = (json \ "name").as[String],
@@ -106,22 +106,22 @@ object ImagesGenModel {
   }
   def resource(env: Env, datastores: AiGatewayExtensionDatastores, states: AiGatewayExtensionState): Resource = {
     Resource(
-      "ImagesGenModel",
-      "images-gen",
-      "images-gen",
+      "ImageModel",
+      "image-models",
+      "image-model",
       "ai-gateway.extensions.cloud-apim.com",
       ResourceVersion("v1", true, false, true),
-      GenericResourceAccessApiWithState[ImagesGenModel](
-        format = ImagesGenModel.format,
-        clazz = classOf[ImagesGenModel],
+      GenericResourceAccessApiWithState[ImageModel](
+        format = ImageModel.format,
+        clazz = classOf[ImageModel],
         keyf = id => datastores.imagesGenModelsDataStore.key(id),
         extractIdf = c => datastores.imagesGenModelsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
         tmpl = (v, p, ctx) => {
           p.get("kind").map(_.toLowerCase()) match {
-            case Some("openai") => ImagesGenModel(
-              id = IdGenerator.namedId("provider", env),
+            case Some("openai") => ImageModel(
+              id = IdGenerator.namedId("image-model", env),
               name = "OpenAI gpt-image-1",
               description = "An OpenAI images generation model",
               metadata = Map.empty,
@@ -139,8 +139,8 @@ object ImagesGenModel {
                 )
               ),
             ).json
-            case Some("x-ai") => ImagesGenModel(
-              id = IdGenerator.namedId("provider", env),
+            case Some("x-ai") => ImageModel(
+              id = IdGenerator.namedId("image-model", env),
               name = "X-AI",
               description = "X-AI Images generation model",
               metadata = Map.empty,
@@ -158,8 +158,8 @@ object ImagesGenModel {
                 )
               ),
             ).json
-            case _ => ImagesGenModel(
-              id = IdGenerator.namedId("provider", env),
+            case _ => ImageModel(
+              id = IdGenerator.namedId("image-model", env),
               name = "Local images generation model",
               description = "A Local images generation model",
               metadata = Map.empty,
@@ -183,13 +183,13 @@ object ImagesGenModel {
   }
 }
 
-trait ImagesGenModelsDataStore extends BasicStore[ImagesGenModel]
+trait ImagesGenModelsDataStore extends BasicStore[ImageModel]
 
 class KvImagesGenModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
   extends ImagesGenModelsDataStore
-    with RedisLikeStore[ImagesGenModel] {
-  override def fmt: Format[ImagesGenModel]                  = ImagesGenModel.format
+    with RedisLikeStore[ImageModel] {
+  override def fmt: Format[ImageModel]                  = ImageModel.format
   override def redisLike(implicit env: Env): RedisLike = redisCli
   override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:imgensmds:$id"
-  override def extractId(value: ImagesGenModel): String    = value.id
+  override def extractId(value: ImageModel): String    = value.id
 }

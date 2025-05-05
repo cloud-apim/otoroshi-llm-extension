@@ -55,19 +55,19 @@ class VideosGenModelsPage extends Component {
         '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config'];
 
     componentDidMount() {
-        this.props.setTitle(`Videos Generation models`);
+        this.props.setTitle(`Video models`);
     }
 
-    client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'Videos-gen');
+    client = BackOfficeServices.apisClient('ai-gateway.extensions.cloud-apim.com', 'v1', 'video-models');
 
     render() {
         return (
             React.createElement(Table, {
                 parentProps: this.props,
-                selfUrl: "extensions/cloud-apim/ai-gateway/videos-gen",
+                selfUrl: "extensions/cloud-apim/ai-gateway/video-models",
                 defaultTitle: "All Videos generation models",
                 defaultValue: () => ({
-                    id: 'video-gen-model_' + uuid(),
+                    id: 'video-model_' + uuid(),
                     name: 'Luma video generation models',
                     description: 'A video generation model',
                     tags: [],
@@ -114,7 +114,7 @@ class VideosGenModelsPage extends Component {
                         }
                     }
                 },
-                itemName: "Videos Generation model",
+                itemName: "Video model",
                 formSchema: this.formSchema,
                 formFlow: this.formFlow,
                 columns: this.columns,
@@ -124,15 +124,15 @@ class VideosGenModelsPage extends Component {
                 deleteItem: this.client.delete,
                 createItem: this.client.create,
                 navigateTo: (item) => {
-                    window.location = `/bo/dashboard/extensions/cloud-apim/ai-gateway/videos-gen/edit/${item.id}`
+                    window.location = `/bo/dashboard/extensions/cloud-apim/ai-gateway/video-models/edit/${item.id}`
                 },
-                itemUrl: (item) => `/bo/dashboard/extensions/cloud-apim/ai-gateway/videos-gen/edit/${item.id}`,
+                itemUrl: (item) => `/bo/dashboard/extensions/cloud-apim/ai-gateway/video-models/edit/${item.id}`,
                 showActions: true,
                 showLink: true,
                 rowNavigation: true,
                 extractKey: (item) => item.id,
                 export: true,
-                kubernetesKind: "ai-gateway.extensions.cloud-apim.com/VideosGenModel"
+                kubernetesKind: "ai-gateway.extensions.cloud-apim.com/VideoModel"
             }, null)
         );
     }

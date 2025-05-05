@@ -25,7 +25,7 @@ object OpenAiCompatImagesGenConfig {
       "array" -> true,
       "label" -> s"Images Generation",
       "props" -> Json.obj(
-        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/images-gen",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/image-models",
         "optionsTransformer" -> Json.obj(
           "label" -> "name",
           "value" -> "id",
@@ -50,7 +50,7 @@ object OpenAiCompatImagesGenConfig {
 
 class OpenAICompatImagesGen extends NgBackendCall {
 
-  override def name: String = "Cloud APIM - LLM OpenAI Compat. Images Generation Models"
+  override def name: String = "Cloud APIM - LLM OpenAI Compat. Images Generation"
   override def description: Option[String] = "Delegates call to a LLM provider to generate images".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -64,7 +64,7 @@ class OpenAICompatImagesGen extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'LLM OpenAI Compat. Images generation models' plugin is available !")
+      ext.logger.info("the 'LLM OpenAI Compat. Images generation' plugin is available !")
     }
     ().vfuture
   }

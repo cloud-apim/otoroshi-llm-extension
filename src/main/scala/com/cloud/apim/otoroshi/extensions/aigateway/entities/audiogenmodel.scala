@@ -115,7 +115,7 @@ object AudioModel {
         tmpl = (v, p, ctx) => {
           p.get("kind").map(_.toLowerCase()) match {
             case Some("openai") => AudioModel(
-              id = IdGenerator.namedId("provider", env),
+              id = IdGenerator.namedId("audio-model", env),
               name = "OpenAI text-AudioGen-3-small",
               description = "An OpenAI AudioGen model",
               metadata = Map.empty,
@@ -134,7 +134,7 @@ object AudioModel {
               ),
             ).json
             case _ => AudioModel(
-              id = IdGenerator.namedId("provider", env),
+              id = IdGenerator.namedId("audio-model", env),
               name = "Local AudioGen model",
               description = "A Local AudioGen model",
               metadata = Map.empty,
