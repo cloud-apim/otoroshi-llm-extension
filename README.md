@@ -44,6 +44,34 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 * OpenAI
   * omni-moderation-latest
 
+## Supported Audio Text-to-Speech models
+
+* OpenAI
+    * gpt-4o-mini-tts
+    * tts-1
+    * tts-1-hd
+* Groq
+    * playai-tts
+    * playai-tts-arabic
+* ElevenLabs
+
+## Supported LLM Embeddings models
+
+## Supported Images generation models
+
+* OpenAI 
+  * dall-e-2
+  * dall-e-3
+  * gpt-image-1
+* Azure OpenAI
+* Grok
+  * grok-2-image
+* Luma
+  * photon-1 (default)
+  * photon-flash-1
+* Hive
+  * black-forest-labs/flux-schnell
+
 ## Requirements
 
 **Run it on JDK17+**

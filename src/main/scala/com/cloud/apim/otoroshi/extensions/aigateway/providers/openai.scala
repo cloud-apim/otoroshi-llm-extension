@@ -9,12 +9,16 @@ import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
+import play.api.libs.Files.TemporaryFile
 import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
 import play.api.libs.ws.WSResponse
+import play.api.mvc.MultipartFormData.FilePart
 
+import java.io.{File, FileOutputStream}
 import java.util.concurrent.atomic.AtomicLong
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
+import scala.reflect.io.Path.jfile2path
 
 case class OpenAiChatResponseChunkUsage(raw: JsValue) {
   lazy val completion_tokens: Long = raw.select("completion_tokens").asLong
@@ -145,6 +149,64 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
       ).applyOnWithOpt(body) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
+          .withBody(body)
+      }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .execute()
+      .map { resp =>
+        println(s"resp: ${resp.status} - ${resp.body}")
+        println("\n\n================================\n")
+        resp
+      }
+  }
+
+  def rawCallTts(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[File] = {
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logCall(providerName, method, url, body)(env)
+
+    env.Ws.url(url)
+      .withHttpHeaders(
+        "Authorization" -> s"Bearer ${token}",
+        "Accept" -> "application/json",
+      ).applyOnWithOpt(body) {
+        case (builder, body) => builder
+          .addHttpHeaders("Content-Type" -> "application/json")
+          .withBody(body)
+      }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .execute()
+      .map { response =>
+        if (response.status == 200) {
+          val audioBytes: ByteString = response.bodyAsBytes
+          val file = new File("speech.mp3")
+          val output = new FileOutputStream(file)
+          try {
+            output.write(audioBytes.toArray)
+          } finally {
+            output.close()
+          }
+          file
+        } else {
+          throw new RuntimeException(s"Failed with status ${response.status}: ${response.body}")
+        }
+      }
+  }
+
+  def rawCallWithFile(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${baseUrl}${path}"
+    val uri = Uri(url)
+    ProviderHelpers.logCall(providerName, method, url, body)(env)
+    env.Ws
+      .url(url)
+      .withHttpHeaders(
+        "Authorization" -> s"Bearer ${token}",
+        "Accept" -> "application/json",
+        "Host" -> uri.authority.host.toString(),
+      ).applyOnWithOpt(body) {
+        case (builder, body) => builder
+          .addHttpHeaders("Content-Type" -> body.select("Content-Type").asOptString.getOrElse("application/json"))
           .withBody(body)
       }
       .withMethod(method)
@@ -625,6 +687,10 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
   }
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                       OpenAI Embedding                                         ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 case class OpenAiEmbeddingModelClientOptions(raw: JsObject) {
   lazy val model: String = raw.select("model").asOpt[String].getOrElse("text-embedding-3-small")
 }
@@ -678,6 +744,117 @@ class OpenAiModerationModelClient(val api: OpenAiApi, val options: OpenAiModerat
         Right(ModerationResponse(
           model = resp.json.select("model").asString,
           moderationResults = resp.json.select("results").as[Seq[JsObject]].map(o => ModerationResult(o.select("flagged").asOpt[Boolean].getOrElse(false), o.select("categories").asOpt[JsObject].getOrElse(Json.obj()), o.select("category_scores").asOpt[JsObject].getOrElse(Json.obj()))),
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                             Audio generation and transcription                                 ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+case class OpenAIAudioModelClientOptions(raw: JsObject) {
+  lazy val speechModel: String = raw.select("model").asOpt[String].getOrElse("gpt-4o-mini-tts")
+  lazy val transcriptionModel: String = raw.select("model").asOpt[String].getOrElse("gpt-4o-transcribe")
+  lazy val voice: String = raw.select("voice").asOpt[String].getOrElse("alloy")
+  lazy val format: String = raw.select("response_format").asOpt[String].getOrElse("mp3")
+}
+
+object OpenAIAudioModelClientOptions {
+  def fromJson(raw: JsObject): OpenAIAudioModelClientOptions = OpenAIAudioModelClientOptions(raw)
+}
+
+class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelClientOptions, mode: String, id: String) extends AudioModelClient {
+
+  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+    Right(
+      List(
+        AudioGenVoice("tts-1", "tts-1"),
+        AudioGenVoice("tts-1-hd", "tts-1-hd"),
+        AudioGenVoice("gpt-4o-mini-tts", "gpt-4o-mini-tts")
+      )
+    ).vfuture
+  }
+
+  //  override def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+//    val finalModel: String = modelOpt.getOrElse(options.transcriptionModel)
+//    api.rawCall("POST", "/audio/transcriptions", (
+//      options.raw ++ Json.obj("model" -> finalModel)).some).map { resp =>
+//      if (resp.status == 200) {
+//        Right(AudioTranscriptionResponse(
+//          transcribedText = resp.json.select("text").asOptString.getOrElse("")
+//        ))
+//      } else {
+//        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+//      }
+//    }
+//  }
+
+  override def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String], formatOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]] = {
+    val finalModel: String = modelOpt.getOrElse(options.speechModel)
+    val finalVoice: String = voiceOpt.getOrElse(options.voice)
+    val finalFormat: String = formatOpt.getOrElse(options.format)
+
+    api.rawCallTts("POST", "/audio/speech", (
+        options.raw ++
+          Json.obj(
+            "input" -> textInput,
+            "voice" -> finalVoice,
+            "model" -> finalModel,
+            "response_format" -> finalFormat
+          )
+      ).some).map { resp =>
+      if (resp.isFile) {
+        Right(
+          resp
+        )
+      } else {
+        Left(Json.obj("error" -> "Bad file", "body" -> "Error"))
+      }
+    } 
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                     OpenAI Images Gen                                          ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class OpenAiImagesGenModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("gpt-image-1")
+  lazy val size: String = raw.select("size").asOpt[String].getOrElse("auto")
+}
+
+object OpenAiImagesGenModelClientOptions {
+  def fromJson(raw: JsObject): OpenAiImagesGenModelClientOptions = OpenAiImagesGenModelClientOptions(raw)
+}
+
+class OpenAiImagesGenModelClient(val api: OpenAiApi, val options: OpenAiImagesGenModelClientOptions, id: String) extends ImagesGenModelClient {
+
+  override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    val finalModel: String = modelOpt.getOrElse(options.model)
+    val finalSize: String = imgSizeOpt.getOrElse(options.size)
+    api.rawCall("POST", "/images/generations", (options.raw ++
+      Json.obj(
+        "prompt" -> promptInput,
+        "size" -> finalSize,
+        "model" -> finalModel
+      )).some).map { resp =>
+      if (resp.status == 200) {
+        Right(ImagesGenResponse(
+          created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
+          images = resp.json.select("data").as[Seq[JsObject]].map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String])),
+          metadata = finalModel.toLowerCase match {
+            case "gpt-image-1" => ImagesGenResponseMetadata(
+              totalTokens = resp.json.at("usage.total_tokens").asOpt[Long].getOrElse(-1L),
+              tokenInput = resp.json.at("usage.input_tokens").asOpt[Long].getOrElse(-1L),
+              tokenOutput = resp.json.at("usage.output_tokens").asOpt[Long].getOrElse(-1L),
+              tokenText = resp.json.at("usage.input_tokens_details.text_tokens").asOpt[Long].getOrElse(-1L),
+              tokenImage = resp.json.at("usage.input_tokens_details.image_tokens").asOpt[Long].getOrElse(-1L),
+            ).some
+            case _ => None
+          }
         ))
       } else {
         Left(Json.obj("status" -> resp.status, "body" -> resp.json))

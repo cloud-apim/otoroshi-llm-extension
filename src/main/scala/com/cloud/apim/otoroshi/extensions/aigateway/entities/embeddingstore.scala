@@ -89,7 +89,7 @@ object EmbeddingStore {
         tmpl = (v, p, ctx) => {
           p.get("kind").map(_.toLowerCase()) match {
             case _ => EmbeddingStore(
-              id = IdGenerator.namedId("provider", env),
+              id = IdGenerator.namedId("embedding-store", env),
               name = "Local embedding store",
               description = "A Local embedding store",
               metadata = Map.empty,

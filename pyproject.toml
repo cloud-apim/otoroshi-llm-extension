@@ -1,0 +1,13 @@
+[project]
+name = "otoroshi-llm-extension"
+version = "0.1.0"
+description = "AConnect, setup, secure and seamlessly manage LLM models using an Universal/OpenAI compatible API"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ecologits>=0.6.3",
+    "litellm>=1.68.0",
+]
+
+[tool.uv.workspace]
+members = []

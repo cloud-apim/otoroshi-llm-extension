@@ -121,7 +121,7 @@ object EmbeddingModel {
     Resource(
       "EmbeddingModel",
       "embedding-models",
-      "embedding-models",
+      "embedding-model",
       "ai-gateway.extensions.cloud-apim.com",
       ResourceVersion("v1", true, false, true),
       GenericResourceAccessApiWithState[EmbeddingModel](
@@ -134,7 +134,7 @@ object EmbeddingModel {
         tmpl = (v, p, ctx) => {
           p.get("kind").map(_.toLowerCase()) match {
             case Some("openai") => EmbeddingModel(
-              id = IdGenerator.namedId("provider", env),
+              id = IdGenerator.namedId("embedding-model", env),
               name = "OpenAI text-embedding-3-small",
               description = "An OpenAI embedding model",
               metadata = Map.empty,
@@ -153,7 +153,7 @@ object EmbeddingModel {
               ),
             ).json
             case Some("ollama") => EmbeddingModel(
-              id = IdGenerator.namedId("provider", env),
+              id = IdGenerator.namedId("embedding-model", env),
               name = "Ollama embedding model",
               description = "An Ollama embedding model",
               metadata = Map.empty,
@@ -172,7 +172,7 @@ object EmbeddingModel {
               ),
             ).json
             case _ => EmbeddingModel(
-              id = IdGenerator.namedId("provider", env),
+              id = IdGenerator.namedId("embedding-model", env),
               name = "Local embedding model",
               description = "A Local embedding model",
               metadata = Map.empty,

@@ -32,62 +32,89 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val embeddingStoresDataStore: EmbeddingStoresDataStore = new KvEmbeddingStoresDataStore(extensionId, env.datastores.redis, env)
   val mcpConnectorsDatastore: McpConnectorsDataStore = new KvMcpConnectorsDataStore(extensionId, env.datastores.redis, env)
   val moderationModelsDataStore: ModerationModelsDataStore = new KvModerationModelsDataStore(extensionId, env.datastores.redis, env)
+  val AudioModelsDataStore: AudioModelsDataStore = new KvAudioModelsDataStore(extensionId, env.datastores.redis, env)
+  val imagesGenModelsDataStore: ImagesGenModelsDataStore = new KvImagesGenModelsDataStore(extensionId, env.datastores.redis, env)
+  val videosGenModelsDataStore: VideosGenModelsDataStore = new KvVideosGenModelsDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
 
   private val _providers = new UnboundedTrieMap[String, AiProvider]()
+
   def provider(id: String): Option[AiProvider] = _providers.get(id)
-  def allProviders(): Seq[AiProvider]          = _providers.values.toSeq
+
+  def allProviders(): Seq[AiProvider] = _providers.values.toSeq
+
   def updateProviders(values: Seq[AiProvider]): Unit = {
     _providers.addAll(values.map(v => (v.id, v))).remAll(_providers.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _templates = new UnboundedTrieMap[String, PromptTemplate]()
+
   def template(id: String): Option[PromptTemplate] = _templates.get(id)
-  def allTemplates(): Seq[PromptTemplate]          = _templates.values.toSeq
+
+  def allTemplates(): Seq[PromptTemplate] = _templates.values.toSeq
+
   def updateTemplates(values: Seq[PromptTemplate]): Unit = {
     _templates.addAll(values.map(v => (v.id, v))).remAll(_templates.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _contexts = new UnboundedTrieMap[String, PromptContext]()
+
   def context(id: String): Option[PromptContext] = _contexts.get(id)
-  def allContexts(): Seq[PromptContext]          = _contexts.values.toSeq
+
+  def allContexts(): Seq[PromptContext] = _contexts.values.toSeq
+
   def updateContexts(values: Seq[PromptContext]): Unit = {
     _contexts.addAll(values.map(v => (v.id, v))).remAll(_contexts.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _prompts = new UnboundedTrieMap[String, Prompt]()
+
   def prompt(id: String): Option[Prompt] = _prompts.get(id)
-  def allPrompts(): Seq[Prompt]          = _prompts.values.toSeq
+
+  def allPrompts(): Seq[Prompt] = _prompts.values.toSeq
+
   def updatePrompts(values: Seq[Prompt]): Unit = {
     _prompts.addAll(values.map(v => (v.id, v))).remAll(_prompts.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _toolFunctions = new UnboundedTrieMap[String, LlmToolFunction]()
+
   def toolFunction(id: String): Option[LlmToolFunction] = _toolFunctions.get(id)
-  def allToolFunctions(): Seq[LlmToolFunction]          = _toolFunctions.values.toSeq
+
+  def allToolFunctions(): Seq[LlmToolFunction] = _toolFunctions.values.toSeq
+
   def updateToolFunctions(values: Seq[LlmToolFunction]): Unit = {
     _toolFunctions.addAll(values.map(v => (v.id, v))).remAll(_toolFunctions.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _embeddingModels = new UnboundedTrieMap[String, EmbeddingModel]()
+
   def embeddingModel(id: String): Option[EmbeddingModel] = _embeddingModels.get(id)
-  def allEmbeddingModels(): Seq[EmbeddingModel]          = _embeddingModels.values.toSeq
+
+  def allEmbeddingModels(): Seq[EmbeddingModel] = _embeddingModels.values.toSeq
+
   def updateEmbeddingModels(values: Seq[EmbeddingModel]): Unit = {
     _embeddingModels.addAll(values.map(v => (v.id, v))).remAll(_embeddingModels.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _embeddingStores = new UnboundedTrieMap[String, EmbeddingStore]()
+
   def embeddingStore(id: String): Option[EmbeddingStore] = _embeddingStores.get(id)
-  def allEmbeddingStores(): Seq[EmbeddingStore]          = _embeddingStores.values.toSeq
+
+  def allEmbeddingStores(): Seq[EmbeddingStore] = _embeddingStores.values.toSeq
+
   def updateEmbeddingStores(values: Seq[EmbeddingStore]): Unit = {
     _embeddingStores.addAll(values.map(v => (v.id, v))).remAll(_embeddingStores.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _mcpConnectors = new UnboundedTrieMap[String, McpConnector]()
+
   def mcpConnector(id: String): Option[McpConnector] = _mcpConnectors.get(id)
-  def allMcpConnectors(): Seq[McpConnector]          = _mcpConnectors.values.toSeq
+
+  def allMcpConnectors(): Seq[McpConnector] = _mcpConnectors.values.toSeq
+
   def updateMcpConnectors(values: Seq[McpConnector]): Unit = {
     _mcpConnectors.addAll(values.map(v => (v.id, v))).remAll(_mcpConnectors.keySet.toSeq.diff(values.map(_.id)))
   }
@@ -97,6 +124,27 @@ class AiGatewayExtensionState(env: Env) {
   def allModerationModels(): Seq[ModerationModel]          = _moderationModels.values.toSeq
   def updateModerationModels(values: Seq[ModerationModel]): Unit = {
     _moderationModels.addAll(values.map(v => (v.id, v))).remAll(_moderationModels.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _audioModels = new UnboundedTrieMap[String, AudioModel]()
+  def audioModel(id: String): Option[AudioModel] = _audioModels.get(id)
+  def allAudioModel(): Seq[AudioModel] = _audioModels.values.toSeq
+  def updateAudioModel(values: Seq[AudioModel]): Unit = {
+    _audioModels.addAll(values.map(v => (v.id, v))).remAll(_audioModels.keySet.toSeq.diff(values.map(_.id)))
+  }
+  
+  private val _imgGensModels = new UnboundedTrieMap[String, ImageModel]()
+  def imgGensModels(id: String): Option[ImageModel] = _imgGensModels.get(id)
+  def allImgGensModels(): Seq[ImageModel]          = _imgGensModels.values.toSeq
+  def updateImgGensModels(values: Seq[ImageModel]): Unit = {
+    _imgGensModels.addAll(values.map(v => (v.id, v))).remAll(_imgGensModels.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _videoGensModels = new UnboundedTrieMap[String, VideoModel]()
+  def videoGensModels(id: String): Option[VideoModel] = _videoGensModels.get(id)
+  def allVideosGensModels(): Seq[VideoModel]          = _videoGensModels.values.toSeq
+  def updateVideosGensModels(values: Seq[VideoModel]): Unit = {
+    _videoGensModels.addAll(values.map(v => (v.id, v))).remAll(_videoGensModels.keySet.toSeq.diff(values.map(_.id)))
   }
 }
 
@@ -161,7 +209,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     implicit val ec = env.otoroshiExecutionContext
     implicit val mat = env.otoroshiMaterializer
     env.environment.resourceAsStream(path)
-      .map(stream => StreamConverters.fromInputStream(() => stream).runFold(ByteString.empty)(_++_).awaitf(10.seconds).utf8String)
+      .map(stream => StreamConverters.fromInputStream(() => stream).runFold(ByteString.empty)(_ ++ _).awaitf(10.seconds).utf8String)
       .getOrElse(s"'resource ${path} not found !'")
   }
 
@@ -174,9 +222,12 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val promptContextsPageCode = getResourceCode("cloudapim/extensions/ai/PromptContextsPage.js")
   lazy val aiProvidersPageCode = getResourceCode("cloudapim/extensions/ai/AiProvidersPage.js")
   lazy val moderationModelsPage = getResourceCode("cloudapim/extensions/ai/ModerationModelsPage.js")
+  lazy val audioModelsPage = getResourceCode("cloudapim/extensions/ai/AudioGenPage.js")
+  lazy val imagesGenModelsPage = getResourceCode("cloudapim/extensions/ai/ImagesGenModelsPage.js")
+  lazy val videosGenModelsPage = getResourceCode("cloudapim/extensions/ai/VideosGenModelsPage.js")
   lazy val imgCode = getResourceCode("cloudapim/extensions/ai/undraw_visionary_technology_re_jfp7.svg")
 
-  def handleProviderTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body:  Option[Source[ByteString, _]]): Future[Result] = {
+  def handleProviderTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val mat = env.otoroshiMaterializer
     implicit val ev = env
@@ -189,35 +240,35 @@ class AiExtension(val env: Env) extends AdminExtension {
         //   case Some(providerId) => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(providerId)) match {
         //     case None => Results.Ok(Json.obj("done" -> false, "error" -> "no provider")).vfuture
         //     case Some(old_provider) => {
-              val _edited = bodyJson.select("edited").asOpt[JsObject].getOrElse(Json.obj())
-              val providerId = _edited.select("id").asOpt[String].orElse(bodyJson.select("provider").asOpt[String]).getOrElse("new_llm_provider")
-              env.vaults.fillSecretsAsync(providerId, _edited.stringify).flatMap { editedRaw =>
-                val edited = editedRaw.parseJson
-                AiProvider.format.reads(edited) match {
-                  case JsError(errors) => Results.Ok(Json.obj("done" -> false, "error" -> "bad provider shape")).vfuture
-                  case JsSuccess(provider, _) => {
-                    provider.getChatClient() match {
-                      case None => Results.Ok(Json.obj("done" -> false, "error" -> "no client")).vfuture
-                      case Some(client) => {
-                        //val role = bodyJson.select("role").asOpt[String].getOrElse("user")
-                        //val content = bodyJson.select("content").asOpt[String].getOrElse("no input")
-                        //val lastMessage = ChatMessage(role, content)
-                        val historyMessages: Seq[InputChatMessage] = bodyJson.select("history").asOpt[Seq[JsObject]].map(_.flatMap(o => InputChatMessage.fromJsonSafe(o))).getOrElse(Seq.empty)
-                        val messages: Seq[InputChatMessage] = historyMessages // ++ Seq(lastMessage)
-                        client.call(ChatPrompt(messages), TypedMap.empty, Json.obj()).map {
-                          case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
-                          case Right(response) => {
-                            Results.Ok(Json.obj("done" -> true, "response" -> response.generations.map(_.json)))
-                          }
-                        }
-                      }
+        val _edited = bodyJson.select("edited").asOpt[JsObject].getOrElse(Json.obj())
+        val providerId = _edited.select("id").asOpt[String].orElse(bodyJson.select("provider").asOpt[String]).getOrElse("new_llm_provider")
+        env.vaults.fillSecretsAsync(providerId, _edited.stringify).flatMap { editedRaw =>
+          val edited = editedRaw.parseJson
+          AiProvider.format.reads(edited) match {
+            case JsError(errors) => Results.Ok(Json.obj("done" -> false, "error" -> "bad provider shape")).vfuture
+            case JsSuccess(provider, _) => {
+              provider.getChatClient() match {
+                case None => Results.Ok(Json.obj("done" -> false, "error" -> "no client")).vfuture
+                case Some(client) => {
+                  //val role = bodyJson.select("role").asOpt[String].getOrElse("user")
+                  //val content = bodyJson.select("content").asOpt[String].getOrElse("no input")
+                  //val lastMessage = ChatMessage(role, content)
+                  val historyMessages: Seq[InputChatMessage] = bodyJson.select("history").asOpt[Seq[JsObject]].map(_.flatMap(o => InputChatMessage.fromJsonSafe(o))).getOrElse(Seq.empty)
+                  val messages: Seq[InputChatMessage] = historyMessages // ++ Seq(lastMessage)
+                  client.call(ChatPrompt(messages), TypedMap.empty, Json.obj()).map {
+                    case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
+                    case Right(response) => {
+                      Results.Ok(Json.obj("done" -> true, "response" -> response.generations.map(_.json)))
                     }
                   }
                 }
               }
-          //    }
-          //  }
-          //}
+            }
+          }
+        }
+        //    }
+        //  }
+        //}
         //}
       }
     }).recover {
@@ -227,7 +278,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleContextTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body:  Option[Source[ByteString, _]]): Future[Result] = {
+  def handleContextTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val mat = env.otoroshiMaterializer
     implicit val ev = env
@@ -253,7 +304,7 @@ class AiExtension(val env: Env) extends AdminExtension {
                       m.select("content").asOpt[String].getOrElse(""),
                       m.select("prefix").asOptBoolean)*/
                       InputChatMessage.fromJson(m)
-                    ) ++ Seq(InputChatMessage.fromJson(bodyJson)/*ChatMessage(role, content, prefix)*/)), TypedMap.empty, Json.obj()).map {
+                    ) ++ Seq(InputChatMessage.fromJson(bodyJson) /*ChatMessage(role, content, prefix)*/)), TypedMap.empty, Json.obj()).map {
                       case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> err))
                       case Right(response) => {
                         Results.Ok(Json.obj("done" -> true, "response" -> response.generations.map(_.json)))
@@ -273,7 +324,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleTemplateTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body:  Option[Source[ByteString, _]]): Future[Result] = {
+  def handleTemplateTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val mat = env.otoroshiMaterializer
     implicit val ev = env
@@ -314,7 +365,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handlePromptTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body:  Option[Source[ByteString, _]]): Future[Result] = {
+  def handlePromptTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val mat = env.otoroshiMaterializer
     implicit val ev = env
@@ -349,7 +400,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleFunctionTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body:  Option[Source[ByteString, _]]): Future[Result] = {
+  def handleFunctionTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val mat = env.otoroshiMaterializer
     implicit val ev = env
@@ -379,7 +430,55 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleProviderModelsFetch(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body:  Option[Source[ByteString, _]]): Future[Result] = {
+  def handleGenAudioVoicesFetch(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val mat = env.otoroshiMaterializer
+    implicit val ev = env
+    (body match {
+      case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
+      case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
+        val bodyStr = bodyRaw.utf8String
+        val bodyJson = bodyStr.parseJson
+        bodyJson.at("provider").asOptString match {
+          case None => Results.Ok(Json.obj("done" -> false, "error" -> "no id")).vfuture
+          case Some(audioModelId) => {
+            env.vaults.fillSecretsAsync(audioModelId, bodyStr).flatMap { editedRaw =>
+              val edited = editedRaw.parseJson
+              AudioModel.format.reads(edited) match {
+                case JsError(errors) => Results.Ok(Json.obj("done" -> false, "error" -> "bad provider format")).vfuture
+                case JsSuccess(audioModel, _) => {
+                  val token = audioModel.config.select("token").asOptString.getOrElse("--")
+                  val key = s"${audioModel.id}-${token}".sha256
+                  val forceUpdate: Boolean = req.getQueryString("force").contains("true")
+                  if (forceUpdate) {
+                    logger.info(s"forcing models reload for ${audioModel.name} / ${audioModel.id}")
+                  }
+                  audioModel.getAudioModelClient() match {
+                    case None => Results.Ok(Json.obj("done" -> false, "error" -> "no client")).vfuture
+                    case Some(client) => {
+                      client.listVoices(req.getQueryString("raw").contains("true")) map {
+                        case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> "error fetching models", "error_details" -> err))
+                        case Right(voices) => {
+                          Results.Ok(Json.obj("done" -> true, "voices" -> voices.map(_.toJson)))
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }).recover {
+      case e: Throwable => {
+        e.printStackTrace()
+        Results.Ok(Json.obj("done" -> false, "error" -> e.getMessage))
+      }
+    }
+  }
+
+  def handleProviderModelsFetch(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val mat = env.otoroshiMaterializer
     implicit val ev = env
@@ -469,7 +568,13 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/extensions/cloud-apim/extensions/ai-extension/functions/_test",
       wantsBody = true,
       handle = handleFunctionTest
-    )
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = "/extensions/cloud-apim/extensions/ai-extension/audio-models/_voices",
+      wantsBody = true,
+      handle = handleGenAudioVoicesFetch
+    ),
   )
 
   override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
@@ -483,7 +588,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/extensions/assets/cloud-apim/extensions/ai-extension/extension.js",
       handle = (ctx: AdminExtensionRouterContext[AdminExtensionAssetRoute], req: RequestHeader) => {
         Results.Ok(
-          s"""(function() {
+          s"""(function() { 
             |  const extensionId = "${id.value}";
             |  Otoroshi.registerExtension(extensionId, false, (ctx) => {
             |
@@ -543,6 +648,9 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    ${promptContextsPageCode}
             |    ${aiProvidersPageCode}
             |    ${moderationModelsPage}
+            |    ${imagesGenModelsPage}
+            |    ${videosGenModelsPage}
+            |    ${audioModelsPage}
             |
             |    return {
             |      id: extensionId,
@@ -614,11 +722,35 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            display: () => true,
             |            icon: () => 'fa-brain',
             |          },
-            |           {
+            |          {
             |            title: 'Moderation Models',
             |            description: 'All your Moderation Models',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |            link: '/extensions/cloud-apim/ai-gateway/moderation-models',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'Image models',
+            |            description: 'All your Image models',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/image-models',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |           {
+            |            title: 'Video models',
+            |            description: 'All your Video models',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/video-models',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'Audio models',
+            |            description: 'All your Audio models',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/audio-models',
             |            display: () => true,
             |            icon: () => 'fa-brain',
             |          }
@@ -689,11 +821,35 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          display: () => true,
             |          icon: () => 'fa-brain',
             |        },
-            |         {
+            |        {
             |          title: 'Moderation Models',
             |          description: 'All your Moderation models',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
             |          link: '/extensions/cloud-apim/ai-gateway/moderation-models',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'Image models',
+            |          description: 'All your Image models',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/image-models',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'Video models',
+            |          description: 'All your Video models',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/video-models',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'Audio models',
+            |          description: 'All your Audio models',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/audio-models',
             |          display: () => true,
             |          icon: () => 'fa-brain',
             |        }
@@ -751,6 +907,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'Moderation Models',
             |          text: 'All your Moderation models',
             |          path: 'extensions/cloud-apim/ai-gateway/moderation-models',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Image Models',
+            |          text: 'All your image models',
+            |          path: 'extensions/cloud-apim/ai-gateway/image-models',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Video Models',
+            |          text: 'All your video models',
+            |          path: 'extensions/cloud-apim/ai-gateway/video-models',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Audio models',
+            |          text: 'All your Audio models',
+            |          path: 'extensions/cloud-apim/ai-gateway/audio-models',
             |          icon: 'brain'
             |        }
             |      ],
@@ -826,6 +1000,30 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'Moderation Models',
             |          value: 'moderation-models',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/image-models`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Image Models',
+            |          value: 'image-models',
+            |        },
+            |         {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/video-models`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Video Models',
+            |          value: 'video-models',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/audio-models`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Audio models',
+            |          value: 'audio-models',
             |        }
             |      ],
             |      routes: [
@@ -990,6 +1188,60 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          component: (props) => {
             |            return React.createElement(ModerationModelsPage, props, null)
             |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/image-models/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/image-models/:taction',
+            |          component: (props) => {
+            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/image-models',
+            |          component: (props) => {
+            |            return React.createElement(ImagesGenModelsPage, props, null)
+            |          }
+            |        },
+            |         {
+            |          path: '/extensions/cloud-apim/ai-gateway/video-models/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(VideosGenModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/video-models/:taction',
+            |          component: (props) => {
+            |            return React.createElement(VideosGenModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/video-models',
+            |          component: (props) => {
+            |            return React.createElement(VideosGenModelsPage, props, null)
+            |          }
+            |        },
+            |         {
+            |          path: '/extensions/cloud-apim/ai-gateway/audio-models/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(AudioGenPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/audio-models/:taction',
+            |          component: (props) => {
+            |            return React.createElement(AudioGenPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/audio-models',
+            |          component: (props) => {
+            |            return React.createElement(AudioGenPage, props, null)
+            |          },
             |        }
             |      ]
             |    }
@@ -1013,6 +1265,9 @@ class AiExtension(val env: Env) extends AdminExtension {
       embeddingStores <- datastores.embeddingStoresDataStore.findAllAndFillSecrets()
       mcpConnectors <- datastores.mcpConnectorsDatastore.findAllAndFillSecrets()
       moderationModels <- datastores.moderationModelsDataStore.findAllAndFillSecrets()
+      audioModels <- datastores.AudioModelsDataStore.findAllAndFillSecrets()
+      imgGens <- datastores.imagesGenModelsDataStore.findAllAndFillSecrets()
+      videosGens <- datastores.videosGenModelsDataStore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
@@ -1023,6 +1278,9 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateEmbeddingStores(embeddingStores)
       states.updateMcpConnectors(mcpConnectors)
       states.updateModerationModels(moderationModels)
+      states.updateAudioModel(audioModels)
+      states.updateImgGensModels(imgGens)
+      states.updateVideosGensModels(videosGens)
       Future {
         McpSupport.restartConnectorsIfNeeded()
         McpSupport.stopConnectorsIfNeeded()
@@ -1042,6 +1300,9 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(EmbeddingStore.resource(env, datastores, states)),
       AdminExtensionEntity(McpConnector.resource(env, datastores, states)),
       AdminExtensionEntity(ModerationModel.resource(env, datastores, states)),
+      AdminExtensionEntity(AudioModel.resource(env, datastores, states)),
+      AdminExtensionEntity(ImageModel.resource(env, datastores, states)),
+      AdminExtensionEntity(VideoModel.resource(env, datastores, states)),
     )
   }
 }
