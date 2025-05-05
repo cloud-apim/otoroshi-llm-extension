@@ -39,6 +39,10 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 * X.ai
 * Deepseek
 
+## Supported Moderation models
+
+* OpenAI
+  * omni-moderation-latest
 
 ## Supported Audio Text-to-Speech models
 

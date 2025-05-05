@@ -697,6 +697,32 @@ trait EmbeddingStoreClient {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                        Moderation Models                                       ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class ModerationResult(flagged: Boolean, categories: JsObject, categoryScored: JsObject) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "flagged" -> flagged,
+      "categories" -> categories,
+      "category_scores" -> categoryScored
+    )
+  }
+}
+
+case class ModerationResponse(
+                              model: String,
+                              moderationResults: Seq[ModerationResult],
+                            ) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "results" -> moderationResults.map(_.toOpenAiJson),
+      "model" -> model
+    )
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////                             Audio generation and transcription                                 ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 case class AudioTranscriptionResponse(
@@ -707,6 +733,10 @@ case class AudioTranscriptionResponse(
       "text" -> transcribedText
     )
   }
+}
+
+trait ModerationModelClient {
+  def moderate(promptInput: String, model: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]]
 }
 
 case class AudioGenVoice(
