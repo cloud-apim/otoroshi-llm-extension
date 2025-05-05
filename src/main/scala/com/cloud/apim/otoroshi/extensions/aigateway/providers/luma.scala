@@ -73,3 +73,40 @@ class LumaImagesGenModelClient(val api: LumaApi, val options: LumaImagesGenModel
     }
   }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                     Videos Generation                                          ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class LumaVideosGenModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("photon-1")
+}
+
+object LumaVideosGenModelClientOptions {
+  def fromJson(raw: JsObject): LumaVideosGenModelClientOptions = LumaVideosGenModelClientOptions(raw)
+}
+
+class LumaVideosGenModelClient(val api: LumaApi, val options: LumaVideosGenModelClientOptions, id: String) extends VideosGenModelClient {
+
+  override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
+    val finalModel: String = modelOpt.getOrElse(options.model)
+    api.rawCall("POST", "/dream-machine/v1/generations", (options.raw ++
+      Json.obj(
+        "prompt" -> promptInput,
+        "model" -> finalModel,
+        "generation_type" -> "video" // default value set as video
+      )).some).map { resp =>
+      if (resp.status == 200) {
+        val imageUrl = resp.json.at("assets.video").asOptString
+
+        Right(VideosGenResponse(
+          created = resp.json.select("created_at").asOpt[Long].getOrElse(-1L),
+          videos = Seq(VideosGen(None, None, imageUrl)),
+          metadata = None
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}
