@@ -1,0 +1,8 @@
+{
+  "label": "Images Models",
+  "position": 11,
+  "link": {
+    "type": "generated-index",
+    "description": "Everything about image generation models"
+  }
+}

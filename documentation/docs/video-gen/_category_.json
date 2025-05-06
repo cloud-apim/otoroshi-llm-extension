@@ -1,0 +1,8 @@
+{
+  "label": "Video Models",
+  "position": 12,
+  "link": {
+    "type": "generated-index",
+    "description": "Everything about video generation models"
+  }
+}
