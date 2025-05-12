@@ -39,28 +39,28 @@ case class AudioModel(
 
   override def theMetadata: Map[String, String] = metadata
 
+  def slugName: String = metadata.getOrElse("endpoint_name", name).slugifyWithSlash.replaceAll("-+", "_")
+
   def getAudioModelClient()(implicit env: Env): Option[AudioModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
-    val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
-    // val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val token = connection.select("token").asOpt[String].getOrElse("xxx")
-    val mode = connection.select("mode").asOpt[String].getOrElse("transcription")
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
+    val options = config.select("tts").asOpt[JsObject].getOrElse(Json.obj())
     provider.toLowerCase() match {
       case "openai" => {
         val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val opts = OpenAIAudioModelClientOptions.fromJson(options)
-        new OpenAIAudioModelClient(api, opts, mode, id).some
+        new OpenAIAudioModelClient(api, opts, id).some
       }
       case "groq" => {
         val api = new GroqApi(GroqApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
         val opts = GroqAudioModelClientOptions.fromJson(options)
-        new GroqAudioModelClient(api, opts, mode, id).some
+        new GroqAudioModelClient(api, opts, id).some
       }
       case "elevenlabs" => {
         val api = new ElevenLabsApi(ElevenLabsApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
         val opts = ElevenLabsAudioModelClientOptions.fromJson(options)
-        new ElevenLabsAudioModelClient(api, opts, mode, id).some
+        new ElevenLabsAudioModelClient(api, opts, id).some
       }
       case _ => None
     }

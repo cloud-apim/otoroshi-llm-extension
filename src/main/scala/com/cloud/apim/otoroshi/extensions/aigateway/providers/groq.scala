@@ -56,39 +56,6 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       .execute()
   }
 
-  def rawCallTts(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[File] = {
-    val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("Groq", method, url, body)(env)
-
-    env.Ws.url(url)
-      .withHttpHeaders(
-        "Authorization" -> s"Bearer ${token}",
-        "Accept" -> "application/json",
-      ).applyOnWithOpt(body) {
-        case (builder, body) => builder
-          .addHttpHeaders("Content-Type" -> "application/json")
-          .withBody(body)
-      }
-      .withMethod(method)
-      .withRequestTimeout(timeout)
-      .execute()
-      .map { response =>
-        if (response.status == 200) {
-          val audioBytes: ByteString = response.bodyAsBytes
-          val file = new File("speech.mp3")
-          val output = new FileOutputStream(file)
-          try {
-            output.write(audioBytes.toArray)
-          } finally {
-            output.close()
-          }
-          file
-        } else {
-          throw new RuntimeException(s"Failed with status ${response.status}: ${response.body}")
-        }
-      }
-  }
-
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
     rawCall(method, path, body)
       .map(r => ProviderHelpers.wrapResponse("Groq", r, env) { resp =>
@@ -420,17 +387,18 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
 /////////                             Audio generation and transcription                                 ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 case class GroqAudioModelClientOptions(raw: JsObject) {
-  lazy val speechModel: String = raw.select("model").asOpt[String].getOrElse("playai-tts")
-  lazy val transcriptionModel: String = raw.select("model").asOpt[String].getOrElse("whisper-large-v3-turbo")
-  lazy val voice: String = raw.select("voice").asOpt[String].getOrElse("alloy")
-  lazy val format: String = raw.select("response_format").asOpt[String].getOrElse("wav")
+  lazy val model: String = raw.select("model").asOptString.getOrElse("v")
+  lazy val voice: String = raw.select("voice").asOptString.getOrElse("alloy")
+  lazy val instructions: Option[String] = raw.select("instructions").asOptString
+  lazy val responseFormat: Option[String] = raw.select("response_format").asOptString
+  lazy val speed: Option[Double] = raw.select("speed").asOpt[Double]
 }
 
 object GroqAudioModelClientOptions {
   def fromJson(raw: JsObject): GroqAudioModelClientOptions = GroqAudioModelClientOptions(raw)
 }
 
-class GroqAudioModelClient(val api: GroqApi, val options: GroqAudioModelClientOptions, mode: String, id: String) extends AudioModelClient {
+class GroqAudioModelClient(val api: GroqApi, val options: GroqAudioModelClientOptions, id: String) extends AudioModelClient {
 
   override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     Right(
@@ -457,26 +425,29 @@ class GroqAudioModelClient(val api: GroqApi, val options: GroqAudioModelClientOp
 //    }
 //  }
 
-  override def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String], formatOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]] = {
-    val finalModel: String = modelOpt.getOrElse(options.speechModel)
-    val finalVoice: String = voiceOpt.getOrElse(options.voice)
-    val finalFormat: String = voiceOpt.getOrElse(options.format)
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+    val instructionsOpt: Option[String] = opts.instructions.orElse(options.instructions)
+    val responseFormatOpt: Option[String] = opts.responseFormat.orElse(options.responseFormat)
+    val speedOpt: Option[Double] = opts.speed.orElse(options.speed)
 
-    api.rawCallTts("POST", "/openai/v1/audio/speech", (
-      options.raw ++
-        Json.obj(
-          "input" -> textInput,
-          "voice" -> finalVoice,
-          "model" -> finalModel,
-          "response_format" -> finalFormat
-        )
-      ).some).map { resp =>
-      if (resp.isFile) {
-        Right(
-          resp
-        )
+    val body = Json.obj(
+      "input" -> opts.input,
+      "model" -> opts.model.getOrElse(options.model).json,
+      "voice" -> opts.voice.getOrElse(options.voice).json,
+    ).applyOnWithOpt(instructionsOpt) {
+      case (obj, instructions) => obj ++ Json.obj("instructions" -> instructions)
+    }.applyOnWithOpt(responseFormatOpt) {
+      case (obj, responseFormat) => obj ++ Json.obj("response_format" -> responseFormat)
+    }.applyOnWithOpt(speedOpt) {
+      case (obj, speed) => obj ++ Json.obj("speed" -> speed)
+    }
+
+    api.rawCall("POST", "/openai/v1/audio/speech", body.some).map { response =>
+      if (response.status == 200) {
+        val contentType = response.contentType
+        (response.bodyAsSource, contentType).right
       } else {
-        Left(Json.obj("error" -> "Bad file", "body" -> "Error"))
+        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
     }
   }

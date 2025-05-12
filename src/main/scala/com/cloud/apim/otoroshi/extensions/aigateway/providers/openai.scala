@@ -161,64 +161,6 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
       }
   }
 
-  def rawCallTts(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[File] = {
-    val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall(providerName, method, url, body)(env)
-
-    env.Ws.url(url)
-      .withHttpHeaders(
-        "Authorization" -> s"Bearer ${token}",
-        "Accept" -> "application/json",
-      ).applyOnWithOpt(body) {
-        case (builder, body) => builder
-          .addHttpHeaders("Content-Type" -> "application/json")
-          .withBody(body)
-      }
-      .withMethod(method)
-      .withRequestTimeout(timeout)
-      .execute()
-      .map { response =>
-        if (response.status == 200) {
-          val audioBytes: ByteString = response.bodyAsBytes
-          val file = new File("speech.mp3")
-          val output = new FileOutputStream(file)
-          try {
-            output.write(audioBytes.toArray)
-          } finally {
-            output.close()
-          }
-          file
-        } else {
-          throw new RuntimeException(s"Failed with status ${response.status}: ${response.body}")
-        }
-      }
-  }
-
-  def rawCallWithFile(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
-    val url = s"${baseUrl}${path}"
-    val uri = Uri(url)
-    ProviderHelpers.logCall(providerName, method, url, body)(env)
-    env.Ws
-      .url(url)
-      .withHttpHeaders(
-        "Authorization" -> s"Bearer ${token}",
-        "Accept" -> "application/json",
-        "Host" -> uri.authority.host.toString(),
-      ).applyOnWithOpt(body) {
-        case (builder, body) => builder
-          .addHttpHeaders("Content-Type" -> body.select("Content-Type").asOptString.getOrElse("application/json"))
-          .withBody(body)
-      }
-      .withMethod(method)
-      .withRequestTimeout(timeout)
-      .execute()
-      .map { resp =>
-        //println(s"resp: ${resp.status} - ${resp.body}")
-        //println("\n\n================================\n")
-        resp
-      }
-  }
-
   override def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
     rawCall(method, path, body).map(r => ProviderHelpers.wrapResponse(providerName, r, env) { resp =>
       OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
@@ -756,17 +698,18 @@ class OpenAiModerationModelClient(val api: OpenAiApi, val options: OpenAiModerat
 /////////                             Audio generation and transcription                                 ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 case class OpenAIAudioModelClientOptions(raw: JsObject) {
-  lazy val speechModel: String = raw.select("model").asOpt[String].getOrElse("gpt-4o-mini-tts")
-  lazy val transcriptionModel: String = raw.select("model").asOpt[String].getOrElse("gpt-4o-transcribe")
-  lazy val voice: String = raw.select("voice").asOpt[String].getOrElse("alloy")
-  lazy val format: String = raw.select("response_format").asOpt[String].getOrElse("mp3")
+  lazy val model: String = raw.select("model").asOptString.getOrElse("gpt-4o-mini-tts")
+  lazy val voice: String = raw.select("voice").asOptString.getOrElse("alloy")
+  lazy val instructions: Option[String] = raw.select("instructions").asOptString
+  lazy val responseFormat: Option[String] = raw.select("response_format").asOptString
+  lazy val speed: Option[Double] = raw.select("speed").asOpt[Double]
 }
 
 object OpenAIAudioModelClientOptions {
   def fromJson(raw: JsObject): OpenAIAudioModelClientOptions = OpenAIAudioModelClientOptions(raw)
 }
 
-class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelClientOptions, mode: String, id: String) extends AudioModelClient {
+class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelClientOptions, id: String) extends AudioModelClient {
 
   override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     Right(
@@ -792,28 +735,31 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelCl
 //    }
 //  }
 
-  override def textToSpeech(textInput: String, modelOpt: Option[String], voiceOpt: Option[String], formatOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, File]] = {
-    val finalModel: String = modelOpt.getOrElse(options.speechModel)
-    val finalVoice: String = voiceOpt.getOrElse(options.voice)
-    val finalFormat: String = formatOpt.getOrElse(options.format)
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+    val instructionsOpt: Option[String] = opts.instructions.orElse(options.instructions)
+    val responseFormatOpt: Option[String] = opts.responseFormat.orElse(options.responseFormat)
+    val speedOpt: Option[Double] = opts.speed.orElse(options.speed)
 
-    api.rawCallTts("POST", "/audio/speech", (
-        options.raw ++
-          Json.obj(
-            "input" -> textInput,
-            "voice" -> finalVoice,
-            "model" -> finalModel,
-            "response_format" -> finalFormat
-          )
-      ).some).map { resp =>
-      if (resp.isFile) {
-        Right(
-          resp
-        )
+    val body = Json.obj(
+      "input" -> opts.input,
+      "model" -> opts.model.getOrElse(options.model).json,
+      "voice" -> opts.voice.getOrElse(options.voice).json,
+    ).applyOnWithOpt(instructionsOpt) {
+      case (obj, instructions) => obj ++ Json.obj("instructions" -> instructions)
+    }.applyOnWithOpt(responseFormatOpt) {
+      case (obj, responseFormat) => obj ++ Json.obj("response_format" -> responseFormat)
+    }.applyOnWithOpt(speedOpt) {
+      case (obj, speed) => obj ++ Json.obj("speed" -> speed)
+    }
+
+    api.rawCall("POST", "/audio/speech", body.some).map { response =>
+      if (response.status == 200) {
+        val contentType = response.contentType
+        (response.bodyAsSource, contentType).right
       } else {
-        Left(Json.obj("error" -> "Bad file", "body" -> "Error"))
+        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
-    } 
+    }
   }
 }
 
