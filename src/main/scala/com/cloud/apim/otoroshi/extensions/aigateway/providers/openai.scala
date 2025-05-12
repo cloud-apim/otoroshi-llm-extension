@@ -697,7 +697,7 @@ class OpenAiModerationModelClient(val api: OpenAiApi, val options: OpenAiModerat
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////                             Audio generation and transcription                                 ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-case class OpenAIAudioModelClientOptions(raw: JsObject) {
+case class OpenAIAudioModelClientTtsOptions(raw: JsObject) {
   lazy val model: String = raw.select("model").asOptString.getOrElse("gpt-4o-mini-tts")
   lazy val voice: String = raw.select("voice").asOptString.getOrElse("alloy")
   lazy val instructions: Option[String] = raw.select("instructions").asOptString
@@ -705,11 +705,18 @@ case class OpenAIAudioModelClientOptions(raw: JsObject) {
   lazy val speed: Option[Double] = raw.select("speed").asOpt[Double]
 }
 
-object OpenAIAudioModelClientOptions {
-  def fromJson(raw: JsObject): OpenAIAudioModelClientOptions = OpenAIAudioModelClientOptions(raw)
+object OpenAIAudioModelClientTtsOptions {
+  def fromJson(raw: JsObject): OpenAIAudioModelClientTtsOptions = OpenAIAudioModelClientTtsOptions(raw)
 }
 
-class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelClientOptions, id: String) extends AudioModelClient {
+case class OpenAIAudioModelClientSttOptions(raw: JsObject) {
+}
+
+object OpenAIAudioModelClientSttOptions {
+  def fromJson(raw: JsObject): OpenAIAudioModelClientSttOptions = OpenAIAudioModelClientSttOptions(raw)
+}
+
+class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioModelClientTtsOptions, val sttOptions: OpenAIAudioModelClientSttOptions, id: String) extends AudioModelClient {
 
   override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     Right(
@@ -736,14 +743,14 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val options: OpenAIAudioModelCl
 //  }
 
   override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
-    val instructionsOpt: Option[String] = opts.instructions.orElse(options.instructions)
-    val responseFormatOpt: Option[String] = opts.responseFormat.orElse(options.responseFormat)
-    val speedOpt: Option[Double] = opts.speed.orElse(options.speed)
+    val instructionsOpt: Option[String] = opts.instructions.orElse(ttsOptions.instructions)
+    val responseFormatOpt: Option[String] = opts.responseFormat.orElse(ttsOptions.responseFormat)
+    val speedOpt: Option[Double] = opts.speed.orElse(ttsOptions.speed)
 
     val body = Json.obj(
       "input" -> opts.input,
-      "model" -> opts.model.getOrElse(options.model).json,
-      "voice" -> opts.voice.getOrElse(options.voice).json,
+      "model" -> opts.model.getOrElse(ttsOptions.model).json,
+      "voice" -> opts.voice.getOrElse(ttsOptions.voice).json,
     ).applyOnWithOpt(instructionsOpt) {
       case (obj, instructions) => obj ++ Json.obj("instructions" -> instructions)
     }.applyOnWithOpt(responseFormatOpt) {

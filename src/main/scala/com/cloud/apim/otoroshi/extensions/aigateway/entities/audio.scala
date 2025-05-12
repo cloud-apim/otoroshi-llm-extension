@@ -24,7 +24,6 @@ case class AudioModel(
                        tags: Seq[String],
                        metadata: Map[String, String],
                        provider: String,
-                       mode: String,
                        config: JsObject,
                      ) extends EntityLocationSupport {
   override def internalId: String = id
@@ -45,22 +44,26 @@ case class AudioModel(
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val token = connection.select("token").asOpt[String].getOrElse("xxx")
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
-    val options = config.select("tts").asOpt[JsObject].getOrElse(Json.obj())
+    val ttsOptions = config.select("tts").asOpt[JsObject].getOrElse(Json.obj())
+    val sttOptions = config.select("stt").asOpt[JsObject].getOrElse(Json.obj())
     provider.toLowerCase() match {
       case "openai" => {
         val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
-        val opts = OpenAIAudioModelClientOptions.fromJson(options)
-        new OpenAIAudioModelClient(api, opts, id).some
+        val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
+        val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
+        new OpenAIAudioModelClient(api, ttsopts, sttopts, id).some
       }
       case "groq" => {
         val api = new GroqApi(GroqApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
-        val opts = GroqAudioModelClientOptions.fromJson(options)
-        new GroqAudioModelClient(api, opts, id).some
+        val ttsopts = GroqAudioModelClientTtsOptions.fromJson(ttsOptions)
+        val sttopts = GroqAudioModelClientSttOptions.fromJson(sttOptions)
+        new GroqAudioModelClient(api, ttsopts, sttopts, id).some
       }
       case "elevenlabs" => {
         val api = new ElevenLabsApi(ElevenLabsApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
-        val opts = ElevenLabsAudioModelClientOptions.fromJson(options)
-        new ElevenLabsAudioModelClient(api, opts, id).some
+        val ttsopts = ElevenLabsAudioModelClientTtsOptions.fromJson(ttsOptions)
+        val sttopts = ElevenLabsAudioModelClientSttOptions.fromJson(ttsOptions)
+        new ElevenLabsAudioModelClient(api, ttsopts, sttopts, id).some
       }
       case _ => None
     }
@@ -76,7 +79,6 @@ object AudioModel {
       "metadata" -> o.metadata,
       "tags" -> JsArray(o.tags.map(JsString.apply)),
       "provider" -> o.provider,
-      "mode" -> o.mode,
       "config" -> o.config,
     )
 
@@ -89,7 +91,6 @@ object AudioModel {
         metadata = (json \ "metadata").asOpt[Map[String, String]].getOrElse(Map.empty),
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         provider = (json \ "provider").as[String],
-        mode = (json \ "mode").as[String],
         config = (json \ "config").asOpt[JsObject].getOrElse(Json.obj()),
       )
     } match {
@@ -122,14 +123,20 @@ object AudioModel {
               tags = Seq.empty,
               location = EntityLocation.default,
               provider = "openai",
-              mode = "transcription",
               config = Json.obj(
                 "connection" -> Json.obj(
                   "token" -> "xxxxx",
                   "timeout" -> 10000,
                 ),
                 "options" -> Json.obj(
-                  "model" -> "text-AudioGen-3-small"
+                  "tts" -> Json.obj(
+                    "model" -> "gpt-4o-mini-tts",
+                    "response_format" -> "mp3",
+                    "speed" -> 1
+                  ),
+                  "stt" -> {
+                    "model" -> "gpt-4o-mini-transcribe"
+                  }
                 )
               ),
             ).json
@@ -141,7 +148,6 @@ object AudioModel {
               tags = Seq.empty,
               location = EntityLocation.default,
               provider = "all-minilm-l6-v2",
-              mode = "transcription",
               config = Json.obj(),
             ).json
           }

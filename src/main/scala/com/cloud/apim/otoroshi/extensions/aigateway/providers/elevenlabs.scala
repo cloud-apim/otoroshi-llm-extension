@@ -41,17 +41,24 @@ class ElevenLabsApi(baseUrl: String = ElevenLabsApi.baseUrl, token: String, time
   }
 }
 
-case class ElevenLabsAudioModelClientOptions(raw: JsObject) {
+case class ElevenLabsAudioModelClientTtsOptions(raw: JsObject) {
   lazy val model: String = raw.select("model_id").asOpt[String].getOrElse(ElevenLabsModels.DEFAULT)
   lazy val voice: String = raw.select("voice_id").asOpt[String].getOrElse("21m00Tcm4TlvDq8ikWAM")
   lazy val format: String = raw.select("output_format").asOpt[String].getOrElse("mp3_44100_128")
 }
 
-object ElevenLabsAudioModelClientOptions {
-  def fromJson(raw: JsObject): ElevenLabsAudioModelClientOptions = ElevenLabsAudioModelClientOptions(raw)
+object ElevenLabsAudioModelClientTtsOptions {
+  def fromJson(raw: JsObject): ElevenLabsAudioModelClientTtsOptions = ElevenLabsAudioModelClientTtsOptions(raw)
 }
 
-class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val options: ElevenLabsAudioModelClientOptions, id: String) extends AudioModelClient {
+case class ElevenLabsAudioModelClientSttOptions(raw: JsObject) {
+}
+
+object ElevenLabsAudioModelClientSttOptions {
+  def fromJson(raw: JsObject): ElevenLabsAudioModelClientSttOptions = ElevenLabsAudioModelClientSttOptions(raw)
+}
+
+class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenLabsAudioModelClientTtsOptions, val sttOptions: ElevenLabsAudioModelClientSttOptions, id: String) extends AudioModelClient {
 
   override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     api.rawCall("GET", "/v2/voices?include_total_count=true", None).map { resp =>
@@ -65,9 +72,9 @@ class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val options: ElevenLabs
   }
 
   override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
-    val finalModel: String = opts.model.getOrElse(options.model)
-    val finalVoice: String = opts.voice.getOrElse(options.voice)
-    val finalFormat: String = opts.responseFormat.getOrElse(options.format)
+    val finalModel: String = opts.model.getOrElse(ttsOptions.model)
+    val finalVoice: String = opts.voice.getOrElse(ttsOptions.voice)
+    val finalFormat: String = opts.responseFormat.getOrElse(ttsOptions.format)
 
     val body = Json.obj(
       "text" -> opts.input,

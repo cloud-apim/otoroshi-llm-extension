@@ -791,13 +791,54 @@ object AudioModelClientTextToSpeechInputOptions {
   }
 }
 
+case class AudioModelClientSpeechToTextInputOptions(
+  file: Source[ByteString, _],
+  fileContentType: String,
+  fileSize: Long,
+  language: Option[String] = None,
+  prompt: Option[String] = None,
+  responseFormat: Option[String] = None,
+  temperature: Option[Double] = None
+) {
+  def json: JsValue = AudioModelClientSpeechToTextInputOptions.format.writes(this)
+}
+
+object AudioModelClientSpeechToTextInputOptions {
+  val format = new Format[AudioModelClientSpeechToTextInputOptions] {
+    override def reads(json: JsValue): JsResult[AudioModelClientSpeechToTextInputOptions] = Try {
+      AudioModelClientSpeechToTextInputOptions(
+        file = Source.empty,
+        fileContentType = "",
+        fileSize = 0L,
+        language = json.select("model").asOptString,
+        prompt = json.select("voice").asOptString,
+        responseFormat = json.select("response_format").asOptString,
+        temperature = json.select("temperature").asOpt[Double],
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+    override def writes(o: AudioModelClientSpeechToTextInputOptions): JsValue = Json.obj()
+      .applyOnWithOpt(o.language) {
+        case (obj, language) => obj ++ Json.obj("language" -> language)
+      }.applyOnWithOpt(o.prompt) {
+        case (obj, prompt) => obj ++ Json.obj("prompt" -> prompt)
+      }.applyOnWithOpt(o.responseFormat) {
+        case (obj, responseFormat) => obj ++ Json.obj("response_format" -> responseFormat)
+      }.applyOnWithOpt(o.temperature) {
+        case (obj, temperature) => obj ++ Json.obj("temperature" -> temperature)
+      }
+  }
+}
+
 trait AudioModelClient {
 
   def supportsTts: Boolean = true
-  def supportsStt: Boolean = false
+  def supportsStt: Boolean = true
   def supportsTranslation: Boolean = false
 
-  // def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]]
+  def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]]
   def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]]
   def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
 }

@@ -166,6 +166,7 @@ class AudioModelsPage extends Component {
           description: 'An audio model',
           tags: [],
           metadata: {},
+          config: {}
         }),
         onStateChange: (state, oldState, update) => {
           this.setState(state)
