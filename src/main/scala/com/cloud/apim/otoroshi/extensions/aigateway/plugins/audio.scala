@@ -4,7 +4,7 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.FileIO
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AudioModel
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
@@ -225,7 +225,6 @@ class OpenAICompatSpeechToText extends NgBackendCall {
               case Some(provider) => {
                 provider.getAudioModelClient() match {
                   case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
-                  // TODO: add flag on config too ?
                   case Some(client) if !client.supportsTts => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support text to speech"))).leftf
                   case Some(client) => {
                     val _options = AudioModelClientSpeechToTextInputOptions.format.reads(jsonBody).get
@@ -236,6 +235,102 @@ class OpenAICompatSpeechToText extends NgBackendCall {
                       fileName = file.filename.some,
                     )
                     client.speechToText(options, jsonBody).map {
+                      case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
+                      case Right(transcription) => {
+                        val result = Results.Status(200).apply(Json.obj(
+                          "text" -> transcription.transcribedText
+                        ))
+                        Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(result), None))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+class OpenAICompatTranslation extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - audio translation backend"
+  override def description: Option[String] = "Delegates call to a provider to generate english text from audio files".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatTextToSpeechConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = OpenAICompatTextToSpeechConfig.configFlow
+  override def configSchema: Option[JsObject] = OpenAICompatTextToSpeechConfig.configSchema
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'audio translation backend' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    Multipart.multipartParser(
+      100 * 1024 * 1024, // TODO: from config ?
+      allowEmptyFiles = false,
+      filePartHandler = Multipart.handleFilePartAsTemporaryFile(play.api.libs.Files.SingletonTemporaryFileCreator),
+      errorHandler = new HttpErrorHandler {
+        override def onClientError(request: RequestHeader, statusCode: Int, message: String): Future[Result] = Results.Status(statusCode).apply(message).vfuture
+        override def onServerError(request: RequestHeader, exception: Throwable): Future[Result] = Results.InternalServerError(exception.getMessage).vfuture
+      }
+    ).apply(ctx.rawRequest).run(ctx.request.body).flatMap {
+      case Left(err) => {
+        NgProxyEngineError.NgResultProxyEngineError.apply(err).leftf
+      }
+      case Right(form) => {
+
+        var _jsonBody = Json.obj()
+        form.dataParts.foreach {
+          case ("temperature", value) => {
+            _jsonBody = _jsonBody ++ Json.obj("temperature" -> value.head.toDouble)
+          }
+          case (key, value) if value.length == 1 => {
+            _jsonBody = _jsonBody ++ Json.obj(key -> value.head.json)
+          }
+          case (key, value) => {
+            _jsonBody = _jsonBody ++ Json.obj(key -> JsArray(value.map(_.json)))
+          }
+        }
+
+        form.file("file") match {
+          case None => NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> "no file present"))).leftf
+          case Some(file) => {
+            val config = ctx.cachedConfig(internalName)(OpenAICompatTextToSpeechConfig.format).getOrElse(OpenAICompatTextToSpeechConfig.default)
+            val jsonBody: JsObject = OpenAICompatTextToSpeechConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
+            val provider: Option[AudioModel] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
+              ext.states.audioModel(r)
+            }.orElse(
+              config.refs.headOption.flatMap { r =>
+                ext.states.audioModel(r)
+              }
+            )
+            provider match {
+              case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider not found"))).leftf
+              case Some(provider) => {
+                provider.getAudioModelClient() match {
+                  case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
+                  case Some(client) if !client.supportsTts => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support text to speech"))).leftf
+                  case Some(client) => {
+                    val _options = AudioModelClientTranslationInputOptions.format.reads(jsonBody).get
+                    val options = _options.copy(
+                      file = FileIO.fromPath(file.ref.path),
+                      fileContentType = file.contentType.getOrElse("audio/mp3"),
+                      fileLength = file.fileSize,
+                      fileName = file.filename.some,
+                    )
+                    client.translate(options, jsonBody).map {
                       case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                       case Right(transcription) => {
                         val result = Results.Status(200).apply(Json.obj(

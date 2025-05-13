@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import akka.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioTranscriptionResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse}
 import otoroshi.env.Env
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
@@ -59,6 +59,7 @@ class ElevenLabsApi(baseUrl: String = ElevenLabsApi.baseUrl, token: String, time
 }
 
 case class ElevenLabsAudioModelClientTtsOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
   lazy val model: String = raw.select("model_id").asOpt[String].getOrElse(ElevenLabsModels.DEFAULT)
   lazy val voice: String = raw.select("voice_id").asOpt[String].getOrElse("21m00Tcm4TlvDq8ikWAM")
   lazy val format: String = raw.select("output_format").asOpt[String].getOrElse("mp3_44100_128")
@@ -69,6 +70,7 @@ object ElevenLabsAudioModelClientTtsOptions {
 }
 
 case class ElevenLabsAudioModelClientSttOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
   lazy val model: Option[String] = raw.select("model").asOptString
   lazy val language: Option[String] = raw.select("language").asOptString
 }
@@ -78,6 +80,10 @@ object ElevenLabsAudioModelClientSttOptions {
 }
 
 class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenLabsAudioModelClientTtsOptions, val sttOptions: ElevenLabsAudioModelClientSttOptions, id: String) extends AudioModelClient {
+
+  override def supportsTts: Boolean = ttsOptions.enabled
+  override def supportsStt: Boolean = sttOptions.enabled
+  override def supportsTranslation: Boolean = false
 
   override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     api.rawCall("GET", "/v2/voices?include_total_count=true", None).map { resp =>

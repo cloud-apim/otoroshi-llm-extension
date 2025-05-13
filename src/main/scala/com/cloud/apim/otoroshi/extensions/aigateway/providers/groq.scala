@@ -405,6 +405,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
 /////////                             Audio generation and transcription                                 ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 case class GroqAudioModelClientTtsOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
   lazy val model: String = raw.select("model").asOptString.getOrElse("v")
   lazy val voice: String = raw.select("voice").asOptString.getOrElse("alloy")
   lazy val instructions: Option[String] = raw.select("instructions").asOptString
@@ -417,6 +418,7 @@ object GroqAudioModelClientTtsOptions {
 }
 
 case class GroqAudioModelClientSttOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
   lazy val model: Option[String] = raw.select("model").asOptString
   lazy val language: Option[String] = raw.select("language").asOptString
   lazy val prompt: Option[String] = raw.select("prompt").asOptString
@@ -424,11 +426,28 @@ case class GroqAudioModelClientSttOptions(raw: JsObject) {
   lazy val temperature: Option[Double] = raw.select("temperature").asOpt[Double]
 }
 
+
 object GroqAudioModelClientSttOptions {
   def fromJson(raw: JsObject): GroqAudioModelClientSttOptions = GroqAudioModelClientSttOptions(raw)
 }
 
-class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClientTtsOptions, val sttOptions: GroqAudioModelClientSttOptions, id: String) extends AudioModelClient {
+case class GroqAudioModelClientTranslationOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
+  lazy val model: Option[String] = raw.select("model").asOptString
+  lazy val prompt: Option[String] = raw.select("prompt").asOptString
+  lazy val responseFormat: Option[String] = raw.select("response_format").asOptString
+  lazy val temperature: Option[Double] = raw.select("temperature").asOpt[Double]
+}
+
+object GroqAudioModelClientTranslationOptions {
+  def fromJson(raw: JsObject): GroqAudioModelClientTranslationOptions = GroqAudioModelClientTranslationOptions(raw)
+}
+
+class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClientTtsOptions, val sttOptions: GroqAudioModelClientSttOptions, val translationOptions: GroqAudioModelClientTranslationOptions, id: String) extends AudioModelClient {
+
+  override def supportsTts: Boolean = ttsOptions.enabled
+  override def supportsStt: Boolean = sttOptions.enabled
+  override def supportsTranslation: Boolean = translationOptions.enabled
 
   override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     Right(
@@ -438,6 +457,51 @@ class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClien
         AudioGenVoice("Basil-PlayAI", "Basil-PlayAI")
       )
     ).vfuture
+  }
+
+  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    val model = opts.model.orElse(sttOptions.model)
+    val prompt = opts.prompt.orElse(sttOptions.prompt)
+    val responseFormat = opts.responseFormat.orElse(sttOptions.responseFormat)
+    val temperature = opts.responseFormat.orElse(sttOptions.temperature)
+    val parts = List(
+      Multipart.FormData.BodyPart(
+        "file",
+        HttpEntity(ContentType.parse(opts.fileContentType).toOption.get, opts.fileLength, opts.file),
+        Map("filename" -> opts.fileName.getOrElse("audio.mp3"))
+      )
+    ).applyOnWithOpt(model) {
+        case (list, model) => list :+ Multipart.FormData.BodyPart(
+          "model",
+          HttpEntity(model.byteString),
+        )
+      }
+      .applyOnWithOpt(responseFormat) {
+        case (list, responseFormat) => list :+ Multipart.FormData.BodyPart(
+          "response_format",
+          HttpEntity(responseFormat.byteString),
+        )
+      }
+      .applyOnWithOpt(prompt) {
+        case (list, prompt) => list :+ Multipart.FormData.BodyPart(
+          "prompt",
+          HttpEntity(prompt.byteString),
+        )
+      }
+      .applyOnWithOpt(temperature) {
+        case (list, temperature) => list :+ Multipart.FormData.BodyPart(
+          "temperature",
+          HttpEntity(temperature.toString.byteString),
+        )
+      }
+    val form = Multipart.FormData(parts: _*)
+    api.rawCallForm("POST", "/openai/v1/audio/translations", form).map { response =>
+      if (response.status == 200) {
+        AudioTranscriptionResponse(response.json.select("text").asString).right
+      } else {
+        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
+      }
+    }
   }
 
   override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
@@ -482,7 +546,7 @@ class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClien
         )
       }
     val form = Multipart.FormData(parts: _*)
-    api.rawCallForm("POST", "/audio/transcriptions", form).map { response =>
+    api.rawCallForm("POST", "/openai/v1/audio/transcriptions", form).map { response =>
       if (response.status == 200) {
         AudioTranscriptionResponse(response.json.select("text").asString).right
       } else {

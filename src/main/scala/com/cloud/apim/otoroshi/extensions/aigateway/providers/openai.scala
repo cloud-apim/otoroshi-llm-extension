@@ -718,6 +718,7 @@ class OpenAiModerationModelClient(val api: OpenAiApi, val options: OpenAiModerat
 /////////                             Audio generation and transcription                                 ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 case class OpenAIAudioModelClientTtsOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
   lazy val model: String = raw.select("model").asOptString.getOrElse("gpt-4o-mini-tts")
   lazy val voice: String = raw.select("voice").asOptString.getOrElse("alloy")
   lazy val instructions: Option[String] = raw.select("instructions").asOptString
@@ -730,6 +731,7 @@ object OpenAIAudioModelClientTtsOptions {
 }
 
 case class OpenAIAudioModelClientSttOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
   lazy val model: Option[String] = raw.select("model").asOptString
   lazy val language: Option[String] = raw.select("language").asOptString
   lazy val prompt: Option[String] = raw.select("prompt").asOptString
@@ -741,17 +743,83 @@ object OpenAIAudioModelClientSttOptions {
   def fromJson(raw: JsObject): OpenAIAudioModelClientSttOptions = OpenAIAudioModelClientSttOptions(raw)
 }
 
-class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioModelClientTtsOptions, val sttOptions: OpenAIAudioModelClientSttOptions, id: String) extends AudioModelClient {
+case class OpenAIAudioModelClientTranslationOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
+  lazy val model: Option[String] = raw.select("model").asOptString
+  lazy val prompt: Option[String] = raw.select("prompt").asOptString
+  lazy val responseFormat: Option[String] = raw.select("response_format").asOptString
+  lazy val temperature: Option[Double] = raw.select("temperature").asOpt[Double]
+}
 
-  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
-    // TODO: those are not voices here, those are models
+object OpenAIAudioModelClientTranslationOptions {
+  def fromJson(raw: JsObject): OpenAIAudioModelClientTranslationOptions = OpenAIAudioModelClientTranslationOptions(raw)
+}
+
+class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioModelClientTtsOptions, val sttOptions: OpenAIAudioModelClientSttOptions, val translationOptions: OpenAIAudioModelClientTranslationOptions, id: String) extends AudioModelClient {
+
+  override def supportsTts: Boolean = ttsOptions.enabled
+  override def supportsStt: Boolean = sttOptions.enabled
+  override def supportsTranslation: Boolean = translationOptions.enabled
+
+  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = {
     Right(
       List(
-        AudioGenVoice("tts-1", "tts-1"),
-        AudioGenVoice("tts-1-hd", "tts-1-hd"),
-        AudioGenVoice("gpt-4o-mini-tts", "gpt-4o-mini-tts")
+        AudioGenModel("tts-1", "tts-1"),
+        AudioGenModel("tts-1-hd", "tts-1-hd"),
+        AudioGenModel("gpt-4o-mini-tts", "gpt-4o-mini-tts")
       )
     ).vfuture
+  }
+
+  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+    List(
+      "alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"
+    ).map(v => AudioGenVoice(v, v)).rightf
+  }
+
+  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    val model = opts.model.orElse(sttOptions.model)
+    val prompt = opts.prompt.orElse(sttOptions.prompt)
+    val responseFormat = opts.responseFormat.orElse(sttOptions.responseFormat)
+    val temperature = opts.responseFormat.orElse(sttOptions.temperature)
+    val parts = List(
+      Multipart.FormData.BodyPart(
+        "file",
+        HttpEntity(ContentType.parse(opts.fileContentType).toOption.get, opts.fileLength, opts.file),
+        Map("filename" -> opts.fileName.getOrElse("audio.mp3"))
+      )
+    ).applyOnWithOpt(model) {
+        case (list, model) => list :+ Multipart.FormData.BodyPart(
+          "model",
+          HttpEntity(model.byteString),
+        )
+      }
+      .applyOnWithOpt(responseFormat) {
+        case (list, responseFormat) => list :+ Multipart.FormData.BodyPart(
+          "response_format",
+          HttpEntity(responseFormat.byteString),
+        )
+      }
+      .applyOnWithOpt(prompt) {
+        case (list, prompt) => list :+ Multipart.FormData.BodyPart(
+          "prompt",
+          HttpEntity(prompt.byteString),
+        )
+      }
+      .applyOnWithOpt(temperature) {
+        case (list, temperature) => list :+ Multipart.FormData.BodyPart(
+          "temperature",
+          HttpEntity(temperature.toString.byteString),
+        )
+      }
+    val form = Multipart.FormData(parts: _*)
+    api.rawCallForm("POST", "/audio/translations", form).map { response =>
+      if (response.status == 200) {
+        AudioTranscriptionResponse(response.json.select("text").asString).right
+      } else {
+        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
+      }
+    }
   }
 
   override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {

@@ -749,6 +749,18 @@ case class AudioGenVoice(
   }
 }
 
+case class AudioGenModel(
+                          modelId: String,
+                          modelName: String
+                        ){
+  def toJson: JsValue = {
+    Json.obj(
+      "model_id" -> modelId,
+      "model_name" -> modelName
+    )
+  }
+}
+
 case class AudioModelClientTextToSpeechInputOptions(
   input: String,
   model: Option[String] = None,
@@ -838,15 +850,67 @@ object AudioModelClientSpeechToTextInputOptions {
   }
 }
 
+
+case class AudioModelClientTranslationInputOptions(
+  file: Source[ByteString, _],
+  fileName: Option[String],
+  fileContentType: String,
+  fileLength: Long,
+  model: Option[String] = None,
+  prompt: Option[String] = None,
+  responseFormat: Option[String] = None,
+  temperature: Option[Double] = None
+) {
+  def json: JsValue = AudioModelClientTranslationInputOptions.format.writes(this)
+}
+
+object AudioModelClientTranslationInputOptions {
+  val format = new Format[AudioModelClientTranslationInputOptions] {
+    override def reads(json: JsValue): JsResult[AudioModelClientTranslationInputOptions] = Try {
+      AudioModelClientTranslationInputOptions(
+        file = Source.empty,
+        fileContentType = "",
+        fileLength = 0L,
+        fileName = None,
+        model = json.select("model").asOptString,
+        prompt = json.select("voice").asOptString,
+        responseFormat = json.select("response_format").asOptString,
+        temperature = json.select("temperature").asOpt[Double],
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+    override def writes(o: AudioModelClientTranslationInputOptions): JsValue = Json.obj()
+      .applyOnWithOpt(o.model) {
+        case (obj, model) => obj ++ Json.obj("model" -> model)
+      }.applyOnWithOpt(o.prompt) {
+        case (obj, prompt) => obj ++ Json.obj("prompt" -> prompt)
+      }.applyOnWithOpt(o.responseFormat) {
+        case (obj, responseFormat) => obj ++ Json.obj("response_format" -> responseFormat)
+      }.applyOnWithOpt(o.temperature) {
+        case (obj, temperature) => obj ++ Json.obj("temperature" -> temperature)
+      }
+  }
+}
+
 trait AudioModelClient {
 
-  def supportsTts: Boolean = true
-  def supportsStt: Boolean = true
-  def supportsTranslation: Boolean = false
+  def supportsTts: Boolean
+  def supportsStt: Boolean
+  def supportsTranslation: Boolean
 
-  def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]]
-  def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]]
-  def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
+  def translate(options: AudioModelClientTranslationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    Left(Json.obj("error" -> "audio translation not supported")).vfuture
+  }
+  def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    Left(Json.obj("error" -> "speech to text not supported")).vfuture
+  }
+  def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+    Left(Json.obj("error" -> "text to speech not supported")).vfuture
+  }
+  def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
+  def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = Left(Json.obj("error" -> "voices list not supported")).vfuture
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

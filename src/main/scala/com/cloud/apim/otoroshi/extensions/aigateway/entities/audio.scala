@@ -46,18 +46,21 @@ case class AudioModel(
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     val ttsOptions = config.select("tts").asOpt[JsObject].getOrElse(Json.obj())
     val sttOptions = config.select("stt").asOpt[JsObject].getOrElse(Json.obj())
+    val translateOptions = config.select("translate").asOpt[JsObject].getOrElse(Json.obj())
     provider.toLowerCase() match {
       case "openai" => {
         val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
         val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
-        new OpenAIAudioModelClient(api, ttsopts, sttopts, id).some
+        val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
+        new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
       }
       case "groq" => {
         val api = new GroqApi(GroqApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
         val ttsopts = GroqAudioModelClientTtsOptions.fromJson(ttsOptions)
         val sttopts = GroqAudioModelClientSttOptions.fromJson(sttOptions)
-        new GroqAudioModelClient(api, ttsopts, sttopts, id).some
+        val transopts = GroqAudioModelClientTranslationOptions.fromJson(translateOptions)
+        new GroqAudioModelClient(api, ttsopts, sttopts, transopts, id).some
       }
       case "elevenlabs" => {
         val api = new ElevenLabsApi(ElevenLabsApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
