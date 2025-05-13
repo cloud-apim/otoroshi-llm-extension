@@ -43,26 +43,42 @@ class HiveApi(baseUrl: String = HiveApi.baseUrl, token: String, timeout: FiniteD
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 case class HiveImageModelClientOptions(raw: JsObject) {
-  lazy val model: String = raw.select("model").asOpt[String].getOrElse("black-forest-labs/flux-schnell")
+  lazy val enabled: Boolean = raw.select("enabled").asOpt[Boolean].getOrElse(true)
+  lazy val model: Option[String] = raw.select("model").asOpt[String]
+  lazy val num_images: Option[Int] = raw.select("num_images").asOpt[Int]
+  lazy val imageWidth: Option[Int] = raw.select("image_size").select("width").asOpt[Int]
+  lazy val imageHeight: Option[Int] = raw.select("image_size").select("height").asOpt[Int]
+  lazy val num_inference_steps: Option[Int] = raw.select("num_inference_steps").asOpt[Int]
+  lazy val seed: Option[Int] = raw.select("seed").asOpt[Int]
+  lazy val output_quality: Option[Int] = raw.select("output_quality").asOpt[Int]
+  lazy val output_format: Option[String] = raw.select("output_format").asOptString
 }
 
 object HiveImageModelClientOptions {
   def fromJson(raw: JsObject): HiveImageModelClientOptions = HiveImageModelClientOptions(raw)
 }
 
-class HiveImageModelClient(val api: HiveApi, val options: HiveImageModelClientOptions, id: String) extends ImageModelClient {
+class HiveImageModelClient(val api: HiveApi, val genOptions: HiveImageModelClientOptions, id: String) extends ImageModelClient {
 
-  override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
-    val finalModel: String = modelOpt.getOrElse(options.model)
-    api.rawCall("POST", s"/${finalModel}", (options.raw ++
-      Json.obj(
+  override def supportsGeneration: Boolean = genOptions.enabled
+  override def supportsEdit: Boolean = false
+
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    val finalModel: String = opts.model.orElse(genOptions.model).getOrElse("black-forest-labs/flux-schnell")
+    val body = Json.obj(
+        "prompt" -> opts.prompt,
         "image_size" -> Json.obj(
-          "width" -> options.raw.select("width").asOpt[Int].getOrElse(1024).json,
-          "height" -> options.raw.select("height").asOpt[Int].getOrElse(1024).json
-        ),
-        "output_format" -> options.raw.select("output_format").asOptString.getOrElse("jpeg").json,
-        "prompt" -> promptInput,
-      )).some).map { resp =>
+          "width" -> genOptions.imageWidth.getOrElse(1024).json,
+          "height" -> genOptions.imageHeight.getOrElse(1024).json
+        )
+      )
+      .applyOnWithOpt(opts.outputFormat.orElse(genOptions.output_format)) { case (obj, output_format) => obj ++ Json.obj("output_format" -> output_format) }
+      .applyOnWithOpt(opts.n.orElse(genOptions.num_images)) { case (obj, num_images) => obj ++ Json.obj("num_images" -> num_images) }
+      .applyOnWithOpt(rawBody.select("num_inference_steps").asOptInt.orElse(genOptions.num_inference_steps)) { case (obj, num_inference_steps) => obj ++ Json.obj("num_inference_steps" -> num_inference_steps) }
+      .applyOnWithOpt(rawBody.select("seed").asOptInt.orElse(genOptions.seed)) { case (obj, seed) => obj ++ Json.obj("seed" -> seed) }
+      .applyOnWithOpt(rawBody.select("output_quality").asOptInt.orElse(genOptions.output_quality)) { case (obj, output_quality) => obj ++ Json.obj("output_quality" -> output_quality) }
+
+    api.rawCall("POST", s"/${finalModel}", body.some).map { resp =>
       if (resp.status == 200) {
         Right(ImagesGenResponse(
           created = resp.json.select("created_at").asOpt[Long].getOrElse(-1L),

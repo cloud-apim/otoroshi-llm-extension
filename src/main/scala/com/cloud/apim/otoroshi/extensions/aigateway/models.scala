@@ -917,6 +917,57 @@ trait AudioModelClient {
 /////////                                       Images Gen                                               ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+case class ImageModelClientGenerationInputOptions(
+   prompt: String,
+   background: Option[String] = None,
+   model: Option[String] = None,
+   moderation: Option[String] = None,
+   n: Option[Int] = None,
+   outputCompression: Option[Int] = None,
+   outputFormat: Option[String] = None,
+   responseFormat: Option[String] = None,
+   quality: Option[String] = None,
+   size: Option[String] = None,
+   style: Option[String] = None,
+) {
+  def json: JsValue = ImageModelClientGenerationInputOptions.format.writes(this)
+}
+
+object ImageModelClientGenerationInputOptions {
+  val format = new Format[ImageModelClientGenerationInputOptions] {
+    override def reads(json: JsValue): JsResult[ImageModelClientGenerationInputOptions] = Try {
+      ImageModelClientGenerationInputOptions(
+        prompt = json.select("prompt").asString,
+        background = json.select("background").asOptString,
+        model = json.select("model").asOptString,
+        moderation = json.select("moderation").asOptString,
+        n = json.select("n").asOptInt,
+        outputCompression = json.select("output_compression").asOptInt,
+        outputFormat = json.select("output_format").asOptString,
+        responseFormat = json.select("response_format").asOptString,
+        quality = json.select("quality").asOptString,
+        size = json.select("size").asOptString,
+        style = json.select("style").asOptString,
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+    override def writes(o: ImageModelClientGenerationInputOptions): JsValue =
+      Json.obj("prompt" -> o.prompt)
+        .applyOnWithOpt(o.background) { case (obj, background) => obj ++ Json.obj("background" -> background) }
+        .applyOnWithOpt(o.model) { case (obj, model) => obj ++ Json.obj("model" -> model) }
+        .applyOnWithOpt(o.moderation) { case (obj, moderation) => obj ++ Json.obj("moderation" -> moderation) }
+        .applyOnWithOpt(o.n) { case (obj, n) => obj ++ Json.obj("n" -> n) }
+        .applyOnWithOpt(o.outputCompression) { case (obj, outputCompression) => obj ++ Json.obj("output_compression" -> outputCompression) }
+        .applyOnWithOpt(o.outputFormat) { case (obj, outputFormat) => obj ++ Json.obj("output_format" -> outputFormat) }
+        .applyOnWithOpt(o.responseFormat) { case (obj, responseFormat) => obj ++ Json.obj("response_format" -> responseFormat) }
+        .applyOnWithOpt(o.quality) { case (obj, quality) => obj ++ Json.obj("quality" -> quality) }
+        .applyOnWithOpt(o.size) { case (obj, size) => obj ++ Json.obj("size" -> size) }
+        .applyOnWithOpt(o.style) { case (obj, style) => obj ++ Json.obj("style" -> style) }
+  }
+}
+
 case class ImagesGen(b64Json: Option[String], revisedPrompt: Option[String], url: Option[String]) {
   def toOpenAiJson: JsValue = {
     Json.obj(
@@ -962,7 +1013,9 @@ case class ImagesGenResponse(
 }
 
 trait ImageModelClient {
-  def generate(promptInput: String, model: Option[String], size: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]]
+  def supportsGeneration: Boolean
+  def supportsEdit: Boolean
+  def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]]
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

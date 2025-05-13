@@ -43,25 +43,28 @@ class LumaApi(baseUrl: String = LumaApi.baseUrl, token: String, timeout: FiniteD
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 case class LumaImageModelClientOptions(raw: JsObject) {
-  lazy val model: String = raw.select("model").asOpt[String].getOrElse("photon-1")
+  lazy val enabled: Boolean = raw.select("enabled").asOpt[Boolean].getOrElse(true)
+  lazy val model: Option[String] = raw.select("model").asOpt[String]
 }
 
 object LumaImageModelClientOptions {
   def fromJson(raw: JsObject): LumaImageModelClientOptions = LumaImageModelClientOptions(raw)
 }
 
-class LumaImageModelClient(val api: LumaApi, val options: LumaImageModelClientOptions, id: String) extends ImageModelClient {
+class LumaImageModelClient(val api: LumaApi, val genOptions: LumaImageModelClientOptions, id: String) extends ImageModelClient {
 
-  override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
-    val finalModel: String = modelOpt.getOrElse(options.model)
-    api.rawCall("POST", "/dream-machine/v1/generations/image", (options.raw ++
-      Json.obj(
-        "prompt" -> promptInput,
-        "model" -> finalModel
-      )).some).map { resp =>
+  override def supportsGeneration: Boolean = genOptions.enabled
+  override def supportsEdit: Boolean = false
+
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    val finalModel: String = opts.model.orElse(genOptions.model).getOrElse("photon-1")
+    val body = Json.obj(
+      "prompt" -> opts.prompt,
+      "model" -> finalModel,
+    )
+    api.rawCall("POST", "/dream-machine/v1/generations/image", body.some).map { resp =>
       if (resp.status == 200) {
         val imageUrl = resp.json.at("assets.image").asOptString
-
         Right(ImagesGenResponse(
           created = resp.json.select("created_at").asOpt[Long].getOrElse(-1L),
           images = Seq(ImagesGen(None, None, imageUrl)),

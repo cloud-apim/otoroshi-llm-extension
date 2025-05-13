@@ -554,33 +554,68 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 case class AzureOpenAiImageModelClientOptions(raw: JsObject) {
-  lazy val size: String = raw.select("size").asOpt[String].getOrElse("1024x1024")
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
+  lazy val background: Option[String] = raw.select("background").asOptString
+  lazy val model: Option[String] = raw.select("model").asOptString
+  lazy val moderation: Option[String] = raw.select("moderation").asOptString
+  lazy val n: Option[Int] = raw.select("n").asOptInt
+  lazy val outputCompression: Option[Int] = raw.select("output_compression").asOptInt
+  lazy val outputFormat: Option[String] = raw.select("output_format").asOptString
+  lazy val responseFormat: Option[String] = raw.select("response_format").asOptString
+  lazy val quality: Option[String] = raw.select("quality").asOptString
+  lazy val size: Option[String] = raw.select("size").asOptString
+  lazy val style: Option[String] = raw.select("style").asOptString
 }
 
 object AzureOpenAiImageModelClientOptions {
   def fromJson(raw: JsObject): AzureOpenAiImageModelClientOptions = AzureOpenAiImageModelClientOptions(raw)
 }
 
-class AzureOpenAiImageModelClient(val api: AzureOpenAiApi, val options: AzureOpenAiImageModelClientOptions, id: String) extends ImageModelClient {
+class AzureOpenAiImageModelClient(val api: AzureOpenAiApi, val genOptions: AzureOpenAiImageModelClientOptions, id: String) extends ImageModelClient {
 
-  override def generate(promptInput: String, modelOpt: Option[String], imgSizeOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
-    val finalSize: String = imgSizeOpt.getOrElse(options.size).toLowerCase match {
+  override def supportsGeneration: Boolean = genOptions.enabled
+  override def supportsEdit: Boolean = false
+
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    val finalModel = opts.model.orElse(genOptions.model).getOrElse("gpt-image-1")
+    val finalSize: String = opts.size.orElse(genOptions.size).getOrElse("1024x1024").toLowerCase match {
       case "1024x1024" => "1024x1024"
       case "1792x1024" => "1792x1024"
       case "1024x1792" => "1024x1792"
       case _ => "1024x1024"
     }
+    val body = Json.obj(
+        "prompt" -> opts.prompt,
+        "size" -> finalSize,
+        "model" -> finalModel,
+        "quality" -> "auto",
+      )
+      .applyOnWithOpt(opts.background.orElse(genOptions.background)) { case (obj, background) => obj ++ Json.obj("background" -> background) }
+      .applyOnWithOpt(opts.model.orElse(genOptions.model)) { case (obj, model) => obj ++ Json.obj("model" -> model) }
+      .applyOnWithOpt(opts.moderation.orElse(genOptions.moderation)) { case (obj, moderation) => obj ++ Json.obj("moderation" -> moderation) }
+      .applyOnWithOpt(opts.n.orElse(genOptions.n)) { case (obj, n) => obj ++ Json.obj("n" -> n) }
+      .applyOnWithOpt(opts.outputCompression.orElse(genOptions.outputCompression)) { case (obj, outputCompression) => obj ++ Json.obj("output_compression" -> outputCompression) }
+      .applyOnWithOpt(opts.outputFormat.orElse(genOptions.outputFormat)) { case (obj, outputFormat) => obj ++ Json.obj("output_format" -> outputFormat) }
+      .applyOnWithOpt(opts.responseFormat.orElse(genOptions.responseFormat)) { case (obj, responseFormat) => obj ++ Json.obj("response_format" -> responseFormat) }
+      .applyOnWithOpt(opts.quality.orElse(genOptions.quality)) { case (obj, quality) => obj ++ Json.obj("quality" -> quality) }
+      .applyOnWithOpt(opts.size.orElse(genOptions.size)) { case (obj, size) => obj ++ Json.obj("size" -> size) }
+      .applyOnWithOpt(opts.style.orElse(genOptions.style)) { case (obj, style) => obj ++ Json.obj("style" -> style) }
 
-    api.rawCall("POST", "/images/generations", (options.raw ++
-      Json.obj(
-        "prompt" -> promptInput,
-        "size" -> finalSize
-      )).some).map { resp =>
+    api.rawCall("POST", "/images/generations", body.some).map { resp =>
       if (resp.status == 200) {
         Right(ImagesGenResponse(
           created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
           images = resp.json.select("data").as[Seq[JsObject]].map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String])),
-          metadata = None
+          metadata = finalModel.toLowerCase match {
+            case "gpt-image-1" => ImagesGenResponseMetadata(
+              totalTokens = resp.json.at("usage.total_tokens").asOpt[Long].getOrElse(-1L),
+              tokenInput = resp.json.at("usage.input_tokens").asOpt[Long].getOrElse(-1L),
+              tokenOutput = resp.json.at("usage.output_tokens").asOpt[Long].getOrElse(-1L),
+              tokenText = resp.json.at("usage.input_tokens_details.text_tokens").asOpt[Long].getOrElse(-1L),
+              tokenImage = resp.json.at("usage.input_tokens_details.image_tokens").asOpt[Long].getOrElse(-1L),
+            ).some
+            case _ => None
+          }
         ))
       } else {
         Left(Json.obj("status" -> resp.status, "body" -> resp.json))

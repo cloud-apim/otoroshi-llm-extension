@@ -2,6 +2,8 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.ImageModelClientGenerationInputOptions
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.ImageModel
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
@@ -46,11 +48,57 @@ object OpenAiCompatImagesGenConfig {
       case Success(value) => JsSuccess(value)
     }
   }
+  def getProvidersMap(config: OpenAiCompatImagesGenConfig)(implicit ec: ExecutionContext, env: Env): (Map[String, ImageModel], Map[String, ImageModel]) = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val providers = config.refs.flatMap(ref => ext.states.imageModel(ref))
+    val providersByName = providers.map { provider =>
+      val name = provider.slugName
+      (name, provider)
+    }.toMap
+    val providersById = providers.map(p => (p.id, p)).toMap
+    (providersById, providersByName)
+  }
+
+  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAiCompatImagesGenConfig)(implicit ec: ExecutionContext, env: Env): JsValue = {
+    _jsonBody.select("model").asOpt[String] match {
+      case Some(value) if value.contains("###") => {
+        val parts = value.split("###")
+        val name = parts(0)
+        val model = parts(1)
+        val (providersById, providersByName) = OpenAiCompatImagesGenConfig.getProvidersMap(config)
+        providersById.get(name) match {
+          case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+          case None => {
+            providersByName.get(name) match {
+              case None => _jsonBody
+              case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+            }
+          }
+        }
+      }
+      case Some(value) if value.contains("/")=> {
+        val parts = value.split("/")
+        val name = parts(0)
+        val model = parts.tail.mkString("/")
+        val (providersById, providersByName) = OpenAiCompatImagesGenConfig.getProvidersMap(config)
+        providersById.get(name) match {
+          case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+          case None => {
+            providersByName.get(name) match {
+              case None => _jsonBody
+              case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+            }
+          }
+        }
+      }
+      case _ => _jsonBody
+    }
+  }
 }
 
 class OpenAICompatImagesGen extends NgBackendCall {
 
-  override def name: String = "Cloud APIM - LLM OpenAI Compat. Images Generation"
+  override def name: String = "Cloud APIM - Image generation backend"
   override def description: Option[String] = "Delegates call to a LLM provider to generate images".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -64,52 +112,41 @@ class OpenAICompatImagesGen extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'LLM OpenAI Compat. Images generation' plugin is available !")
+      ext.logger.info("the Image generation backend' plugin is available !")
     }
     ().vfuture
   }
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
+    val config = ctx.cachedConfig(internalName)(OpenAiCompatImagesGenConfig.format).getOrElse(OpenAiCompatImagesGenConfig.default)
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
-      try {
-        val jsonBody = bodyRaw.utf8String.parseJson
-        val promptFromBody = jsonBody.select("prompt").asOptString
-        val modelFromBody = jsonBody.select("model").asOptString
-        val encoding_format = jsonBody.select("encoding_format").asOptString.getOrElse("float")
-        val sizeFromBody = jsonBody.select("size").asOptString
-        val nFromBody = jsonBody.select("n").asOpt[Int].getOrElse(1)
-
-        val config = ctx.cachedConfig(internalName)(OpenAiCompatImagesGenConfig.format).getOrElse(OpenAiCompatImagesGenConfig.default)
-        val models = config.refs.flatMap(r => ext.states.imageModel(r))
-        val model = modelFromBody.flatMap { m =>
-          if (m.contains("/")) {
-            val parts = m.split("/")
-            models.find(_.name == parts.head)
-          } else {
-            models.find(_.name == m)
-          }
-        }.getOrElse(models.head)
-        val modelStr: Option[String] = modelFromBody.flatMap { m =>
-          if (m.contains("/")) {
-            m.split("/").last.some
-          } else {
-            m.some
-          }
+      val _jsonBody = bodyRaw.utf8String.parseJson
+      val jsonBody: JsObject = OpenAiCompatImagesGenConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
+      val provider: Option[ImageModel] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
+        ext.states.imageModel(r)
+      }.orElse(
+        config.refs.headOption.flatMap { r =>
+          ext.states.imageModel(r)
         }
-        model.getImageModelClient() match {
-          case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
-          case Some(client) => {
-            client.generate(promptFromBody.getOrElse(""), modelStr, sizeFromBody).map {
-              case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
-              case Right(imageGen) => {
-                Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(imageGen.toOpenAiJson)), None))
+      )
+      provider match {
+        case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider not found"))).leftf
+        case Some(provider) => {
+          provider.getImageModelClient() match {
+            case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
+            case Some(client) if !client.supportsGeneration => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support image generation"))).leftf
+            case Some(client) => {
+              val options = ImageModelClientGenerationInputOptions.format.reads(jsonBody).getOrElse(ImageModelClientGenerationInputOptions(""))
+              client.generate(options, jsonBody).map {
+                case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
+                case Right(imageGen) => {
+                  Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(imageGen.toOpenAiJson)), None))
+                }
               }
             }
           }
         }
-      } catch {
-        case e: Throwable => NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> e.getMessage))).leftf
       }
     }
   }

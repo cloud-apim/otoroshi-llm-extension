@@ -107,9 +107,11 @@ class ImageModelsPage extends Component {
                                         timeout: 30000
                                     },
                                     options: {
-                                        model: 'gpt-image-1',
-                                        size: "1024x1024",
-                                        n: 1,
+                                        generation: {
+                                            model: 'gpt-image-1',
+                                            size: "1024x1024",
+                                            n: 1,
+                                        }
                                     }
                                 },
                             });
@@ -127,9 +129,11 @@ class ImageModelsPage extends Component {
                                         timeout: 30000
                                     },
                                     options: {
-                                        model: 'grok-2-image',
-                                        n: 1,
-                                        response_format: "url"
+                                        generation: {
+                                            model: 'grok-2-image',
+                                            n: 1,
+                                            response_format: "url"
+                                        }
                                     }
                                 },
                             });
@@ -149,11 +153,13 @@ class ImageModelsPage extends Component {
                                         timeout: 30000
                                     },
                                     options: {
-                                        model: 'gpt-image-1',
-                                        size: "1024x1024",
-                                        n: 1,
-                                        quality: "hd",
-                                        style: "vivid"
+                                        generation: {
+                                            model: 'gpt-image-1',
+                                            size: "1024x1024",
+                                            n: 1,
+                                            quality: "hd",
+                                            style: "vivid"
+                                        }
                                     }
                                 },
                             });
@@ -171,8 +177,10 @@ class ImageModelsPage extends Component {
                                         timeout: 30000
                                     },
                                     options: {
+                                        generation: {
                                         model: 'photon-1',
                                         aspect_ratio: '16:9'
+                                            }
                                     }
                                 },
                             });
@@ -212,11 +220,13 @@ class ImageModelsPage extends Component {
                                         timeout: 30000
                                     },
                                     options: {
-                                        model: 'black-forest-labs/flux-schnell',
-                                        width: 1024,
-                                        height: 1024,
-                                        output_format: "jpeg",
-                                        output_quality: 90
+                                        generation: {
+                                            model: 'black-forest-labs/flux-schnell',
+                                            width: 1024,
+                                            height: 1024,
+                                            output_format: "jpeg",
+                                            output_quality: 90
+                                        }
                                     }
                                 },
                             });
