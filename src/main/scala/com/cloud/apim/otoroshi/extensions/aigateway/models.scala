@@ -1066,8 +1066,46 @@ case class VideosGenResponse(
   }
 }
 
+
+case class VideoModelClientTextToVideoInputOptions(
+                                                   prompt: String,
+                                                   loop: Option[Boolean] = None,
+                                                   model: Option[String] = None,
+                                                   aspect_ratio: Option[String] = None,
+                                                   resolution: Option[String] = None,
+                                                   duration: Option[String] = None,
+                                                 ) {
+  def json: JsValue = VideoModelClientTextToVideoInputOptions.format.writes(this)
+}
+
+object VideoModelClientTextToVideoInputOptions {
+  val format = new Format[VideoModelClientTextToVideoInputOptions] {
+    override def reads(json: JsValue): JsResult[VideoModelClientTextToVideoInputOptions] = Try {
+      VideoModelClientTextToVideoInputOptions(
+        prompt = json.select("prompt").asString,
+        loop = json.select("loop").asOptBoolean,
+        model = json.select("model").asOptString,
+        aspect_ratio = json.select("aspect_ratio").asOptString,
+        resolution = json.select("resolution").asOptString,
+        duration = json.select("duration").asOptString,
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+    override def writes(o: VideoModelClientTextToVideoInputOptions): JsValue =
+      Json.obj("prompt" -> o.prompt)
+        .applyOnWithOpt(o.loop) { case (obj, loop) => obj ++ Json.obj("loop" -> loop) }
+        .applyOnWithOpt(o.model) { case (obj, model) => obj ++ Json.obj("model" -> model) }
+        .applyOnWithOpt(o.aspect_ratio) { case (obj, aspect_ratio) => obj ++ Json.obj("aspect_ratio" -> aspect_ratio) }
+        .applyOnWithOpt(o.resolution) { case (obj, resolution) => obj ++ Json.obj("resolution" -> resolution) }
+        .applyOnWithOpt(o.duration) { case (obj, duration) => obj ++ Json.obj("duration" -> duration) }
+  }
+}
+
 trait VideoModelClient {
-  def generate(promptInput: String, model: Option[String], size: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]]
+  def supportsTextToVideo: Boolean
+  def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]]
 }
 
 trait ChatClient {

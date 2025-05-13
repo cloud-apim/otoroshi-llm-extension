@@ -42,6 +42,7 @@ case class AudioModel(
 
   def getAudioModelClient()(implicit env: Env): Option[AudioModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
+    val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val token = connection.select("token").asOpt[String].getOrElse("xxx")
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     val ttsOptions = config.select("tts").asOpt[JsObject].getOrElse(Json.obj())
@@ -49,21 +50,21 @@ case class AudioModel(
     val translateOptions = config.select("translate").asOpt[JsObject].getOrElse(Json.obj())
     provider.toLowerCase() match {
       case "openai" => {
-        val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
         val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
         val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
         new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
       }
       case "groq" => {
-        val api = new GroqApi(GroqApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
+        val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
         val ttsopts = GroqAudioModelClientTtsOptions.fromJson(ttsOptions)
         val sttopts = GroqAudioModelClientSttOptions.fromJson(sttOptions)
         val transopts = GroqAudioModelClientTranslationOptions.fromJson(translateOptions)
         new GroqAudioModelClient(api, ttsopts, sttopts, transopts, id).some
       }
       case "elevenlabs" => {
-        val api = new ElevenLabsApi(ElevenLabsApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
+        val api = new ElevenLabsApi(baseUrl.getOrElse(ElevenLabsApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
         val ttsopts = ElevenLabsAudioModelClientTtsOptions.fromJson(ttsOptions)
         val sttopts = ElevenLabsAudioModelClientSttOptions.fromJson(ttsOptions)
         new ElevenLabsAudioModelClient(api, ttsopts, sttopts, id).some

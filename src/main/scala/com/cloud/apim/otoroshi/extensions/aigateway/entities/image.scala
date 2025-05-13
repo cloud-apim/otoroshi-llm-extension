@@ -36,17 +36,17 @@ case class ImageModel(
   def getImageModelClient()(implicit env: Env): Option[ImageModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val genOptions = config.select("options").select("generation").asOpt[JsObject].getOrElse(Json.obj())
-    // val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
+    val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val token = connection.select("token").asOpt[String].getOrElse("xxx")
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     provider.toLowerCase() match {
       case "openai" => {
-        val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
         new OpenAiImageModelClient(api, opts, id).some
       }
       case "x-ai" => {
-        val api = new XAiApi(XAiApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
+        val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = XAiImageModelClientOptions.fromJson(genOptions)
         new XAiImageModelClient(api, opts, id).some
       }
@@ -59,17 +59,17 @@ case class ImageModel(
         new AzureOpenAiImageModelClient(api, opts, id).some
       }
       case "luma" => {
-        val api = new LumaApi(LumaApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
+        val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = LumaImageModelClientOptions.fromJson(genOptions)
         new LumaImageModelClient(api, opts, id).some
       }
 //      case "leonardo-ai" => {
-//        val api = new LeonardoAIApi(LeonardoAIApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
+//        val api = new LeonardoAIApi(baseUrl.getOrElse(LeonardoAIApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
 //        val opts = LeonardoAIImagesModelClientOptions.fromJson(genOptions)
 //        new LeonardoAIImagesModelClient(api, opts, id).some
 //      }
       case "hive" => {
-        val api = new HiveApi(HiveApi.baseUrl, token, timeout.getOrElse(10.seconds), env = env)
+        val api = new HiveApi(baseUrl.getOrElse(HiveApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = HiveImageModelClientOptions.fromJson(genOptions)
         new HiveImageModelClient(api, opts, id).some
       }
