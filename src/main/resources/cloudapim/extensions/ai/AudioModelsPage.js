@@ -191,12 +191,18 @@ class AudioModelsPage extends Component {
                   },
                   options: {
                     tts: {
+                      enabled: true,
                       model: 'gpt-4o-mini-tts',
                       response_format: 'mp3',
                       speed: 1
                     },
                     stt: {
+                      enabled: true,
                       model: 'gpt-4o-mini-transcribe',
+                    },
+                    translation: {
+                      enabled: true,
+                      model: 'whisper-1'
                     }
                   }
                 }
@@ -216,11 +222,17 @@ class AudioModelsPage extends Component {
                   },
                   options: {
                     tts: {
+                      enabled: true,
                       model: 'playai-tts',
                       response_format: 'wav'
                     },
                     stt: {
+                      enabled: true,
                       model: 'whisper-large-v3-turbo',
+                    },
+                    translation: {
+                      enabled: true,
+                      model: 'whisper-large-v3'
                     }
                   }
                 }
@@ -240,11 +252,12 @@ class AudioModelsPage extends Component {
                   },
                   options: {
                     tts: {
+                      enabled: true,
                       model_id: 'eleven_multilingual_v2',
                       output_format: 'mp3_44100_128'
                     },
                     stt: {
-
+                      enabled: true,
                     }
                   }
                 }

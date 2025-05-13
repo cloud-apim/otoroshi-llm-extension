@@ -157,6 +157,91 @@ class OpenAICompatTextToSpeech extends NgBackendCall {
   }
 }
 
+case class OpenAICompatSpeechToTextConfig(refs: Seq[String], maxSizeUpload: Long) extends NgPluginConfig {
+  def json: JsValue = OpenAICompatSpeechToTextConfig.format.writes(this)
+}
+
+object OpenAICompatSpeechToTextConfig {
+  val configFlow: Seq[String] = Seq("refs", "max_size_upload")
+  def configSchema: Option[JsObject] = Some(Json.obj(
+    "max_size_upload" -> Json.obj(
+      "type" -> "number",
+      "label" -> "Max Audio file size"
+    ),
+    "refs" -> Json.obj(
+      "type" -> "select",
+      "array" -> true,
+      "label" -> s"Audio models",
+      "props" -> Json.obj(
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/audio-models",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      ),
+    )
+  ))
+  val default = OpenAICompatSpeechToTextConfig(Seq.empty, 100 * 1024 * 1024)
+  val format = new Format[OpenAICompatSpeechToTextConfig] {
+    override def writes(o: OpenAICompatSpeechToTextConfig): JsValue = Json.obj("refs" -> o.refs, "max_size_upload" -> o.maxSizeUpload)
+    override def reads(json: JsValue): JsResult[OpenAICompatSpeechToTextConfig] = Try {
+      OpenAICompatSpeechToTextConfig(
+        refs = json.select("refs").asOpt[Seq[String]].getOrElse(Seq.empty),
+        maxSizeUpload = json.select("max_size_upload").asOpt[Long].getOrElse(default.maxSizeUpload),
+      )
+    } match {
+      case Failure(exception) => JsError(exception.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+  }
+
+  def getProvidersMap(config: OpenAICompatSpeechToTextConfig)(implicit ec: ExecutionContext, env: Env): (Map[String, AudioModel], Map[String, AudioModel]) = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val providers = config.refs.flatMap(ref => ext.states.audioModel(ref))
+    val providersByName = providers.map { provider =>
+      val name = provider.slugName
+      (name, provider)
+    }.toMap
+    val providersById = providers.map(p => (p.id, p)).toMap
+    (providersById, providersByName)
+  }
+
+  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatSpeechToTextConfig)(implicit ec: ExecutionContext, env: Env): JsValue = {
+    _jsonBody.select("model").asOpt[String] match {
+      case Some(value) if value.contains("###") => {
+        val parts = value.split("###")
+        val name = parts(0)
+        val model = parts(1)
+        val (providersById, providersByName) = OpenAICompatSpeechToTextConfig.getProvidersMap(config)
+        providersById.get(name) match {
+          case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+          case None => {
+            providersByName.get(name) match {
+              case None => _jsonBody
+              case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+            }
+          }
+        }
+      }
+      case Some(value) if value.contains("/")=> {
+        val parts = value.split("/")
+        val name = parts(0)
+        val model = parts.tail.mkString("/")
+        val (providersById, providersByName) = OpenAICompatSpeechToTextConfig.getProvidersMap(config)
+        providersById.get(name) match {
+          case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+          case None => {
+            providersByName.get(name) match {
+              case None => _jsonBody
+              case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+            }
+          }
+        }
+      }
+      case _ => _jsonBody
+    }
+  }
+}
 
 class OpenAICompatSpeechToText extends NgBackendCall {
 
@@ -167,10 +252,10 @@ class OpenAICompatSpeechToText extends NgBackendCall {
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
   override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
   override def useDelegates: Boolean = false
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatTextToSpeechConfig.default)
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatSpeechToTextConfig.default)
   override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = OpenAICompatTextToSpeechConfig.configFlow
-  override def configSchema: Option[JsObject] = OpenAICompatTextToSpeechConfig.configSchema
+  override def configFlow: Seq[String] = OpenAICompatSpeechToTextConfig.configFlow
+  override def configSchema: Option[JsObject] = OpenAICompatSpeechToTextConfig.configSchema
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
@@ -181,8 +266,9 @@ class OpenAICompatSpeechToText extends NgBackendCall {
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
+    val config = ctx.cachedConfig(internalName)(OpenAICompatSpeechToTextConfig.format).getOrElse(OpenAICompatSpeechToTextConfig.default)
     Multipart.multipartParser(
-      100 * 1024 * 1024, // TODO: from config ?
+      config.maxSizeUpload,
       allowEmptyFiles = false,
       filePartHandler = Multipart.handleFilePartAsTemporaryFile(play.api.libs.Files.SingletonTemporaryFileCreator),
       errorHandler = new HttpErrorHandler {
@@ -211,8 +297,7 @@ class OpenAICompatSpeechToText extends NgBackendCall {
         form.file("file") match {
           case None => NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> "no file present"))).leftf
           case Some(file) => {
-            val config = ctx.cachedConfig(internalName)(OpenAICompatTextToSpeechConfig.format).getOrElse(OpenAICompatTextToSpeechConfig.default)
-            val jsonBody: JsObject = OpenAICompatTextToSpeechConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
+            val jsonBody: JsObject = OpenAICompatSpeechToTextConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
             val provider: Option[AudioModel] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
               ext.states.audioModel(r)
             }.orElse(
@@ -263,10 +348,10 @@ class OpenAICompatTranslation extends NgBackendCall {
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
   override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
   override def useDelegates: Boolean = false
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatTextToSpeechConfig.default)
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatSpeechToTextConfig.default)
   override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = OpenAICompatTextToSpeechConfig.configFlow
-  override def configSchema: Option[JsObject] = OpenAICompatTextToSpeechConfig.configSchema
+  override def configFlow: Seq[String] = OpenAICompatSpeechToTextConfig.configFlow
+  override def configSchema: Option[JsObject] = OpenAICompatSpeechToTextConfig.configSchema
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
@@ -277,8 +362,9 @@ class OpenAICompatTranslation extends NgBackendCall {
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
+    val config = ctx.cachedConfig(internalName)(OpenAICompatSpeechToTextConfig.format).getOrElse(OpenAICompatSpeechToTextConfig.default)
     Multipart.multipartParser(
-      100 * 1024 * 1024, // TODO: from config ?
+      config.maxSizeUpload,
       allowEmptyFiles = false,
       filePartHandler = Multipart.handleFilePartAsTemporaryFile(play.api.libs.Files.SingletonTemporaryFileCreator),
       errorHandler = new HttpErrorHandler {
@@ -307,8 +393,7 @@ class OpenAICompatTranslation extends NgBackendCall {
         form.file("file") match {
           case None => NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> "no file present"))).leftf
           case Some(file) => {
-            val config = ctx.cachedConfig(internalName)(OpenAICompatTextToSpeechConfig.format).getOrElse(OpenAICompatTextToSpeechConfig.default)
-            val jsonBody: JsObject = OpenAICompatTextToSpeechConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
+            val jsonBody: JsObject = OpenAICompatSpeechToTextConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
             val provider: Option[AudioModel] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
               ext.states.audioModel(r)
             }.orElse(
