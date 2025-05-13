@@ -793,8 +793,10 @@ object AudioModelClientTextToSpeechInputOptions {
 
 case class AudioModelClientSpeechToTextInputOptions(
   file: Source[ByteString, _],
+  fileName: Option[String],
   fileContentType: String,
-  fileSize: Long,
+  fileLength: Long,
+  model: Option[String] = None,
   language: Option[String] = None,
   prompt: Option[String] = None,
   responseFormat: Option[String] = None,
@@ -809,8 +811,10 @@ object AudioModelClientSpeechToTextInputOptions {
       AudioModelClientSpeechToTextInputOptions(
         file = Source.empty,
         fileContentType = "",
-        fileSize = 0L,
-        language = json.select("model").asOptString,
+        fileLength = 0L,
+        fileName = None,
+        model = json.select("model").asOptString,
+        language = json.select("language").asOptString,
         prompt = json.select("voice").asOptString,
         responseFormat = json.select("response_format").asOptString,
         temperature = json.select("temperature").asOpt[Double],
@@ -822,6 +826,8 @@ object AudioModelClientSpeechToTextInputOptions {
     override def writes(o: AudioModelClientSpeechToTextInputOptions): JsValue = Json.obj()
       .applyOnWithOpt(o.language) {
         case (obj, language) => obj ++ Json.obj("language" -> language)
+      }.applyOnWithOpt(o.model) {
+        case (obj, model) => obj ++ Json.obj("model" -> model)
       }.applyOnWithOpt(o.prompt) {
         case (obj, prompt) => obj ++ Json.obj("prompt" -> prompt)
       }.applyOnWithOpt(o.responseFormat) {

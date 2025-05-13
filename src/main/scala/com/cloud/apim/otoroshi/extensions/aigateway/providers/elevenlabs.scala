@@ -1,8 +1,9 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import akka.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenVoice, AudioModelClient, AudioModelClientTextToSpeechInputOptions}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioTranscriptionResponse}
 import otoroshi.env.Env
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
@@ -39,6 +40,22 @@ class ElevenLabsApi(baseUrl: String = ElevenLabsApi.baseUrl, token: String, time
       .withRequestTimeout(timeout)
       .execute()
   }
+  def rawCallForm(method: String, path: String, body: Multipart)(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logCall("ElevenLabs", method, url, None)(env)
+    val entity = body.toEntity()
+    env.Ws
+      .url(url)
+      .withHttpHeaders(
+        "xi-api-key" -> token,
+        "Accept" -> "application/json",
+        "Content-Type" -> entity.contentType.toString()
+      )
+      .withBody(entity.dataBytes)
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .execute()
+  }
 }
 
 case class ElevenLabsAudioModelClientTtsOptions(raw: JsObject) {
@@ -52,6 +69,8 @@ object ElevenLabsAudioModelClientTtsOptions {
 }
 
 case class ElevenLabsAudioModelClientSttOptions(raw: JsObject) {
+  lazy val model: Option[String] = raw.select("model").asOptString
+  lazy val language: Option[String] = raw.select("language").asOptString
 }
 
 object ElevenLabsAudioModelClientSttOptions {
@@ -85,6 +104,36 @@ class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenL
       if (response.status == 200) {
         val contentType = response.contentType
         (response.bodyAsSource, contentType).right
+      } else {
+        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
+      }
+    }
+  }
+
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    val model = opts.model.orElse(sttOptions.model)
+    val language = opts.language.orElse(sttOptions.language)
+    val parts = List(
+      Multipart.FormData.BodyPart(
+        "file",
+        HttpEntity(ContentType.parse(opts.fileContentType).toOption.get, opts.fileLength, opts.file),
+        Map("filename" -> opts.fileName.getOrElse("audio.mp3"))
+      )
+    ).applyOnWithOpt(model) {
+        case (list, model) => list :+ Multipart.FormData.BodyPart(
+          "model_id",
+          HttpEntity(model.byteString),
+        )
+      }.applyOnWithOpt(language) {
+        case (list, language) => list :+ Multipart.FormData.BodyPart(
+          "language_code",
+          HttpEntity(language.byteString),
+        )
+      }
+    val form = Multipart.FormData(parts: _*)
+    api.rawCallForm("POST", "/audio/transcriptions", form).map { response =>
+      if (response.status == 200) {
+        AudioTranscriptionResponse(response.json.select("text").asString).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }

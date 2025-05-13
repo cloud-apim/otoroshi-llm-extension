@@ -225,13 +225,15 @@ class OpenAICompatSpeechToText extends NgBackendCall {
               case Some(provider) => {
                 provider.getAudioModelClient() match {
                   case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
+                  // TODO: add flag on config too ?
                   case Some(client) if !client.supportsTts => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support text to speech"))).leftf
                   case Some(client) => {
                     val _options = AudioModelClientSpeechToTextInputOptions.format.reads(jsonBody).get
                     val options = _options.copy(
                       file = FileIO.fromPath(file.ref.path),
                       fileContentType = file.contentType.getOrElse("audio/mp3"),
-                      fileSize = file.fileSize
+                      fileLength = file.fileSize,
+                      fileName = file.filename.some,
                     )
                     client.speechToText(options, jsonBody).map {
                       case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left

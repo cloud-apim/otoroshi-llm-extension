@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import akka.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
@@ -51,6 +52,23 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
           .addHttpHeaders("Content-Type" -> "application/json")
           .withBody(body)
       }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .execute()
+  }
+
+  def rawCallForm(method: String, path: String, body: Multipart)(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logCall("Groq", method, url, None)(env)
+    val entity = body.toEntity()
+    env.Ws
+      .url(url)
+      .withHttpHeaders(
+        "Authorization" -> s"Bearer ${token}",
+        "Accept" -> "application/json",
+        "Content-Type" -> entity.contentType.toString()
+      )
+      .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
@@ -399,6 +417,11 @@ object GroqAudioModelClientTtsOptions {
 }
 
 case class GroqAudioModelClientSttOptions(raw: JsObject) {
+  lazy val model: Option[String] = raw.select("model").asOptString
+  lazy val language: Option[String] = raw.select("language").asOptString
+  lazy val prompt: Option[String] = raw.select("prompt").asOptString
+  lazy val responseFormat: Option[String] = raw.select("response_format").asOptString
+  lazy val temperature: Option[Double] = raw.select("temperature").asOpt[Double]
 }
 
 object GroqAudioModelClientSttOptions {
@@ -417,20 +440,56 @@ class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClien
     ).vfuture
   }
 
-
-  //  override def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
-//    val finalModel: String = modelOpt.getOrElse(options.transcriptionModel)
-//    api.rawCall("POST", "/openai/v1/audio/transcriptions", (
-//      options.raw ++ Json.obj("model" -> finalModel)).some).map { resp =>
-//      if (resp.status == 200) {
-//        Right(AudioTranscriptionResponse(
-//          transcribedText = resp.json.select("text").asOptString.getOrElse("")
-//        ))
-//      } else {
-//        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
-//      }
-//    }
-//  }
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    val model = opts.model.orElse(sttOptions.model)
+    val language = opts.language.orElse(sttOptions.language)
+    val prompt = opts.prompt.orElse(sttOptions.prompt)
+    val responseFormat = opts.responseFormat.orElse(sttOptions.responseFormat)
+    val temperature = opts.responseFormat.orElse(sttOptions.temperature)
+    val parts = List(
+      Multipart.FormData.BodyPart(
+        "file",
+        HttpEntity(ContentType.parse(opts.fileContentType).toOption.get, opts.fileLength, opts.file),
+        Map("filename" -> opts.fileName.getOrElse("audio.mp3"))
+      )
+    ).applyOnWithOpt(model) {
+        case (list, model) => list :+ Multipart.FormData.BodyPart(
+          "model",
+          HttpEntity(model.byteString),
+        )
+      }.applyOnWithOpt(language) {
+        case (list, language) => list :+ Multipart.FormData.BodyPart(
+          "language",
+          HttpEntity(language.byteString),
+        )
+      }
+      .applyOnWithOpt(responseFormat) {
+        case (list, responseFormat) => list :+ Multipart.FormData.BodyPart(
+          "response_format",
+          HttpEntity(responseFormat.byteString),
+        )
+      }
+      .applyOnWithOpt(prompt) {
+        case (list, prompt) => list :+ Multipart.FormData.BodyPart(
+          "prompt",
+          HttpEntity(prompt.byteString),
+        )
+      }
+      .applyOnWithOpt(temperature) {
+        case (list, temperature) => list :+ Multipart.FormData.BodyPart(
+          "temperature",
+          HttpEntity(temperature.toString.byteString),
+        )
+      }
+    val form = Multipart.FormData(parts: _*)
+    api.rawCallForm("POST", "/audio/transcriptions", form).map { response =>
+      if (response.status == 200) {
+        AudioTranscriptionResponse(response.json.select("text").asString).right
+      } else {
+        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
+      }
+    }
+  }
 
   override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
     val instructionsOpt: Option[String] = opts.instructions.orElse(ttsOptions.instructions)

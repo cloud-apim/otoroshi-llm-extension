@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.http.scaladsl.model.Uri
+import akka.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
@@ -9,16 +9,12 @@ import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
-import play.api.libs.Files.TemporaryFile
 import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
 import play.api.libs.ws.WSResponse
-import play.api.mvc.MultipartFormData.FilePart
 
-import java.io.{File, FileOutputStream}
 import java.util.concurrent.atomic.AtomicLong
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
-import scala.reflect.io.Path.jfile2path
 
 case class OpenAiChatResponseChunkUsage(raw: JsValue) {
   lazy val completion_tokens: Long = raw.select("completion_tokens").asLong
@@ -156,6 +152,30 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
       .execute()
       .map { resp =>
         println(s"resp: ${resp.status} - ${resp.body}")
+        println("\n\n================================\n")
+        resp
+      }
+  }
+
+  def rawCallForm(method: String, path: String, body: Multipart)(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${baseUrl}${path}"
+    val uri = Uri(url)
+    ProviderHelpers.logCall(providerName, method, url, None)(env)
+    val entity = body.toEntity()
+    env.Ws
+      .url(url)
+      .withHttpHeaders(
+        "Authorization" -> s"Bearer ${token}",
+        "Accept" -> "application/json",
+        "Host" -> uri.authority.host.toString(),
+        "Content-Type" -> entity.contentType.toString()
+      )
+      .withBody(entity.dataBytes)
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .execute()
+      .map { resp =>
+        println(s"form resp: ${resp.status} - ${resp.body}")
         println("\n\n================================\n")
         resp
       }
@@ -710,6 +730,11 @@ object OpenAIAudioModelClientTtsOptions {
 }
 
 case class OpenAIAudioModelClientSttOptions(raw: JsObject) {
+  lazy val model: Option[String] = raw.select("model").asOptString
+  lazy val language: Option[String] = raw.select("language").asOptString
+  lazy val prompt: Option[String] = raw.select("prompt").asOptString
+  lazy val responseFormat: Option[String] = raw.select("response_format").asOptString
+  lazy val temperature: Option[Double] = raw.select("temperature").asOpt[Double]
 }
 
 object OpenAIAudioModelClientSttOptions {
@@ -719,6 +744,7 @@ object OpenAIAudioModelClientSttOptions {
 class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioModelClientTtsOptions, val sttOptions: OpenAIAudioModelClientSttOptions, id: String) extends AudioModelClient {
 
   override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+    // TODO: those are not voices here, those are models
     Right(
       List(
         AudioGenVoice("tts-1", "tts-1"),
@@ -727,20 +753,6 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
       )
     ).vfuture
   }
-
-  //  override def transcribe(modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
-//    val finalModel: String = modelOpt.getOrElse(options.transcriptionModel)
-//    api.rawCall("POST", "/audio/transcriptions", (
-//      options.raw ++ Json.obj("model" -> finalModel)).some).map { resp =>
-//      if (resp.status == 200) {
-//        Right(AudioTranscriptionResponse(
-//          transcribedText = resp.json.select("text").asOptString.getOrElse("")
-//        ))
-//      } else {
-//        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
-//      }
-//    }
-//  }
 
   override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
     val instructionsOpt: Option[String] = opts.instructions.orElse(ttsOptions.instructions)
@@ -763,6 +775,57 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
       if (response.status == 200) {
         val contentType = response.contentType
         (response.bodyAsSource, contentType).right
+      } else {
+        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
+      }
+    }
+  }
+
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    val model = opts.model.orElse(sttOptions.model)
+    val language = opts.language.orElse(sttOptions.language)
+    val prompt = opts.prompt.orElse(sttOptions.prompt)
+    val responseFormat = opts.responseFormat.orElse(sttOptions.responseFormat)
+    val temperature = opts.responseFormat.orElse(sttOptions.temperature)
+    val parts = List(
+        Multipart.FormData.BodyPart(
+          "file",
+          HttpEntity(ContentType.parse(opts.fileContentType).toOption.get, opts.fileLength, opts.file),
+          Map("filename" -> opts.fileName.getOrElse("audio.mp3"))
+        )
+      ).applyOnWithOpt(model) {
+        case (list, model) => list :+ Multipart.FormData.BodyPart(
+          "model",
+          HttpEntity(model.byteString),
+        )
+      }.applyOnWithOpt(language) {
+        case (list, language) => list :+ Multipart.FormData.BodyPart(
+          "language",
+          HttpEntity(language.byteString),
+        )
+      }
+      .applyOnWithOpt(responseFormat) {
+        case (list, responseFormat) => list :+ Multipart.FormData.BodyPart(
+          "response_format",
+          HttpEntity(responseFormat.byteString),
+        )
+      }
+      .applyOnWithOpt(prompt) {
+        case (list, prompt) => list :+ Multipart.FormData.BodyPart(
+          "prompt",
+          HttpEntity(prompt.byteString),
+        )
+      }
+      .applyOnWithOpt(temperature) {
+        case (list, temperature) => list :+ Multipart.FormData.BodyPart(
+          "temperature",
+          HttpEntity(temperature.toString.byteString),
+        )
+      }
+    val form = Multipart.FormData(parts: _*)
+    api.rawCallForm("POST", "/audio/transcriptions", form).map { response =>
+      if (response.status == 200) {
+        AudioTranscriptionResponse(response.json.select("text").asString).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
