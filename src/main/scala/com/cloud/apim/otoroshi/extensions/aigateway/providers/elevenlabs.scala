@@ -71,7 +71,7 @@ object ElevenLabsAudioModelClientTtsOptions {
 
 case class ElevenLabsAudioModelClientSttOptions(raw: JsObject) {
   lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
-  lazy val model: Option[String] = raw.select("model").asOptString
+  lazy val model: Option[String] = raw.select("model_id").asOptString
   lazy val language: Option[String] = raw.select("language").asOptString
 }
 
