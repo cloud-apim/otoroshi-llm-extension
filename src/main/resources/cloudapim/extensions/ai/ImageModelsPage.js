@@ -85,6 +85,12 @@ class ImageModelsPage extends Component {
             },
             options: {
               generation: {
+                enabled: true,
+                model: 'gpt-image-1',
+                size: "auto"
+              },
+              edition: {
+                enabled: true,
                 model: 'gpt-image-1',
                 size: "auto"
               }
@@ -110,9 +116,13 @@ class ImageModelsPage extends Component {
                   },
                   options: {
                     generation: {
+                      enabled: true,
                       model: 'gpt-image-1',
                       size: "auto",
                       n: 1,
+                    },
+                    edition: {
+                      enabled: false
                     }
                   }
                 },
@@ -135,6 +145,9 @@ class ImageModelsPage extends Component {
                       model: 'grok-2-image',
                       n: 1,
                       response_format: "url"
+                    },
+                    edition: {
+                      enabled: false
                     }
                   }
                 },
@@ -161,6 +174,9 @@ class ImageModelsPage extends Component {
                       n: 1,
                       quality: "hd",
                       style: "vivid"
+                    },
+                    edition: {
+                      enabled: false
                     }
                   }
                 },
@@ -182,6 +198,9 @@ class ImageModelsPage extends Component {
                     generation: {
                       model: 'photon-1',
                       aspect_ratio: '16:9'
+                    },
+                    edition: {
+                      enabled: false
                     }
                   }
                 },
@@ -228,6 +247,9 @@ class ImageModelsPage extends Component {
                       height: 1024,
                       output_format: "jpeg",
                       output_quality: 90
+                    },
+                    edition: {
+                      enabled: false
                     }
                   }
                 },

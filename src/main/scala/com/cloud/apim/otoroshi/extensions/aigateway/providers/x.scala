@@ -530,4 +530,6 @@ class XAiImageModelClient(val api: XAiApi, val genOptions: XAiImageModelClientOp
       }
     }
   }
+
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = ???
 }

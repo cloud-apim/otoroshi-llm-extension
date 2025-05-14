@@ -927,10 +927,24 @@ object OpenAiImageModelClientOptions {
   def fromJson(raw: JsObject): OpenAiImageModelClientOptions = OpenAiImageModelClientOptions(raw)
 }
 
-class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageModelClientOptions, id: String) extends ImageModelClient {
+case class OpenAiImageEditionModelClientOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
+  lazy val background: Option[String] = raw.select("background").asOptString
+  lazy val model: Option[String] = raw.select("model").asOptString
+  lazy val n: Option[Int] = raw.select("n").asOptInt
+  lazy val responseFormat: Option[String] = raw.select("response_format").asOptString
+  lazy val quality: Option[String] = raw.select("quality").asOptString
+  lazy val size: Option[String] = raw.select("size").asOptString
+}
+
+object OpenAiImageEditionModelClientOptions {
+  def fromJson(raw: JsObject): OpenAiImageEditionModelClientOptions = OpenAiImageEditionModelClientOptions(raw)
+}
+
+class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageModelClientOptions, editOptions: OpenAiImageEditionModelClientOptions, id: String) extends ImageModelClient {
 
   override def supportsGeneration: Boolean = genOptions.enabled
-  override def supportsEdit: Boolean = false
+  override def supportsEdit: Boolean = editOptions.enabled
 
   override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel = opts.model.orElse(genOptions.model).getOrElse("gpt-image-1")
@@ -973,4 +987,45 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
       }
     }
   }
+
+
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    val finalModel = opts.model.orElse(editOptions.model).getOrElse("gpt-image-1")
+    val body = Json.obj(
+        "images" -> opts.image,
+        "prompt" -> opts.prompt,
+        "size" -> "auto",
+        "model" -> finalModel,
+        "quality" -> "auto",
+        "n" -> 1
+      )
+      .applyOnWithOpt(opts.background.orElse(editOptions.background)) { case (obj, background) => obj ++ Json.obj("background" -> background) }
+      .applyOnWithOpt(opts.model.orElse(editOptions.model)) { case (obj, model) => obj ++ Json.obj("model" -> model) }
+      .applyOnWithOpt(opts.n.orElse(editOptions.n)) { case (obj, n) => obj ++ Json.obj("n" -> n) }
+      .applyOnWithOpt(opts.responseFormat.orElse(editOptions.responseFormat)) { case (obj, responseFormat) => obj ++ Json.obj("response_format" -> responseFormat) }
+      .applyOnWithOpt(opts.quality.orElse(editOptions.quality)) { case (obj, quality) => obj ++ Json.obj("quality" -> quality) }
+      .applyOnWithOpt(opts.size.orElse(editOptions.size)) { case (obj, size) => obj ++ Json.obj("size" -> size) }
+
+    api.rawCall("POST", "/images/edits", body.some).map { resp =>
+      if (resp.status == 200) {
+        Right(ImagesGenResponse(
+          created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
+          images = resp.json.select("data").as[Seq[JsObject]].map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String])),
+          metadata = finalModel.toLowerCase match {
+            case "gpt-image-1" => ImagesGenResponseMetadata(
+              totalTokens = resp.json.at("usage.total_tokens").asOpt[Long].getOrElse(-1L),
+              tokenInput = resp.json.at("usage.input_tokens").asOpt[Long].getOrElse(-1L),
+              tokenOutput = resp.json.at("usage.output_tokens").asOpt[Long].getOrElse(-1L),
+              tokenText = resp.json.at("usage.input_tokens_details.text_tokens").asOpt[Long].getOrElse(-1L),
+              tokenImage = resp.json.at("usage.input_tokens_details.image_tokens").asOpt[Long].getOrElse(-1L),
+            ).some
+            case _ => None
+          }
+        ))
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+
 }

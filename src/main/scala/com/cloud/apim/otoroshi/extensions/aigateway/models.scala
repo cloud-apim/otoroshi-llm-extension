@@ -1033,6 +1033,47 @@ object ImageModelClientGenerationInputOptions {
   }
 }
 
+case class ImageModelClientEditionInputOptions(
+   image: List[String],
+   prompt: String,
+   background: Option[String] = None,
+   model: Option[String] = None,
+   n: Option[Int] = None,
+   responseFormat: Option[String] = None,
+   quality: Option[String] = None,
+   size: Option[String] = None,
+) {
+  def json: JsValue = ImageModelClientEditionInputOptions.format.writes(this)
+}
+
+object ImageModelClientEditionInputOptions {
+  val format = new Format[ImageModelClientEditionInputOptions] {
+    override def reads(json: JsValue): JsResult[ImageModelClientEditionInputOptions] = Try {
+      ImageModelClientEditionInputOptions(
+        image = json.select("prompt").as[List[String]],
+        prompt = json.select("prompt").asString,
+        background = json.select("background").asOptString,
+        model = json.select("model").asOptString,
+        n = json.select("n").asOptInt,
+        responseFormat = json.select("response_format").asOptString,
+        quality = json.select("quality").asOptString,
+        size = json.select("size").asOptString
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+    override def writes(o: ImageModelClientEditionInputOptions): JsValue =
+      Json.obj("prompt" -> o.prompt) ++ Json.obj("image" -> o.image)
+        .applyOnWithOpt(o.background) { case (obj, background) => obj ++ Json.obj("background" -> background) }
+        .applyOnWithOpt(o.model) { case (obj, model) => obj ++ Json.obj("model" -> model) }
+        .applyOnWithOpt(o.n) { case (obj, n) => obj ++ Json.obj("n" -> n) }
+        .applyOnWithOpt(o.responseFormat) { case (obj, responseFormat) => obj ++ Json.obj("response_format" -> responseFormat) }
+        .applyOnWithOpt(o.quality) { case (obj, quality) => obj ++ Json.obj("quality" -> quality) }
+        .applyOnWithOpt(o.size) { case (obj, size) => obj ++ Json.obj("size" -> size) }
+  }
+}
+
 case class ImagesGen(b64Json: Option[String], revisedPrompt: Option[String], url: Option[String]) {
   def toOpenAiJson: JsValue = {
     Json.obj(
@@ -1081,6 +1122,7 @@ trait ImageModelClient {
   def supportsGeneration: Boolean
   def supportsEdit: Boolean
   def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]]
+  def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]]
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
