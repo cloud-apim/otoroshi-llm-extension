@@ -137,7 +137,7 @@ class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenL
         )
       }
     val form = Multipart.FormData(parts: _*)
-    api.rawCallForm("POST", "/audio/transcriptions", form).map { response =>
+    api.rawCallForm("POST", "/v1/speech-to-text", form).map { response =>
       if (response.status == 200) {
         AudioTranscriptionResponse(response.json.select("text").asString).right
       } else {
