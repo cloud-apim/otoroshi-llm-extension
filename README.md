@@ -55,6 +55,14 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
     * playai-tts-arabic
 * ElevenLabs
 
+## Supported Audio Speech-to-text models
+
+* OpenAI
+    * whisper-1
+
+* Groq
+  * whisper-large-v3
+
 ## Supported LLM Embeddings models
 
 * OpenAI
