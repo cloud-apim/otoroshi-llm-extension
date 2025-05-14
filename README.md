@@ -81,7 +81,7 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 * Mistral 🇫🇷 🇪🇺
   * mistral-embed
 
-## Supported Images generation models
+## Supported Image generation models
 
 * OpenAI 
   * dall-e-2
@@ -95,6 +95,11 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
   * photon-flash-1
 * Hive
   * black-forest-labs/flux-schnell
+
+## Supported Video generation models
+
+* Luma
+  * ray-flash-2
 
 ## Requirements
 
