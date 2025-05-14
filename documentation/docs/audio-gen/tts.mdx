@@ -1,7 +1,71 @@
 ---
-sidebar_position: 1
+sidebar_position: 2
 ---
 
 import Terminal from '@site/src/components/Terminal';
 
-# Text-to-speech
+# Text-to-speech (TTS)
+
+## Default entity configuration 
+
+```js
+{
+  "connection": {
+    "token": "${vault://local/GROQ_API_TOKEN}",
+    "timeout": 30000
+  },
+  "options": {
+    "tts": {
+      "enabled": true,
+      "model": "playai-tts",
+      "response_format": "wav"
+    },
+    "stt": {
+      "enabled": true,
+      "model": "whisper-large-v3-turbo"
+    },
+    "translation": {
+      "enabled": true,
+      "model": "whisper-large-v3"
+    }
+  }
+}
+```
+
+## Full entity example with Groq
+
+`TTS model used is *whisper-large-v3*`
+
+
+```js
+{
+  "id": "audio-gen-model_9a0c79eb-f7e3-40d7-b31d-c26fe28022cf",
+  "name": "Groq TTS",
+  "description": "Groq text-to-speech",
+  "tags": [],
+  "metadata": {},
+  "provider": "groq",
+  "config": {
+    "connection": {
+      "token": "${vault://local/GROQ_API_TOKEN}",
+      "timeout": 30000
+    },
+    "options": {
+      "tts": {
+        "enabled": true,
+        "model": "playai-tts",
+        "response_format": "wav"
+      },
+      "stt": {
+        "enabled": true,
+        "model": "whisper-large-v3-turbo"
+      },
+      "translation": {
+        "enabled": true,
+        "model": "whisper-large-v3"
+      }
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/AudioModel"
+}
+```
