@@ -1649,7 +1649,7 @@ class AiProvidersPage extends Component {
                 metadata: state.metadata,
                 provider: 'ovh-ai-endpoints-unified',
                 connection: {
-                  base_domain: BaseUrls.ovhUnified,
+                  base_url: BaseUrls.ovhUnified,
                   token: 'xxx',
                   timeout: 30000,
                 },
