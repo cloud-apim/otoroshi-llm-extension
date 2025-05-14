@@ -193,9 +193,16 @@ case class AiProvider(
         new XAiChatClient(api, opts, id).some
       }
       case "ovh-ai-endpoints" => {
-        val api = new OVHAiEndpointsApi(baseUrl.getOrElse(OVHAiEndpointsApi.baseDomain), token, timeout.getOrElse(10.seconds), env = env)
-        val opts = OVHAiEndpointsChatClientOptions.fromJson(options)
-        new OVHAiEndpointsChatClient(api, opts, id).some
+        val unified = connection.select("unified").asOpt[Boolean].getOrElse(false)
+        if (unified) {
+          val api = new OpenAiApi(OVHAiEndpointsApi.unifiedUrl, token, timeout.getOrElse(10.seconds), providerName = "OVH", env = env)
+          val opts = OpenAiChatClientOptions.fromJson(options)
+          new OpenAiChatClient(api, opts, id, "OVH", "/models").some
+        } else {
+          val api = new OVHAiEndpointsApi(baseUrl.getOrElse(OVHAiEndpointsApi.baseDomain), token, timeout.getOrElse(10.seconds), env = env)
+          val opts = OVHAiEndpointsChatClientOptions.fromJson(options)
+          new OVHAiEndpointsChatClient(api, opts, id).some
+        }
       }
       case "ovh-ai-endpoints-unified" => {
         val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(10.seconds), providerName = "OVH", env = env)
