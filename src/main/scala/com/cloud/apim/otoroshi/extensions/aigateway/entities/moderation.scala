@@ -38,6 +38,8 @@ case class ModerationModel(
 
   override def theMetadata: Map[String, String] = metadata
 
+  def slugName: String = metadata.getOrElse("endpoint_name", name).slugifyWithSlash.replaceAll("-+", "_")
+
   def getModerationModelClient()(implicit env: Env): Option[ModerationModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())

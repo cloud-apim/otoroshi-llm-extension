@@ -491,17 +491,21 @@ object MistralAiModerationModelClientOptions {
 
 class MistralAiModerationModelClient(val api: MistralAiApi, val options: MistralAiModerationModelClientOptions, id: String) extends ModerationModelClient {
 
-  override def moderate(promptInput: String, modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
-    val finalModel: String = modelOpt.getOrElse(options.model)
-    api.rawCall("POST", "/v1/moderations", (options.raw ++
-      Json.obj(
-        "input" -> promptInput,
-        "model" -> finalModel
-      )).some).map { resp =>
+  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
+    val finalModel: String = opts.model.getOrElse(options.model)
+    val body = Json.obj(
+      "input" -> opts.input,
+      "model" -> finalModel
+    )
+    api.rawCall("POST", "/v1/moderations", body.some).map { resp =>
       if (resp.status == 200) {
         Right(ModerationResponse(
           model = resp.json.select("model").asString,
-          moderationResults = resp.json.select("results").as[Seq[JsObject]].map(o => ModerationResult(o.select("flagged").asOpt[Boolean].getOrElse(false), o.select("categories").asOpt[JsObject].getOrElse(Json.obj()), o.select("category_scores").asOpt[JsObject].getOrElse(Json.obj()))),
+          moderationResults = resp.json.select("results").as[Seq[JsObject]].map(o => ModerationResult(
+            o.select("flagged").asOpt[Boolean].getOrElse(false),
+            o.select("categories").asOpt[JsObject].getOrElse(Json.obj()),
+            o.select("category_scores").asOpt[JsObject].getOrElse(Json.obj())
+          )),
         ))
       } else {
         Left(Json.obj("status" -> resp.status, "body" -> resp.json))

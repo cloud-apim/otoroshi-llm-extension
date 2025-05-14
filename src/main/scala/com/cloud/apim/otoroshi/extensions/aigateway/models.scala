@@ -720,6 +720,37 @@ case class ModerationResponse(
   }
 }
 
+
+case class ModerationModelClientInputOptions(
+  input: String,
+  model: Option[String] = None,
+) {
+  def json: JsValue = ModerationModelClientInputOptions.format.writes(this)
+}
+
+object ModerationModelClientInputOptions {
+  val format = new Format[ModerationModelClientInputOptions] {
+    override def reads(json: JsValue): JsResult[ModerationModelClientInputOptions] = Try {
+      ModerationModelClientInputOptions(
+        input = json.select("input").asString,
+        model = json.select("model").asOptString,
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+    override def writes(o: ModerationModelClientInputOptions): JsValue = Json.obj(
+      "input" -> o.input
+    ).applyOnWithOpt(o.model) {
+      case (obj, model) => obj ++ Json.obj("model" -> model)
+    }
+  }
+}
+
+trait ModerationModelClient {
+  def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]]
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////                             Audio generation and transcription                                 ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -731,10 +762,6 @@ case class AudioTranscriptionResponse(
       "text" -> transcribedText
     )
   }
-}
-
-trait ModerationModelClient {
-  def moderate(promptInput: String, model: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]]
 }
 
 case class AudioGenVoice(
