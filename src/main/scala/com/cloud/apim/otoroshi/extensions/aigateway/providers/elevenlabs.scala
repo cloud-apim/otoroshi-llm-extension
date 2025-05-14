@@ -117,25 +117,24 @@ class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenL
   }
 
   override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
-    val model = opts.model.orElse(sttOptions.model)
+    val model = opts.model.orElse(sttOptions.model).getOrElse("scribe_v1")
     val language = opts.language.orElse(sttOptions.language)
     val parts = List(
       Multipart.FormData.BodyPart(
         "file",
         HttpEntity(ContentType.parse(opts.fileContentType).toOption.get, opts.fileLength, opts.file),
         Map("filename" -> opts.fileName.getOrElse("audio.mp3"))
+      ),
+      Multipart.FormData.BodyPart(
+        "model_id",
+        HttpEntity(model.byteString),
       )
-    ).applyOnWithOpt(model) {
-        case (list, model) => list :+ Multipart.FormData.BodyPart(
-          "model_id",
-          HttpEntity(model.byteString),
-        )
-      }.applyOnWithOpt(language) {
-        case (list, language) => list :+ Multipart.FormData.BodyPart(
-          "language_code",
-          HttpEntity(language.byteString),
-        )
-      }
+    ).applyOnWithOpt(language) {
+      case (list, language) => list :+ Multipart.FormData.BodyPart(
+        "language_code",
+        HttpEntity(language.byteString),
+      )
+    }
     val form = Multipart.FormData(parts: _*)
     api.rawCallForm("POST", "/v1/speech-to-text", form).map { response =>
       if (response.status == 200) {
