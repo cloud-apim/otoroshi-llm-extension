@@ -64,6 +64,7 @@ case class OVHAiEndpointsApiModel(json: JsValue) {
 object OVHAiEndpointsApi {
 
   val baseDomain = "endpoints.kepler.ai.cloud.ovh.net"
+  val unifiedUrl = "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1"
   val cache = Scaffeine().expireAfterWrite(1.hour).build[String, JsValue]()
   val apikey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJpc3MiOiAic3VwYWJhc2UiLAogICJpYXQiOiAxNzEwNzE2NDAwLAogICJleHAiOiAxODY4NDgyODAwCn0.Jty_eO4oWqLm4Lx_LfbpRW5WESXYXtT2humbBq2Pal8" // good until 2029
 

@@ -150,11 +150,11 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
-      .map { resp =>
-        println(s"resp: ${resp.status} - ${resp.body}")
-        println("\n\n================================\n")
-        resp
-      }
+      // .map { resp =>
+      //   println(s"resp: ${resp.status} - ${resp.body}")
+      //   println("\n\n================================\n")
+      //   resp
+      // }
   }
 
   def rawCallForm(method: String, path: String, body: Multipart)(implicit ec: ExecutionContext): Future[WSResponse] = {
@@ -526,10 +526,12 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
   }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    println("in")
     val body = originalBody.asObject - "messages" - "provider"
     val _mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = _mergedOptions.select("model").asString
     val mergedOptions = if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions
+    println("will call")
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
       // println(s"tools added: ${tools.prettify}")
@@ -538,7 +540,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
       api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
     }
     callF.map {
-      case Left(err) => err.left
+      case Left(err) => err.debugPrintln.left
       case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(

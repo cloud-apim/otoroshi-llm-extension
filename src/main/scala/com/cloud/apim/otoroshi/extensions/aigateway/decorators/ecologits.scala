@@ -674,6 +674,7 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
       case "deepseek" => None
       case "x-ai" => None
       case "ovh-ai-endpoints" => None
+      case "ovh-ai-endpoints-unified" => None
       case "azure-openai" => None
       case "azure-ai-foundry" => None
       case "cloudflare" => None
@@ -684,6 +685,7 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
       case "cohere" => "cohere".some
       case "anthropic" => "anthropic".some
       case "groq" => None
+      case _ => None
     }
   }
 

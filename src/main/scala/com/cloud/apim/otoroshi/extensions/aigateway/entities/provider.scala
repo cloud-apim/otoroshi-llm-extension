@@ -197,6 +197,11 @@ case class AiProvider(
         val opts = OVHAiEndpointsChatClientOptions.fromJson(options)
         new OVHAiEndpointsChatClient(api, opts, id).some
       }
+      case "ovh-ai-endpoints-unified" => {
+        val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(10.seconds), providerName = "OVH", env = env)
+        val opts = OpenAiChatClientOptions.fromJson(options)
+        new OpenAiChatClient(api, opts, id, "OVH", "/models").some
+      }
       case "azure-openai" => {
         val resourceName = connection.select("resource_name").as[String]
         val deploymentId = connection.select("deployment_id").as[String]

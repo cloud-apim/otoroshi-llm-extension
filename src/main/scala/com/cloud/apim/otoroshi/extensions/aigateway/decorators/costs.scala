@@ -139,6 +139,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
       case "deepseek" => "deepseek".some
       case "x-ai" => "xai".some
       case "ovh-ai-endpoints" => None
+      case "ovh-ai-endpoints-unified" => None
       case "azure-openai" => "azure".some
       case "azure-ai-foundry" => "azure".some
       case "cloudflare" => "cloudflare".some
@@ -149,6 +150,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
       case "cohere" => "cohere".some
       case "anthropic" => "anthropic".some
       case "groq" => "groq".some
+      case _ => None
     }
   }
 

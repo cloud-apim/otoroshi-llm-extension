@@ -463,6 +463,24 @@ class AiProvidersPage extends Component {
             { 'label': "Mistral-Nemo-Instruct-2407", value: "Mistral-Nemo-Instruct-2407" },
           ] }
       }
+    } else if (provider === "ovh-ai-endpoints-unified") {
+      return {
+        'type': 'select',
+        props: { label: 'Model', possibleValues: [
+            { 'label': "CodeLlama-13b-Instruct-hf", value: 'CodeLlama-13b-Instruct-hf' },
+            { 'label': "Mixtral-8x7B-Instruct-v0.1", value: 'Mixtral-8x7B-Instruct-v0.1' },
+            { 'label': "Meta-Llama-3-70B-Instruct", value: 'Meta-Llama-3-70B-Instruct' },
+            { 'label': "Llama-2-13b-chat-hf", value: 'Llama-2-13b-chat-hf' },
+            { 'label': "Mixtral-8x22B-Instruct-v0.1", value: 'Mixtral-8x22B-Instruct-v0.1' },
+            { 'label': "Mistral-7B-Instruct-v0.2", value: 'Mistral-7B-Instruct-v0.2' },
+            { 'label': "Meta-Llama-3-8B-Instruct", value: 'Meta-Llama-3-8B-Instruct' },
+            { 'label': "mathstral-7B-v0.1", value: "mathstral-7B-v0.1" },
+            { 'label': "mamba-codestral-7B-v0.1", value: "mamba-codestral-7B-v0.1" },
+            { 'label': "Meta-Llama-3_1-70B-Instruct", value: "Meta-Llama-3_1-70B-Instruct" },
+            { 'label': "llava-next-mistral-7b", value: "llava-next-mistral-7b" },
+            { 'label': "Mistral-Nemo-Instruct-2407", value: "Mistral-Nemo-Instruct-2407" },
+          ] }
+      }
     } else if (provider === "deepseek") {
       return {
         'type': 'select',
@@ -490,6 +508,7 @@ class AiProvidersPage extends Component {
     { 'label': 'Scaleway', value: 'scaleway' },
     { 'label': 'Deepseek', value: 'deepseek' },
     { 'label': 'OVH AI Endpoints', value: 'ovh-ai-endpoints' },
+    { 'label': 'OVH AI Endpoints (unified)', value: 'ovh-ai-endpoints-unified' },
     { 'label': 'HuggingFace', value: 'huggingface' },
     { 'label': 'Cloudflare', value: 'cloudflare' },
     { 'label': 'Cohere', value: 'cohere' },
@@ -1620,6 +1639,21 @@ class AiProvidersPage extends Component {
                   timeout: 30000,
                 },
                 options: ClientOptions.ovh,
+              });
+            } else if (state.provider === 'ovh-ai-endpoints-unified') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'ovh-ai-endpoints-unified',
+                connection: {
+                  base_domain: BaseUrls.ovhUnified,
+                  token: 'xxx',
+                  timeout: 30000,
+                },
+                options: ClientOptions.ovhUnified,
               });
             } else if (state.provider === 'gemini') {
               update({

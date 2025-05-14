@@ -615,6 +615,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      anthropic: '${AnthropicApi.baseUrl}',
             |      cohere: '${CohereAiApi.baseUrl}',
             |      ovh: '${OVHAiEndpointsApi.baseDomain}',
+            |      ovhUnified: '${OVHAiEndpointsApi.unifiedUrl}',
             |      hugging: ''
             |    };
             |    const ClientOptions = {
@@ -631,6 +632,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      'azureAiFoundry': ${OpenAiChatClientOptions().copy(model = "mistral-large-2407").json.stringify},
             |      'cohere': ${CohereAiChatClientOptions().json.stringify},
             |      ovh: ${OVHAiEndpointsChatClientOptions().json.stringify},
+            |      ovhUnified: ${OpenAiChatClientOptions().copy(model = "Meta-Llama-3_1-70B-Instruct").json.stringify},
             |      huggingface: ${OpenAiChatClientOptions().copy(model = "google/gemma-2-2b-it").json.stringify},
             |    };
             |    const GuardrailsOptions = {
