@@ -663,9 +663,9 @@ object OpenAiEmbeddingModelClientOptions {
 
 class OpenAiEmbeddingModelClient(val api: OpenAiApi, val options: OpenAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
 
-  override def embed(input: Seq[String], modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
-    val finalModel: String = modelOpt.getOrElse(options.model)
-    api.rawCall("POST", "/embeddings", (options.raw ++ Json.obj("input" -> input, "model" -> finalModel)).some).map { resp =>
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    val finalModel: String = opts.model.getOrElse(options.model)
+    api.rawCall("POST", "/embeddings", (options.raw ++ Json.obj("input" -> opts.input, "model" -> finalModel)).some).map { resp =>
       if (resp.status == 200) {
         Right(EmbeddingResponse(
           model = finalModel,

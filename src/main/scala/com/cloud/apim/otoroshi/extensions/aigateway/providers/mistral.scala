@@ -459,9 +459,9 @@ object MistralAiEmbeddingModelClientOptions {
 
 class MistralAiEmbeddingModelClient(val api: MistralAiApi, val options: MistralAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
 
-  override def embed(input: Seq[String], modelOpt: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
-    val finalModel: String = modelOpt.getOrElse(options.model)
-    api.rawCall("POST", "/v1/embeddings", (options.raw ++ Json.obj("input" -> input, "model" -> finalModel)).some).map { resp =>
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    val finalModel: String = opts.model.getOrElse(options.model)
+    api.rawCall("POST", "/v1/embeddings", (options.raw ++ Json.obj("input" -> opts.input, "model" -> finalModel)).some).map { resp =>
       if (resp.status == 200) {
         Right(EmbeddingResponse(
           model = finalModel,

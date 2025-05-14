@@ -681,8 +681,46 @@ case class EmbeddingResponse(
   }
 }
 
+case class EmbeddingClientInputOptions(
+  input: Seq[String],
+  model: Option[String] = None,
+  dimensions: Option[Int] = None,
+  encoding_format: Option[String] = None,
+  user: Option[String] = None,
+) {
+  def json: JsValue = EmbeddingClientInputOptions.format.writes(this)
+}
+
+object EmbeddingClientInputOptions {
+  val format = new Format[EmbeddingClientInputOptions] {
+    override def reads(json: JsValue): JsResult[EmbeddingClientInputOptions] = Try {
+      EmbeddingClientInputOptions(
+        input = json.select("input").asOpt[Seq[String]].getOrElse(Seq.empty),
+        model = json.select("model").asOptString,
+        dimensions = json.select("dimensions").asOptInt,
+        encoding_format = json.select("encoding_format").asOptString,
+        user = json.select("user").asOptString,
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+    override def writes(o: EmbeddingClientInputOptions): JsValue = Json.obj(
+      "input" -> o.input
+    ).applyOnWithOpt(o.model) {
+      case (obj, model) => obj ++ Json.obj("model" -> model)
+    }.applyOnWithOpt(o.dimensions) {
+      case (obj, dimensions) => obj ++ Json.obj("dimensions" -> dimensions)
+    }.applyOnWithOpt(o.encoding_format) {
+      case (obj, encoding_format) => obj ++ Json.obj("encoding_format" -> encoding_format)
+    }.applyOnWithOpt(o.user) {
+      case (obj, user) => obj ++ Json.obj("user" -> user)
+    }
+  }
+}
+
 trait EmbeddingModelClient {
-  def embed(input: Seq[String], model: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]]
+  def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]]
 }
 
 case class EmbeddingSearchMatch(score: Double, id: String, embedding: Embedding, embedded: String)
