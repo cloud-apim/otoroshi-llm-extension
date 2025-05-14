@@ -5,3 +5,25 @@ sidebar_position: 1
 import Terminal from '@site/src/components/Terminal';
 
 # Video generation Models
+
+
+## Default configuration
+
+Demonstration with Luma 
+
+Used model is *ray-flash-2*
+
+```js
+{
+  "connection": {
+    "token": "${vault://local/LUMA_API_TOKEN}",
+    "timeout": 30000
+  },
+  "options": {
+    "model": "ray-flash-2",
+    "aspect_ratio": "16:9",
+    "resolution": "720p",
+    "duration": "5s"
+  }
+}
+```
