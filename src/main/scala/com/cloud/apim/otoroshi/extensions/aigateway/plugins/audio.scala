@@ -341,7 +341,7 @@ class OpenAICompatSpeechToText extends NgBackendCall {
 
 class OpenAICompatTranslation extends NgBackendCall {
 
-  override def name: String = "Cloud APIM - audio translation backend"
+  override def name: String = "Cloud APIM - Audio translation backend"
   override def description: Option[String] = "Delegates call to a provider to generate english text from audio files".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -355,7 +355,7 @@ class OpenAICompatTranslation extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'audio translation backend' plugin is available !")
+      ext.logger.info("the 'Audio translation backend' plugin is available !")
     }
     ().vfuture
   }

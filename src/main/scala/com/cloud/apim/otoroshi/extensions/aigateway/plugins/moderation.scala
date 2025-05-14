@@ -50,8 +50,8 @@ object OpenAICompatModerationConfig {
 
 class OpenAICompatModeration extends NgBackendCall {
 
-  override def name: String = "Cloud APIM - LLM OpenAI Compat. Moderation Models"
-  override def description: Option[String] = "Delegates call to a LLM provider".some
+  override def name: String = "Cloud APIM - Text moderation backend"
+  override def description: Option[String] = "Delegates call to a LLM provider to moderate text".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
@@ -64,7 +64,7 @@ class OpenAICompatModeration extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'LLM OpenAI Compat. Moderations models' plugin is available !")
+      ext.logger.info("the 'Text moderation backend' plugin is available !")
     }
     ().vfuture
   }

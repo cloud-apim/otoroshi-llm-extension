@@ -935,6 +935,7 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
         "size" -> "auto",
         "model" -> finalModel,
         "quality" -> "auto",
+        "n" -> 1
       )
       .applyOnWithOpt(opts.background.orElse(genOptions.background)) { case (obj, background) => obj ++ Json.obj("background" -> background) }
       .applyOnWithOpt(opts.model.orElse(genOptions.model)) { case (obj, model) => obj ++ Json.obj("model" -> model) }

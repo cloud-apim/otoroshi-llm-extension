@@ -1,4 +1,4 @@
-package com.cloud.apim.otoroshi.extensions.aigateway.plugins
+package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
 import akka.util.ByteString
@@ -120,16 +120,16 @@ class VideosGen extends NgBackendCall {
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
-        val _jsonBody = bodyRaw.utf8String.parseJson
-        val config = ctx.cachedConfig(internalName)(VideosGenConfig.format).getOrElse(VideosGenConfig.default)
-        val jsonBody: JsObject = VideosGenConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
-        val provider: Option[VideoModel] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
+      val _jsonBody = bodyRaw.utf8String.parseJson
+      val config = ctx.cachedConfig(internalName)(VideosGenConfig.format).getOrElse(VideosGenConfig.default)
+      val jsonBody: JsObject = VideosGenConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
+      val provider: Option[VideoModel] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
+        ext.states.videoModel(r)
+      }.orElse(
+        config.refs.headOption.flatMap { r =>
           ext.states.videoModel(r)
-        }.orElse(
-          config.refs.headOption.flatMap { r =>
-            ext.states.videoModel(r)
-          }
-        )
+        }
+      )
       provider match {
         case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider not found"))).leftf
         case Some(provider) => {
