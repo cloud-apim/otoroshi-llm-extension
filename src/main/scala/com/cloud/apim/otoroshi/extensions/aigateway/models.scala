@@ -48,7 +48,7 @@ sealed trait ChatMessageContent { self =>
 }
 object ChatMessageContent {
 
-  def fromJson(json: JsObject): ChatMessageContent = {
+  def fromJson(json: JsObject): ChatMessageContent = try {
     val url = json.at("source.url").asOptString
     lazy val dataBase64 = json.at("source.data").asOptString.map(_.byteString.decodeBase64)
     lazy val dataText = json.at("source.data").asOptString.map(_.byteString)
@@ -90,6 +90,10 @@ object ChatMessageContent {
       }
       case _ => TextContent(json.select("text").asString)
     }
+  } catch {
+    case t: Throwable =>
+      t.printStackTrace()
+      TextContent(s"error: ${t.getMessage}")
   }
 
   case class TextContent(text: String) extends ChatMessageContent {
@@ -382,31 +386,47 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
   override def wholeTextContent: String = content
 
   lazy val citations = raw.select("citations").asOpt[Seq[JsObject]]
-    .orElse(raw.at("message.citations").asOpt[Seq[JsObject]])
-    .orElse(raw.at("content.citations").asOpt[Seq[JsObject]])
+    .orElse(raw.select("message").select("citations").asOpt[Seq[JsObject]])
+    .orElse(raw.select("content").select("citations").asOpt[Seq[JsObject]])
   lazy val hasCitations = citations.isDefined
 
   lazy val reasoningDetails = raw.select("reasoning_content").asOpt[String]
     .orElse(raw.select("reasoning").asOpt[String])
-    .orElse(raw.at("message.reasoning_content").asOpt[String])
-    .orElse(raw.at("message.reasoning").asOpt[String])
-    .orElse(raw.at("content.reasoning_content").asOpt[String])
-    .orElse(raw.at("content.reasoning").asOpt[String])
+    .orElse(raw.select("message").select("reasoning_content").asOpt[String])
+    .orElse(raw.select("message").select("reasoning").asOpt[String])
+    .orElse(raw.select("content").select("reasoning_content").asOpt[String])
+    .orElse(raw.select("content").select("reasoning").asOpt[String])
   lazy val hasReasoningDetails = reasoningDetails.isDefined
 
   lazy val annotations = raw.select("message").select("annotations").asOpt[Seq[JsObject]]
+  lazy val audio = raw.select("message").select("audio").asOpt[JsObject]
+  lazy val tool_calls = raw.select("message").select("tool_calls").asOpt[Seq[JsObject]]
 
-  def json: JsValue = Json.obj(
-    "role" -> role,
-    "content" -> content,
-  ).applyOnWithOpt(prefix) {
-    case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
-  }.applyOnWithOpt(citations) {
-    case (obj, citations) => obj ++ Json.obj("citations" -> citations)
-  }.applyOnWithOpt(reasoningDetails) {
-    case (obj, reasoningDetails) => obj ++ Json.obj("reasoning_details" -> reasoningDetails)
-  }.applyOnWithOpt(annotations) {
-    case (obj, annotations) => obj ++ Json.obj("annotations" -> annotations)
+  /// Anthropic responses
+  lazy val is_server_tool_use = raw.select("type").asOpt[String].contains("server_tool_use")
+  lazy val is_web_search_tool_result = raw.select("type").asOpt[String].contains("web_search_tool_result")
+  /// Anthropic responses
+
+  def json: JsValue = {
+    if (is_server_tool_use || is_web_search_tool_result) {
+      return raw
+    }
+    Json.obj(
+      "role" -> role,
+      "content" -> content,
+    ).applyOnWithOpt(prefix) {
+      case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
+    }.applyOnWithOpt(citations) {
+      case (obj, citations) => obj ++ Json.obj("citations" -> citations)
+    }.applyOnWithOpt(reasoningDetails) {
+      case (obj, reasoningDetails) => obj ++ Json.obj("reasoning_details" -> reasoningDetails)
+    }.applyOnWithOpt(annotations) {
+      case (obj, annotations) => obj ++ Json.obj("annotations" -> annotations)
+    }.applyOnWithOpt(audio) {
+      case (obj, audio) => obj ++ Json.obj("audio" -> audio)
+    }.applyOnWithOpt(tool_calls) {
+      case (obj, tool_calls) => obj ++ Json.obj("tool_calls" -> tool_calls)
+    }
   }
 
   def toInput(): InputChatMessage = InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None, json.asObject)
