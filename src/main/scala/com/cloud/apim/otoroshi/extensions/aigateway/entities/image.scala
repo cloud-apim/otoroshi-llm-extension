@@ -36,6 +36,7 @@ case class ImageModel(
   def getImageModelClient()(implicit env: Env): Option[ImageModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val genOptions = config.select("options").select("generation").asOpt[JsObject].getOrElse(Json.obj())
+    val editOptions = config.select("options").select("edition").asOpt[JsObject].getOrElse(Json.obj())
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val token = connection.select("token").asOpt[String].getOrElse("xxx")
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
@@ -43,7 +44,8 @@ case class ImageModel(
       case "openai" => {
         val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
-        new OpenAiImageModelClient(api, opts, id).some
+        val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
+        new OpenAiImageModelClient(api, opts, editOpts, id).some
       }
       case "x-ai" => {
         val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
@@ -136,7 +138,12 @@ object ImageModel {
                   "timeout" -> 10000,
                 ),
                 "options" -> Json.obj(
-                  "model" -> "gpt-image-1"
+                  "generation" -> (
+                    "model" -> "gpt-image-1"
+                  ),
+                  "edition" -> (
+                    "model" -> "gpt-image-1"
+                    )
                 )
               ),
             ).json
