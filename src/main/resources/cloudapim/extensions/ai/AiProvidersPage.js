@@ -508,7 +508,7 @@ class AiProvidersPage extends Component {
     { 'label': 'Scaleway', value: 'scaleway' },
     { 'label': 'Deepseek', value: 'deepseek' },
     { 'label': 'OVH AI Endpoints', value: 'ovh-ai-endpoints' },
-    { 'label': 'OVH AI Endpoints (unified)', value: 'ovh-ai-endpoints-unified' },
+    // { 'label': 'OVH AI Endpoints (unified)', value: 'ovh-ai-endpoints-unified' },
     { 'label': 'HuggingFace', value: 'huggingface' },
     { 'label': 'Cloudflare', value: 'cloudflare' },
     { 'label': 'Cohere', value: 'cohere' },
