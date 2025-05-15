@@ -94,7 +94,7 @@ object ModerationModel {
     Resource(
       "ModerationModel",
       "moderation-models",
-      "moderation-models",
+      "moderation-model",
       "ai-gateway.extensions.cloud-apim.com",
       ResourceVersion("v1", true, false, true),
       GenericResourceAccessApiWithState[ModerationModel](

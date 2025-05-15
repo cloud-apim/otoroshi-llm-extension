@@ -15,7 +15,7 @@ import scala.concurrent.{ExecutionContext, Future}
 object WasmGuardrail {
   def handleCallResult(from: String, res: Either[JsValue, (String, ResultsWrapper)])(implicit ec: ExecutionContext, env: Env): GuardrailResult = res match {
     case Left(err) =>
-      err.prettify.debugPrintln
+      err.prettify
       GuardrailResult.GuardrailError(err.stringify)
     case Right(output) => {
       val out = output._1

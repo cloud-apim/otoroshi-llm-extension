@@ -50,6 +50,7 @@ object Guardrails {
     "semantic_contains" -> new SemanticContainsGuardrail(),
     "wasm" -> new WasmGuardrail(),
     "quickjs" -> new QuickJsGuardrail(),
+    "moderation_model" -> new ModerationGuardrail(),
   )
 /*
 [

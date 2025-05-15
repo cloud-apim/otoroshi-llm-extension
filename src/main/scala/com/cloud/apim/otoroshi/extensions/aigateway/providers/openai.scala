@@ -174,11 +174,11 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
-      .map { resp =>
-        println(s"form resp: ${resp.status} - ${resp.body}")
-        println("\n\n================================\n")
-        resp
-      }
+      // .map { resp =>
+      //   println(s"form resp: ${resp.status} - ${resp.body}")
+      //   println("\n\n================================\n")
+      //   resp
+      // }
   }
 
   override def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
@@ -538,7 +538,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
       api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
     }
     callF.map {
-      case Left(err) => err.debugPrintln.left
+      case Left(err) => err.left
       case Right(resp) =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(

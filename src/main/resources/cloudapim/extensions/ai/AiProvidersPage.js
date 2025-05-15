@@ -270,6 +270,12 @@ class Guardrail extends Component {
               valuesFrom: "/bo/api/proxy/apis/plugins.otoroshi.io/v1/wasm-plugins",
               transformer: (item) => ({ label: item.name, value: item.id }),
             } },
+          'config.moderation_model': { type: 'select', props: {
+              label: 'Moderation model',
+              placeholder: 'Select a Moderation model',
+              valuesFrom: "/bo/api/proxy/apis/plugins.otoroshi.io/v1/moderation-models",
+              transformer: (item) => ({ label: item.name, value: item.id }),
+            } },
           'config.quickjs_path': {
             type: 'code',
             label: 'QuickJS code path',
@@ -341,6 +347,7 @@ class Guardrail extends Component {
             if (i.id === 'semantic_contains') this.props.value[this.props.idx].config = { operation: 'contains_all', values: [], score: 0.8 };
             if (i.id === 'wasm') this.props.value[this.props.idx].config = { plugin_ref: '' };
             if (i.id === 'quickjs') this.props.value[this.props.idx].config = { quickjs_path: '\'inline module\';\n\nexports.guardrail_call = function(args) {\n  const { messages } = JSON.parse(args);\n  return JSON.stringify({ \n    pass: true, \n    reason: "none" \n  });\n};' };
+            if (i.id === 'moderation_model') this.props.value[this.props.idx].config = { ref: '' };
           }
           this.props.onChange(this.props.value)
         }
