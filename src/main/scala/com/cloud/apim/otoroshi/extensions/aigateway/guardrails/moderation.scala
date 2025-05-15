@@ -20,7 +20,7 @@ class ModerationGuardrail extends Guardrail {
   override def manyMessages: Boolean = false
 
   override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
-    val moderationModelRef = config.select("ref").asString
+    val moderationModelRef = config.select("moderation_model").asString
     val ext = env.adminExtensions.extension[AiExtension].get
     ext.states.moderationModel(moderationModelRef) match {
       case None => GuardrailResult.GuardrailError("Moderation model not found").vfuture

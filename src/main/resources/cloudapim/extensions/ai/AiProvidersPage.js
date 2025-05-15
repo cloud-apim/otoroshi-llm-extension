@@ -169,6 +169,7 @@ class Guardrail extends Component {
     if (id === 'prompt_injection') return [...def, 'config.provider', 'config.max_injection_score', ...tail];
     if (id === 'wasm') return [...def, 'config.plugin_ref', ...tail];
     if (id === 'quickjs') return [...def, 'config.quickjs_path', ...tail];
+    if (id === 'moderation_model') return [...def, 'config.moderation_model', ...tail];
     return [...def, ...tail];
   }
   render() {
@@ -197,7 +198,7 @@ class Guardrail extends Component {
             type: 'select',
             props: {
               label: 'Guardrail',
-              possibleValues: [
+              possibleValues: _.sortBy([
                 {label: 'Regex', value: 'regex'},
                 {label: 'Webhook', value: 'webhook'},
                 {label: 'LLM', value: 'llm'},
@@ -206,6 +207,7 @@ class Guardrail extends Component {
                 {label: 'No gibberish', value: 'gibberish'},
                 {label: 'No personal information', value: 'pif'},
                 {label: 'Language moderation', value: 'moderation'},
+                {label: 'Moderation model', value: 'moderation_model'},
                 {label: 'No toxic language', value: 'toxic_language'},
                 {label: 'No racial bias', value: 'racial_bias'},
                 {label: 'No gender bias', value: 'gender_bias'},
@@ -218,7 +220,7 @@ class Guardrail extends Component {
                 {label: 'Semantic contains', value: 'semantic_contains'},
                 {label: 'QuickJS', value: 'quickjs'},
                 {label: 'Wasm', value: 'wasm'},
-              ]
+              ], i => i.label)
             }
           },
           config: { type: 'jsonobjectcode', props: { label: 'Config.', height: '150px' } },
