@@ -549,7 +549,7 @@ case class LLMImpactsSettings(configuration: Configuration) {
 
 class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
 
-  val models_by_provider_name: Map[String, Model] = {
+  val default_models_by_provider_name: Map[String, Model] = {
     val modelsJson = Json.parse(getResourceCode("data/eg-models.json"))
     val rawModels = modelsJson.select("models").as[Seq[JsObject]].map { obj =>
       val provider = obj.select("provider").asString
@@ -565,7 +565,41 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
     rawModels.toMap
   }
 
-  val electricityMixes = {
+  val custom_models_by_provider_name: Map[String, Model] = {
+    val modelsJson = Json.parse(getResourceCode("data/custom-eg-models.json"))
+    val rawModels = modelsJson.select("models").as[Seq[JsObject]].map { obj =>
+      val provider = obj.select("provider").asString
+      val name = obj.select("name").asString
+      (s"${provider}-${name}", Model(
+        provider = provider,
+        name = name,
+        warnings = obj.select("warnings").asOpt[List[String]].getOrElse(List.empty),
+        sources = obj.select("sources").asOpt[List[String]].getOrElse(List.empty),
+        architecture = Architecture.from(obj.select("architecture").asObject)
+      ))
+    }
+    rawModels.toMap
+  }
+
+  val user_models_by_provider_name: Map[String, Model] = {
+    val modelsJson = settings.configuration.getOptional[String]("custom-models").getOrElse("{\"aliases\": [],\"models\": []}").parseJson
+    val rawModels = modelsJson.select("models").as[Seq[JsObject]].map { obj =>
+      val provider = obj.select("provider").asString
+      val name = obj.select("name").asString
+      (s"${provider}-${name}", Model(
+        provider = provider,
+        name = name,
+        warnings = obj.select("warnings").asOpt[List[String]].getOrElse(List.empty),
+        sources = obj.select("sources").asOpt[List[String]].getOrElse(List.empty),
+        architecture = Architecture.from(obj.select("architecture").asObject)
+      ))
+    }
+    rawModels.toMap
+  }
+
+  val models_by_provider_name: Map[String, Model] = default_models_by_provider_name ++ custom_models_by_provider_name ++ user_models_by_provider_name
+
+  val default_electricityMixes = {
     val csv = getResourceCode("data/eg-elec.csv")
     csv.split("\n")
       .toSeq
@@ -576,6 +610,32 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
       }
       .toMap
   }
+
+  val custom_electricityMixes = {
+    val csv = getResourceCode("data/custom-eg-elec.csv")
+    csv.split("\n")
+      .toSeq
+      .tail
+      .map { line =>
+        val parts = line.split(",")
+        (parts(0), ElectricityMix(name = parts(0), adpe = parts(1).toDouble, pe = parts(2).toDouble, gwp = parts(3).toDouble))
+      }
+      .toMap
+  }
+
+  val user_electricityMixes = {
+    val csv = settings.configuration.getOptional[String]("custom-electricity-mix").getOrElse("name,adpe,pe,gwp\n")
+    csv.split("\n")
+      .toSeq
+      .tail
+      .map { line =>
+        val parts = line.split(",")
+        (parts(0), ElectricityMix(name = parts(0), adpe = parts(1).toDouble, pe = parts(2).toDouble, gwp = parts(3).toDouble))
+      }
+      .toMap
+  }
+
+  val electricityMixes = default_electricityMixes ++ custom_electricityMixes ++ user_electricityMixes
 
   def getResourceCode(path: String): String = {
     implicit val ec = env.otoroshiExecutionContext
