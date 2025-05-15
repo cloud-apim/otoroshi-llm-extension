@@ -991,22 +991,54 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
 
   override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel = opts.model.orElse(editOptions.model).getOrElse("gpt-image-1")
-    val body = Json.obj(
-        "images" -> opts.image,
-        "prompt" -> opts.prompt,
-        "size" -> "auto",
-        "model" -> finalModel,
-        "quality" -> "auto",
-        "n" -> 1
-      )
-      .applyOnWithOpt(opts.background.orElse(editOptions.background)) { case (obj, background) => obj ++ Json.obj("background" -> background) }
-      .applyOnWithOpt(opts.model.orElse(editOptions.model)) { case (obj, model) => obj ++ Json.obj("model" -> model) }
-      .applyOnWithOpt(opts.n.orElse(editOptions.n)) { case (obj, n) => obj ++ Json.obj("n" -> n) }
-      .applyOnWithOpt(opts.responseFormat.orElse(editOptions.responseFormat)) { case (obj, responseFormat) => obj ++ Json.obj("response_format" -> responseFormat) }
-      .applyOnWithOpt(opts.quality.orElse(editOptions.quality)) { case (obj, quality) => obj ++ Json.obj("quality" -> quality) }
-      .applyOnWithOpt(opts.size.orElse(editOptions.size)) { case (obj, size) => obj ++ Json.obj("size" -> size) }
-
-    api.rawCall("POST", "/images/edits", body.some).map { resp =>
+    val model = finalModel
+    val background = opts.background.orElse(editOptions.background)
+    val n = opts.n.orElse(editOptions.n)
+    val prompt = opts.prompt
+    val responseFormat = opts.responseFormat.orElse(editOptions.responseFormat)
+    val quality = opts.quality.orElse(editOptions.quality)
+    val size = opts.size.orElse(editOptions.size)
+    val parts = opts.images.map(i => Multipart.FormData.BodyPart(
+      "file",
+      HttpEntity(ContentType.parse(i.contentType).toOption.get, i.length, i.bytes),
+      Map("filename" -> i.name.getOrElse("audio.mp3"))
+    )).applyOnWithOpt(model.some) {
+        case (list, model) => list :+ Multipart.FormData.BodyPart(
+          "model",
+          HttpEntity(model.byteString),
+        )
+      }.applyOnWithOpt(background) {
+        case (list, background) => list :+ Multipart.FormData.BodyPart(
+          "background",
+          HttpEntity(background.byteString),
+        )
+      }
+      .applyOnWithOpt(n) {
+        case (list, n) => list :+ Multipart.FormData.BodyPart(
+          "n",
+          HttpEntity(n.toString.byteString),
+        )
+      }
+      .applyOnWithOpt(quality) {
+        case (list, quality) => list :+ Multipart.FormData.BodyPart(
+          "quality",
+          HttpEntity(quality.byteString),
+        )
+      }
+      .applyOnWithOpt(size) {
+        case (list, size) => list :+ Multipart.FormData.BodyPart(
+          "size",
+          HttpEntity(size.byteString),
+        )
+      }
+      .applyOnWithOpt(size) {
+        case (list, size) => list :+ Multipart.FormData.BodyPart(
+          "size",
+          HttpEntity(size.byteString),
+        )
+      }
+    val form = Multipart.FormData(parts: _*)
+    api.rawCallForm("POST", "/images/edits", form).map { resp =>
       if (resp.status == 200) {
         Right(ImagesGenResponse(
           created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
@@ -1027,5 +1059,4 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
       }
     }
   }
-
 }

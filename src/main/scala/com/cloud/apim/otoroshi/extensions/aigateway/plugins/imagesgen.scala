@@ -4,7 +4,7 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.FileIO
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AudioModel, ImageModel}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ImageFile, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
@@ -119,7 +119,7 @@ class OpenAICompatImagesGen extends NgBackendCall {
 
   override def useDelegates: Boolean = false
 
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAiCompatImagesEditConfig.default)
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAiCompatImagesGenConfig.default)
 
   override def noJsForm: Boolean = true
 
@@ -169,15 +169,17 @@ class OpenAICompatImagesGen extends NgBackendCall {
   }
 }
 
-
-case class OpenAICompatImagesEditConfig(refs: Seq[String]) extends NgPluginConfig {
+case class OpenAICompatImagesEditConfig(refs: Seq[String], maxSizeUpload: Long) extends NgPluginConfig {
   def json: JsValue = OpenAICompatImagesEditConfig.format.writes(this)
 }
 
 object OpenAICompatImagesEditConfig {
-  val configFlow: Seq[String] = Seq("refs")
-
+  val configFlow: Seq[String] = Seq("refs", "max_size_upload")
   def configSchema: Option[JsObject] = Some(Json.obj(
+    "max_size_upload" -> Json.obj(
+      "type" -> "number",
+      "label" -> "Max Audio file size"
+    ),
     "refs" -> Json.obj(
       "type" -> "select",
       "array" -> true,
@@ -192,14 +194,13 @@ object OpenAICompatImagesEditConfig {
     )
   ))
 
-  val default = OpenAICompatImagesEditConfig(Seq.empty)
+  val default = OpenAICompatImagesEditConfig(Seq.empty, 100 * 1024 * 1024)
   val format = new Format[OpenAICompatImagesEditConfig] {
-    override def writes(o: OpenAICompatImagesEditConfig): JsValue = Json.obj("refs" -> o.refs)
-
+    override def writes(o: OpenAICompatImagesEditConfig): JsValue = Json.obj("refs" -> o.refs, "max_size_upload" -> o.maxSizeUpload)
     override def reads(json: JsValue): JsResult[OpenAICompatImagesEditConfig] = Try {
-      val refs = json.select("refs").asOpt[Seq[String]].getOrElse(Seq.empty)
       OpenAICompatImagesEditConfig(
-        refs = refs
+        refs = json.select("refs").asOpt[Seq[String]].getOrElse(Seq.empty),
+        maxSizeUpload = json.select("max_size_upload").asOpt[Long].getOrElse(default.maxSizeUpload),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -296,7 +297,6 @@ class OpenAICompatImagesEdit extends NgBackendCall {
       filePartHandler = Multipart.handleFilePartAsTemporaryFile(play.api.libs.Files.SingletonTemporaryFileCreator),
       errorHandler = new HttpErrorHandler {
         override def onClientError(request: RequestHeader, statusCode: Int, message: String): Future[Result] = Results.Status(statusCode).apply(message).vfuture
-
         override def onServerError(request: RequestHeader, exception: Throwable): Future[Result] = Results.InternalServerError(exception.getMessage).vfuture
       }
     ).apply(ctx.rawRequest).run(ctx.request.body).flatMap {
@@ -304,7 +304,6 @@ class OpenAICompatImagesEdit extends NgBackendCall {
         NgProxyEngineError.NgResultProxyEngineError.apply(err).leftf
       }
       case Right(form) => {
-
         var _jsonBody = Json.obj()
         form.dataParts.foreach {
           case (key, value) if value.length == 1 => {
@@ -314,41 +313,35 @@ class OpenAICompatImagesEdit extends NgBackendCall {
             _jsonBody = _jsonBody ++ Json.obj(key -> JsArray(value.map(_.json)))
           }
         }
-
-        form.file("file") match {
-          case None => NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> "no file present"))).leftf
-          case Some(file) => {
-            val jsonBody: JsObject = OpenAICompatImagesEditConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
-            val provider: Option[AudioModel] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
-              ext.states.imageModel(r)
-            }.orElse(
-              config.refs.headOption.flatMap { r =>
-                ext.states.imageModel(r)
-              }
-            )
-            provider match {
-              case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider not found"))).leftf
-              case Some(provider) => {
-                provider.get() match {
-                  case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
-                  case Some(client) if !client.supportsTts => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support text to speech"))).leftf
-                  case Some(client) => {
-                    val _options = ImageModelClientEditionInputOptions.format.reads(jsonBody).get
-                    val options = _options.copy(
-                      file = FileIO.fromPath(file.ref.path),
-                      fileContentType = file.contentType.getOrElse("audio/mp3"),
-                      fileLength = file.fileSize,
-                      fileName = file.filename.some,
-                    )
-                    client.edit(options, jsonBody).map {
-                      case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
-                      case Right(transcription) => {
-                        val result = Results.Status(200).apply(Json.obj(
-                          "text" -> transcription.transcribedText
-                        ))
-                        Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(result), None))
-                      }
-                    }
+        val jsonBody: JsObject = OpenAICompatImagesEditConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
+        val provider: Option[ImageModel] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
+          ext.states.imageModel(r)
+        }.orElse(
+          config.refs.headOption.flatMap { r =>
+            ext.states.imageModel(r)
+          }
+        )
+        provider match {
+          case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider not found"))).leftf
+          case Some(provider) => {
+            provider.getImageModelClient() match {
+              case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
+              case Some(client) if !client.supportsEdit => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support text to speech"))).leftf
+              case Some(client) => {
+                val _options = ImageModelClientEditionInputOptions.format.reads(jsonBody).get
+                val options = _options.copy(
+                  images = form.files.filter(_.key == "image").map(file => ImageFile(
+                    bytes = FileIO.fromPath(file.ref.path),
+                    name = file.filename.some,
+                    contentType = file.contentType.getOrElse("audio/mp3"),
+                    length = file.fileSize,
+                  )).toList
+                )
+                client.edit(options, jsonBody).map {
+                  case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
+                  case Right(edition) => {
+                    val result = Results.Status(200).apply(edition.toOpenAiJson)
+                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(result), None))
                   }
                 }
               }

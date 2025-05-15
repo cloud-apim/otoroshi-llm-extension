@@ -498,7 +498,6 @@ class XAiImageModelClient(val api: XAiApi, val genOptions: XAiImageModelClientOp
     }
   }
 
-
   override def supportsGeneration: Boolean = genOptions.enabled
   override def supportsEdit: Boolean = false
 
@@ -530,6 +529,4 @@ class XAiImageModelClient(val api: XAiApi, val genOptions: XAiImageModelClientOp
       }
     }
   }
-
-  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = ???
 }

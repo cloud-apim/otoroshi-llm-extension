@@ -65,11 +65,11 @@ case class ImageModel(
         val opts = LumaImageModelClientOptions.fromJson(genOptions)
         new LumaImageModelClient(api, opts, id).some
       }
-//      case "leonardo-ai" => {
-//        val api = new LeonardoAIApi(baseUrl.getOrElse(LeonardoAIApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
-//        val opts = LeonardoAIImagesModelClientOptions.fromJson(genOptions)
-//        new LeonardoAIImagesModelClient(api, opts, id).some
-//      }
+     case "leonardo-ai" => {
+       val api = new LeonardoAIApi(baseUrl.getOrElse(LeonardoAIApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+       val opts = LeonardoAIImagesGenModelClientOptions.fromJson(genOptions)
+       new LeonardoAIImageModelClient(api, opts, id).some
+     }
       case "hive" => {
         val api = new HiveApi(baseUrl.getOrElse(HiveApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = HiveImageModelClientOptions.fromJson(genOptions)

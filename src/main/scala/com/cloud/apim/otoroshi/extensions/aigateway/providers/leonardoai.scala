@@ -82,6 +82,4 @@ class LeonardoAIImageModelClient(val api: LeonardoAIApi, val genOptions: Leonard
       }
     }
   }
-
-  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = ???
 }

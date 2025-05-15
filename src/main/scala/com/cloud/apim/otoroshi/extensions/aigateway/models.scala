@@ -1053,8 +1053,13 @@ object ImageModelClientGenerationInputOptions {
   }
 }
 
+case class ImageFile(bytes: Source[ByteString, _],
+                     name: Option[String],
+                     contentType: String,
+                     length: Long)
+
 case class ImageModelClientEditionInputOptions(
-   image: List[String],
+   images: List[ImageFile],
    prompt: String,
    background: Option[String] = None,
    model: Option[String] = None,
@@ -1070,7 +1075,7 @@ object ImageModelClientEditionInputOptions {
   val format = new Format[ImageModelClientEditionInputOptions] {
     override def reads(json: JsValue): JsResult[ImageModelClientEditionInputOptions] = Try {
       ImageModelClientEditionInputOptions(
-        image = json.select("prompt").as[List[String]],
+        images = List.empty,
         prompt = json.select("prompt").asString,
         background = json.select("background").asOptString,
         model = json.select("model").asOptString,
@@ -1084,7 +1089,7 @@ object ImageModelClientEditionInputOptions {
       case Success(e) => JsSuccess(e)
     }
     override def writes(o: ImageModelClientEditionInputOptions): JsValue =
-      Json.obj("prompt" -> o.prompt) ++ Json.obj("image" -> o.image)
+      Json.obj("prompt" -> o.prompt)
         .applyOnWithOpt(o.background) { case (obj, background) => obj ++ Json.obj("background" -> background) }
         .applyOnWithOpt(o.model) { case (obj, model) => obj ++ Json.obj("model" -> model) }
         .applyOnWithOpt(o.n) { case (obj, n) => obj ++ Json.obj("n" -> n) }
@@ -1141,8 +1146,8 @@ case class ImagesGenResponse(
 trait ImageModelClient {
   def supportsGeneration: Boolean
   def supportsEdit: Boolean
-  def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]]
-  def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]]
+  def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = Json.obj("error" -> "Image generation not supported").leftf
+  def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = Json.obj("error" -> "Image edition not supported").leftf
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

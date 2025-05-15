@@ -622,6 +622,4 @@ class AzureOpenAiImageModelClient(val api: AzureOpenAiApi, val genOptions: Azure
       }
     }
   }
-
-  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = ???
 }
