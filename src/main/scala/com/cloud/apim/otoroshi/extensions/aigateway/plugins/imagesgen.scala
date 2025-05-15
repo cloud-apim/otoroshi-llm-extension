@@ -18,14 +18,22 @@ import play.core.parsers.Multipart
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
-case class OpenAiCompatImagesGenConfig(refs: Seq[String]) extends NgPluginConfig {
+case class OpenAiCompatImagesGenConfig(refs: Seq[String], decode: Boolean) extends NgPluginConfig {
   def json: JsValue = OpenAiCompatImagesGenConfig.format.writes(this)
 }
 
 object OpenAiCompatImagesGenConfig {
-  val configFlow: Seq[String] = Seq("refs")
+  val configFlow: Seq[String] = Seq("refs", "decode")
 
   def configSchema: Option[JsObject] = Some(Json.obj(
+    "decode" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Decode base64",
+      "help" -> "Only work for single image results base64 encoded",
+      "props" -> Json.obj(
+        "help" -> "Only work for single image results base64 encoded",
+      )
+    ),
     "refs" -> Json.obj(
       "type" -> "select",
       "array" -> true,
@@ -40,14 +48,15 @@ object OpenAiCompatImagesGenConfig {
     )
   ))
 
-  val default = OpenAiCompatImagesGenConfig(Seq.empty)
+  val default = OpenAiCompatImagesGenConfig(Seq.empty, false)
   val format = new Format[OpenAiCompatImagesGenConfig] {
-    override def writes(o: OpenAiCompatImagesGenConfig): JsValue = Json.obj("refs" -> o.refs)
+    override def writes(o: OpenAiCompatImagesGenConfig): JsValue = Json.obj("refs" -> o.refs, "decode" -> o.decode)
 
     override def reads(json: JsValue): JsResult[OpenAiCompatImagesGenConfig] = Try {
       val refs = json.select("refs").asOpt[Seq[String]].getOrElse(Seq.empty)
       OpenAiCompatImagesGenConfig(
-        refs = refs
+        refs = refs,
+        decode = json.select("decode").asOpt[Boolean].getOrElse(false)
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -158,7 +167,13 @@ class OpenAICompatImagesGen extends NgBackendCall {
               client.generate(options, jsonBody).map {
                 case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                 case Right(imageGen) => {
-                  Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(imageGen.toOpenAiJson)), None))
+                  if (config.decode && imageGen.images.length == 1 && imageGen.images.head.b64Json.isDefined) {
+                    val bytes = imageGen.images.head.b64Json.get.byteString.decodeBase64
+                    val ctype = options.outputFormat.getOrElse("image/png")
+                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(bytes).as(ctype)), None))
+                  } else {
+                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(imageGen.toOpenAiJson)), None))
+                  }
                 }
               }
             }

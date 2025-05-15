@@ -107,7 +107,7 @@ object AudioModel {
     Resource(
       "AudioModel",
       "audio-models",
-      "audio-models",
+      "audio-model",
       "ai-gateway.extensions.cloud-apim.com",
       ResourceVersion("v1", true, false, true),
       GenericResourceAccessApiWithState[AudioModel](
