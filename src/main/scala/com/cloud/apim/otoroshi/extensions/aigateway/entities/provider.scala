@@ -195,7 +195,6 @@ case class AiProvider(
       case "ovh-ai-endpoints" => {
         val unified = connection.select("unified").asOpt[Boolean].getOrElse(true)
         if (unified) {
-          println("unified")
           val api = new OpenAiApi(OVHAiEndpointsApi.unifiedUrl, token, timeout.getOrElse(10.seconds), providerName = "OVH", env = env)
           val opts = OpenAiChatClientOptions.fromJson(options)
           new OpenAiChatClient(api, opts, id, "OVH", "/models").some
