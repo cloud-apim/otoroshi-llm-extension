@@ -74,7 +74,7 @@ case class McpConnectorTransportStdioOption(raw: JsObject) {
 case class McpConnectorTransportSseOption(raw: JsObject) {
   lazy val url: String = raw.select("url").asString
   lazy val headers: Map[String, String] = raw.select("headers").asOpt[Map[String, String]].getOrElse(Map.empty)
-  lazy val timeout: FiniteDuration = raw.select("timeout").asOpt[Long].map(_.millis).getOrElse(30.seconds)
+  lazy val timeout: FiniteDuration = raw.select("timeout").asOpt[Long].map(_.millis).getOrElse(3.minutes)
   lazy val log: Boolean = raw.select("log").asOptBoolean.getOrElse(false)
 }
 
@@ -199,7 +199,7 @@ case class McpConnector(
       .transport(trsprt)
       .clientName(name)
       .clientVersion(metadata.get("version").getOrElse("0.0.0"))
-      .toolExecutionTimeout(java.time.Duration.ofMillis(Duration.apply(metadata.get("timeout").getOrElse("30s")).toMillis))
+      .toolExecutionTimeout(java.time.Duration.ofMillis(Duration.apply(metadata.get("timeout").getOrElse("180s")).toMillis))
       .build()
   }
 

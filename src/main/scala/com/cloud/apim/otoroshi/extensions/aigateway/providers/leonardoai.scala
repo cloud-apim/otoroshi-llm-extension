@@ -14,7 +14,7 @@ object LeonardoAIApi {
   val baseUrl = "https://cloud.leonardo.ai/api/rest/v1"
 }
 
-class LeonardoAIApi(baseUrl: String = LeonardoAIApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+class LeonardoAIApi(baseUrl: String = LeonardoAIApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"

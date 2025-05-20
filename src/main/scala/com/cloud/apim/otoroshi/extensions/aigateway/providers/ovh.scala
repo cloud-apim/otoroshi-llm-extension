@@ -182,7 +182,7 @@ object OVHAiEndpointsApi {
   }
 }
 
-class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token: String, timeout: FiniteDuration = 10.seconds, val env: Env) {
+class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token: String, timeout: FiniteDuration = 3.minutes, val env: Env) {
 
   val supportsTools: Boolean = false
   val supportsCompletion: Boolean = true

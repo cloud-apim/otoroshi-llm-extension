@@ -78,7 +78,7 @@ object AnthropicModels {
 object AnthropicApi {
   val baseUrl = "https://api.anthropic.com"
 }
-class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[AnthropicApiResponse, AnthropicApiResponseChunk] {
+class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[AnthropicApiResponse, AnthropicApiResponseChunk] {
 
   val providerName = "anthropic"
   override def supportsTools: Boolean = true

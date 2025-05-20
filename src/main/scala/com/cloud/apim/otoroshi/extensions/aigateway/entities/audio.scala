@@ -50,21 +50,21 @@ case class AudioModel(
     val translateOptions = config.select("translate").asOpt[JsObject].getOrElse(Json.obj())
     provider.toLowerCase() match {
       case "openai" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
         val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
         val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
         val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
         new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
       }
       case "groq" => {
-        val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
+        val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val ttsopts = GroqAudioModelClientTtsOptions.fromJson(ttsOptions)
         val sttopts = GroqAudioModelClientSttOptions.fromJson(sttOptions)
         val transopts = GroqAudioModelClientTranslationOptions.fromJson(translateOptions)
         new GroqAudioModelClient(api, ttsopts, sttopts, transopts, id).some
       }
       case "elevenlabs" => {
-        val api = new ElevenLabsApi(baseUrl.getOrElse(ElevenLabsApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
+        val api = new ElevenLabsApi(baseUrl.getOrElse(ElevenLabsApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val ttsopts = ElevenLabsAudioModelClientTtsOptions.fromJson(ttsOptions)
         val sttopts = ElevenLabsAudioModelClientSttOptions.fromJson(ttsOptions)
         new ElevenLabsAudioModelClient(api, ttsopts, sttopts, id).some
@@ -130,7 +130,7 @@ object AudioModel {
               config = Json.obj(
                 "connection" -> Json.obj(
                   "token" -> "xxxxx",
-                  "timeout" -> 10000,
+                  "timeout" -> 3.minutes.toMillis,
                 ),
                 "options" -> Json.obj(
                   "tts" -> Json.obj(

@@ -87,7 +87,7 @@ object CohereAiApi {
   val baseUrl = "https://api.cohere.com"
 }
 
-class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[CohereAiApiResponse, CohereAiApiResponseChunk] {
+class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[CohereAiApiResponse, CohereAiApiResponseChunk] {
 
   val providerName = "cohere"
   override def supportsTools: Boolean = true

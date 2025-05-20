@@ -187,7 +187,7 @@ class AudioModelsPage extends Component {
                 config: {
                   connection: {
                     token: 'xxxxx',
-                    timeout: 30000,
+                    timeout: 180000,
                   },
                   options: {
                     tts: {
@@ -218,7 +218,7 @@ class AudioModelsPage extends Component {
                 config: {
                   connection: {
                     token: 'xxxxx',
-                    timeout: 30000,
+                    timeout: 180000,
                   },
                   options: {
                     tts: {
@@ -248,7 +248,7 @@ class AudioModelsPage extends Component {
                 config: {
                   connection: {
                     token: 'xxxxx',
-                    timeout: 30000,
+                    timeout: 180000,
                   },
                   options: {
                     tts: {

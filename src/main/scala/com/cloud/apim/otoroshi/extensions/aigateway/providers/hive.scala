@@ -14,7 +14,7 @@ object HiveApi {
   val baseUrl = "https://api.thehive.ai/api/v3"
 }
 
-class HiveApi(baseUrl: String = HiveApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+class HiveApi(baseUrl: String = HiveApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"

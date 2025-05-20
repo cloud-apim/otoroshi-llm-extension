@@ -146,7 +146,7 @@ object EmbeddingModel {
                 "connection" -> Json.obj(
                   "base_url" -> OpenAiApi.baseUrl,
                   "token" -> "xxxxx",
-                  "timeout" -> 10000,
+                  "timeout" -> 3.minutes.toMillis,
                 ),
                 "options" -> Json.obj(
                   "model" -> "text-embedding-3-small"
@@ -165,7 +165,7 @@ object EmbeddingModel {
                 "connection" -> Json.obj(
                   "base_url" -> OllamaAiApi.baseUrl,
                   "token" -> "xxxxx",
-                  "timeout" -> 10000,
+                  "timeout" -> 3.minutes.toMillis,
                 ),
                 "options" -> Json.obj(
                   "model" -> "snowflake-arctic-embed:22m"

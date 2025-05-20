@@ -76,7 +76,7 @@ class VideoModelsPage extends Component {
           config: {
             connection: {
               token: 'xxxxxx',
-              timeout: 30000
+              timeout: 180000
             },
             options: {
               model: 'ray-flash-2',
@@ -101,7 +101,7 @@ class VideoModelsPage extends Component {
                 config: {
                   connection: {
                     token: 'xxxxxx',
-                    timeout: 30000
+                    timeout: 180000
                   },
                   options: {
                     model: 'ray-flash-2',

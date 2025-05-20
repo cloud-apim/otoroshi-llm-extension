@@ -22,7 +22,7 @@ object ElevenLabsApi {
   val baseUrl = "https://api.elevenlabs.io"
 }
 
-class ElevenLabsApi(baseUrl: String = ElevenLabsApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) {
+class ElevenLabsApi(baseUrl: String = ElevenLabsApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logCall("ElevenLabs", method, url, body)(env)

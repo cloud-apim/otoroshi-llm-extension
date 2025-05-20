@@ -1451,7 +1451,7 @@ class AiProvidersPage extends Component {
             connection: {
               base_url: BaseUrls.openai,
               token: 'xxxx',
-              timeout: 30000,
+              timeout: 180000,
             },
             options: ClientOptions.openai,
             cache: {
@@ -1495,7 +1495,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.ollama,
                   token: null,
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.ollama,
               });
@@ -1510,7 +1510,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.anthropic,
                   token: "xxx",
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.anthropic,
               });
@@ -1525,7 +1525,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.groq,
                   token: "xxx",
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.groq,
               });
@@ -1540,7 +1540,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.mistral,
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.mistral,
               });
@@ -1555,7 +1555,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.cohere,
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.cohere,
               });
@@ -1570,7 +1570,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.openai,
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.openai,
               });
@@ -1585,7 +1585,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.azureAiFoundry,
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.azureAiFoundry,
               });
@@ -1600,7 +1600,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.deepseek,
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.deepseek,
               });
@@ -1615,7 +1615,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.scaleway,
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.scaleway,
               });
@@ -1630,7 +1630,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.xai,
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.xai,
               });
@@ -1645,7 +1645,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_domain: BaseUrls.ovh,
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.ovh,
               });
@@ -1660,7 +1660,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   base_url: BaseUrls.ovhUnified,
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.ovhUnified,
               });
@@ -1676,7 +1676,7 @@ class AiProvidersPage extends Component {
                   base_url: BaseUrls.gemini,
                   model: 'model name',
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.gemini,
               });
@@ -1692,7 +1692,7 @@ class AiProvidersPage extends Component {
                   resource_name: "resource name",
                   deployment_id: "model id",
                   api_key: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.azureOpenai,
               });
@@ -1708,7 +1708,7 @@ class AiProvidersPage extends Component {
                   account_id: "YOUR ACCOUNT ID",
                   model_name: "@cf/meta/llama-3.1-8b-instruct-fp8",
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.azureOpenai,
               });
@@ -1724,7 +1724,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   model_name: "google/gemma-2-2b-it:",
                   token: 'xxx',
-                  timeout: 30000,
+                  timeout: 180000,
                 },
                 options: ClientOptions.huggingface,
               });

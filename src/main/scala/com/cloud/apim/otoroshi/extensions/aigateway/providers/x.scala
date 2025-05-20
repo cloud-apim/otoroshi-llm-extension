@@ -17,7 +17,7 @@ import scala.concurrent.duration.{DurationInt, FiniteDuration}
 object XAiApi {
   val baseUrl = "https://api.x.ai"
 }
-class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) extends ApiClient[OpenAiApiResponse, OpenAiChatResponseChunk] {
+class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[OpenAiApiResponse, OpenAiChatResponseChunk] {
 
   val supportsTools: Boolean = true
   val supportsStreaming: Boolean = true

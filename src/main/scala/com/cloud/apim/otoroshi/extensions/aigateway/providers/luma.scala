@@ -14,7 +14,7 @@ object LumaApi {
   val baseUrl = "https://api.lumalabs.ai"
 }
 
-class LumaApi(baseUrl: String = LumaApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+class LumaApi(baseUrl: String = LumaApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"

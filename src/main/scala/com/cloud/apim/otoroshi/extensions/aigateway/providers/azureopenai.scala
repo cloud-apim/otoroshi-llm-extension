@@ -125,7 +125,7 @@ object AzureOpenAiApi {
   }
 }
 // https://learn.microsoft.com/en-us/azure/ai-services/openai/reference
-class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey: String, timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[AzureOpenAiApiResponse, AzureOpenAiChatResponseChunk] {
+class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[AzureOpenAiApiResponse, AzureOpenAiChatResponseChunk] {
 
   override def supportsTools: Boolean = true
   override def supportsStreaming: Boolean = true

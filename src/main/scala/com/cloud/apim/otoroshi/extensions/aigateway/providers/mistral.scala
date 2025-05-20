@@ -38,7 +38,7 @@ object MistralAiModels {
 object MistralAiApi {
   val baseUrl = "https://api.mistral.ai"
 }
-class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[MistralAiApiResponse, OpenAiChatResponseChunk] {
+class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[MistralAiApiResponse, OpenAiChatResponseChunk] {
 
   val supportsTools: Boolean = true
   val supportsStreaming: Boolean = true

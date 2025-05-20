@@ -33,7 +33,7 @@ object GroqModels {
 object GroqApi {
   val baseUrl = "https://api.groq.com"
 }
-class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[GroqApiResponse, OpenAiChatResponseChunk] {
+class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[GroqApiResponse, OpenAiChatResponseChunk] {
 
   val supportsTools: Boolean = true
   val supportsStreaming: Boolean = true

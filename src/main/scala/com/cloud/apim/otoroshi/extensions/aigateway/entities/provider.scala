@@ -173,39 +173,39 @@ case class AiProvider(
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     val rawClient = provider.toLowerCase() match {
       case "openai" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "OpenAI", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "openai").some
       }
       case "scaleway" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Scaleway", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Scaleway", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "scaleway", accumulateStreamConsumptions = true).some
       }
       case "deepseek" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Deepseek", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Deepseek", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "deepseek", "/models").some
       }
       case "x-ai" => {
-        val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val opts = XAiChatClientOptions.fromJson(options)
         new XAiChatClient(api, opts, id).some
       }
       case "ovh-ai-endpoints" => {
         val unified = connection.select("unified").asOpt[Boolean].getOrElse(true)
         if (unified) {
-          val api = new OpenAiApi(OVHAiEndpointsApi.unifiedUrl, token, timeout.getOrElse(10.seconds), providerName = "OVH", env = env)
+          val api = new OpenAiApi(OVHAiEndpointsApi.unifiedUrl, token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
           val opts = OpenAiChatClientOptions.fromJson(options)
           new OpenAiChatClient(api, opts, id, "OVH", "/models").some
         } else {
-          val api = new OVHAiEndpointsApi(baseUrl.getOrElse(OVHAiEndpointsApi.baseDomain), token, timeout.getOrElse(10.seconds), env = env)
+          val api = new OVHAiEndpointsApi(baseUrl.getOrElse(OVHAiEndpointsApi.baseDomain), token, timeout.getOrElse(3.minutes), env = env)
           val opts = OVHAiEndpointsChatClientOptions.fromJson(options)
           new OVHAiEndpointsChatClient(api, opts, id).some
         }
       }
       case "ovh-ai-endpoints-unified" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(10.seconds), providerName = "OVH", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "OVH", "/models").some
       }
@@ -213,64 +213,64 @@ case class AiProvider(
         val resourceName = connection.select("resource_name").as[String]
         val deploymentId = connection.select("deployment_id").as[String]
         val apikey = connection.select("api_key").as[String]
-        val api = new AzureOpenAiApi(resourceName, deploymentId, apikey, timeout.getOrElse(10.seconds), env = env)
+        val api = new AzureOpenAiApi(resourceName, deploymentId, apikey, timeout.getOrElse(3.minutes), env = env)
         val opts = AzureOpenAiChatClientOptions.fromJson(options)
         new AzureOpenAiChatClient(api, opts, id).some
       }
       case "azure-ai-foundry" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(AzureAiFoundry.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Azure AI Foundry", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(AzureAiFoundry.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Azure AI Foundry", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "azure-ai-foundry", "/models").some
       }
       case "cloudflare" => {
         val accountId = connection.select("account_id").as[String]
         val modelName = connection.select("model_name").as[String]
-        val api = new CloudflareApi(accountId, modelName, token, timeout.getOrElse(10.seconds), env = env)
+        val api = new CloudflareApi(accountId, modelName, token, timeout.getOrElse(3.minutes), env = env)
         val opts = CloudflareChatClientOptions.fromJson(options)
         new CloudflareChatClient(api, opts, id).some
       }
       case "gemini" => {
         val model = connection.select("model").asOpt[String].getOrElse("gemini-1.5-flash")
         //-------
-        //val api = new GeminiApi(model, token, timeout.getOrElse(10.seconds), env = env)
+        //val api = new GeminiApi(model, token, timeout.getOrElse(3.minutes), env = env)
         //val opts = GeminiChatClientOptions.fromJson(options)
         //new GeminiChatClient(api, opts, id).some
         //-------
-        val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "gemini", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "gemini", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options).copy(model = model)
         new OpenAiChatClient(api, opts, id, "gemini", "/models", completion = false, accumulateStreamConsumptions = true).some
       }
       case "huggingface" => {
         // val modelName = connection.select("model_name").as[String]
-        // val api = new HuggingfaceApi(modelName, token, timeout.getOrElse(10.seconds), env)
+        // val api = new HuggingfaceApi(modelName, token, timeout.getOrElse(3.minutes), env)
         // val opts = HuggingfaceChatClientOptions.fromJson(options)
         // new HuggingfaceChatClient(api, opts, id).some
-        val api = new OpenAiApi(baseUrl.getOrElse(HuggingfaceApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "huggingface", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(HuggingfaceApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "huggingface", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "huggingface", "/models", completion = false).some
       }
       case "mistral" => {
-        val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val opts = MistralAiChatClientOptions.fromJson(options)
         new MistralAiChatClient(api, opts, id).some
       }
       case "ollama" => {
-        val api = new OllamaAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(10.seconds), env = env)
+        val api = new OllamaAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(3.minutes), env = env)
         val opts = OllamaAiChatClientOptions.fromJson(options)
         new OllamaAiChatClient(api, opts, id).some
       }
       case "cohere" => {
-        val api = new CohereAiApi(baseUrl.getOrElse(CohereAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val api = new CohereAiApi(baseUrl.getOrElse(CohereAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val opts = CohereAiChatClientOptions.fromJson(options)
         new CohereAiChatClient(api, opts, id).some
       }
       case "anthropic" => {
-        val api = new AnthropicApi(baseUrl.getOrElse(AnthropicApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val api = new AnthropicApi(baseUrl.getOrElse(AnthropicApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val opts = AnthropicChatClientOptions.fromJson(options)
         new AnthropicChatClient(api, opts, id).some
       }
       case "groq" => {
-        val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val opts = GroqChatClientOptions.fromJson(options)
         new GroqChatClient(api, opts, id).some
       }
@@ -357,7 +357,7 @@ object AiProvider {
               connection = Json.obj(
                 "base_url" -> OpenAiApi.baseUrl,
                 "token" -> "xxxxx",
-                "timeout" -> 10000,
+                "timeout" -> 3.minutes.toMillis,
               ),
               options = OpenAiChatClientOptions().json
             ).json
@@ -372,7 +372,7 @@ object AiProvider {
               connection = Json.obj(
                 "base_url" -> ScalewayApi.baseUrl,
                 "token" -> "xxxxx",
-                "timeout" -> 10000,
+                "timeout" -> 3.minutes.toMillis,
               ),
               options = OpenAiChatClientOptions().copy(model = "llama-3.1-8b-instruct").json
             ).json
@@ -387,7 +387,7 @@ object AiProvider {
               connection = Json.obj(
                 "base_url" -> XAiApi.baseUrl,
                 "token" -> "xxxxx",
-                "timeout" -> 30000,
+                "timeout" -> 3.minutes.toMillis,
               ),
               options = XAiChatClientOptions().json
             ).json
@@ -402,7 +402,7 @@ object AiProvider {
               connection = Json.obj(
                 "base_url" -> MistralAiApi.baseUrl,
                 "token" -> "xxxxx",
-                "timeout" -> 10000,
+                "timeout" -> 3.minutes.toMillis,
               ),
               options = MistralAiChatClientOptions().json
             ).json
@@ -417,7 +417,7 @@ object AiProvider {
               connection = Json.obj(
                 "base_domain" -> OVHAiEndpointsApi.baseDomain,
                 "token" -> "xxxxx",
-                "timeout" -> 10000,
+                "timeout" -> 3.minutes.toMillis,
               ),
               options = OVHAiEndpointsChatClientOptions().json
             ).json
@@ -432,7 +432,7 @@ object AiProvider {
               connection = Json.obj(
                 "model" -> GeminiModels.GEMINI_1_5_FLASH,
                 "token" -> "xxxxx",
-                "timeout" -> 10000,
+                "timeout" -> 3.minutes.toMillis,
               ),
               options = MistralAiChatClientOptions().json
             ).json
@@ -447,7 +447,7 @@ object AiProvider {
               connection = Json.obj(
                 "model" -> HuggingfaceModels.GOOGLE_GEMMA_2_2B,
                 "token" -> "xxxxx",
-                "timeout" -> 10000,
+                "timeout" -> 3.minutes.toMillis,
               ),
               options = OVHAiEndpointsChatClientOptions().json
             ).json
@@ -462,7 +462,7 @@ object AiProvider {
               connection = Json.obj(
                 "base_url" -> OpenAiApi.baseUrl,
                 "token" -> "xxxxx",
-                "timeout" -> 10000,
+                "timeout" -> 3.minutes.toMillis,
               ),
               options = OpenAiChatClientOptions().json
             ).json

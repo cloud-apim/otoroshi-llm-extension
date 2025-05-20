@@ -81,7 +81,7 @@ class ImageModelsPage extends Component {
           config: {
             connection: {
               token: 'xxxxxx',
-              timeout: 30000
+              timeout: 180000
             },
             options: {
               generation: {
@@ -112,7 +112,7 @@ class ImageModelsPage extends Component {
                 config: {
                   connection: {
                     token: 'xxxxxx',
-                    timeout: 30000
+                    timeout: 180000
                   },
                   options: {
                     generation: {
@@ -138,7 +138,7 @@ class ImageModelsPage extends Component {
                 config: {
                   connection: {
                     token: 'xxxxxx',
-                    timeout: 30000
+                    timeout: 180000
                   },
                   options: {
                     generation: {
@@ -165,7 +165,7 @@ class ImageModelsPage extends Component {
                     resource_name: "resource name",
                     deployment_id: "model id",
                     api_key: 'xxxxxx',
-                    timeout: 30000
+                    timeout: 180000
                   },
                   options: {
                     generation: {
@@ -192,7 +192,7 @@ class ImageModelsPage extends Component {
                 config: {
                   connection: {
                     token: 'xxxxxx',
-                    timeout: 30000
+                    timeout: 180000
                   },
                   options: {
                     generation: {
@@ -216,7 +216,7 @@ class ImageModelsPage extends Component {
               //         config: {
               //             connection: {
               //                 token: 'xxxxxx',
-              //                 timeout: 30000
+              //                 timeout: 180000
               //             },
               //             options: {
               //                 modelId: "6bef9f1b-29cb-40c7-b9df-32b51c1f67d3",
@@ -238,7 +238,7 @@ class ImageModelsPage extends Component {
                 config: {
                   connection: {
                     token: 'xxxxxx',
-                    timeout: 30000
+                    timeout: 180000
                   },
                   options: {
                     generation: {

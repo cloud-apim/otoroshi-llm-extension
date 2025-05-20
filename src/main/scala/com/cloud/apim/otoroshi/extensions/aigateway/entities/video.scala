@@ -41,7 +41,7 @@ case class VideoModel(
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     provider.toLowerCase() match {
       case "luma" => {
-        val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
+        val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val opts = LumaVideoModelClientOptions.fromJson(options)
         new LumaVideoModelClient(api, opts, id).some
       }
@@ -105,7 +105,7 @@ object VideoModel {
                 "connection" -> Json.obj(
                   "base_url" -> OpenAiApi.baseUrl,
                   "token" -> "xxxxx",
-                  "timeout" -> 10000,
+                  "timeout" -> 3.minutes.toMillis,
                 ),
                 "options" -> Json.obj(
                   "model" -> "gpt-image-1"

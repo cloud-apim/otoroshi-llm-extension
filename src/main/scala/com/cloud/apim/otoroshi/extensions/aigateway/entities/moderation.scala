@@ -47,12 +47,12 @@ case class ModerationModel(
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     provider.toLowerCase() match {
       case "openai" => {
-        val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
+        val api = new OpenAiApi(OpenAiApi.baseUrl, token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
         val opts = OpenAiModerationModelClientOptions.fromJson(options)
         new OpenAiModerationModelClient(api, opts, id).some
       }
       case "mistral" => {
-        val api = new MistralAiApi(MistralAiApi.baseUrl, token, timeout.getOrElse(30.seconds), env = env)
+        val api = new MistralAiApi(MistralAiApi.baseUrl, token, timeout.getOrElse(3.minutes), env = env)
         val opts = MistralAiModerationModelClientOptions.fromJson(options)
         new MistralAiModerationModelClient(api, opts, id).some
       }
@@ -118,7 +118,7 @@ object ModerationModel {
                 "connection" -> Json.obj(
                   "base_url" -> OpenAiApi.baseUrl,
                   "token" -> "xxxxx",
-                  "timeout" -> 10000,
+                  "timeout" -> 3.minutes.toMillis,
                 ),
                 "options" -> Json.obj(
                   "model" -> "text-embedding-3-small"
@@ -137,7 +137,7 @@ object ModerationModel {
                 "connection" -> Json.obj(
                   "base_url" -> OllamaAiApi.baseUrl,
                   "token" -> "xxxxx",
-                  "timeout" -> 10000,
+                  "timeout" -> 3.minutes.toMillis,
                 ),
                 "options" -> Json.obj(
                   "model" -> "snowflake-arctic-embed:22m"

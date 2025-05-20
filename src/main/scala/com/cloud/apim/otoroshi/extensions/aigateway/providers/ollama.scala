@@ -68,7 +68,7 @@ object OllamaAiApi {
   val baseUrl = "http://localhost:11434"
   val logger = Logger("ollama-logger")
 }
-class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], timeout: FiniteDuration = 10.seconds, env: Env) extends ApiClient[OllamaAiApiResponse, OllamaAiChatResponseChunk] {
+class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[OllamaAiApiResponse, OllamaAiChatResponseChunk] {
 
   override def supportsTools: Boolean = true
   override def supportsStreaming: Boolean = true

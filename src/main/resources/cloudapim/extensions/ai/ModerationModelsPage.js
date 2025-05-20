@@ -77,7 +77,7 @@ class ModerationModelsPage extends Component {
                     config: {
                         connection: {
                             token: 'xxxxxx',
-                            timeout: 30000
+                            timeout: 180000
                         },
                         options: {
                             model: 'omni-moderation-latest'
@@ -99,7 +99,7 @@ class ModerationModelsPage extends Component {
                                 config: {
                                     connection: {
                                         token: 'xxxxxx',
-                                        timeout: 30000
+                                        timeout: 180000
                                     },
                                     options: {
                                         model: 'omni-moderation-latest'
@@ -117,7 +117,7 @@ class ModerationModelsPage extends Component {
                                 config: {
                                     connection: {
                                         token: 'xxxxxx',
-                                        timeout: 30000
+                                        timeout: 180000
                                     },
                                     options: {
                                         model: 'mistral-moderation-latest'
