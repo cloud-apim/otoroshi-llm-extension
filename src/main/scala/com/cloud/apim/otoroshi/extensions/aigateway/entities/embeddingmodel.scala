@@ -37,7 +37,14 @@ case class EmbeddingModel(
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
-    val token = connection.select("token").asOpt[String].getOrElse("xxx")
+    val _token = connection.select("token").asOpt[String].getOrElse("xxx")
+    val token = if (_token.contains(",")) {
+      val parts = _token.split(",").map(_.trim)
+      val index = AiProvider.tokenCounter.incrementAndGet() % (if (parts.nonEmpty) parts.length else 1)
+      parts(index)
+    } else {
+      _token
+    }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     provider.toLowerCase() match {
       case "openai" => {

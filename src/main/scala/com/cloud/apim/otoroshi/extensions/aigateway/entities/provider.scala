@@ -14,6 +14,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiGatewayExtensionD
 import play.api.libs.json._
 
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
 
@@ -169,7 +170,14 @@ case class AiProvider(
   def slugName: String = metadata.getOrElse("endpoint_name", name).slugifyWithSlash.replaceAll("-+", "_")
   def getChatClient()(implicit env: Env): Option[ChatClient] = {
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
-    val token = connection.select("token").asOpt[String].getOrElse("xxx")
+    val _token = connection.select("token").asOpt[String].getOrElse("xxx")
+    val token = if (_token.contains(",")) {
+      val parts = _token.split(",").map(_.trim)
+      val index = AiProvider.tokenCounter.incrementAndGet() % (if (parts.nonEmpty) parts.length else 1)
+      parts(index)
+    } else {
+      _token
+    }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     val rawClient = provider.toLowerCase() match {
       case "openai" => {
@@ -282,6 +290,7 @@ case class AiProvider(
 }
 
 object AiProvider {
+  val tokenCounter = new AtomicInteger(0)
   val format = new Format[AiProvider] {
     override def writes(o: AiProvider): JsValue = o.location.jsonWithKey ++ Json.obj(
       "id"                -> o.id,

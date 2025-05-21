@@ -43,7 +43,14 @@ case class ModerationModel(
   def getModerationModelClient()(implicit env: Env): Option[ModerationModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
-    val token = connection.select("token").asOpt[String].getOrElse("xxx")
+    val _token = connection.select("token").asOpt[String].getOrElse("xxx")
+    val token = if (_token.contains(",")) {
+      val parts = _token.split(",").map(_.trim)
+      val index = AiProvider.tokenCounter.incrementAndGet() % (if (parts.nonEmpty) parts.length else 1)
+      parts(index)
+    } else {
+      _token
+    }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     provider.toLowerCase() match {
       case "openai" => {
