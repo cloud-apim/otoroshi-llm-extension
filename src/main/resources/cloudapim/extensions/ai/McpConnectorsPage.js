@@ -46,6 +46,20 @@ class McpConnectorsPage extends Component {
       type: 'bool',
       props: { label: 'Strict tool calls', placeholder: 'Strict tool calls' },
     },
+    'include_functions': {
+      type: 'array',
+      props: {
+        label: 'MCP Included Functions',
+        placeholder: 'Name of the functions included from MCP Connectors (optional)',
+      }
+    },
+    'exclude_functions': {
+      type: 'array',
+      props: {
+        label: 'MCP Excluded Functions',
+        placeholder: 'Name of the functions excluded from MCP Connectors (optional)',
+      }
+    },
   };
 
   columns = [
@@ -62,7 +76,7 @@ class McpConnectorsPage extends Component {
   ];
 
   formFlow = [
-    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options', 'strict'];
+    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options', 'strict', '---', 'include_functions', 'exclude_functions'];
 
   componentDidMount() {
     this.props.setTitle(`MCP Connectors`);
