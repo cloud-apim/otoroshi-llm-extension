@@ -49,14 +49,14 @@ class McpConnectorsPage extends Component {
     'include_functions': {
       type: 'array',
       props: {
-        label: 'MCP Included Functions',
+        label: 'Included Functions',
         placeholder: 'Name of the functions included from MCP Connectors (optional)',
       }
     },
     'exclude_functions': {
       type: 'array',
       props: {
-        label: 'MCP Excluded Functions',
+        label: 'Excluded Functions',
         placeholder: 'Name of the functions excluded from MCP Connectors (optional)',
       }
     },
