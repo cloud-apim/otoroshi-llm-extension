@@ -47,23 +47,23 @@ object LlmFunctions {
     } yield wasmFunctionsR ++ mcpConnectorsR
   }
 
-  def tools(wasmFunctions: Seq[String], mcpConnectors: Seq[String])(implicit ec: ExecutionContext, env: Env): JsObject = {
-    val tools: Seq[JsObject] = LlmToolFunction._tools(wasmFunctions) ++ McpSupport.tools(mcpConnectors)
+  def tools(wasmFunctions: Seq[String], mcpConnectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String])(implicit ec: ExecutionContext, env: Env): JsObject = {
+    val tools: Seq[JsObject] = LlmToolFunction._tools(wasmFunctions) ++ McpSupport.tools(mcpConnectors, includeFunctions, excludeFunctions)
     Json.obj(
       "tools" -> tools
     )
   }
 
-  def toolsAnthropic(wasmFunctions: Seq[String], mcpConnectors: Seq[String])(implicit ec: ExecutionContext, env: Env): JsObject = {
-    val tools: Seq[JsObject] = LlmToolFunction._toolsAnthropic(wasmFunctions) ++ McpSupport.toolsAnthropic(mcpConnectors)
+  def toolsAnthropic(wasmFunctions: Seq[String], mcpConnectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String])(implicit ec: ExecutionContext, env: Env): JsObject = {
+    val tools: Seq[JsObject] = LlmToolFunction._toolsAnthropic(wasmFunctions) ++ McpSupport.toolsAnthropic(mcpConnectors, includeFunctions, excludeFunctions)
     Json.obj(
       "tools" -> tools
     )
   }
 
-  def toolsCohere(wasmFunctions: Seq[String], mcpConnectors: Seq[String])(implicit ec: ExecutionContext, env: Env): (JsObject, Map[String, String]) = {
+  def toolsCohere(wasmFunctions: Seq[String], mcpConnectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String])(implicit ec: ExecutionContext, env: Env): (JsObject, Map[String, String]) = {
     val (wasmTools, wasmMap) = LlmToolFunction.toolsCohere(wasmFunctions)
-    val (mcpTools, mcpMap) =  McpSupport.toolsCohere(mcpConnectors)
+    val (mcpTools, mcpMap) =  McpSupport.toolsCohere(mcpConnectors, includeFunctions, excludeFunctions)
     val tools: Seq[JsObject] = wasmTools ++ mcpTools
     val map = wasmMap ++ mcpMap
     (Json.obj(

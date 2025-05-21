@@ -203,6 +203,8 @@ object OllamaAiChatClientOptions {
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
+      mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
+      mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
     )
   }
 }
@@ -225,6 +227,8 @@ case class OllamaAiChatClientOptions(
    wasmTools: Seq[String] = Seq.empty,
    mcpConnectors: Seq[String] = Seq.empty,
    allowConfigOverride: Boolean = true,
+   mcpIncludeFunctions: Seq[String] = Seq.empty,
+   mcpExcludeFunctions: Seq[String] = Seq.empty,
 ) extends ChatOptions {
 
   def temperature: Float = temper.toFloat
@@ -246,10 +250,12 @@ case class OllamaAiChatClientOptions(
     "num_ctx" -> num_ctx,
     "wasm_tools" -> JsArray(wasmTools.map(_.json)),
     "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
+    "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
+    "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override")
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
 class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, id: String) extends ChatClient {
@@ -275,7 +281,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     val finalModel: String = mergedOptions.select("model").asOptString.getOrElse(options.model)
     val mergedOptionsWithoutModel = mergedOptions - "model"
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(
         "model" -> finalModel,
         "stream" -> false,

@@ -835,6 +835,20 @@ class AiProvidersPage extends Component {
         }),
       }
     },
+    'options.mcp_include_functions': {
+      type: 'array',
+      props: {
+        label: 'MCP Included Functions',
+        placeholder: 'Name of the functions included from MCP Connectors (optional)',
+      }
+    },
+    'options.mcp_exclude_functions': {
+      type: 'array',
+      props: {
+        label: 'MCP Excluded Functions',
+        placeholder: 'Name of the functions excluded from MCP Connectors (optional)',
+      }
+    },
     _guardrails: {
       type: 'jsonobjectcode',
       props: { label: 'Guardrails config.' }
@@ -966,6 +980,8 @@ class AiProvidersPage extends Component {
         '>>>Tools',
         'options.wasm_tools',
         'options.mcp_connectors',
+        'options.mcp_include_functions',
+        'options.mcp_exclude_functions',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1013,6 +1029,8 @@ class AiProvidersPage extends Component {
         '>>>Tools',
         'options.wasm_tools',
         'options.mcp_connectors',
+        'options.mcp_include_functions',
+        'options.mcp_exclude_functions',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1061,6 +1079,8 @@ class AiProvidersPage extends Component {
         '>>>Tools',
         'options.wasm_tools',
         'options.mcp_connectors',
+        'options.mcp_include_functions',
+        'options.mcp_exclude_functions',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1107,6 +1127,8 @@ class AiProvidersPage extends Component {
         '>>>Tools',
         'options.wasm_tools',
         'options.mcp_connectors',
+        'options.mcp_include_functions',
+        'options.mcp_exclude_functions',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1153,6 +1175,8 @@ class AiProvidersPage extends Component {
         '>>>Tools',
         'options.wasm_tools',
         'options.mcp_connectors',
+        'options.mcp_include_functions',
+        'options.mcp_exclude_functions',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1199,6 +1223,8 @@ class AiProvidersPage extends Component {
         '>>>Tools',
         'options.wasm_tools',
         'options.mcp_connectors',
+        'options.mcp_include_functions',
+        'options.mcp_exclude_functions',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1244,6 +1270,8 @@ class AiProvidersPage extends Component {
         '>>>Tools',
         'options.wasm_tools',
         'options.mcp_connectors',
+        'options.mcp_include_functions',
+        'options.mcp_exclude_functions',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
@@ -1419,6 +1447,8 @@ class AiProvidersPage extends Component {
       '>>>Tools',
       'options.wasm_tools',
       'options.mcp_connectors',
+      'options.mcp_include_functions',
+      'options.mcp_exclude_functions',
       '>>>Tester',
       'tester',
       '>>>Metadata and tags',

@@ -277,6 +277,8 @@ object CohereAiChatClientOptions {
       tool_choice = json.select("tool_choice").asOpt[Seq[JsValue]],
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
+      mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
+      mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
     )
   }
 }
@@ -296,6 +298,8 @@ case class CohereAiChatClientOptions(
   tool_choice: Option[Seq[JsValue]] =  None,
   wasmTools: Seq[String] = Seq.empty,
   mcpConnectors: Seq[String] = Seq.empty,
+  mcpIncludeFunctions: Seq[String] = Seq.empty,
+  mcpExcludeFunctions: Seq[String] = Seq.empty,
 ) extends ChatOptions {
 
   override def json: JsObject = Json.obj(
@@ -313,9 +317,11 @@ case class CohereAiChatClientOptions(
     "tool_choice" -> tool_choice,
     "wasm_tools" -> JsArray(wasmTools.map(_.json)),
     "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
+    "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
+    "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override")
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 
   override def topP: Float = p.map(_.toFloat).getOrElse(0.75f)
   override def topK: Int = k.getOrElse(0)
@@ -346,7 +352,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors)
+      val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors)
     } else {
       api.call("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
@@ -404,7 +410,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors)
+      val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.streamWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))), options.mcpConnectors)
     } else {
       api.stream("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))))

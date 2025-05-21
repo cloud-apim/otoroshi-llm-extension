@@ -208,6 +208,8 @@ object MistralAiChatClientOptions {
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
+      mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
+      mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
     )
   }
 }
@@ -224,6 +226,8 @@ case class MistralAiChatClientOptions(
   wasmTools: Seq[String] = Seq.empty,
   mcpConnectors: Seq[String] = Seq.empty,
   allowConfigOverride: Boolean = true,
+  mcpIncludeFunctions: Seq[String] = Seq.empty,
+  mcpExcludeFunctions: Seq[String] = Seq.empty,
 ) extends ChatOptions {
   override def topK: Int = 0
 
@@ -237,13 +241,15 @@ case class MistralAiChatClientOptions(
     "wasm_tools" -> JsArray(wasmTools.map(_.json)),
     "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
+    "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
+    "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
   ).applyOnWithOpt(tool_choice) {
     case (obj, tc) => obj ++ Json.obj("tool_choice" -> tc)
   }.applyOnWithOpt(tools) {
     case (obj, tc) => obj ++ Json.obj("tools" -> tc)
   }
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override")
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
 class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions, id: String) extends ChatClient {
@@ -267,7 +273,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors)
     } else {
       api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
@@ -324,7 +330,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors)
     } else {
       api.stream("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))

@@ -295,6 +295,8 @@ object AzureOpenAiChatClientOptions {
       seed = json.select("seed").asOpt[Int],
       presence_penalty = json.select("presence_penalty").asOpt[Double],
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
+      mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
+      mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
     )
   }
 }
@@ -319,6 +321,8 @@ case class AzureOpenAiChatClientOptions(
   wasmTools: Seq[String] = Seq.empty,
   mcpConnectors: Seq[String] = Seq.empty,
   allowConfigOverride: Boolean = true,
+  mcpIncludeFunctions: Seq[String] = Seq.empty,
+  mcpExcludeFunctions: Seq[String] = Seq.empty,
 ) extends ChatOptions {
   override def topK: Int = 0
 
@@ -341,10 +345,12 @@ case class AzureOpenAiChatClientOptions(
     "user" -> user,
     "wasm_tools" -> JsArray(wasmTools.map(_.json)),
     "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
+    "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
+    "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override")
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
 class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientOptions, id: String) extends ChatClient {
@@ -368,7 +374,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors)
     } else {
       api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
@@ -425,7 +431,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors)
     } else {
       api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))

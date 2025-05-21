@@ -24,6 +24,7 @@ import otoroshi.storage.{BasicStore, RedisLike, RedisLikeStore}
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiExtension, AiGatewayExtensionDatastores, AiGatewayExtensionState}
 import play.api.libs.json._
+import play.api.mvc.RequestHeader
 
 import java.io.IOException
 import java.util.UUID
@@ -119,7 +120,9 @@ case class McpConnector(
   metadata: Map[String, String] = Map.empty,
   pool: McpConnectorPoolSettings = McpConnectorPoolSettings(),
   transport: McpConnectorTransport = McpConnectorTransport(),
-  strict: Boolean = true
+  strict: Boolean = true,
+  includeFunctions: Seq[String],
+  excludeFunctions: Seq[String],
 ) extends EntityLocationSupport {
   override def internalId: String = id
 
@@ -203,13 +206,30 @@ case class McpConnector(
       .build()
   }
 
-  def listTools()(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = withClient(_.listTools().asScala)
+  private def matchesTool(tool: ToolSpecification): Boolean = matches(tool.name())
+
+  private def matches(name: String): Boolean = {
+    if (!(includeFunctions.isEmpty && excludeFunctions.isEmpty)) {
+      val canpass    = if (includeFunctions.isEmpty) true else includeFunctions.exists(p => otoroshi.utils.RegexPool.regex(p).matches(name))
+      val cannotpass =
+        if (excludeFunctions.isEmpty) false else excludeFunctions.exists(p => otoroshi.utils.RegexPool.regex(p).matches(name))
+      canpass && !cannotpass
+    } else {
+      true
+    }
+  }
+
+  def listTools()(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = withClient(_.listTools().asScala.filter(matchesTool))
 
   def listToolsBlocking()(implicit ec: ExecutionContext, env: Env): Seq[ToolSpecification] = Await.result(listTools(), 10.seconds)
 
   def call(name: String, args: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
-    val request = ToolExecutionRequest.builder().id(UUID.randomUUID().toString()).name(name).arguments(args).build()
-    withClient(_.executeTool(request))
+    if (matches(name)) {
+      val request = ToolExecutionRequest.builder().id(UUID.randomUUID().toString()).name(name).arguments(args).build()
+      withClient(_.executeTool(request))
+    } else {
+      s"you cannot call tool named: '${name}'".future
+    }
   }
 
   private def withClient[T](f: DefaultMcpClient => T)(implicit ec: ExecutionContext, env: Env): Future[T] = {
@@ -273,6 +293,8 @@ object McpConnector {
       "pool" -> o.pool.json,
       "transport" -> o.transport.json,
       "strict" -> o.strict,
+      "exclude_functions" -> o.excludeFunctions,
+      "include_functions" -> o.includeFunctions,
     )
 
     override def reads(json: JsValue): JsResult[McpConnector] = Try {
@@ -286,6 +308,8 @@ object McpConnector {
         pool = McpConnectorPoolSettings((json \ "pool" \ "size").asOpt[Int].filter(_ > 0).getOrElse(1)),
         transport = (json \ "transport").asOpt(McpConnectorTransport.format).getOrElse(McpConnectorTransport()),
         strict = (json \ "strict").asOpt[Boolean].getOrElse(true),
+        includeFunctions = json.select("include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
+        excludeFunctions = json.select("exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       )
     } match {
       case Failure(ex) => JsError(ex.getMessage)
@@ -316,6 +340,8 @@ object McpConnector {
             tags = Seq.empty,
             location = EntityLocation.default,
             pool = McpConnectorPoolSettings(),
+            includeFunctions = Seq.empty,
+            excludeFunctions = Seq.empty,
             transport = McpConnectorTransport(
               kind = Stdio,
               options = Json.obj(
@@ -466,11 +492,11 @@ object McpSupport {
     }
   }
 
-  def tools(connectors: Seq[String])(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
+  def tools(connectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String])(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     connectors.zipWithIndex.flatMap(tuple => ext.states.mcpConnector(tuple._1).map(v => (v, tuple._2))).flatMap {
       case (connector, idx) =>
-        connector.listToolsBlocking().map { function =>
+        connector.copy(includeFunctions = connector.includeFunctions ++ includeFunctions, excludeFunctions = connector.excludeFunctions ++ excludeFunctions).listToolsBlocking().map { function =>
           val additionalProperties: scala.Boolean = Option(function.parameters().additionalProperties()).map(_.booleanValue()).getOrElse(false)
           val required: Seq[String] = Option(function.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
           val properties: JsObject = JsObject(Option(function.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
@@ -499,12 +525,12 @@ object McpSupport {
     }
   }
 
-  def toolsCohere(connectors: Seq[String])(implicit env: Env, ec: ExecutionContext): (Seq[JsObject], Map[String, String]) = {
+  def toolsCohere(connectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String])(implicit env: Env, ec: ExecutionContext): (Seq[JsObject], Map[String, String]) = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val map = new TrieMap[String, String]()
     (connectors.zipWithIndex.flatMap(tuple => ext.states.mcpConnector(tuple._1).map(v => (v, tuple._2))).flatMap {
       case (connector, idx) =>
-        connector.listToolsBlocking().map { function =>
+        connector.copy(includeFunctions = connector.includeFunctions ++ includeFunctions, excludeFunctions = connector.excludeFunctions ++ excludeFunctions).listToolsBlocking().map { function =>
           val additionalProperties: scala.Boolean = Option(function.parameters().additionalProperties()).map(_.booleanValue()).getOrElse(false)
           val required: Seq[String] = Option(function.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
           val properties: JsObject = JsObject(Option(function.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
@@ -535,11 +561,11 @@ object McpSupport {
     }, map.toMap)
   }
 
-  def toolsAnthropic(connectors: Seq[String])(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
+  def toolsAnthropic(connectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String])(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     connectors.zipWithIndex.flatMap(tuple => ext.states.mcpConnector(tuple._1).map(v => (v, tuple._2))).flatMap {
       case (connector, idx) =>
-        connector.listToolsBlocking().map { function =>
+        connector.copy(includeFunctions = connector.includeFunctions ++ includeFunctions, excludeFunctions = connector.excludeFunctions ++ excludeFunctions).listToolsBlocking().map { function =>
           val additionalProperties: scala.Boolean = Option(function.parameters().additionalProperties()).map(_.booleanValue()).getOrElse(false)
           val required: Seq[String] = Option(function.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
           val properties: JsObject = JsObject(Option(function.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
