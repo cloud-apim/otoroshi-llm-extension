@@ -912,7 +912,7 @@ object AudioModelClientSpeechToTextInputOptions {
         fileName = None,
         model = json.select("model").asOptString,
         language = json.select("language").asOptString,
-        prompt = json.select("voice").asOptString,
+        prompt = json.select("prompt").asOptString,
         responseFormat = json.select("response_format").asOptString,
         temperature = json.select("temperature").asOpt[Double],
       )

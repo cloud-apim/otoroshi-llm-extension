@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway
 
-import akka.stream.scaladsl.{FileIO, Sink}
+import akka.stream.scaladsl.FileIO
+import akka.util.ByteString
 import otoroshi.env.Env
 import otoroshi.next.workflow._
 import otoroshi.utils.TypedMap
@@ -16,7 +17,12 @@ object WorkflowFunctionsInitializer {
   def initDefaults(): Unit = {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.llm_call", new LlmCallFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.audio_tts", new AudioTtsFunction())
-    // access otoroshi resources (apikeys, etc)
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.audio_stt", new AudioSttFunction())
+    // call wasm function
+    // call mcp function
+    // audio stt
+    // image gen
+    // compute embedding
   }
 }
 
@@ -43,6 +49,7 @@ class AudioTtsFunction extends WorkflowFunction {
   override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val base64Encode = args.select("encode_base64").asOpt[Boolean].getOrElse(false)
     val fileDest = new File(args.select("file_out").asOpt[String].getOrElse(Files.createTempFile("audio-out-", ".mp3").toFile.getAbsolutePath))
     val extension = env.adminExtensions.extension[AiExtension].get
     extension.states.audioModel(provider) match {
@@ -51,10 +58,48 @@ class AudioTtsFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instanciate client for audio provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => client.textToSpeech(AudioModelClientTextToSpeechInputOptions.format.reads(payload).get, payload).flatMap {
           case Left(error) => WorkflowError(s"error while calling audio model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).leftf
+          case Right(response) if base64Encode => response._1.runFold(ByteString.empty)(_ ++ _)(env.otoroshiMaterializer).map { bs =>
+            Json.obj("content_type" -> response._2, "base64" -> bs.encodeBase64.utf8String).right
+          }
           case Right(response) =>
             response._1.runWith(FileIO.toPath(fileDest.toPath))(env.otoroshiMaterializer).map { res =>
-              Json.obj("done" -> true, "file_out" -> fileDest.getAbsolutePath).right
+              Json.obj("content_type" -> response._2, "file_out" -> fileDest.getAbsolutePath).right
             }
+        }
+      }
+    }
+  }
+}
+
+class AudioSttFunction extends WorkflowFunction {
+  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    val provider  = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val base64Decode = args.select("decode_base64").asOpt[Boolean].getOrElse(false)
+    val fileIn = args.select("file_in").asOpt[String]
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.audioModel(provider) match {
+      case None => WorkflowError(s"audio provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getAudioModelClient() match {
+        case None => WorkflowError(s"unable to instanciate client for audio provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val bytes: ByteString = fileIn match {
+            case None if base64Decode => payload.select("audio").asString.byteString.decodeBase64
+            case None => payload.select("audio").asOpt[Array[Byte]].map(v => ByteString(v)).getOrElse(ByteString.empty)
+            case Some(file) => ByteString(Files.readAllBytes(new File(file).toPath))
+          }
+          val options = AudioModelClientSpeechToTextInputOptions.format.reads(payload).get.copy(
+            file = bytes.chunks(32 * 1024),
+            fileContentType = payload.select("content_type").asOptString.getOrElse("audio/mp3"),
+            fileLength = bytes.length,
+            fileName = payload.select("filename").asOptString,
+          )
+          client.speechToText(options, payload).map {
+            case Left(error) => WorkflowError(s"error while calling audio model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(response) =>
+              println(s"transcribe: ${response.transcribedText}")
+              response.transcribedText.json.right
+          }
         }
       }
     }
