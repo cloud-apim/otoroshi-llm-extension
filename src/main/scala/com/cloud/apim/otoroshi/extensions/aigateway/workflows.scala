@@ -18,17 +18,102 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.llm_call", new LlmCallFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.audio_tts", new AudioTtsFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.audio_stt", new AudioSttFunction())
-    // call wasm function
-    // call mcp function
-    // audio stt
-    // image gen
-    // compute embedding
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.embedding_compute", new ComputeEmbeddingFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.image_generate", new GenerateImageFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.tool_function_call", new CallToolFunctionFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.mcp_function_call", new CallMcpFunctionFunction())
+  }
+}
+
+class CallMcpFunctionFunction extends WorkflowFunction {
+  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val function = args.select("function").asString
+    val arguments = args.select("arguments").asOpt[JsObject].map(_.stringify)
+      .orElse(args.select("arguments").asOpt[JsArray].map(_.stringify))
+      .orElse(args.select("arguments").asOpt[JsNumber].map(_.stringify))
+      .orElse(args.select("arguments").asOpt[JsBoolean].map(_.stringify))
+      .orElse(args.select("arguments").asOpt[String])
+      .getOrElse("")
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.mcpConnector(provider) match {
+      case None => WorkflowError(s"llm provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(connector) => {
+        connector.call(function, arguments).map { res =>
+          res.json.right
+        }
+      }
+    }
+  }
+}
+
+class CallToolFunctionFunction extends WorkflowFunction {
+  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val arguments = args.select("arguments").asOpt[JsObject].map(_.stringify)
+      .orElse(args.select("arguments").asOpt[JsArray].map(_.stringify))
+      .orElse(args.select("arguments").asOpt[JsNumber].map(_.stringify))
+      .orElse(args.select("arguments").asOpt[JsBoolean].map(_.stringify))
+      .orElse(args.select("arguments").asOpt[String])
+      .getOrElse("")
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.toolFunction(provider) match {
+      case None => WorkflowError(s"llm provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(function) => {
+        function.call(arguments).map { res =>
+          res.json.right
+        }
+      }
+    }
+  }
+}
+
+class GenerateImageFunction extends WorkflowFunction {
+  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.imageModel(provider) match {
+      case None => WorkflowError(s"llm provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getImageModelClient() match {
+        case None => WorkflowError(s"unable to instanciate client for image provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val options = ImageModelClientGenerationInputOptions.format.reads(payload).get
+          client.generate(options, payload).map {
+            case Left(error) => WorkflowError(s"error while calling embedding model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(response) => response.toOpenAiJson.right
+          }
+        }
+      }
+    }
+  }
+}
+
+class ComputeEmbeddingFunction extends WorkflowFunction {
+  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.embeddingModel(provider) match {
+      case None => WorkflowError(s"llm provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getEmbeddingModelClient() match {
+        case None => WorkflowError(s"unable to instanciate client for llm provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val options = EmbeddingClientInputOptions.format.reads(payload).get
+          client.embed(options, payload).map {
+            case Left(error) => WorkflowError(s"error while calling embedding model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(response) => response.toOpenAiJson(options.encoding_format.getOrElse("float")).right
+          }
+        }
+      }
+    }
   }
 }
 
 class LlmCallFunction extends WorkflowFunction {
   override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
+    val openai  = args.select("openai_format").asOptBoolean.getOrElse(true)
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val messages = payload.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(obj => InputChatMessage.fromJson(obj))
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -38,6 +123,7 @@ class LlmCallFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instanciate client for llm provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => client.call(ChatPrompt(messages, None), TypedMap.empty, payload).map {
           case Left(error) => WorkflowError(s"error while calling llm", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+          case Right(response) if openai => response.openaiJson("--", env).right
           case Right(response) => response.json(env).right
         }
       }
@@ -97,7 +183,7 @@ class AudioSttFunction extends WorkflowFunction {
           client.speechToText(options, payload).map {
             case Left(error) => WorkflowError(s"error while calling audio model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) =>
-              println(s"transcribe: ${response.transcribedText}")
+              //println(s"transcribe: ${response.transcribedText}")
               response.transcribedText.json.right
           }
         }

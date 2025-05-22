@@ -327,7 +327,13 @@ object LlmToolFunctionBackendOptions {
         }
         .execute()
         .map { resp =>
-          resp.body
+          finalOptions.select("response_at").asOptString.filterNot(_.isEmpty) match {
+            case None => finalOptions.select("response_path").asOptString.filterNot(_.isEmpty) match {
+              case None => resp.body
+              case Some(path) => resp.json.atPath(path).asValue.stringify
+            }
+            case Some(at) => resp.json.at(at).asValue.stringify
+          }
         }
         .recover {
           case t: Throwable => t.getMessage
