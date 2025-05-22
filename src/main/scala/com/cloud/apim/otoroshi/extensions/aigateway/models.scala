@@ -743,13 +743,93 @@ trait EmbeddingModelClient {
   def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]]
 }
 
-case class EmbeddingSearchMatch(score: Double, id: String, embedding: Embedding, embedded: String)
-case class EmbeddingSearchResponse(matches: Seq[EmbeddingSearchMatch])
+case class EmbeddingSearchMatch(score: Double, id: String, embedding: Embedding, embedded: String) {
+  def json: JsValue = Json.obj(
+    "score" -> score,
+    "id" -> id,
+    "embedded" -> embedded,
+    "embedding" -> Json.obj(
+      "vector" -> Json.toJson(embedding.vector)
+    )
+  )
+}
+case class EmbeddingSearchResponse(matches: Seq[EmbeddingSearchMatch]) {
+  def json: JsValue = Json.obj(
+    "matches" -> JsArray(matches.map(_.json))
+  )
+}
+
+case class EmbeddingAddOptions(id: String, input: String, embedding: Embedding)
+
+object EmbeddingAddOptions {
+  val format = new Format[EmbeddingAddOptions] {
+    override def reads(json: JsValue): JsResult[EmbeddingAddOptions] = Try {
+      EmbeddingAddOptions(
+        id = json.select("id").asString,
+        input = json.select("input").asString,
+        embedding = Embedding(json.select("embedding").select("vector").as[Array[Float]]),
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(s) => JsSuccess(s)
+    }
+
+    override def writes(o: EmbeddingAddOptions): JsValue = Json.obj(
+      "id" -> o.id,
+      "input" -> o.input,
+      "embedding" -> Json.obj(
+        "vector" -> Json.toJson(o.embedding.vector)
+      ),
+    )
+  }
+}
+case class EmbeddingRemoveOptions(id: String)
+
+object EmbeddingRemoveOptions {
+  val format = new Format[EmbeddingRemoveOptions] {
+    override def reads(json: JsValue): JsResult[EmbeddingRemoveOptions] = Try {
+      EmbeddingRemoveOptions(
+        id = json.select("id").asString,
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(s) => JsSuccess(s)
+    }
+
+    override def writes(o: EmbeddingRemoveOptions): JsValue = Json.obj(
+      "id" -> o.id,
+    )
+  }
+}
+case class EmbeddingSearchOptions(embedding: Embedding, maxResults: Int, minScore: Double)
+
+object EmbeddingSearchOptions {
+  val format = new Format[EmbeddingSearchOptions] {
+    override def reads(json: JsValue): JsResult[EmbeddingSearchOptions] = Try {
+      EmbeddingSearchOptions(
+        embedding = Embedding(json.select("embedding").select("vector").as[Array[Float]]),
+        maxResults = json.select("max_results").asOpt[Int].getOrElse(10),
+        minScore = json.select("minScore").asOpt[Double].getOrElse(0.9),
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(s) => JsSuccess(s)
+    }
+
+    override def writes(o: EmbeddingSearchOptions): JsValue = Json.obj(
+      "max_results" -> o.maxResults,
+      "min_score" -> o.minScore,
+      "embedding" -> Json.obj(
+        "vector" -> Json.toJson(o.embedding.vector)
+      )
+    )
+  }
+}
 
 trait EmbeddingStoreClient {
-  def add(id: String, input: String, embedding: Embedding)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
-  def remove(id: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
-  def search(embedding: Embedding, maxResults: Int, minScore: Double)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]]
+  def add(options: EmbeddingAddOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def remove(options: EmbeddingRemoveOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def search(options: EmbeddingSearchOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]]
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -69,31 +69,31 @@ class LocalEmbeddingStoreClient(val config: JsObject, storeId: String) extends E
     }
   }
 
-  override def add(id: String, input: String, embedding: Embedding)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def add(options: EmbeddingAddOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     getStore(storeId).map { store =>
-      val lcEmbedding = new dev.langchain4j.data.embedding.Embedding(embedding.vector)
-      store.add(id, lcEmbedding, TextSegment.from(input))
+      val lcEmbedding = new dev.langchain4j.data.embedding.Embedding(options.embedding.vector)
+      store.add(options.id, lcEmbedding, TextSegment.from(options.input))
       ().right
     }
   }
 
-  override def remove(id: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def remove(options: EmbeddingRemoveOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     getStore(storeId).map { store =>
-      store.remove(id)
+      store.remove(options.id)
       ().right
     }
   }
 
-  override def search(embedding: Embedding, maxResults: Int, minScore: Double)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
+  override def search(options: EmbeddingSearchOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
     getStore(storeId).flatMap { store =>
       try {
-        val lcEmbedding = new dev.langchain4j.data.embedding.Embedding(embedding.vector)
+        val lcEmbedding = new dev.langchain4j.data.embedding.Embedding(options.embedding.vector)
         val relevant = store.search(
           dev.langchain4j.store.embedding.EmbeddingSearchRequest
             .builder()
             .queryEmbedding(lcEmbedding)
-            .maxResults(maxResults)
-            .minScore(minScore)
+            .maxResults(options.maxResults)
+            .minScore(options.minScore)
             .build()
         )
         val matches = relevant.matches().asScala

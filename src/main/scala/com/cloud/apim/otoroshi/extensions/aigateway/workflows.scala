@@ -20,8 +20,118 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.audio_stt", new AudioSttFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.embedding_compute", new ComputeEmbeddingFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.image_generate", new GenerateImageFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.video_generate", new GenerateVideoFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.tool_function_call", new CallToolFunctionFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.mcp_function_call", new CallMcpFunctionFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.moderation_call", new ModerationCallFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_add", new VectorStoreAddFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_remove", new VectorStoreRemoveFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_search", new VectorStoreSearchFunction())
+  }
+}
+
+class VectorStoreAddFunction extends WorkflowFunction {
+  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.embeddingStore(provider) match {
+      case None => WorkflowError(s"embedding store not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getEmbeddingStoreClient() match {
+        case None => WorkflowError(s"unable to instanciate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val options = EmbeddingAddOptions.format.reads(payload).get
+          client.add(options).map {
+            case Left(error) => WorkflowError(s"error while calling embedding store", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(_) => JsNull.right
+          }
+        }
+      }
+    }
+  }
+}
+
+class VectorStoreRemoveFunction extends WorkflowFunction {
+  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.embeddingStore(provider) match {
+      case None => WorkflowError(s"embedding store not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getEmbeddingStoreClient() match {
+        case None => WorkflowError(s"unable to instanciate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val options = EmbeddingRemoveOptions.format.reads(payload).get
+          client.remove(options).map {
+            case Left(error) => WorkflowError(s"error while calling embedding store", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(_) => JsNull.right
+          }
+        }
+      }
+    }
+  }
+}
+
+class VectorStoreSearchFunction extends WorkflowFunction {
+  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.embeddingStore(provider) match {
+      case None => WorkflowError(s"embedding store not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getEmbeddingStoreClient() match {
+        case None => WorkflowError(s"unable to instanciate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val options = EmbeddingSearchOptions.format.reads(payload).get
+          client.search(options).map {
+            case Left(error) => WorkflowError(s"error while calling embedding store", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(response) => response.json.right
+          }
+        }
+      }
+    }
+  }
+}
+
+class ModerationCallFunction extends WorkflowFunction {
+  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.moderationModel(provider) match {
+      case None => WorkflowError(s"moderation model not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getModerationModelClient() match {
+        case None => WorkflowError(s"unable to instanciate client for moderation model", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val options = ModerationModelClientInputOptions.format.reads(payload).get
+          client.moderate(options, payload).map {
+            case Left(error) => WorkflowError(s"error while calling moderation model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(response) => response.toOpenAiJson.right
+          }
+        }
+      }
+    }
+  }
+}
+
+class GenerateVideoFunction extends WorkflowFunction {
+  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.videoModel(provider) match {
+      case None => WorkflowError(s"video model not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getVideoModelClient() match {
+        case None => WorkflowError(s"unable to instanciate client for video model", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val options = VideoModelClientTextToVideoInputOptions.format.reads(payload).get
+          client.generate(options, payload).map {
+            case Left(error) => WorkflowError(s"error while calling video model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(response) => response.toOpenAiJson.right
+          }
+        }
+      }
+    }
   }
 }
 
@@ -74,7 +184,7 @@ class GenerateImageFunction extends WorkflowFunction {
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
     extension.states.imageModel(provider) match {
-      case None => WorkflowError(s"llm provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case None => WorkflowError(s"image model not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getImageModelClient() match {
         case None => WorkflowError(s"unable to instanciate client for image provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
@@ -95,7 +205,7 @@ class ComputeEmbeddingFunction extends WorkflowFunction {
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
     extension.states.embeddingModel(provider) match {
-      case None => WorkflowError(s"llm provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case None => WorkflowError(s"embedding model not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getEmbeddingModelClient() match {
         case None => WorkflowError(s"unable to instanciate client for llm provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
