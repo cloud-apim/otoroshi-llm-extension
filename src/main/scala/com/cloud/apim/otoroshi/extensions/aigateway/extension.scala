@@ -8,6 +8,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHard
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage, WorkflowFunctionsInitializer}
 import com.github.blemale.scaffeine.Scaffeine
+import dev.langchain4j.memory.chat.MessageWindowChatMemory
 import otoroshi.env.Env
 import otoroshi.models._
 import otoroshi.next.extensions.{AdminExtensionBackofficeAuthRoute, _}
@@ -1307,5 +1308,10 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(ImageModel.resource(env, datastores, states)),
       AdminExtensionEntity(VideoModel.resource(env, datastores, states)),
     )
+  }
+
+
+  def test(): Unit = {
+    val mem = MessageWindowChatMemory.withMaxMessages(10)
   }
 }

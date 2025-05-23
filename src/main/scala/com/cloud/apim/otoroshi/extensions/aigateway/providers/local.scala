@@ -46,14 +46,21 @@ object LocalEmbeddingStoreClient {
   lazy val stores = new TrieMap[String, dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]]()
 }
 
-class LocalEmbeddingStoreClient(val config: JsObject, storeId: String) extends EmbeddingStoreClient {
+class LocalEmbeddingStoreClient(val config: JsObject, _storeId: String) extends EmbeddingStoreClient {
 
-  private def getStore(id: String)(implicit ec: ExecutionContext, env: Env): Future[dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]] = {
+  private lazy val connection: JsObject = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
+  private lazy val _sessionId: Option[String] = connection.select("session_id").asOptString
+
+  private def getStore()(implicit ec: ExecutionContext, env: Env): Future[dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]] = {
+    val id = _sessionId match {
+      case Some(sessionId) => s"${_storeId}:${sessionId}"
+      case None => _storeId
+    }
     LocalEmbeddingStoreClient.stores.get(id) match {
       case Some(store) => store.vfuture
       case None => {
-        val headers = config.select("connection").asOpt[Map[String, String]].getOrElse(Map.empty)
-        config.select("connection").select("init_content").asOptString match {
+        val headers = connection.asOpt[Map[String, String]].getOrElse(Map.empty)
+        connection.select("init_content").asOptString match {
           case None => {
             val s = new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
             LocalEmbeddingStoreClient.stores.put(id, s)
@@ -69,23 +76,23 @@ class LocalEmbeddingStoreClient(val config: JsObject, storeId: String) extends E
     }
   }
 
-  override def add(options: EmbeddingAddOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
-    getStore(storeId).map { store =>
+  override def add(options: EmbeddingAddOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+    getStore().map { store =>
       val lcEmbedding = new dev.langchain4j.data.embedding.Embedding(options.embedding.vector)
       store.add(options.id, lcEmbedding, TextSegment.from(options.input))
       ().right
     }
   }
 
-  override def remove(options: EmbeddingRemoveOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
-    getStore(storeId).map { store =>
+  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+    getStore().map { store =>
       store.remove(options.id)
       ().right
     }
   }
 
-  override def search(options: EmbeddingSearchOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
-    getStore(storeId).flatMap { store =>
+  override def search(options: EmbeddingSearchOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
+    getStore().flatMap { store =>
       try {
         val lcEmbedding = new dev.langchain4j.data.embedding.Embedding(options.embedding.vector)
         val relevant = store.search(

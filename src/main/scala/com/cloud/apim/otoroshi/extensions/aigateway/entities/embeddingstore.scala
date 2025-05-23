@@ -33,11 +33,6 @@ case class EmbeddingStore(
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
   def getEmbeddingStoreClient()(implicit env: Env): Option[EmbeddingStoreClient] = {
-    val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
-    val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
-    val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
-    val token = connection.select("token").asOpt[String].getOrElse("xxx")
-    val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     provider.toLowerCase() match {
       case "local" => new LocalEmbeddingStoreClient(config, id).some
       case _ => None

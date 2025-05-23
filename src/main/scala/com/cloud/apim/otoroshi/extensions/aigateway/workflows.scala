@@ -27,6 +27,8 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_add", new VectorStoreAddFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_remove", new VectorStoreRemoveFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_search", new VectorStoreSearchFunction())
+    // text chunking ;)
+
   }
 }
 
@@ -41,7 +43,7 @@ class VectorStoreAddFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instanciate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = EmbeddingAddOptions.format.reads(payload).get
-          client.add(options).map {
+          client.add(options, payload).map {
             case Left(error) => WorkflowError(s"error while calling embedding store", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(_) => JsNull.right
           }
@@ -62,7 +64,7 @@ class VectorStoreRemoveFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instanciate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = EmbeddingRemoveOptions.format.reads(payload).get
-          client.remove(options).map {
+          client.remove(options, payload).map {
             case Left(error) => WorkflowError(s"error while calling embedding store", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(_) => JsNull.right
           }
@@ -83,7 +85,7 @@ class VectorStoreSearchFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instanciate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = EmbeddingSearchOptions.format.reads(payload).get
-          client.search(options).map {
+          client.search(options, payload).map {
             case Left(error) => WorkflowError(s"error while calling embedding store", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) => response.json.right
           }

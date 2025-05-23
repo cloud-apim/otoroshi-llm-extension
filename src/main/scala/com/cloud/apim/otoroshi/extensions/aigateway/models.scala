@@ -827,9 +827,9 @@ object EmbeddingSearchOptions {
 }
 
 trait EmbeddingStoreClient {
-  def add(options: EmbeddingAddOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
-  def remove(options: EmbeddingRemoveOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
-  def search(options: EmbeddingSearchOptions)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]]
+  def add(options: EmbeddingAddOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def remove(options: EmbeddingRemoveOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def search(options: EmbeddingSearchOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]]
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
