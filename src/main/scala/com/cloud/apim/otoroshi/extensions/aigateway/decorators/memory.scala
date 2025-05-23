@@ -30,7 +30,7 @@ class ChatClientWithPersistentMemory(originalProvider: AiProvider, val chatClien
       case None => Json.obj("error" -> "memory provider not found").leftf
       case Some(memory) => {
         val opts = memory.config.select("options").asOpt[JsObject].getOrElse(Json.obj())
-        val sessionIdValue = opts.select("session_id").asOpt[String].getOrElse("${apikey.client_id || user.email :: default}")
+        val sessionIdValue = opts.select("session_id").asOpt[String].getOrElse("${consumer.id || apikey.id || user.email || token.sub || req.ip :: default}")
         val sessionId: String = GlobalExpressionLanguage.apply(
           value = sessionIdValue,
           req = attrs.get(otoroshi.plugins.Keys.RequestKey),

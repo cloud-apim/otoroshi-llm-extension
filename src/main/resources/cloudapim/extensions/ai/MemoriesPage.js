@@ -75,8 +75,9 @@ class MemoriesPage extends Component {
           provider: 'local',
           config: {
             options: {
+              session_id: '${consumer.id || apikey.id || user.email || token.sub || req.ip :: default}',
               strategy: 'message_window',
-              max_messages: '10'
+              max_messages: 10
             }
           }
         }),
@@ -94,8 +95,9 @@ class MemoriesPage extends Component {
                 provider: 'local',
                 config: {
                   options: {
+                    session_id: '${consumer.id || apikey.id || user.email || token.sub || req.ip :: default}',
                     strategy: 'message_window',
-                    max_messages: '10'
+                    max_messages: 10
                   }
                 },
               });
