@@ -4,6 +4,7 @@ import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsOutput, ImpactsOutput}
 import otoroshi.env.Env
+import otoroshi.gateway.Errors.messages
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -830,6 +831,55 @@ trait EmbeddingStoreClient {
   def add(options: EmbeddingAddOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
   def remove(options: EmbeddingRemoveOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
   def search(options: EmbeddingSearchOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]]
+}
+
+case class PersistedChatMessage(raw: JsObject) {
+  lazy val role: String = raw.select("role").asOptString.getOrElse("")
+  lazy val isSystem: Boolean = role == "system"
+  lazy val isUser: Boolean = role == "user"
+  lazy val isAssistant: Boolean = role == "assistant"
+  lazy val isTool: Boolean = role == "tool" || (isAssistant && raw.select("tool_calls").isDefined)
+}
+
+object PersistedChatMessage {
+  def from(raw: JsObject): PersistedChatMessage = PersistedChatMessage(raw.select("message").asOpt[JsObject].getOrElse(raw))
+}
+
+trait PersistentMemoryClient {
+  def config: JsObject
+  def addMessages(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+    getMessages(sessionId).flatMap {
+      case Left(error) => error.leftf
+      case Right(oldMessages) => {
+        val newMessages = oldMessages ++ messages
+        applyStrategy(sessionId, newMessages).flatMap {
+          case Left(error) => error.leftf
+          case Right(finalMessages) => {
+            updateMessages(sessionId, finalMessages)
+          }
+        }
+      }
+    }
+  }
+  def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def getMessages(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]]
+  def clearMemory(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def applyStrategy(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
+    val options = config.select("options")
+    options.select("strategy").asOptString.getOrElse("message_window") match {
+      case "message_window" => {
+        val maxMessages = options.select("max_messages").asOpt[Int].getOrElse(100)
+        val (systemMessages, otherMessages) = messages.partition(_.isSystem)
+        val filteredMessages = otherMessages.filterNot(_.isTool)
+        val maxWithoutSystem = maxMessages - systemMessages.size
+        val finalMessages = filteredMessages.takeRight(maxWithoutSystem)
+        (systemMessages ++ finalMessages).rightf
+      }
+      case strat =>
+        env.adminExtensions.extension[AiExtension].get.logger.warn(s"unknown memory strategy: ${strat}")
+        Seq.empty[PersistedChatMessage].rightf
+    }
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

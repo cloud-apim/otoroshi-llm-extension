@@ -8,7 +8,6 @@ import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHard
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage, WorkflowFunctionsInitializer}
 import com.github.blemale.scaffeine.Scaffeine
-import dev.langchain4j.memory.chat.MessageWindowChatMemory
 import otoroshi.env.Env
 import otoroshi.models._
 import otoroshi.next.extensions.{AdminExtensionBackofficeAuthRoute, _}
@@ -36,6 +35,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val AudioModelsDataStore: AudioModelsDataStore = new KvAudioModelsDataStore(extensionId, env.datastores.redis, env)
   val imageModelsDataStore: ImageModelsDataStore = new KvImageModelsDataStore(extensionId, env.datastores.redis, env)
   val videoModelsDataStore: VideoModelsDataStore = new KvVideoModelsDataStore(extensionId, env.datastores.redis, env)
+  val persistentMemoriesDataStore: PersistentMemoryDataStore = new KvPersistentMemoryDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
@@ -147,6 +147,13 @@ class AiGatewayExtensionState(env: Env) {
   def updateVideoModels(values: Seq[VideoModel]): Unit = {
     _videoModels.addAll(values.map(v => (v.id, v))).remAll(_videoModels.keySet.toSeq.diff(values.map(_.id)))
   }
+
+  private val _persistentMemories = new UnboundedTrieMap[String, PersistentMemory]()
+  def persistentMemory(id: String): Option[PersistentMemory] = _persistentMemories.get(id)
+  def allPersistentMemories(): Seq[PersistentMemory]          = _persistentMemories.values.toSeq
+  def updatePersistentMemories(values: Seq[PersistentMemory]): Unit = {
+    _persistentMemories.addAll(values.map(v => (v.id, v))).remAll(_persistentMemories.keySet.toSeq.diff(values.map(_.id)))
+  }
 }
 
 object AiExtension {
@@ -227,6 +234,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val audioModelsPage = getResourceCode("cloudapim/extensions/ai/AudioModelsPage.js")
   lazy val imagesModelsPage = getResourceCode("cloudapim/extensions/ai/ImageModelsPage.js")
   lazy val videoModelsPage = getResourceCode("cloudapim/extensions/ai/VideoModelsPage.js")
+  lazy val memoriesPage = getResourceCode("cloudapim/extensions/ai/MemoriesPage.js")
   lazy val imgCode = getResourceCode("cloudapim/extensions/ai/undraw_visionary_technology_re_jfp7.svg")
 
   def handleProviderTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
@@ -655,6 +663,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    ${imagesModelsPage}
             |    ${videoModelsPage}
             |    ${audioModelsPage}
+            |    ${memoriesPage}
             |
             |    return {
             |      id: extensionId,
@@ -757,6 +766,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            link: '/extensions/cloud-apim/ai-gateway/audio-models',
             |            display: () => true,
             |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'Persistent memories',
+            |            description: 'All your Persistent memories',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/persistent-memories',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
             |          }
             |        ]
             |      }],
@@ -856,6 +873,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          link: '/extensions/cloud-apim/ai-gateway/audio-models',
             |          display: () => true,
             |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'Persistent memories',
+            |          description: 'All your Persistent memories',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/persistent-memories',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
             |        }
             |      ],
             |      sidebarItems: [
@@ -929,6 +954,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'Audio models',
             |          text: 'All your Audio models',
             |          path: 'extensions/cloud-apim/ai-gateway/audio-models',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Persistent memories',
+            |          text: 'All your Persistent memories',
+            |          path: 'extensions/cloud-apim/ai-gateway/persistent-memories',
             |          icon: 'brain'
             |        }
             |      ],
@@ -1028,6 +1059,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'Audio models',
             |          value: 'audio-models',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/persistent-memories`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Persistent memories',
+            |          value: 'persistent-memories',
             |        }
             |      ],
             |      routes: [
@@ -1229,7 +1268,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            return React.createElement(VideoModelsPage, props, null)
             |          }
             |        },
-            |         {
+            |        {
             |          path: '/extensions/cloud-apim/ai-gateway/audio-models/:taction/:titem',
             |          component: (props) => {
             |            return React.createElement(AudioModelsPage, props, null)
@@ -1245,6 +1284,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          path: '/extensions/cloud-apim/ai-gateway/audio-models',
             |          component: (props) => {
             |            return React.createElement(AudioModelsPage, props, null)
+            |          },
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/persistent-memories/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(MemoriesPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/persistent-memories/:taction',
+            |          component: (props) => {
+            |            return React.createElement(MemoriesPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/persistent-memories',
+            |          component: (props) => {
+            |            return React.createElement(MemoriesPage, props, null)
             |          },
             |        }
             |      ]
@@ -1272,6 +1329,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       audioModels <- datastores.AudioModelsDataStore.findAllAndFillSecrets()
       imageModels <- datastores.imageModelsDataStore.findAllAndFillSecrets()
       videosModels <- datastores.videoModelsDataStore.findAllAndFillSecrets()
+      persistentMemories <- datastores.persistentMemoriesDataStore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
@@ -1285,6 +1343,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateAudioModel(audioModels)
       states.updateImageModels(imageModels)
       states.updateVideoModels(videosModels)
+      states.updatePersistentMemories(persistentMemories)
       Future {
         McpSupport.restartConnectorsIfNeeded()
         McpSupport.stopConnectorsIfNeeded()
@@ -1307,11 +1366,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(AudioModel.resource(env, datastores, states)),
       AdminExtensionEntity(ImageModel.resource(env, datastores, states)),
       AdminExtensionEntity(VideoModel.resource(env, datastores, states)),
+      AdminExtensionEntity(PersistentMemory.resource(env, datastores, states)),
     )
-  }
-
-
-  def test(): Unit = {
-    val mem = MessageWindowChatMemory.withMaxMessages(10)
   }
 }

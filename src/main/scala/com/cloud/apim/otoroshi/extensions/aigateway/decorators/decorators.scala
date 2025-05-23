@@ -14,6 +14,7 @@ object ChatClientDecorators {
   val possibleDecorators: Seq[Function[(AiProvider, ChatClient, Env), ChatClient]] = Seq(
     ChatClientWithModelConstraints.applyIfPossible,
     ChatClientWithProviderFallback.applyIfPossible,
+    ChatClientWithPersistentMemory.applyIfPossible,
     ChatClientWithSemanticCache.applyIfPossible,
     ChatClientWithSimpleCache.applyIfPossible,
     ChatClientWithGuardrailsValidation.applyIfPossible,

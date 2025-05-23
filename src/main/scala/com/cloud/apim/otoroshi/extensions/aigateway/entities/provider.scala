@@ -159,6 +159,7 @@ case class AiProvider(
                        guardrailsFailOnDeny: Boolean = false,
                        context: ContextSettings = ContextSettings.empty,
                        models: ModelSettings = ModelSettings.empty,
+                       memory: Option[String] = None,
                      ) extends EntityLocationSupport {
   override def internalId: String               = id
   override def json: JsValue                    = AiProvider.format.writes(this)
@@ -302,6 +303,7 @@ object AiProvider {
       "connection"        -> o.connection,
       "options"           -> o.options,
       "provider_fallback" -> o.providerFallback.map(_.json).getOrElse(JsNull).asValue,
+      "memory"            -> o.memory.map(_.json).getOrElse(JsNull).asValue,
       "context"           -> o.context.json,
       "models"            -> o.models.json,
       "guardrails"        -> o.guardrails.json,
@@ -324,6 +326,7 @@ object AiProvider {
         connection = (json \ "connection").asOpt[JsObject].getOrElse(Json.obj()),
         options = (json \ "options").asOpt[JsObject].getOrElse(Json.obj()),
         providerFallback = (json \ "provider_fallback").asOpt[String],
+        memory = (json \ "memory").asOpt[String],
         guardrails = json.select("guardrails").asOpt[JsArray].orElse(json.select("fences").asOpt[JsArray]).flatMap(seq => Guardrails.format.reads(seq).asOpt).getOrElse(Guardrails.empty),
         guardrailsFailOnDeny = json.select("guardrails_fail_on_deny").asOpt[Boolean].getOrElse(false),
         context = json.select("context").asOpt[JsObject].flatMap(o => ContextSettings.format.reads(o).asOpt).getOrElse(ContextSettings.empty),

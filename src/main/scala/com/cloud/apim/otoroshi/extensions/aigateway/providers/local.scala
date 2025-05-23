@@ -18,6 +18,7 @@ import software.amazon.awssdk.regions.providers.AwsRegionProvider
 
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicReference
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{ExecutionContext, Future}
@@ -205,5 +206,36 @@ class LocalEmbeddingStoreClient(val config: JsObject, _storeId: String) extends 
   }
 }
 
+case class LocalPersistentMemoryClientMemory(sessionId: String) {
+  private val messages = new AtomicReference[Seq[PersistedChatMessage]](Seq.empty)
+  def getMessages(): Seq[PersistedChatMessage] = messages.get()
+  def updateMessages(m: Seq[PersistedChatMessage]): Seq[PersistedChatMessage] = messages.updateAndGet(_ => m)
+  def clearMessages(): Unit = messages.set(Seq.empty)
+}
+
+object LocalPersistentMemoryClient {
+  val memories = new TrieMap[String, TrieMap[String, LocalPersistentMemoryClientMemory]]()
+}
+
+class LocalPersistentMemoryClient(val config: JsObject, id: String) extends PersistentMemoryClient {
+
+  private def getMemory(sessionId: String)(implicit env: Env, ec: ExecutionContext): LocalPersistentMemoryClientMemory = {
+    val memories = LocalPersistentMemoryClient.memories.getOrElseUpdate(id, new TrieMap[String, LocalPersistentMemoryClientMemory]())
+    memories.getOrElseUpdate(sessionId, LocalPersistentMemoryClientMemory(sessionId))
+  }
+
+  override def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+    getMemory(sessionId).updateMessages(messages)
+    ().rightf
+  }
+
+  override def getMessages(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
+    getMemory(sessionId).getMessages().rightf
+  }
+
+  override def clearMemory(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+    getMemory(sessionId).clearMessages().rightf
+  }
+}
 
 
