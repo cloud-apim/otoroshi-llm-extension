@@ -291,6 +291,10 @@ object InputChatMessage {
 }
 case class InputChatMessage(role: String, contentParts: Seq[ChatMessageContent], prefix: Option[Boolean], name: Option[String], raw: JsObject) extends ChatMessage {
 
+  def isUser: Boolean = role == "user"
+  def isAssistant: Boolean = role == "assistant"
+  def isSystem: Boolean = role == "system"
+
   def json(flavor: ChatMessageContentFlavor): JsValue = Json.obj(
     "role" -> role,
   ).applyOnIf(isSingleTextContent) { obj =>
@@ -303,6 +307,8 @@ case class InputChatMessage(role: String, contentParts: Seq[ChatMessageContent],
     case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
   }.applyOnWithOpt(name) {
     case (obj, name) => obj ++ Json.obj("name" -> name)
+  }.applyOnIf(flavor == ChatMessageContentFlavor.Anthropic && isSystem) { obj =>
+     Json.obj("type" -> "text", "text" -> wholeTextContent)
   }.applyOnIf(flavor == ChatMessageContentFlavor.Ollama && hasImage) { obj =>
     val aggContent = contentParts.collect {
       case ChatMessageContent.TextContent(text) => text

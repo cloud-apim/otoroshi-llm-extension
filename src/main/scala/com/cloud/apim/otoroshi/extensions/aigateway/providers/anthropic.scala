@@ -366,11 +366,14 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val (system, otherMessages) = prompt.messages.partition(_.isSystem)
+    val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
+    val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsAnthropic(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
-      api.callWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))), options.mcpConnectors)
+      api.callWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> messages, "system" -> systemMessages)), options.mcpConnectors)
     } else {
-      api.call("POST", "/v1/messages", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))))
+      api.call("POST", "/v1/messages", Some(mergedOptions ++ Json.obj("messages" -> messages, "system" -> systemMessages)))
     }
     callF.map {
       case Left(err) => err.left
@@ -422,11 +425,14 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
+    val (system, otherMessages) = prompt.messages.partition(_.isSystem)
+    val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
+    val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsAnthropic(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
-      api.streamWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))), options.mcpConnectors)
+      api.streamWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> messages, "system" -> systemMessages)), options.mcpConnectors)
     } else {
-      api.stream("POST", "/v1/messages", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))))
+      api.stream("POST", "/v1/messages", Some(mergedOptions ++ Json.obj("messages" -> messages, "system" -> systemMessages)))
     }
     callF.map {
       case Left(err) => err.left
