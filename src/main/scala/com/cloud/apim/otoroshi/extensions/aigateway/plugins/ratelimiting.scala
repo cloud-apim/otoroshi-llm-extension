@@ -10,7 +10,7 @@ import otoroshi.next.plugins.api._
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
-import play.api.mvc.Results
+import play.api.mvc.{Result, Results}
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util._
@@ -38,6 +38,7 @@ case class LlmTokensRateLimitingValidatorConfig(windowMillis: String, groupExpr:
 }
 
 object LlmTokensRateLimitingValidatorConfig {
+  val LlmTokensRateLimitingValidatorKey = play.api.libs.typedmap.TypedKey[Map[String, String]]("LlmTokensRateLimitingValidatorKey")
   val format = new Format[LlmTokensRateLimitingValidatorConfig] {
     override def reads(json: JsValue): JsResult[LlmTokensRateLimitingValidatorConfig] = Try {
       LlmTokensRateLimitingValidatorConfig(
@@ -91,8 +92,8 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
   override def description: Option[String] = """This plugin limits the number of LLM used on a period of time.""".stripMargin.some
   override def defaultConfigObject: Option[NgPluginConfig] = LlmTokensRateLimitingValidatorConfig.default.some
 
-  override def transformsError: Boolean = false
-  override def transformsRequest: Boolean = false
+  override def transformsError: Boolean = true
+  override def transformsRequest: Boolean = true
   override def transformsResponse: Boolean = true
 
   private val defaultExpr = "LlmTokensRateLimitingValidator-usage"
@@ -136,6 +137,34 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     )
   }
 
+  private def computeExprAfter(expr: String, ctx: NgTransformerResponseContext, env: Env): String = {
+    GlobalExpressionLanguage.apply(
+      value = expr,
+      req = ctx.request.some,
+      service = ctx.route.legacy.some,
+      route = ctx.route.some,
+      user = ctx.attrs.get(otoroshi.plugins.Keys.UserKey),
+      apiKey = ctx.attrs.get(otoroshi.plugins.Keys.ApiKeyKey),
+      context = Map.empty,
+      attrs = ctx.attrs,
+      env = env
+    )
+  }
+
+  private def computeExprAfter(expr: String, ctx: NgTransformerErrorContext, env: Env): String = {
+    GlobalExpressionLanguage.apply(
+      value = expr,
+      req = ctx.request.some,
+      service = ctx.route.legacy.some,
+      route = ctx.route.some,
+      user = ctx.attrs.get(otoroshi.plugins.Keys.UserKey),
+      apiKey = ctx.attrs.get(otoroshi.plugins.Keys.ApiKeyKey),
+      context = Map.empty,
+      attrs = ctx.attrs,
+      env = env
+    )
+  }
+
   private def updateQuotas(ctx: NgAfterRequestContext, qconf: LlmTokensRateLimitingValidatorConfig)(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
     val group = computeExprAfter(qconf.groupExpr, ctx, env)
     val expr  = computeExprAfter(defaultExpr, ctx, env)
@@ -143,6 +172,51 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     ctx.attrs.get(ChatClient.ApiUsageKey).map { usage =>
       val increment = usage.usage.promptTokens + usage.usage.generationTokens + usage.usage.reasoningTokens
       //println(s"incrementing '${env.storageRoot}:plugins:custom-throttling:${group}:second:$expr' of ${increment} in ${windowMillis} ms")
+      ctx.attrs.update(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey) { map =>
+        val consumed = map.flatMap(_.get("X-Llm-Ratelimit-Consumed-Tokens")).getOrElse("0").toLong
+        map.getOrElse(Map.empty) ++ Map(
+          "X-Llm-Ratelimit-Consumed-Tokens" -> (consumed + increment).toString,
+        )
+      }
+      env.clusterAgent.incrementCustomThrottling(expr, group, increment, windowMillis)
+      NgCustomThrottling.updateQuotas(expr, group, increment, windowMillis)
+    }.getOrElse(().vfuture)
+  }
+
+  private def updateQuotas(ctx: NgTransformerResponseContext, qconf: LlmTokensRateLimitingValidatorConfig)(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+    val group = computeExprAfter(qconf.groupExpr, ctx, env)
+    val expr  = computeExprAfter(defaultExpr, ctx, env)
+    val windowMillis = computeExprAfter(qconf.windowMillis, ctx, env).trim.toLong
+    ctx.attrs.get(ChatClient.ApiUsageKey).map { usage =>
+      val increment = usage.usage.promptTokens + usage.usage.generationTokens + usage.usage.reasoningTokens
+      //println(s"incrementing '${env.storageRoot}:plugins:custom-throttling:${group}:second:$expr' of ${increment} in ${windowMillis} ms")
+      ctx.attrs.update(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey) { map =>
+        val consumed = map.flatMap(_.get("X-Llm-Ratelimit-Consumed-Tokens")).getOrElse("0").toLong
+        map.getOrElse(Map.empty) ++ Map(
+          "X-Llm-Ratelimit-Consumed-Tokens" -> (consumed + increment).toString,
+        )
+      }
+      env.clusterAgent.incrementCustomThrottling(expr, group, increment, windowMillis)
+      NgCustomThrottling.updateQuotas(expr, group, increment, windowMillis)
+    }.getOrElse(().vfuture)
+  }
+
+  private def updateQuotas(ctx: NgTransformerErrorContext, qconf: LlmTokensRateLimitingValidatorConfig)(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+    val group = computeExprAfter(qconf.groupExpr, ctx, env)
+    val expr  = computeExprAfter(defaultExpr, ctx, env)
+    val windowMillis = computeExprAfter(qconf.windowMillis, ctx, env).trim.toLong
+    ctx.attrs.get(ChatClient.ApiUsageKey).map { usage =>
+      val increment = usage.usage.promptTokens + usage.usage.generationTokens + usage.usage.reasoningTokens
+      //println(s"incrementing '${env.storageRoot}:plugins:custom-throttling:${group}:second:$expr' of ${increment} in ${windowMillis} ms")
+      ctx.attrs.update(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey) { map =>
+        val max = map.flatMap(_.get("X-Llm-Ratelimit-Map-Tokens")).getOrElse("0").toLong
+        val past_consumed = map.flatMap(_.get("X-Llm-Ratelimit-Consumed-Tokens")).getOrElse("0").toLong
+        // println("new is: " + (past_consumed + increment))
+        map.getOrElse(Map.empty) ++ Map(
+          "X-Llm-Ratelimit-Remaining-Tokens" -> Math.max(max - (past_consumed + increment), 0).toString,
+          "X-Llm-Ratelimit-Consumed-Tokens" -> (past_consumed + increment).toString,
+        )
+      }
       env.clusterAgent.incrementCustomThrottling(expr, group, increment, windowMillis)
       NgCustomThrottling.updateQuotas(expr, group, increment, windowMillis)
     }.getOrElse(().vfuture)
@@ -154,10 +228,21 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
                            )(implicit ec: ExecutionContext, env: Env): Future[Boolean] = {
     val value = qconf.throttlingQuota(ctx, env)
     val key = throttlingKey(computeExpr(defaultExpr, ctx, env), computeExpr(qconf.groupExpr, ctx, env), ctx)
-    //println(s"checking '${key}' under ${value}")
+    // println(s"checking '${key}' under ${value}")
     env.datastores.rawDataStore
       .get(key)
-      .map(_.map(_.utf8String.toLong).getOrElse(0L) <= value)
+      .map { opt =>
+        val current = opt.map(_.utf8String.toLong).getOrElse(0L)
+        // println("current is " + current)
+        ctx.attrs.update(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey) { map =>
+          map.getOrElse(Map.empty) ++ Map(
+            "X-Llm-Ratelimit-Max-Tokens" -> value.toString,
+            "X-Llm-Ratelimit-Remaining-Tokens" -> Math.max(value - current, 0).toString,
+            "X-Llm-Ratelimit-Consumed-Tokens" -> current.toString,
+          )
+        }
+        current <= value
+      }
   }
 
   private def tooMuchTokens(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
@@ -178,14 +263,39 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
 
   override def access(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
     val config = ctx.cachedConfig(internalName)(LlmTokensRateLimitingValidatorConfig.format).getOrElse(LlmTokensRateLimitingValidatorConfig.default)
+    val windowMillis = computeExpr(config.windowMillis, ctx, env).trim
+    ctx.attrs.put(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey -> Map(
+      "X-Llm-Ratelimit-Window-Millis" -> windowMillis
+    ))
     withingQuotas(ctx, config) flatMap {
       case true => NgAccess.NgAllowed.vfuture
       case false => tooMuchTokens(ctx)
     }
   }
 
-  override def afterRequest(ctx: NgAfterRequestContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Unit] = {
+  override def transformResponse(ctx: NgTransformerResponseContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
     val config = ctx.cachedConfig(internalName)(LlmTokensRateLimitingValidatorConfig.format).getOrElse(LlmTokensRateLimitingValidatorConfig.default)
-    updateQuotas(ctx, config)
+    updateQuotas(ctx, config).map { _ =>
+      val headers = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).getOrElse(Map.empty[String, String])
+      ctx.otoroshiResponse.copy(
+        headers = ctx.otoroshiResponse.headers ++ headers,
+      ).right
+    }
+  }
+
+  override def transformError(ctx: NgTransformerErrorContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[NgPluginHttpResponse] = {
+    val config = ctx.cachedConfig(internalName)(LlmTokensRateLimitingValidatorConfig.format).getOrElse(LlmTokensRateLimitingValidatorConfig.default)
+    updateQuotas(ctx, config).map { _ =>
+      val headers = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).getOrElse(Map.empty[String, String])
+      ctx.otoroshiResponse.copy(
+        headers = ctx.otoroshiResponse.headers ++ headers,
+      )
+    }
+  }
+
+  override def afterRequest(ctx: NgAfterRequestContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Unit] = {
+    // val config = ctx.cachedConfig(internalName)(LlmTokensRateLimitingValidatorConfig.format).getOrElse(LlmTokensRateLimitingValidatorConfig.default)
+    // updateQuotas(ctx, config)
+    ().vfuture
   }
 }
