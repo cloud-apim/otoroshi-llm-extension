@@ -204,6 +204,14 @@ class ToolFunctionsPage extends Component {
         ]
       }
     },
+    'backend.options.workflow_id': {
+      type: 'select',
+      props: {
+        label: 'Wasm plugin',
+        valuesFrom: "/bo/api/proxy/apis/plugins.otoroshi.io/v1/workflows",
+        transformer: (item) => ({ label: item.name, value: item.id }),
+      },
+    },
     tester: {
       type: FunctionTester,
     }
@@ -226,6 +234,7 @@ class ToolFunctionsPage extends Component {
     '_loc', 'id', 'name', 'description', 'tags', 'metadata',
     '<<<Backend',
     'backend.kind',
+    (item.backend.kind === 'Workflow') ? 'backend.options.workflow_id' : null,
     (item.backend.kind === 'QuickJs') ? 'backend.options.jsPath' : null,
     (item.backend.kind === 'WasmPlugin') ? 'backend.options.wasmPlugin' : null,
     (item.backend.kind === 'Http') ? 'backend.options.url' : null,

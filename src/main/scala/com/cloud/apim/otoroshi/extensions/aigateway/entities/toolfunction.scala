@@ -14,9 +14,11 @@ import otoroshi.models._
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.next.models.NgTlsConfig
 import otoroshi.next.plugins.BodyHelper
+import otoroshi.next.workflow.{Node, WorkflowAdminExtension, WorkflowHelper}
 import otoroshi.security.IdGenerator
 import otoroshi.storage._
 import otoroshi.storage.drivers.inmemory.S3Configuration
+import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi.wasm.{WasmAuthorizations, WasmConfig}
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
@@ -42,11 +44,13 @@ object LlmToolFunctionBackendKind {
   case object WasmPlugin extends LlmToolFunctionBackendKind { def name: String = "WasmPlugin" }
   case object Http extends LlmToolFunctionBackendKind { def name: String = "Http" }
   case object Route extends LlmToolFunctionBackendKind { def name: String = "Route" }
+  case object Workflow extends LlmToolFunctionBackendKind { def name: String = "Workflow" }
   def apply(str: String): LlmToolFunctionBackendKind = str match {
     case "QuickJs" => QuickJs
     case "WasmPlugin" => WasmPlugin
     case "Http" => Http
     case "Route" => Route
+    case "Workflow" => Workflow
     case _ => QuickJs
   }
 }
@@ -345,9 +349,41 @@ object LlmToolFunctionBackendOptions {
     def json: JsValue = options
     def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = Future.apply("Route backend not supported yet")
   }
+
+  case class Workflow(options: JsValue, root: JsValue) extends LlmToolFunctionBackendOptions {
+
+    private lazy val workflow_id: Option[String] = root.select("workflow_id").asOpt[String].orElse(options.select("workflow_id").asOpt[String]).filter(_.trim.nonEmpty)
+
+    def json: JsValue = Json.obj(
+      "workflow_id" -> workflow_id
+    )
+
+    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+      workflow_id match {
+        case None => "error, no workflow ref".vfuture
+        case Some(ref) => {
+          val extension = env.adminExtensions.extension[WorkflowAdminExtension].get
+          WorkflowHelper.getWorkflow(extension, ref) match {
+            case None => "error, workflow not found".vfuture
+            case Some(workflow) => {
+              val input: JsObject = if (arguments.startsWith("{")) {
+                Json.parse(arguments).as[JsObject]
+              } else {
+                Json.obj("input" -> arguments)
+              }
+              extension.engine.run(Node.from(workflow.config), input).map { res =>
+                res.error match {
+                  case Some(error) => Json.obj("error" -> error.json).stringify
+                  case None => res.returned.getOrElse(Json.obj()).stringify
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 }
-
-
 
 case class LlmToolFunction(
                            location: EntityLocation = EntityLocation.default,
@@ -430,6 +466,7 @@ case class LlmToolFunction(
       case LlmToolFunctionBackendKind.QuickJs => backend.options.call(arguments)
       case LlmToolFunctionBackendKind.WasmPlugin => backend.options.call(arguments)
       case LlmToolFunctionBackendKind.Route => backend.options.call(arguments)
+      case LlmToolFunctionBackendKind.Workflow => backend.options.call(arguments)
       case LlmToolFunctionBackendKind.Http => backend.options.call(arguments)
     }
   }
@@ -718,6 +755,7 @@ object LlmToolFunction {
             case LlmToolFunctionBackendKind.QuickJs => LlmToolFunctionBackendOptions.QuickJs(options, json)
             case LlmToolFunctionBackendKind.Http => LlmToolFunctionBackendOptions.Http(options)
             case LlmToolFunctionBackendKind.Route => LlmToolFunctionBackendOptions.Route(options)
+            case LlmToolFunctionBackendKind.Workflow => LlmToolFunctionBackendOptions.Workflow(options, json)
           }
         )
       )
