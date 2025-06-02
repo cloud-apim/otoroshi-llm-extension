@@ -172,7 +172,7 @@ class CallToolFunctionFunction extends WorkflowFunction {
     extension.states.toolFunction(provider) match {
       case None => WorkflowError(s"llm provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(function) => {
-        function.call(arguments).map { res =>
+        function.call(arguments, TypedMap.empty).map { res =>
           res.json.right
         }
       }

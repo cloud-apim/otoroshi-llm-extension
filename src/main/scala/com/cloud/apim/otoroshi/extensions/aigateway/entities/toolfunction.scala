@@ -65,7 +65,7 @@ case class LlmToolFunctionBackend(kind: LlmToolFunctionBackendKind, options: Llm
 
 sealed trait LlmToolFunctionBackendOptions {
   def json: JsValue
-  def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String]
+  def call(arguments: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String]
 }
 
 object LlmToolFunctionBackendOptions {
@@ -201,7 +201,7 @@ object LlmToolFunctionBackendOptions {
       "jsPath" -> jsPath
     )
 
-    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+    def call(arguments: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
       jsPath match {
         case None => "error, not wasm plugin ref".vfuture
         case Some(path) => {
@@ -245,7 +245,7 @@ object LlmToolFunctionBackendOptions {
       "wasmPlugin" -> wasmPlugin
     )
 
-    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+    def call(arguments: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
       wasmPlugin match {
         case None => "error, not wasm plugin ref".vfuture
         case Some(ref) => {
@@ -280,7 +280,7 @@ object LlmToolFunctionBackendOptions {
 
     def json: JsValue = options
 
-    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+    def call(arguments: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
 
       def replace(str: String, params: Map[String, String]): String = {
         if (str.contains("${")) {
@@ -347,7 +347,7 @@ object LlmToolFunctionBackendOptions {
 
   case class Route(options: JsValue) extends LlmToolFunctionBackendOptions {
     def json: JsValue = options
-    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = Future.apply("Route backend not supported yet")
+    def call(arguments: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = Future.apply("Route backend not supported yet")
   }
 
   case class Workflow(options: JsValue, root: JsValue) extends LlmToolFunctionBackendOptions {
@@ -358,7 +358,7 @@ object LlmToolFunctionBackendOptions {
       "workflow_id" -> workflow_id
     )
 
-    def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+    def call(arguments: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
       workflow_id match {
         case None => "error, no workflow ref".vfuture
         case Some(ref) => {
@@ -461,13 +461,13 @@ case class LlmToolFunction(
   //  }
   //}
 
-  def call(arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+  def call(arguments: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
     backend.kind match {
-      case LlmToolFunctionBackendKind.QuickJs => backend.options.call(arguments)
-      case LlmToolFunctionBackendKind.WasmPlugin => backend.options.call(arguments)
-      case LlmToolFunctionBackendKind.Route => backend.options.call(arguments)
-      case LlmToolFunctionBackendKind.Workflow => backend.options.call(arguments)
-      case LlmToolFunctionBackendKind.Http => backend.options.call(arguments)
+      case LlmToolFunctionBackendKind.QuickJs => backend.options.call(arguments, attrs)
+      case LlmToolFunctionBackendKind.WasmPlugin => backend.options.call(arguments, attrs)
+      case LlmToolFunctionBackendKind.Route => backend.options.call(arguments, attrs)
+      case LlmToolFunctionBackendKind.Workflow => backend.options.call(arguments, attrs)
+      case LlmToolFunctionBackendKind.Http => backend.options.call(arguments, attrs)
     }
   }
 }
@@ -589,7 +589,7 @@ object LlmToolFunction {
     }
   }
 
-  private def call(functions: Seq[GenericApiResponseChoiceMessageToolCall])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  private def call(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
         val fid = toolCall.function.name
@@ -598,7 +598,7 @@ object LlmToolFunction {
           case None => (s"undefined function ${fid}", toolCall).some.vfuture
           case Some(function) => {
             println(s"calling function '${function.name}' with args: '${toolCall.function.arguments}'")
-            function.call(toolCall.function.arguments).map { r =>
+            function.call(toolCall.function.arguments, attrs).map { r =>
               (r, toolCall).some
             }
           }
@@ -613,7 +613,7 @@ object LlmToolFunction {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
-  private def callCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], fmap: Map[String, String])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  private def callCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], fmap: Map[String, String], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
         val fid = toolCall.function.name
@@ -622,7 +622,7 @@ object LlmToolFunction {
           case None => (s"undefined function ${fid}", toolCall).some.vfuture
           case Some(function) => {
             println(s"calling function '${function.name}' with args: '${toolCall.function.arguments}'")
-            function.call(toolCall.function.arguments).map { r =>
+            function.call(toolCall.function.arguments, attrs).map { r =>
               (r, toolCall).some
             }
           }
@@ -637,7 +637,7 @@ object LlmToolFunction {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
-  private def callAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall])(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  private def callAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
         val fid = toolCall.name
@@ -647,7 +647,7 @@ object LlmToolFunction {
           case Some(function) => {
             val args = toolCall.arguments
             println(s"calling function '${function.name}' with args: '${args}'")
-            function.call(args).map { r =>
+            function.call(args, attrs).map { r =>
               (r, toolCall).some
             }
           }
@@ -662,8 +662,8 @@ object LlmToolFunction {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
-  def _callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    call(functions) { (resp, tc) =>
+  def _callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    call(functions, attrs) { (resp, tc) =>
       Source(List(
         Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)),
         Json.obj(
@@ -678,8 +678,8 @@ object LlmToolFunction {
     }
   }
 
-  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, fmap: Map[String, String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    callCohere(functions, fmap) { (resp, tc) =>
+  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, fmap: Map[String, String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callCohere(functions, fmap, attrs) { (resp, tc) =>
       Source(List(
         Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)),
         Json.obj(
@@ -694,8 +694,8 @@ object LlmToolFunction {
     }
   }
 
-  def _callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    callAnthropic(functions) { (resp, tc) =>
+  def _callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callAnthropic(functions, attrs) { (resp, tc) =>
       Source(List(
         Json.obj("role" -> "assistant", "content" -> Json.arr(Json.obj(
           "type" -> "tool_use",
@@ -712,8 +712,8 @@ object LlmToolFunction {
     }
   }
 
-  def _callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    call(functions) { (resp, tc) =>
+  def _callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    call(functions, attrs) { (resp, tc) =>
       Source(List(
         Json.obj("role" -> "assistant", "content" -> "", "tool_calls" -> Json.arr(tc.raw)),
         Json.obj(

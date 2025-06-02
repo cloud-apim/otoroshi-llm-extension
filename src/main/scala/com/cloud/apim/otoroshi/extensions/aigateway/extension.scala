@@ -424,7 +424,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             case JsError(err) => Results.Ok(Json.obj("done" -> false, "error" -> "bad function format")).vfuture
             case JsSuccess(function, _) => {
               val params = bodyJson.select("parameters").asOptString.getOrElse("")
-              function.call(params).map { res =>
+              function.call(params, TypedMap.empty).map { res =>
                 Results.Ok(Json.obj("done" -> true, "result" -> res))
               }.recover {
                 case t: Throwable => Results.Ok(Json.obj("done" -> false, "error" -> t.getMessage))

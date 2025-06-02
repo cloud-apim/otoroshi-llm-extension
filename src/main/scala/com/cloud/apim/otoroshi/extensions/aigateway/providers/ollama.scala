@@ -139,7 +139,7 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
@@ -150,12 +150,12 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty)//.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              LlmFunctions.callToolsOllama(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors)(ec, env)
+              LlmFunctions.callToolsOllama(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, attrs)(ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs)
                 }
             }
           }
@@ -167,8 +167,8 @@ class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], 
     }
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OllamaAiChatResponseChunk, _], WSResponse)]] = {
-    callWithToolSupport(method, path, body, mcpConnectors).map {case Left(err) => err.left
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OllamaAiChatResponseChunk, _], WSResponse)]] = {
+    callWithToolSupport(method, path, body, mcpConnectors, attrs).map {case Left(err) => err.left
     case Right(resp) =>
       val source = resp.message.content.get.chunks(5).map { str =>
         OllamaAiChatResponseChunk(resp.body.asObject.deepMerge(Json.obj(
@@ -287,7 +287,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         "stream" -> false,
         "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
         "options" -> mergedOptionsWithoutModel,
-      ) ++ tools), options.mcpConnectors)
+      ) ++ tools), options.mcpConnectors, attrs)
     } else {
       api.call("POST", "/api/chat", Some(Json.obj(
         "model" -> finalModel,

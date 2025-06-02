@@ -1,15 +1,16 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import otoroshi.env.Env
+import otoroshi.utils.TypedMap
 import play.api.libs.json.{JsObject, JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
 
 object LlmFunctions {
 
-  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val (wasmFunctions, mcpConnectors) = functions.partition(_.isWasm)
-    val wasmFunctionsF = LlmToolFunction._callToolsOpenai(wasmFunctions, providerName)(ec, env)
+    val wasmFunctionsF = LlmToolFunction._callToolsOpenai(wasmFunctions, providerName, attrs)(ec, env)
     val mcpConnectorsF = McpSupport.callToolsOpenai(mcpConnectors, conns, providerName)(ec, env)
     for {
       wasmFunctionsR <- wasmFunctionsF
@@ -17,9 +18,9 @@ object LlmFunctions {
     } yield wasmFunctionsR ++ mcpConnectorsR
   }
 
-  def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val (wasmFunctions, mcpConnectors) = functions.partition(_.isWasm)
-    val wasmFunctionsF = LlmToolFunction._callToolsOllama(wasmFunctions)(ec, env)
+    val wasmFunctionsF = LlmToolFunction._callToolsOllama(wasmFunctions, attrs)(ec, env)
     val mcpConnectorsF = McpSupport.callToolsOllama(mcpConnectors, conns)(ec, env)
     for {
       wasmFunctionsR <- wasmFunctionsF
@@ -27,9 +28,9 @@ object LlmFunctions {
     } yield wasmFunctionsR ++ mcpConnectorsR
   }
 
-  def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], conns: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], conns: Seq[String], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val (wasmFunctions, mcpConnectors) = functions.partition(_.isWasm)
-    val wasmFunctionsF = LlmToolFunction._callToolsAnthropic(wasmFunctions, providerName)(ec, env)
+    val wasmFunctionsF = LlmToolFunction._callToolsAnthropic(wasmFunctions, providerName, attrs)(ec, env)
     val mcpConnectorsF = McpSupport.callToolsAnthropic(mcpConnectors, conns, providerName)(ec, env)
     for {
       wasmFunctionsR <- wasmFunctionsF
@@ -37,9 +38,9 @@ object LlmFunctions {
     } yield wasmFunctionsR ++ mcpConnectorsR
   }
 
-  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String], providerName: String, fmap: Map[String, String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String], providerName: String, fmap: Map[String, String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val (wasmFunctions, mcpConnectors) = functions.partition(_.isWasm)
-    val wasmFunctionsF = LlmToolFunction.callToolsCohere(wasmFunctions, providerName, fmap)(ec, env)
+    val wasmFunctionsF = LlmToolFunction.callToolsCohere(wasmFunctions, providerName, fmap, attrs)(ec, env)
     val mcpConnectorsF = McpSupport.callToolsCohere(mcpConnectors, conns, providerName, fmap)(ec, env)
     for {
       wasmFunctionsR <- wasmFunctionsF

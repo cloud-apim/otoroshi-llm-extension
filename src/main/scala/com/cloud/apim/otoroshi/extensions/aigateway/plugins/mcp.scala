@@ -11,6 +11,7 @@ import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.security.IdGenerator
+import otoroshi.utils.TypedMap
 import otoroshi.utils.http.RequestImplicits.EnhancedRequestHeader
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
@@ -351,7 +352,7 @@ class McpSseEndpoint extends NgBackendCall {
     jsonRpcResponse(id, response)
   }
 
-  def toolsCall(id: Long, session: SseSession, request: JsValue, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def toolsCall(id: Long, session: SseSession, request: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val ext = env.adminExtensions.extension[AiExtension].get
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
@@ -380,7 +381,7 @@ class McpSseEndpoint extends NgBackendCall {
         }
       }
       case Some(function) => {
-        function.call(arguments.stringify).flatMap { res =>
+        function.call(arguments.stringify, attrs).flatMap { res =>
           val payload = Json.obj("content" -> Json.arr(Json.obj(
             "type" -> "text",
             "text" -> res
@@ -486,7 +487,7 @@ class McpSseEndpoint extends NgBackendCall {
                       case Some("resources/templates/list") if session.ready.get() => getTemplatesList(id, session)
                       case Some("prompts/list") if session.ready.get() => getPromptsList(id, session)
                       case Some("prompts/get") if session.ready.get() => ???
-                      case Some("tools/call") if session.ready.get() => toolsCall(id, session, json, config)
+                      case Some("tools/call") if session.ready.get() => toolsCall(id, session, json, config, ctx.attrs)
                       case _ => {
                         val method = json.select("method").asOpt[String].getOrElse("--")
                         jsonRpcResponse(id, Json.obj("error" -> "method unsupported", "error_details" -> Json.obj("method" -> method, "ready" -> session.ready.get())))
@@ -530,15 +531,15 @@ class McpWebsocketEndpoint extends NgWebsocketBackendPlugin {
   override def callBackend(ctx: NgWebsocketPluginContext)(implicit env: Env, ec: ExecutionContext): Flow[Message, Message, _] = {
     val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default)
     ActorFlow
-      .actorRef(out => McpActor.props(out, config, env))(env.otoroshiActorSystem, env.otoroshiMaterializer)
+      .actorRef(out => McpActor.props(out, config, env, ctx.attrs))(env.otoroshiActorSystem, env.otoroshiMaterializer)
   }
 }
 
 object McpActor {
-  def props(out: ActorRef, config: McpProxyEndpointConfig, env: Env) = Props(new McpActor(out, config, env))
+  def props(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: TypedMap) = Props(new McpActor(out, config, env, attrs))
 }
 
-class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env) extends Actor {
+class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: TypedMap) extends Actor {
 
   val ready = new AtomicBoolean(false)
   val canceledRequests = new TrieMap[Long, Unit]()
@@ -650,7 +651,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env) extends 
         }
       }
       case Some(function) => {
-        function.call(arguments.stringify).flatMap { res =>
+        function.call(arguments.stringify, attrs).flatMap { res =>
           val payload = Json.obj("content" -> Json.arr(Json.obj(
             "type" -> "text",
             "text" -> res
@@ -820,7 +821,7 @@ class McpRespEndpoint extends NgBackendCall {
     jsonRpcResponse(id, response)
   }
 
-  def toolsCall(id: Long, request: JsValue, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def toolsCall(id: Long, request: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val ext = env.adminExtensions.extension[AiExtension].get
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
@@ -846,7 +847,7 @@ class McpRespEndpoint extends NgBackendCall {
         }
       }
       case Some(function) => {
-        function.call(arguments.stringify).flatMap { res =>
+        function.call(arguments.stringify, attrs).flatMap { res =>
           val payload = Json.obj("content" -> Json.arr(Json.obj(
             "type" -> "text",
             "text" -> res
@@ -891,7 +892,7 @@ class McpRespEndpoint extends NgBackendCall {
               case Some("resources/templates/list") => getTemplatesList(id)
               case Some("prompts/list") => getPromptsList(id)
               case Some("prompts/get") => emptyResp(id)
-              case Some("tools/call") => toolsCall(id, json, config)
+              case Some("tools/call") => toolsCall(id, json, config, ctx.attrs)
               case _ => {
                 val method = json.select("method").asOpt[String].getOrElse("--")
                 jsonRpcResponse(id, Json.obj("error" -> "method unsupported", "error_details" -> Json.obj("method" -> method)))
