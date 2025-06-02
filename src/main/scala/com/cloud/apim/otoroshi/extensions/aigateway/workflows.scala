@@ -232,8 +232,13 @@ class LlmCallFunction extends WorkflowFunction {
     extension.states.provider(provider) match {
       case None => WorkflowError(s"llm provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => {
-        val inlineToolFunctions: Seq[String] = args.select("tool_functions").asOpt[Seq[String]].getOrElse(Seq.empty) ++ payload.select("tool_functions").asOpt[Seq[String]].getOrElse(Seq.empty)
-        val inlineMcpConnectors: Seq[String] = args.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty) ++ payload.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty)
+        val inlineToolFunctions: Seq[String] = args.select("tool_functions").asOpt[Seq[String]].getOrElse(Seq.empty) ++
+          payload.select("tool_functions").asOpt[Seq[String]].getOrElse(Seq.empty) ++
+          provider.options.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty) ++
+          provider.options.select("tool_functions").asOpt[Seq[String]].getOrElse(Seq.empty)
+        val inlineMcpConnectors: Seq[String] = args.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty) ++
+          payload.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty) ++
+          provider.options.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty)
         val added: JsObject = Json.obj()
           .applyOnIf(inlineToolFunctions.nonEmpty)(_ ++ Json.obj("tool_functions" -> inlineToolFunctions))
           .applyOnIf(inlineMcpConnectors.nonEmpty)(_ ++ Json.obj("mcp_connectors" -> inlineMcpConnectors))
