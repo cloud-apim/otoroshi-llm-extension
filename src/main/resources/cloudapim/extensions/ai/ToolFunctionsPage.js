@@ -200,6 +200,7 @@ class ToolFunctionsPage extends Component {
           { label: 'Quick JS (Wasm)', value: 'QuickJs' },
           { label: 'Wasm Plugin', value: 'WasmPlugin' },
           { label: 'Http call', value: 'Http' },
+          { label: 'Workflow', value: 'Workflow' },
           // { label: 'Route call', value: 'Route' },
         ]
       }
@@ -207,7 +208,7 @@ class ToolFunctionsPage extends Component {
     'backend.options.workflow_id': {
       type: 'select',
       props: {
-        label: 'Wasm plugin',
+        label: 'Workflow',
         valuesFrom: "/bo/api/proxy/apis/plugins.otoroshi.io/v1/workflows",
         transformer: (item) => ({ label: item.name, value: item.id }),
       },
