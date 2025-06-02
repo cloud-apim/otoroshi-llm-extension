@@ -293,7 +293,7 @@ object AnthropicChatClientOptions {
       topK = json.select("top_k").asOpt[Int].getOrElse(0),
       system = json.select("system").asOpt[String],
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
-      wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      wasmTools = json.select("wasm_tools").asOpt[Seq[String]].filter(_.nonEmpty).orElse(json.select("tool_functions").asOpt[Seq[String]]).getOrElse(Seq.empty),
       mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
@@ -339,7 +339,7 @@ case class AnthropicChatClientOptions(
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
 class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions, id: String) extends ChatClient {

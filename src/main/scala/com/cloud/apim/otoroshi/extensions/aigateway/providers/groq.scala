@@ -214,7 +214,7 @@ object GroqChatClientOptions {
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
       topP = json.select("top_p").asOpt[Float].getOrElse(1.0f),
       n = json.select("n").asOpt[Int].getOrElse(1),
-      wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      wasmTools = json.select("wasm_tools").asOpt[Seq[String]].filter(_.nonEmpty).orElse(json.select("tool_functions").asOpt[Seq[String]]).getOrElse(Seq.empty),
       mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
       mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
@@ -255,7 +255,7 @@ case class GroqChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 
   override def topK: Int = 0
 }

@@ -40,7 +40,7 @@ class VectorStoreAddFunction extends WorkflowFunction {
     extension.states.embeddingStore(provider) match {
       case None => WorkflowError(s"embedding store not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getEmbeddingStoreClient() match {
-        case None => WorkflowError(s"unable to instanciate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case None => WorkflowError(s"unable to instantiate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = EmbeddingAddOptions.format.reads(payload).get
           client.add(options, payload).map {
@@ -61,7 +61,7 @@ class VectorStoreRemoveFunction extends WorkflowFunction {
     extension.states.embeddingStore(provider) match {
       case None => WorkflowError(s"embedding store not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getEmbeddingStoreClient() match {
-        case None => WorkflowError(s"unable to instanciate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case None => WorkflowError(s"unable to instantiate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = EmbeddingRemoveOptions.format.reads(payload).get
           client.remove(options, payload).map {
@@ -82,7 +82,7 @@ class VectorStoreSearchFunction extends WorkflowFunction {
     extension.states.embeddingStore(provider) match {
       case None => WorkflowError(s"embedding store not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getEmbeddingStoreClient() match {
-        case None => WorkflowError(s"unable to instanciate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case None => WorkflowError(s"unable to instantiate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = EmbeddingSearchOptions.format.reads(payload).get
           client.search(options, payload).map {
@@ -103,7 +103,7 @@ class ModerationCallFunction extends WorkflowFunction {
     extension.states.moderationModel(provider) match {
       case None => WorkflowError(s"moderation model not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getModerationModelClient() match {
-        case None => WorkflowError(s"unable to instanciate client for moderation model", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case None => WorkflowError(s"unable to instantiate client for moderation model", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = ModerationModelClientInputOptions.format.reads(payload).get
           client.moderate(options, payload).map {
@@ -124,7 +124,7 @@ class GenerateVideoFunction extends WorkflowFunction {
     extension.states.videoModel(provider) match {
       case None => WorkflowError(s"video model not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getVideoModelClient() match {
-        case None => WorkflowError(s"unable to instanciate client for video model", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case None => WorkflowError(s"unable to instantiate client for video model", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = VideoModelClientTextToVideoInputOptions.format.reads(payload).get
           client.generate(options, payload).map {
@@ -188,7 +188,7 @@ class GenerateImageFunction extends WorkflowFunction {
     extension.states.imageModel(provider) match {
       case None => WorkflowError(s"image model not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getImageModelClient() match {
-        case None => WorkflowError(s"unable to instanciate client for image provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case None => WorkflowError(s"unable to instantiate client for image provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = ImageModelClientGenerationInputOptions.format.reads(payload).get
           client.generate(options, payload).map {
@@ -209,7 +209,7 @@ class ComputeEmbeddingFunction extends WorkflowFunction {
     extension.states.embeddingModel(provider) match {
       case None => WorkflowError(s"embedding model not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getEmbeddingModelClient() match {
-        case None => WorkflowError(s"unable to instanciate client for llm provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case None => WorkflowError(s"unable to instantiate client for llm provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = EmbeddingClientInputOptions.format.reads(payload).get
           client.embed(options, payload).map {
@@ -231,12 +231,19 @@ class LlmCallFunction extends WorkflowFunction {
     val extension = env.adminExtensions.extension[AiExtension].get
     extension.states.provider(provider) match {
       case None => WorkflowError(s"llm provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
-      case Some(provider) => provider.getChatClient() match {
-        case None => WorkflowError(s"unable to instanciate client for llm provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
-        case Some(client) => client.call(ChatPrompt(messages, None), TypedMap.empty, payload).map {
-          case Left(error) => WorkflowError(s"error while calling llm", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
-          case Right(response) if openai => response.openaiJson("--", env).right
-          case Right(response) => response.json(env).right
+      case Some(provider) => {
+        val inlineToolFunctions: Seq[String] = args.select("tool_functions").asOpt[Seq[String]].getOrElse(Seq.empty) ++ payload.select("tool_functions").asOpt[Seq[String]].getOrElse(Seq.empty)
+        val inlineMcpConnectors: Seq[String] = args.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty) ++ payload.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty)
+        val added: JsObject = Json.obj()
+          .applyOnIf(inlineToolFunctions.nonEmpty)(_ ++ Json.obj("tool_functions" -> inlineToolFunctions))
+          .applyOnIf(inlineMcpConnectors.nonEmpty)(_ ++ Json.obj("mcp_connectors" -> inlineMcpConnectors))
+        provider.copy(options = provider.options ++ added).getChatClient() match {
+          case None => WorkflowError(s"unable to instantiate client for llm provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+          case Some(client) => client.call(ChatPrompt(messages, None), TypedMap.empty, (payload - "tool_functions" - "mcp_connectors" - "wasm_tools")).map {
+            case Left(error) => WorkflowError(s"error while calling llm", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(response) if openai => response.openaiJson("--", env).right
+            case Right(response) => response.json(env).right
+          }
         }
       }
     }
@@ -253,7 +260,7 @@ class AudioTtsFunction extends WorkflowFunction {
     extension.states.audioModel(provider) match {
       case None => WorkflowError(s"audio provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getAudioModelClient() match {
-        case None => WorkflowError(s"unable to instanciate client for audio provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case None => WorkflowError(s"unable to instantiate client for audio provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => client.textToSpeech(AudioModelClientTextToSpeechInputOptions.format.reads(payload).get, payload).flatMap {
           case Left(error) => WorkflowError(s"error while calling audio model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).leftf
           case Right(response) if base64Encode => response._1.runFold(ByteString.empty)(_ ++ _)(env.otoroshiMaterializer).map { bs =>
@@ -279,7 +286,7 @@ class AudioSttFunction extends WorkflowFunction {
     extension.states.audioModel(provider) match {
       case None => WorkflowError(s"audio provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getAudioModelClient() match {
-        case None => WorkflowError(s"unable to instanciate client for audio provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case None => WorkflowError(s"unable to instantiate client for audio provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val bytes: ByteString = fileIn match {
             case None if base64Decode => payload.select("audio").asString.byteString.decodeBase64

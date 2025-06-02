@@ -275,7 +275,7 @@ object CohereAiChatClientOptions {
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
       tools = json.select("tools").asOpt[Seq[JsValue]],
       tool_choice = json.select("tool_choice").asOpt[Seq[JsValue]],
-      wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      wasmTools = json.select("wasm_tools").asOpt[Seq[String]].filter(_.nonEmpty).orElse(json.select("tool_functions").asOpt[Seq[String]]).getOrElse(Seq.empty),
       mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
@@ -321,7 +321,7 @@ case class CohereAiChatClientOptions(
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 
   override def topP: Float = p.map(_.toFloat).getOrElse(0.75f)
   override def topK: Int = k.getOrElse(0)

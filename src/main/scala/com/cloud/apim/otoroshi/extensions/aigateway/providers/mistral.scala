@@ -205,7 +205,7 @@ object MistralAiChatClientOptions {
       topP = json.select("topP").asOpt[Float].orElse(json.select("top_p").asOpt[Float]).getOrElse(1.0f),
       tools = json.select("tools").asOpt[Seq[JsValue]],
       tool_choice = json.select("tool_choice").asOpt[Seq[JsValue]],
-      wasmTools = json.select("wasm_tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      wasmTools = json.select("wasm_tools").asOpt[Seq[String]].filter(_.nonEmpty).orElse(json.select("tool_functions").asOpt[Seq[String]]).getOrElse(Seq.empty),
       mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
       mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
@@ -249,7 +249,7 @@ case class MistralAiChatClientOptions(
     case (obj, tc) => obj ++ Json.obj("tools" -> tc)
   }
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
 class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions, id: String) extends ChatClient {
