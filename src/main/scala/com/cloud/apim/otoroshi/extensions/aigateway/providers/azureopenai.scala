@@ -343,7 +343,7 @@ case class AzureOpenAiChatClientOptions(
     "tools" -> tools,
     "tool_choice" -> tool_choice,
     "user" -> user,
-    "wasm_tools" -> JsArray(wasmTools.map(_.json)),
+    "tool_functions" -> JsArray(wasmTools.map(_.json)),
     "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
     "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),

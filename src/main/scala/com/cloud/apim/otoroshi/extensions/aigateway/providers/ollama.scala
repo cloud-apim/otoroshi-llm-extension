@@ -248,7 +248,7 @@ case class OllamaAiChatClientOptions(
     "num_gpu" -> num_gpu,
     "num_gqa" -> num_gqa,
     "num_ctx" -> num_ctx,
-    "wasm_tools" -> JsArray(wasmTools.map(_.json)),
+    "tool_functions" -> JsArray(wasmTools.map(_.json)),
     "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
     "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),

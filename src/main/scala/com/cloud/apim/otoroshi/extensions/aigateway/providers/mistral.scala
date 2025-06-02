@@ -238,7 +238,7 @@ case class MistralAiChatClientOptions(
     "safe_prompt" -> safe_prompt,
     "temperature" -> temperature,
     "top_p" -> topP,
-    "wasm_tools" -> JsArray(wasmTools.map(_.json)),
+    "tool_functions" -> JsArray(wasmTools.map(_.json)),
     "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
     "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
