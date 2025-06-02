@@ -13,7 +13,8 @@ class AiProviderTesterMessage extends Component {
     return (
       React.createElement('div', { ref: (r) => this.ref = r, style: { display: 'flex', width: '100%', flexDirection: 'row', backgroundColor: '#616060', borderRadius: 3, marginBottom: 3, padding: 5 }},
         React.createElement('div', { style: { width: '20%', fontWeight: 'bold', color: this.props.message.error ? 'red' : 'white' }}, _.capitalize(this.props.message.role)),
-        React.createElement('p', { style: { width: '80%', marginBottom: 0 }}, content),
+        !AiProviderTesterMessage.converter ? React.createElement('p', { style: { width: '80%', marginBottom: 0 }}, content) : null,
+        AiProviderTesterMessage.converter ? React.createElement('p', { style: { width: '80%', marginBottom: 0 }, dangerouslySetInnerHTML: { __html: AiProviderTesterMessage.converter.makeHtml(content) }}) : null,
         React.createElement(
           'button',
           {
@@ -49,6 +50,23 @@ class AiProviderTester extends Component {
     calling: false,
     input: '',
     messages: [],
+  }
+  componentDidMount() {
+    if (showdown && !AiProviderTesterMessage.converter) {
+      AiProviderTesterMessage.converter = new showdown.Converter({
+        omitExtraWLInCodeBlocks: true,
+        ghCompatibleHeaderId: true,
+        parseImgDimensions: true,
+        simplifiedAutoLink: true,
+        tables: true,
+        tasklists: true,
+        requireSpaceBeforeHeadingText: true,
+        ghMentions: true,
+        emoji: true,
+        ghMentionsLink: "/{u}",
+        flavor: "github",
+      });
+    }
   }
   send = () => {
     const input = this.state.input;
@@ -103,6 +121,9 @@ class AiProviderTester extends Component {
     this.state.messages.splice(idx, 1);
     this.setState({ messages: this.state.messages });
   }
+  clear = () => {
+    this.setState({ messages: [] });
+  }
   render() {
     return [
       React.createElement('div', { className: 'row mb-3' },
@@ -136,6 +157,10 @@ class AiProviderTester extends Component {
               React.createElement('button', { type: 'button', className: 'btn btn-sm btn-success', onClick: this.send, disabled: this.state.calling },
                 React.createElement('i', { className: 'fas fa-play' }),
                 React.createElement('span', null, ' Test'),
+              ),
+              React.createElement('button', { type: 'button', className: 'btn btn-sm btn-danger', onClick: this.clear, disabled: this.state.messages.length === 0 },
+                React.createElement('i', { className: 'fas fa-trash' }),
+                React.createElement('span', null, ' Clear'),
               ),
             ),
           )

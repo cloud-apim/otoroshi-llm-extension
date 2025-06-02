@@ -607,6 +607,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    const React     = dependencies.react;
             |    const _         = dependencies.lodash;
             |    const Component = React.Component;
+            |    const showdown  = dependencies.showdown;
             |    const uuid      = dependencies.uuid;
             |    const Table     = dependencies.Components.Inputs.Table;
             |    const Form      = dependencies.Components.Inputs.Form;
