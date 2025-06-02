@@ -19,7 +19,7 @@ class AiProviderTesterMessage extends Component {
           'button',
           {
             type: 'button',
-            disabled: this.props.message.role !== 'user',
+            __disabled: this.props.message.role !== 'user',
             className: 'btn btn-sm btn-danger',
             onClick: this.deleteMessage,
           },
