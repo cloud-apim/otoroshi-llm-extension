@@ -253,17 +253,24 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
   }
 
   override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
-    if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
+    val tools_arr = body.get.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+    val tools = tools_arr.collect {
+      case tool if tool.select("type").asOptString.contains("function") => tool.select("function").asObject
+    }.map { tool =>
+      (tool.select("name").asString, tool)
+    }.toMap
+    if (tools_arr.nonEmpty) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
       stream(method, path, body).flatMap {
         case Left(err) => err.leftf
+        case Right(res) if res._2.status != 200 => Json.obj("error" -> "error while streaming response", "error_details" -> res._2.json).leftf
         case Right(res) => {
           var isToolCall = false
           var isToolCallEnded = false
           var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
           var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
           var toolCallUsage: OpenAiChatResponseChunkUsage = null
-          val newSource = res._1.flatMapConcat { chunk =>
+          val newSource: Source[OpenAiChatResponseChunk, _]  = res._1.flatMapConcat { chunk =>
             if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
               isToolCall = true
               toolCalls = chunk.choices.head.delta.head.tool_calls
@@ -294,7 +301,37 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
               val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, providerName, attrs)(ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
-                  val newMessages: Seq[JsValue] = messages ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ callResps.map { resp =>
+                    val tcs = resp.select("tool_calls").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                    if (tcs.nonEmpty) {
+                      val newTcs = tcs.map { call =>
+                        val funcOpt = call.select("function").asOpt[JsObject]
+                        if (funcOpt.isDefined) {
+                          val func = funcOpt.get
+                          val name = func.select("name").asString
+                          val arguments = func.select("arguments").asString
+                          tools.get(name) match {
+                            case None => call
+                            case Some(tool) => {
+                              val isObject = tool.select("parameters").select("type").asOptString.contains("object")
+                              val properties = tool.select("parameters").select("properties").asOpt[JsObject].getOrElse(Json.obj())
+                              val additionalProperties = tool.select("parameters").select("additionalProperties").asOptBoolean.getOrElse(false)
+                              if (isObject && properties.value.isEmpty && !additionalProperties && arguments.isBlank) {
+                                call ++ Json.obj("function" -> (func ++ Json.obj("arguments" -> "{}")))
+                              } else {
+                                call
+                              }
+                            }
+                          }
+                        } else {
+                          call
+                        }
+                      }
+                      resp.asObject ++ Json.obj("tool_calls" -> newTcs)
+                    } else {
+                      resp
+                    }
+                  }
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs)
                 }

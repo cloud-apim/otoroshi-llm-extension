@@ -66,9 +66,10 @@ case class OllamaAiChatResponseChunk(raw: JsValue) {
 
 object OllamaAiApi {
   val baseUrl = "http://localhost:11434"
+  val baseUrlOAI = s"$baseUrl/v1"
   val logger = Logger("ollama-logger")
 }
-class OllamaAiApi(baseUrl: String = OllamaAiApi.baseUrl, token: Option[String], timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[OllamaAiApiResponse, OllamaAiChatResponseChunk] {
+class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[String], val timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[OllamaAiApiResponse, OllamaAiChatResponseChunk] {
 
   override def supportsTools: Boolean = true
   override def supportsStreaming: Boolean = true
@@ -342,77 +343,86 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
   }
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
-    val finalModel: String = mergedOptions.select("model").asOptString.getOrElse(options.model)
-    val mergedOptionsWithoutModel = mergedOptions - "model"
-    api.stream("POST", "/api/chat", Some(Json.obj(
-      "model" -> finalModel,
-      "stream" -> true,
-      "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
-      "options" -> mergedOptionsWithoutModel
-    ))).map {
-      case Left(err) => err.left
-      case Right((source, resp)) =>
-        source
-          .filterNot { chunk =>
-            if (chunk.eval_count.nonEmpty) {
-              val usage = ChatResponseMetadata(
-                ChatResponseMetadataRateLimit(
-                  requestsLimit = resp.header("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
-                  requestsRemaining = resp.header("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
-                  tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
-                  tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
-                ),
-                ChatResponseMetadataUsage(
-                  promptTokens = chunk.prompt_eval_count.getOrElse(-1L),
-                  generationTokens = chunk.eval_count.getOrElse(-1L),
-                  reasoningTokens = chunk.reasoning_count.getOrElse(-1L),
-                ),
-                None
-              )
-              val duration: Long = chunk.total_duration.getOrElse(0L)
-              val slug = Json.obj(
-                "provider_kind" -> "ollama",
-                "provider" -> id,
-                "duration" -> duration,
-                "model" -> finalModel,
-                "rate_limit" -> usage.rateLimit.json,
-                "usage" -> usage.usage.json
-              ).applyOnWithOpt(usage.cache) {
-                case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
-              }
-              attrs.update(ChatClient.ApiUsageKey -> usage)
-              attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-                case Some(obj@JsObject(_)) => {
-                  val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-                  val newArr = arr ++ Seq(slug)
-                  obj ++ Json.obj("ai" -> newArr)
-                }
-                case Some(other) => other
-                case None => Json.obj("ai" -> Seq(slug))
-              }
-              true
-            } else {
-              false
-            }
-          }
-          .zipWithIndex
-          .map {
-            case (chunk, idx) =>
-              ChatResponseChunk(
-                id = chunk.created_at.sha256,
-                created = chunk.created_at_datetime.toDate.getTime / 1000,
-                model = chunk.model,
-                choices = Seq(ChatResponseChunkChoice(
-                  index = idx,
-                  delta = ChatResponseChunkChoiceDelta(
-                    chunk.message.content.some
+    val hasOtoTools = api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)
+    val hasBodyTools = originalBody.select("tools").asOpt[JsArray].isDefined
+    if (hasOtoTools || hasBodyTools) {
+      val a = new OpenAiApi(api.baseUrl + "/v1", api.token.getOrElse("token"), api.timeout, providerName = "Ollama", env = env)
+      val opts = OpenAiChatClientOptions.fromJson(options.json) // TODO: transform options here
+      val client = new OpenAiChatClient(a, opts, id, "ollama")
+      client.stream(prompt, attrs, originalBody)
+    } else {
+      val obody = originalBody.asObject - "messages" - "provider"
+      val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
+      val finalModel: String = mergedOptions.select("model").asOptString.getOrElse(options.model)
+      val mergedOptionsWithoutModel = mergedOptions - "model"
+      api.stream("POST", "/api/chat", Some(Json.obj(
+        "model" -> finalModel,
+        "stream" -> true,
+        "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
+        "options" -> mergedOptionsWithoutModel
+      ))).map {
+        case Left(err) => err.left
+        case Right((source, resp)) =>
+          source
+            .filterNot { chunk =>
+              if (chunk.eval_count.nonEmpty) {
+                val usage = ChatResponseMetadata(
+                  ChatResponseMetadataRateLimit(
+                    requestsLimit = resp.header("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+                    requestsRemaining = resp.header("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+                    tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+                    tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
                   ),
-                  finishReason = if (chunk.done) Some("stop") else None
-                ))
-              )
-          }.right
+                  ChatResponseMetadataUsage(
+                    promptTokens = chunk.prompt_eval_count.getOrElse(-1L),
+                    generationTokens = chunk.eval_count.getOrElse(-1L),
+                    reasoningTokens = chunk.reasoning_count.getOrElse(-1L),
+                  ),
+                  None
+                )
+                val duration: Long = chunk.total_duration.getOrElse(0L)
+                val slug = Json.obj(
+                  "provider_kind" -> "ollama",
+                  "provider" -> id,
+                  "duration" -> duration,
+                  "model" -> finalModel,
+                  "rate_limit" -> usage.rateLimit.json,
+                  "usage" -> usage.usage.json
+                ).applyOnWithOpt(usage.cache) {
+                  case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+                }
+                attrs.update(ChatClient.ApiUsageKey -> usage)
+                attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+                  case Some(obj@JsObject(_)) => {
+                    val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                    val newArr = arr ++ Seq(slug)
+                    obj ++ Json.obj("ai" -> newArr)
+                  }
+                  case Some(other) => other
+                  case None => Json.obj("ai" -> Seq(slug))
+                }
+                true
+              } else {
+                false
+              }
+            }
+            .zipWithIndex
+            .map {
+              case (chunk, idx) =>
+                ChatResponseChunk(
+                  id = chunk.created_at.sha256,
+                  created = chunk.created_at_datetime.toDate.getTime / 1000,
+                  model = chunk.model,
+                  choices = Seq(ChatResponseChunkChoice(
+                    index = idx,
+                    delta = ChatResponseChunkChoiceDelta(
+                      chunk.message.content.some
+                    ),
+                    finishReason = if (chunk.done) Some("stop") else None
+                  ))
+                )
+            }.right
+      }
     }
   }
 

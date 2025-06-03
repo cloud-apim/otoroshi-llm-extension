@@ -138,7 +138,7 @@ class OpenAICompatImagesGen extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the Image generation backend' plugin is available !")
+      ext.logger.info("the 'Image generation backend' plugin is available !")
     }
     ().vfuture
   }
@@ -298,7 +298,7 @@ class OpenAICompatImagesEdit extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the Image edition backend' plugin is available !")
+      ext.logger.info("the 'Image edition backend' plugin is available !")
     }
     ().vfuture
   }
