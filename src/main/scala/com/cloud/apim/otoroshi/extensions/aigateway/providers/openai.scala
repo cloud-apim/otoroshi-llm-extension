@@ -303,7 +303,7 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps.map { resp =>
                     val tcs = resp.select("tool_calls").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-                    if (tcs.nonEmpty) {
+                    if (providerName.toLowerCase() == "ollama" && tcs.nonEmpty) { // TODO: check if it's always the case ?
                       val newTcs = tcs.map { call =>
                         val funcOpt = call.select("function").asOpt[JsObject]
                         if (funcOpt.isDefined) {

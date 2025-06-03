@@ -371,7 +371,7 @@ object LlmToolFunctionBackendOptions {
               } else {
                 Json.obj("input" -> arguments)
               }
-              extension.engine.run(Node.from(workflow.config), input).map { res =>
+              extension.engine.run(Node.from(workflow.config), input, attrs).map { res =>
                 res.error match {
                   case Some(error) => Json.obj("error" -> error.json).stringify
                   case None => res.returned.getOrElse(Json.obj()).stringify

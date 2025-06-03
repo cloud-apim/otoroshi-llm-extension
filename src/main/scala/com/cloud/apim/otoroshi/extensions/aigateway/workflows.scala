@@ -160,7 +160,7 @@ class CallMcpFunctionFunction extends WorkflowFunction {
 }
 
 class CallToolFunctionFunction extends WorkflowFunction {
-  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val arguments = args.select("arguments").asOpt[JsObject].map(_.stringify)
       .orElse(args.select("arguments").asOpt[JsArray].map(_.stringify))
@@ -172,7 +172,7 @@ class CallToolFunctionFunction extends WorkflowFunction {
     extension.states.toolFunction(provider) match {
       case None => WorkflowError(s"llm provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(function) => {
-        function.call(arguments, TypedMap.empty).map { res =>
+        function.call(arguments, wfr.attrs).map { res =>
           res.json.right
         }
       }
@@ -223,7 +223,7 @@ class ComputeEmbeddingFunction extends WorkflowFunction {
 }
 
 class LlmCallFunction extends WorkflowFunction {
-  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val openai  = args.select("openai_format").asOptBoolean.getOrElse(true)
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
@@ -244,7 +244,7 @@ class LlmCallFunction extends WorkflowFunction {
           .applyOnIf(inlineMcpConnectors.nonEmpty)(_ ++ Json.obj("mcp_connectors" -> inlineMcpConnectors))
         provider.copy(options = provider.options ++ added).getChatClient() match {
           case None => WorkflowError(s"unable to instantiate client for llm provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
-          case Some(client) => client.call(ChatPrompt(messages, None), TypedMap.empty, (payload - "tool_functions" - "mcp_connectors" - "wasm_tools")).map {
+          case Some(client) => client.call(ChatPrompt(messages, None), wfr.attrs, (payload - "tool_functions" - "mcp_connectors" - "wasm_tools")).map {
             case Left(error) => WorkflowError(s"error while calling llm", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) if openai => response.openaiJson("--", env).right
             case Right(response) => response.json(env).right
