@@ -52,11 +52,12 @@ class OpenAiCompatModels extends NgBackendCall {
       }
       .collect {
         case (provider, Right(list)) => list.map { model =>
-          if (config.refs.size == 1) {
+          val res = if (config.refs.size == 1) {
             model
           } else {
             if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"
           }
+          (res, provider)
           //(model, combined)
         }
       }
@@ -68,10 +69,10 @@ class OpenAiCompatModels extends NgBackendCall {
           Results.Ok(Json.obj(
             "object" -> "list",
             "data" -> JsArray(list.map(m => Json.obj(
-              "id" -> m,
+              "id" -> m._1,
               "object" -> "model",
               "created" -> now,
-              "owned_by" -> "openai"
+              "owned_by" -> m._2.slugName,
             )))
           ))
         ), None))
