@@ -893,9 +893,19 @@ trait PersistentMemoryClient {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 case class ModerationResult(flagged: Boolean, categories: JsObject, categoryScored: JsObject) {
+  lazy val isFlagged: Boolean = {
+    if (flagged) {
+      true
+    } else {
+      categories.value.exists {
+        case (_, JsBoolean(true)) => true
+        case _ => false
+      }
+    }
+  }
   def toOpenAiJson: JsValue = {
     Json.obj(
-      "flagged" -> flagged,
+      "flagged" -> isFlagged,
       "categories" -> categories,
       "category_scores" -> categoryScored
     )

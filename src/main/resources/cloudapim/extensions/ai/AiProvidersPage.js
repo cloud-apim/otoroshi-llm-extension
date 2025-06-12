@@ -300,7 +300,7 @@ class Guardrail extends Component {
           'config.moderation_model': { type: 'select', props: {
               label: 'Moderation model',
               placeholder: 'Select a Moderation model',
-              valuesFrom: "/bo/api/proxy/apis/plugins.otoroshi.io/v1/moderation-models",
+              valuesFrom: "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/moderation-models",
               transformer: (item) => ({ label: item.name, value: item.id }),
             } },
           'config.quickjs_path': {

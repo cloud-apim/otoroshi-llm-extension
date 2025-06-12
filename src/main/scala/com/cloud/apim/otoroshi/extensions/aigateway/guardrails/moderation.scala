@@ -17,7 +17,7 @@ class ModerationGuardrail extends Guardrail {
 
   override def isAfter: Boolean = true
 
-  override def manyMessages: Boolean = false
+  override def manyMessages: Boolean = true
 
   override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val moderationModelRef = config.select("moderation_model").asString
@@ -33,7 +33,7 @@ class ModerationGuardrail extends Guardrail {
             client.moderate(opts, Json.obj()).map {
               case Left(err) => GuardrailResult.GuardrailError(err.stringify)
               case Right(res) => {
-                if (res.moderationResults.exists(_.flagged)) {
+                if (res.moderationResults.exists(_.isFlagged)) {
                   val categories: Seq[String] = res.moderationResults.flatMap(_.categories.value.collect {
                     case (key, JsBoolean(true)) => key
                   })

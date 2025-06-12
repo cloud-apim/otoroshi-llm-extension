@@ -68,7 +68,7 @@ class ModerationModelsPage extends Component {
                 selfUrl: "extensions/cloud-apim/ai-gateway/moderation-models",
                 defaultTitle: "All Moderation models",
                 defaultValue: () => ({
-                    id: 'embedding-model_' + uuid(),
+                    id: 'moderation-model_' + uuid(),
                     name: 'Moderation model',
                     description: 'An moderation model',
                     tags: [],
