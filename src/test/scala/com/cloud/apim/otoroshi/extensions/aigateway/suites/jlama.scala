@@ -7,6 +7,7 @@ import com.github.tjake.jlama.util.Downloader
 
 import java.lang.management.ManagementFactory
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.function.BiConsumer
 
 class JlamaSuite extends munit.FunSuite {
@@ -18,7 +19,6 @@ class JlamaSuite extends munit.FunSuite {
     val prompt = "What is the best season to plant avocados?"
     val localModelPath = new Downloader(workingDirectory, model).huggingFaceModel()
     val m = ModelSupport.loadModel(localModelPath, DType.F32, DType.I8)
-
     val ctx = if (m.promptSupport().isPresent()) {
       println("promptSupport")
       m.promptSupport()
@@ -35,17 +35,20 @@ class JlamaSuite extends munit.FunSuite {
       val start = System.currentTimeMillis()
       println("=========================================================")
       println(s"[$i] Start")
+      val counter = new AtomicInteger(0)
       val r = m.generate(UUID.randomUUID(), ctx, 0.8f, 500, new BiConsumer[java.lang.String, java.lang.Float] {
         override def accept(t: java.lang.String, u: java.lang.Float): Unit = {
-          println(s"on: ${t} - ${u}")
+          counter.incrementAndGet()
+          //println(s"on: ${t} - ${u}")
         }
       })
       val time = System.currentTimeMillis() - start
+      val avg = counter.get() / (time / 1000)
       println("=========================================================")
-      println(s"duration: ${time} ms.")
+      println(s"duration: ${time} ms. ${avg} tok/sec")
       println("=========================================================")
-      println(r.responseText);
-      println("=========================================================")
+      //println(r.responseText)
+      //println("=========================================================")
       println("\n\n")
     }
   }

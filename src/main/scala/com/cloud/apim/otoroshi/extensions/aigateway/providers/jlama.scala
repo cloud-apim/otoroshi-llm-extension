@@ -61,9 +61,7 @@ class JlamaChatClient(options: JlamaChatClientOptions, id: String) extends ChatC
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     if (canExecuteJlama) {
-      Future {
-        JlamaChatClient.generate(prompt, attrs, computeOptions(originalBody), id)
-      }(JlamaChatClient.ecccc)
+      JlamaChatClient.generate(prompt, attrs, computeOptions(originalBody), id)
     } else {
       Left(Json.obj("error" -> errorMsg)).vfuture
     }
@@ -79,9 +77,7 @@ class JlamaChatClient(options: JlamaChatClientOptions, id: String) extends ChatC
 
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     if (canExecuteJlama) {
-      Future {
-        JlamaChatClient.generate(prompt, attrs, computeOptions(originalBody), id)
-      }(JlamaChatClient.ecccc)
+      JlamaChatClient.generate(prompt, attrs, computeOptions(originalBody), id)
     } else {
       Left(Json.obj("error" -> errorMsg)).vfuture
     }
@@ -184,127 +180,138 @@ object JlamaChatClient {
     (mod, ctx)
   }
 
-  def generate(prompt: ChatPrompt, attrs: TypedMap, options: JlamaChatClientOptions, id: String): Either[JsValue, ChatResponse] = {
-    val (modAny, ctxAny) = getModelAndContext(prompt, attrs, options)
-    val mod = modAny.asInstanceOf[com.github.tjake.jlama.model.AbstractModel]
-    val ctx = ctxAny.asInstanceOf[com.github.tjake.jlama.safetensors.prompt.PromptContext]
-    val response = mod.generate(UUID.randomUUID(), ctx, options.temperature, options.max_completion_tokens.getOrElse(-1))
-    val usage = ChatResponseMetadata(
-      rateLimit = ChatResponseMetadataRateLimit(
-        requestsLimit = -1L,
-        requestsRemaining = -1L,
-        tokensLimit = -1L,
-        tokensRemaining = -1L
-      ),
-      usage = ChatResponseMetadataUsage(
-        promptTokens = response.promptTokens,
-        generationTokens = response.generatedTokens,
-        reasoningTokens = 0L
-      ),
-      cache = None
-    )
-    val duration: Long = response.generateTimeMs
-    val slug = Json.obj(
-      "provider_kind" -> "jlama",
-      "provider" -> id,
-      "duration" -> duration,
-      "model" -> options.model.json,
-      "rate_limit" -> usage.rateLimit.json,
-      "usage" -> usage.usage.json
-    ).applyOnWithOpt(usage.cache) {
-      case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
-    }
-    attrs.update(ChatClient.ApiUsageKey -> usage)
-    attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-      case Some(obj@JsObject(_)) => {
-        val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-        val newArr = arr ++ Seq(slug)
-        obj ++ Json.obj("ai" -> newArr)
+  def generate(prompt: ChatPrompt, attrs: TypedMap, options: JlamaChatClientOptions, id: String): Future[Either[JsValue, ChatResponse]] = {
+    Future {
+      try {
+        val (modAny, ctxAny) = getModelAndContext(prompt, attrs, options)
+        val mod = modAny.asInstanceOf[com.github.tjake.jlama.model.AbstractModel]
+        val ctx = ctxAny.asInstanceOf[com.github.tjake.jlama.safetensors.prompt.PromptContext]
+        val response = mod.generate(UUID.randomUUID(), ctx, options.temperature, options.max_completion_tokens.getOrElse(-1))
+        val usage = ChatResponseMetadata(
+          rateLimit = ChatResponseMetadataRateLimit(
+            requestsLimit = -1L,
+            requestsRemaining = -1L,
+            tokensLimit = -1L,
+            tokensRemaining = -1L
+          ),
+          usage = ChatResponseMetadataUsage(
+            promptTokens = response.promptTokens,
+            generationTokens = response.generatedTokens,
+            reasoningTokens = 0L
+          ),
+          cache = None
+        )
+        val duration: Long = response.generateTimeMs
+        val slug = Json.obj(
+          "provider_kind" -> "jlama",
+          "provider" -> id,
+          "duration" -> duration,
+          "model" -> options.model.json,
+          "rate_limit" -> usage.rateLimit.json,
+          "usage" -> usage.usage.json
+        ).applyOnWithOpt(usage.cache) {
+          case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+        }
+        attrs.update(ChatClient.ApiUsageKey -> usage)
+        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+          case Some(obj@JsObject(_)) => {
+            val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+            val newArr = arr ++ Seq(slug)
+            obj ++ Json.obj("ai" -> newArr)
+          }
+          case Some(other) => other
+          case None => Json.obj("ai" -> Seq(slug))
+        }
+        ChatResponse(
+          generations = Seq(
+            ChatGeneration(OutputChatMessage(
+              role = "assistant",
+              content = response.responseText,
+              prefix = None,
+              raw = Json.obj(
+                "message" -> Json.obj(
+                  "role" -> "assistant",
+                  "content" -> response.responseText
+                )
+              )
+            ))
+          ),
+          metadata = usage
+        ).right
+      } catch {
+        case e: Throwable => Left(Json.obj("error" -> e.getMessage))
       }
-      case Some(other) => other
-      case None => Json.obj("ai" -> Seq(slug))
-    }
-    ChatResponse(
-      generations = Seq(
-        ChatGeneration(OutputChatMessage(
-          role = "assistant",
-          content = response.responseText,
-          prefix = None,
-          raw = Json.obj(
-            "message" -> Json.obj(
-              "role" -> "assistant",
-              "content" -> response.responseText
-            )
-          )
-        ))
-      ),
-      metadata = usage
-    ).right
+    }(ecccc)
   }
 
   def stream(prompt: ChatPrompt, attrs: TypedMap, options: JlamaChatClientOptions, id: String): Either[JsValue, Source[ChatResponseChunk, _]] = {
-
-    val (modAny, ctxAny) = getModelAndContext(prompt, attrs, options)
-    val mod = modAny.asInstanceOf[com.github.tjake.jlama.model.AbstractModel]
-    val ctx = ctxAny.asInstanceOf[com.github.tjake.jlama.safetensors.prompt.PromptContext]
     val hotSource = Sinks.many().unicast().onBackpressureBuffer[ChatResponseChunk]()
     val hotFlux   = hotSource.asFlux()
+      try {
+        val (modAny, ctxAny) = getModelAndContext(prompt, attrs, options)
+        val mod = modAny.asInstanceOf[com.github.tjake.jlama.model.AbstractModel]
+        val ctx = ctxAny.asInstanceOf[com.github.tjake.jlama.safetensors.prompt.PromptContext]
+        Future {
+          val response = mod.generate(UUID.randomUUID(), ctx, options.temperature, options.max_completion_tokens.getOrElse(-1), new BiConsumer[java.lang.String, java.lang.Float] {
+            override def accept(t: java.lang.String, u: java.lang.Float): Unit = {
+              // println(s"on: ${t} - ${u}")
+              hotSource.tryEmitNext(ChatResponseChunk(
+                id = ULID.random().toLowerCase(),
+                created = System.currentTimeMillis(),
+                model = options.model,
+                choices = Seq(ChatResponseChunkChoice(
+                  index = 0,
+                  delta = ChatResponseChunkChoiceDelta(
+                    content = Some(t)
+                  ),
+                  finishReason = None
+                ))
+              ))
+            }
+          })
+          val usage = ChatResponseMetadata(
+            rateLimit = ChatResponseMetadataRateLimit(
+              requestsLimit = -1L,
+              requestsRemaining = -1L,
+              tokensLimit = -1L,
+              tokensRemaining = -1L
+            ),
+            usage = ChatResponseMetadataUsage(
+              promptTokens = response.promptTokens,
+              generationTokens = response.generatedTokens,
+              reasoningTokens = 0L
+            ),
+            cache = None
+          )
+          val duration: Long = response.generateTimeMs
+          val slug = Json.obj(
+            "provider_kind" -> "jlama",
+            "provider" -> id,
+            "duration" -> duration,
+            "model" -> options.model.json,
+            "rate_limit" -> usage.rateLimit.json,
+            "usage" -> usage.usage.json
+          ).applyOnWithOpt(usage.cache) {
+            case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+          }
+          attrs.update(ChatClient.ApiUsageKey -> usage)
+          attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+            case Some(obj@JsObject(_)) => {
+              val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+              val newArr = arr ++ Seq(slug)
+              obj ++ Json.obj("ai" -> newArr)
+            }
+            case Some(other) => other
+            case None => Json.obj("ai" -> Seq(slug))
+          }
+          hotSource.tryEmitComplete()
+        }(ecccc)
+      } catch {
+        case t: Throwable => {
+          hotSource.tryEmitError(t)
+        }
+      }
 
-    Future {
-      val response = mod.generate(UUID.randomUUID(), ctx, options.temperature, options.max_completion_tokens.getOrElse(-1), new BiConsumer[java.lang.String, java.lang.Float] {
-        override def accept(t: java.lang.String, u: java.lang.Float): Unit = {
-          println(s"on: ${t} - ${u}")
-          hotSource.tryEmitNext(ChatResponseChunk(
-            id = ULID.random().toLowerCase(),
-            created = System.currentTimeMillis(),
-            model = options.model,
-            choices = Seq(ChatResponseChunkChoice(
-              index = 0,
-              delta = ChatResponseChunkChoiceDelta(
-                content = Some(t)
-              ),
-              finishReason = None
-            ))
-          ))
-        }
-      })
-      val usage = ChatResponseMetadata(
-        rateLimit = ChatResponseMetadataRateLimit(
-          requestsLimit = -1L,
-          requestsRemaining = -1L,
-          tokensLimit = -1L,
-          tokensRemaining = -1L
-        ),
-        usage = ChatResponseMetadataUsage(
-          promptTokens = response.promptTokens,
-          generationTokens = response.generatedTokens,
-          reasoningTokens = 0L
-        ),
-        cache = None
-      )
-      val duration: Long = response.generateTimeMs
-      val slug = Json.obj(
-        "provider_kind" -> "jlama",
-        "provider" -> id,
-        "duration" -> duration,
-        "model" -> options.model.json,
-        "rate_limit" -> usage.rateLimit.json,
-        "usage" -> usage.usage.json
-      ).applyOnWithOpt(usage.cache) {
-        case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
-      }
-      attrs.update(ChatClient.ApiUsageKey -> usage)
-      attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-        case Some(obj@JsObject(_)) => {
-          val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-          val newArr = arr ++ Seq(slug)
-          obj ++ Json.obj("ai" -> newArr)
-        }
-        case Some(other) => other
-        case None => Json.obj("ai" -> Seq(slug))
-      }
-      hotSource.tryEmitComplete()
-    }(ecccc)
     Source.fromPublisher(hotFlux).right
   }
 }
