@@ -288,6 +288,10 @@ case class AiProvider(
         val opts = GroqChatClientOptions.fromJson(options)
         new GroqChatClient(api, opts, id).some
       }
+      case "jlama" => {
+        val opts = JlamaChatClientOptions.fromJson(options)
+        new JlamaChatClient(opts, id).some
+      }
       case "loadbalancer" => new LoadBalancerChatClient(this).some
       case _ => None
     }
@@ -467,6 +471,23 @@ object AiProvider {
                 "timeout" -> 3.minutes.toMillis,
               ),
               options = OVHAiEndpointsChatClientOptions().json
+            ).json
+            case Some("jlama") => AiProvider(
+              id = IdGenerator.namedId("provider", env),
+              name = "Jlama provider",
+              description = "An Jlama provider",
+              metadata = Map.empty,
+              tags = Seq.empty,
+              location = EntityLocation.default,
+              provider = "jlama",
+              connection = Json.obj(),
+              options = Json.obj(
+                "model" -> "tjake/Llama-3.2-1B-Instruct-JQ4",
+                "temperature" -> 0.5,
+                "max_completion_tokens" -> 256,
+                "kind" -> "hf",
+                "file_path" -> "./jlama-models"
+              )
             ).json
             case _ => AiProvider(
               id = IdGenerator.namedId("provider", env),

@@ -12,3 +12,4 @@ target
 node_modules
 /lib
 /logs
+/jlama-models

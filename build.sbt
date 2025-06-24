@@ -1,12 +1,14 @@
 import Dependencies.*
+import sbt.Package.ManifestAttributes
 
-ThisBuild / scalaVersion     := "2.12.13"
+ThisBuild / scalaVersion     := "2.12.18"
 ThisBuild / version          := "1.0.0-dev"
 ThisBuild / organization     := "com.cloud-apim"
 ThisBuild / organizationName := "Cloud-APIM"
 
 lazy val langchain4jVersion = "1.0.0-alpha1" //"0.34.0"
 lazy val jacksonVersion = "2.15.3"
+lazy val jlamaVersion = "0.8.4"
 lazy val jackson = Seq(
   ExclusionRule("com.fasterxml.jackson.core", "jackson-databind"),
   ExclusionRule("io.opentelemetry"),
@@ -55,17 +57,25 @@ lazy val root = (project in file("."))
       "dev.langchain4j" % "langchain4j-embeddings" % langchain4jVersion excludeAll(all: _*),
       "dev.langchain4j" % "langchain4j-embeddings-all-minilm-l6-v2" % langchain4jVersion excludeAll(all: _*),
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      "com.github.tjake" % "jlama-core" % jlamaVersion excludeAll(all: _*),
+      "com.github.tjake" % "jlama-native" % jlamaVersion excludeAll(all: _*),
+      //"com.github.tjake" % "jlama-native" % jlamaVersion classifier "linux-x86_64" classifier "osx-x86_64" classifier "osx-aarch_64" excludeAll(all: _*),
+      "com.github.tjake" % "jlama-native" % jlamaVersion classifier "linux-x86_64" classifier "osx-aarch_64" excludeAll(all: _*),
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       "io.netty" % "netty-transport-native-kqueue" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       "io.netty" % "netty-transport-native-epoll" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       munit % Test
     ),
     fork := true,
     Test / parallelExecution := false,
+    Test / javaOptions ++= Seq("--add-modules=jdk.incubator.vector", "--enable-preview"),
     assembly / test  := {},
     assembly / assemblyJarName := "otoroshi-llm-extension-assembly_2.12-dev.jar",
+    assembly / packageOptions += ManifestAttributes("Multi-Release" -> "true"),
     assembly / assemblyMergeStrategy := {
       case PathList("scala", xs @ _*) => MergeStrategy.first
       case PathList("com", "sun", "jna", xs @ _*) => MergeStrategy.first
+      case PathList("javax", "annotation", xs @ _*) => MergeStrategy.first
       case PathList(ps @ _*) if ps.contains("module-info.class") => MergeStrategy.first
       case PathList(ps @ _*) if ps.last == "FastDoubleParser-NOTICE" => MergeStrategy.first
       case PathList(ps @ _*) if ps.last == "groovy-release-info.properties" => MergeStrategy.first
@@ -75,6 +85,8 @@ lazy val root = (project in file("."))
       case PathList(ps @ _*) if ps.last == "aot.factories" => MergeStrategy.first
       case PathList(ps @ _*) if ps.last == "spring.factories" => MergeStrategy.first
       case PathList(ps @ _*) if ps.last == "okio.kotlin_module" => MergeStrategy.first
+      case PathList(ps @ _*) if ps.last == "libjlama.dylib" => MergeStrategy.first
+      case PathList(ps @ _*) if ps.last == "com.github.tjake.versions.properties" => MergeStrategy.first
       case PathList(ps @ _*) if ps.last == "org.springframework.boot.autoconfigure.AutoConfiguration.imports" => MergeStrategy.first
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value

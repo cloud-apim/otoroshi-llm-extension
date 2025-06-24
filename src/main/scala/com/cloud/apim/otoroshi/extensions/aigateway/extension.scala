@@ -19,6 +19,7 @@ import play.api.{Configuration, Logger}
 import play.api.libs.json.{JsArray, JsError, JsObject, JsSuccess, Json}
 import play.api.mvc.{RequestHeader, Result, Results}
 
+import java.lang.management.ManagementFactory
 import scala.concurrent.Future
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
@@ -189,6 +190,7 @@ class AiExtension(val env: Env) extends AdminExtension {
 
   override def start(): Unit = {
     logger.info("the 'AI - LLM Extension' is enabled !")
+    JlamaChatClient.computeCanExecuteJlama(logger.some)
     implicit val ev = env
     implicit val ec = env.otoroshiExecutionContext
     WorkflowFunctionsInitializer.initDefaults()
@@ -283,6 +285,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       }
     }).recover {
       case e: Throwable => {
+        e.printStackTrace()
         Results.Ok(Json.obj("done" -> false, "error" -> e.getMessage))
       }
     }
@@ -542,6 +545,10 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
+  def handleJlamaStatus(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
+    Results.Ok(Json.obj("can_execute" -> JlamaChatClient.canExecuteJlama, "msg" -> JlamaChatClient.errorMsg)).vfuture
+  }
+
   override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = Seq(
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
@@ -584,6 +591,12 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/extensions/cloud-apim/extensions/ai-extension/audio-models/_voices",
       wantsBody = true,
       handle = handleGenAudioVoicesFetch
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "GET",
+      path = "/extensions/cloud-apim/extensions/ai-extension/jlama/status",
+      wantsBody = false,
+      handle = handleJlamaStatus
     ),
   )
 
@@ -651,6 +664,8 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      possiblePersonalInformations: ${JsArray(LLMGuardrailsHardcodedItems.possiblePersonalInformations.map(_.json)).stringify},
             |      possibleSecretLeakage: ${JsArray(LLMGuardrailsHardcodedItems.possibleSecretLeakage.map(_.json)).stringify},
             |    };
+            |    const canExecuteJlama = ${JlamaChatClient.canExecuteJlama.toString};
+            |    const canExecuteJlamaMsg = "${JlamaChatClient.errorMsg}";
             |
             |    ${mcpConnectorsPageCode}
             |    ${embeddingModelsPageCode}

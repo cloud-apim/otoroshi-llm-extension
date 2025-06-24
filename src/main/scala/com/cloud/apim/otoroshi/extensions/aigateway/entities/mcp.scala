@@ -121,8 +121,8 @@ case class McpConnector(
   pool: McpConnectorPoolSettings = McpConnectorPoolSettings(),
   transport: McpConnectorTransport = McpConnectorTransport(),
   strict: Boolean = true,
-  includeFunctions: Seq[String],
-  excludeFunctions: Seq[String],
+  includeFunctions: Seq[String] = Seq.empty,
+  excludeFunctions: Seq[String] = Seq.empty,
 ) extends EntityLocationSupport {
   override def internalId: String = id
 

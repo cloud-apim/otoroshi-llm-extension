@@ -547,6 +547,7 @@ class AiProvidersPage extends Component {
     { 'label': 'Cloudflare', value: 'cloudflare' },
     { 'label': 'Cohere', value: 'cohere' },
     { 'label': 'Gemini', value: 'gemini' },
+    { 'label': 'JLama', value: 'jlama' },
     { 'label': 'Loadbalancer', value: 'loadbalancer' },
   ], a => a.label)
 
@@ -571,6 +572,10 @@ class AiProvidersPage extends Component {
     'provider': {
       'type': 'select',
       props: { label: ' ', possibleValues: this.providerList }
+    },
+    'provider_error': {
+      'type': 'display',
+      props: { label: '', value: canExecuteJlamaMsg }
     },
     'connection.model_name': {
       type: 'string',
@@ -616,6 +621,21 @@ class AiProvidersPage extends Component {
     'options.max_tokens': {
       type: 'string',
       props: { label: 'Max. tokens' },
+    },
+    'options.max_completion_tokens': {
+      type: 'string',
+      props: { label: 'Max. tokens' },
+    },
+    'options.kind': {
+      type: 'select',
+      props: { label: 'Kind', possibleValues: [
+        { 'label': 'Huggingface', 'value': 'hf' },
+        { 'label': 'File', 'value': 'file' },
+      ] },
+    },
+    'options.file_path': {
+      type: 'string',
+      props: { label: 'Model path' },
     },
     'options.temperature': {
       type: 'number',
@@ -1026,6 +1046,42 @@ class AiProvidersPage extends Component {
         'tags',
         'metadata',
       ];
+    }
+    if (state.provider === "jlama") {
+      return [
+        '_loc', 'id', 'name', 'description',
+        '<<<Provider',
+        'provider',
+        canExecuteJlama ? null : 'provider_error',
+        '<<<Connection options',
+        'options.model',
+        'options.max_completion_token',
+        'options.temperature',
+        'options.kind',
+        'options.file_path',
+        '>>>Connection options raw',
+        'options',
+        '>>>Context settings',
+        'context.default',
+        'context.contexts',
+        '>>>Models restriction settings',
+        'models.include',
+        'models.exclude',
+        '>>>Provider fallback',
+        'provider_fallback', '>>> Persistent memory', 'memory',
+        '>>>Cache',
+        'cache.strategy',
+        'cache.ttl',
+        state.cache.strategy === 'semantic' ? 'cache.score' : null,
+        '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
+        'guardrails',
+        '>>>Tester',
+        'tester',
+        '>>>Metadata and tags',
+        'tags',
+        'metadata',
+      ].filter(i => !!i);
     }
     if (state.provider === "mistral") {
       return [
@@ -1566,6 +1622,23 @@ class AiProvidersPage extends Component {
                   timeout: 180000,
                 },
                 options: ClientOptions.ollama,
+              });
+            } else if (state.provider === 'jlama') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'jlama',
+                connection: {},
+                options: {
+                  model: 'tjake/Llama-3.2-1B-Instruct-JQ4',
+                  temperature: 0.5,
+                  max_completion_tokens: 256,
+                  kind: "hf",
+                  file_path: './jlama-models'
+                },
               });
             } else if (state.provider === 'anthropic') {
               update({
