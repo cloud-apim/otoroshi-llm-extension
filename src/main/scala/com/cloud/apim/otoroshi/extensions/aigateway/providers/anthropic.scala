@@ -370,6 +370,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
     val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
     val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
+    val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsAnthropic(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> messages, "system" -> systemMessages)), options.mcpConnectors, attrs)
@@ -393,7 +394,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
           ),
           None
         )
-        val duration: Long = resp.headers.getIgnoreCase("anthropic-processing-ms").map(_.toLong).getOrElse(0L)
+        val duration: Long = System.currentTimeMillis() - startTime //resp.headers.getIgnoreCase("anthropic-processing-ms").map(_.toLong).getOrElse(0L)
         val slug = Json.obj(
           "provider_kind" -> "anthropic",
           "provider" -> id,
@@ -430,6 +431,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
     val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
     val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
+    val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsAnthropic(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.streamWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> messages, "system" -> systemMessages)), options.mcpConnectors, attrs)
@@ -455,7 +457,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
               ),
               None
             )
-            val duration: Long = resp.header("openai-processing-ms").map(_.toLong).getOrElse(0L)
+            val duration: Long = System.currentTimeMillis() - startTime //resp.header("openai-processing-ms").map(_.toLong).getOrElse(0L)
             val slug = Json.obj(
               "provider_kind" -> "anthropic",
               "provider" -> id,

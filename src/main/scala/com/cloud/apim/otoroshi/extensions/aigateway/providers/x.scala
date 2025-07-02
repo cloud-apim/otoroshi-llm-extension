@@ -263,6 +263,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs)
@@ -290,7 +291,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
                 ),
                 None
               )
-              val duration: Long = resp.header("xai-processing-ms").map(_.toLong).getOrElse(0L)
+              val duration: Long = System.currentTimeMillis() - startTime // resp.header("xai-processing-ms").map(_.toLong).getOrElse(0L)
               val slug = Json.obj(
                 "provider_kind" -> "x.ai",
                 "provider" -> id,
@@ -337,6 +338,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs)
@@ -360,7 +362,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
         ),
         None
       )
-      val duration: Long = resp.headers.getIgnoreCase("xai-processing-ms").map(_.toLong).getOrElse(0L)
+      val duration: Long = System.currentTimeMillis() - startTime //resp.headers.getIgnoreCase("xai-processing-ms").map(_.toLong).getOrElse(0L)
       val slug = Json.obj(
         "provider_kind" -> "x.ai",
         "provider" -> id,
@@ -404,6 +406,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val startTime = System.currentTimeMillis()
     val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
     callF.map {
       case Left(err) => err.left
@@ -422,7 +425,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
         ),
         None
       )
-      val duration: Long = resp.headers.getIgnoreCase("xai-processing-ms").map(_.toLong).getOrElse(0L)
+      val duration: Long = System.currentTimeMillis() - startTime //resp.headers.getIgnoreCase("xai-processing-ms").map(_.toLong).getOrElse(0L)
       val slug = Json.obj(
         "provider_kind" -> "x.ai",
         "provider" -> id,

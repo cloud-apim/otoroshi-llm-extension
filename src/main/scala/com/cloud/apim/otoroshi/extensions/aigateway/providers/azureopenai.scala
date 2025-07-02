@@ -374,6 +374,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs)
@@ -397,7 +398,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
         ),
         None
       )
-      val duration: Long = resp.headers.getIgnoreCase("AzureOpenAi-processing-ms").map(_.toLong).getOrElse(0L)
+      val duration: Long = System.currentTimeMillis() - startTime //resp.headers.getIgnoreCase("AzureOpenAi-processing-ms").map(_.toLong).getOrElse(0L)
       val slug = Json.obj(
         "provider_kind" -> "AzureOpenAi",
         "provider" -> id,
@@ -433,6 +434,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs)
@@ -459,7 +461,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
                 ),
                 None
               )
-              val duration: Long = resp.header("AzureOpenAi-processing-ms").map(_.toLong).getOrElse(0L)
+              val duration: Long = System.currentTimeMillis() - startTime //resp.header("AzureOpenAi-processing-ms").map(_.toLong).getOrElse(0L)
               val slug = Json.obj(
                 "provider_kind" -> "AzureOpenAi",
                 "provider" -> id,
@@ -509,6 +511,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
+    val startTime = System.currentTimeMillis()
     val callF = api.call("POST", "/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
     callF.map {
       case Left(err) => err.left
@@ -527,7 +530,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
         ),
         None
       )
-      val duration: Long = resp.headers.getIgnoreCase("AzureOpenAi-processing-ms").map(_.toLong).getOrElse(0L)
+      val duration: Long = System.currentTimeMillis() - startTime //resp.headers.getIgnoreCase("AzureOpenAi-processing-ms").map(_.toLong).getOrElse(0L)
       val slug = Json.obj(
         "provider_kind" -> "AzureOpenAi",
         "provider" -> id,

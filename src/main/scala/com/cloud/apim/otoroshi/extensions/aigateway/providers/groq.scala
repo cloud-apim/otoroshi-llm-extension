@@ -280,6 +280,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs)
@@ -303,7 +304,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
         ),
         None
       )
-      val duration: Long = resp.body.select("total_time").asOpt[Long].getOrElse(0L)
+      val duration: Long = System.currentTimeMillis() - startTime //resp.body.select("total_time").asOpt[Long].getOrElse(0L)
       val slug = Json.obj(
         "provider_kind" -> "groq",
         "provider" -> id,
@@ -337,7 +338,8 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
-    val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
+    val startTime = System.currentTimeMillis()
+      val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.streamWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs)
     } else {
@@ -363,7 +365,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
                 ),
                 None
               )
-              val duration: Long = resp.header("total_time").map(_.toLong).getOrElse(0L)
+              val duration: Long = System.currentTimeMillis() - startTime //resp.header("total_time").map(_.toLong).getOrElse(0L)
               val slug = Json.obj(
                 "provider_kind" -> "groq",
                 "provider" -> id,

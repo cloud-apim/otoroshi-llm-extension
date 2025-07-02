@@ -352,6 +352,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs)
@@ -375,7 +376,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
         ),
         None
       )
-      val duration: Long = resp.headers.getIgnoreCase("CohereAi-processing-ms").map(_.toLong).getOrElse(0L)
+      val duration: Long = System.currentTimeMillis() - startTime //resp.headers.getIgnoreCase("CohereAi-processing-ms").map(_.toLong).getOrElse(0L)
       val slug = Json.obj(
         "provider_kind" -> "cohere",
         "provider" -> id,
@@ -411,6 +412,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.streamWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))), options.mcpConnectors, attrs)
@@ -436,7 +438,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
                 ),
                 None
               )
-              val duration: Long = resp.header("cohere-processing-ms").map(_.toLong).getOrElse(0L)
+              val duration: Long = System.currentTimeMillis() - startTime //resp.header("cohere-processing-ms").map(_.toLong).getOrElse(0L)
               val slug = Json.obj(
                 "provider_kind" -> "cohere",
                 "provider" -> id,

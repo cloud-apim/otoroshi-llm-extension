@@ -281,6 +281,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
     val finalModel: String = mergedOptions.select("model").asOptString.getOrElse(options.model)
     val mergedOptionsWithoutModel = mergedOptions - "model"
+    val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(
@@ -314,7 +315,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         ),
         None
       )
-      val duration: Long = resp.body.select("total_duration").asOpt[Long].map(_ / 100000).getOrElse(-1L)
+      val duration: Long = System.currentTimeMillis() - startTime //resp.body.select("total_duration").asOpt[Long].map(_ / 100000).getOrElse(-1L)
       val slug = Json.obj(
         "provider_kind" -> "ollama",
         "provider" -> id,
@@ -345,6 +346,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val hasOtoTools = api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)
     val hasBodyTools = originalBody.select("tools").asOpt[JsArray].isDefined
+    val startTime = System.currentTimeMillis()
     if (hasOtoTools || hasBodyTools) {
       val a = new OpenAiApi(api.baseUrl + "/v1", api.token.getOrElse("token"), api.timeout, providerName = "Ollama", env = env)
       val opts = OpenAiChatClientOptions.fromJson(options.json) // TODO: transform options here
@@ -380,7 +382,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
                   ),
                   None
                 )
-                val duration: Long = chunk.total_duration.getOrElse(0L)
+                val duration: Long = System.currentTimeMillis() - startTime
                 val slug = Json.obj(
                   "provider_kind" -> "ollama",
                   "provider" -> id,

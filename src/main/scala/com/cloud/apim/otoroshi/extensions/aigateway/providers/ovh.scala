@@ -333,6 +333,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
     val body = mergedOptions ++ Json.obj("messages" -> prompt.json)
+    val startTime = System.currentTimeMillis()
     api.call(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(body)).map {
       case Left(err) => err.left
       case Right(resp) =>
@@ -351,7 +352,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
           ),
           None
         )
-        val duration: Long = resp.headers.getIgnoreCase("X-Kong-Proxy-Latency").map(_.toLong).getOrElse(0L)
+        val duration: Long = System.currentTimeMillis() - startTime // resp.headers.getIgnoreCase("X-Kong-Proxy-Latency").map(_.toLong).getOrElse(0L)
         val slug = Json.obj(
           "provider_kind" -> "ovh-ai-endpoints",
           "provider" -> id,
@@ -385,6 +386,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val startTime = System.currentTimeMillis()
     api.stream(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi)))).map {
       case Left(err) => err.left
       case Right((source, resp)) =>
@@ -405,7 +407,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
                 ),
                 None
               )
-              val duration: Long = resp.header("X-Kong-Proxy-Latency").map(_.toLong).getOrElse(0L)
+              val duration: Long = System.currentTimeMillis() - startTime // resp.header("X-Kong-Proxy-Latency").map(_.toLong).getOrElse(0L)
               val slug = Json.obj(
                 "provider_kind" -> "ovh-ai-endpoints",
                 "provider" -> id,

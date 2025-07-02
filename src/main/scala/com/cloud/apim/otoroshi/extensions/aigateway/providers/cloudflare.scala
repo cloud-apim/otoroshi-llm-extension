@@ -103,6 +103,7 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val startTime = System.currentTimeMillis()
     api.call("POST", "", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
       case Left(err) => err.left
       case Right(resp) =>
@@ -120,7 +121,7 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
           ),
           None
         )
-        val duration: Long = resp.headers.getIgnoreCase("Cloudflare-processing-ms").map(_.toLong).getOrElse(0L)
+        val duration: Long = System.currentTimeMillis() - startTime //resp.headers.getIgnoreCase("Cloudflare-processing-ms").map(_.toLong).getOrElse(0L)
         val slug = Json.obj(
           "provider_kind" -> "cloudflare",
           "provider" -> id,
