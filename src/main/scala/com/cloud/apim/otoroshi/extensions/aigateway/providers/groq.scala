@@ -279,6 +279,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs)
@@ -307,7 +308,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
         "provider_kind" -> "groq",
         "provider" -> id,
         "duration" -> duration,
-        "model" -> options.model.json,
+        "model" -> finalModel.json,
         "rate_limit" -> usage.rateLimit.json,
         "usage" -> usage.usage.json
       ).applyOnWithOpt(usage.cache) {
@@ -335,6 +336,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.streamWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs)
@@ -366,7 +368,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
                 "provider_kind" -> "groq",
                 "provider" -> id,
                 "duration" -> duration,
-                "model" -> options.model.json,
+                "model" -> finalModel.json,
                 "rate_limit" -> usage.rateLimit.json,
                 "usage" -> usage.usage.json
               ).applyOnWithOpt(usage.cache) {

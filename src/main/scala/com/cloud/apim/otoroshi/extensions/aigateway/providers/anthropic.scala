@@ -366,6 +366,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
     val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
     val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
@@ -397,7 +398,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
           "provider_kind" -> "anthropic",
           "provider" -> id,
           "duration" -> duration,
-          "model" -> options.model.json,
+          "model" -> finalModel.json,
           "rate_limit" -> usage.rateLimit.json,
           "usage" -> usage.usage.json,
         ).applyOnWithOpt(usage.cache) {
@@ -425,6 +426,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
+    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
     val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
     val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
@@ -458,7 +460,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
               "provider_kind" -> "anthropic",
               "provider" -> id,
               "duration" -> duration,
-              "model" -> options.model.json,
+              "model" -> finalModel.json,
               "rate_limit" -> usage.rateLimit.json,
               "usage" -> usage.usage.json
             ).applyOnWithOpt(usage.cache) {

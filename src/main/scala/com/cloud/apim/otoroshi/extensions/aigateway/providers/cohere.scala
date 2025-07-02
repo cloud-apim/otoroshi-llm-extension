@@ -351,6 +351,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs)
@@ -379,7 +380,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
         "provider_kind" -> "cohere",
         "provider" -> id,
         "duration" -> duration,
-        "model" -> options.model.json,
+        "model" -> finalModel.json,
         "rate_limit" -> usage.rateLimit.json,
         "usage" -> usage.usage.json
       ).applyOnWithOpt(usage.cache) {
@@ -409,6 +410,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
+    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.streamWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))), options.mcpConnectors, attrs)
@@ -439,7 +441,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
                 "provider_kind" -> "cohere",
                 "provider" -> id,
                 "duration" -> duration,
-                "model" -> options.model.json,
+                "model" -> finalModel.json,
                 "rate_limit" -> usage.rateLimit.json,
                 "usage" -> usage.usage.json
               ).applyOnWithOpt(usage.cache) {

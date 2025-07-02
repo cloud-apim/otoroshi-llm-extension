@@ -373,6 +373,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs)
@@ -401,6 +402,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
         "provider_kind" -> "AzureOpenAi",
         "provider" -> id,
         "duration" -> duration,
+        "model" -> finalModel.json,
         "deployment_id" -> api.deploymentId,
         "resource_name" -> api.resourceName,
         "rate_limit" -> usage.rateLimit.json,
@@ -430,6 +432,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs)
@@ -461,7 +464,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
                 "provider_kind" -> "AzureOpenAi",
                 "provider" -> id,
                 "duration" -> duration,
-                "model" -> model.get,
+                "model" -> finalModel.json,
                 "deployment_id" -> api.deploymentId,
                 "resource_name" -> api.resourceName,
                 "rate_limit" -> usage.rateLimit.json,
