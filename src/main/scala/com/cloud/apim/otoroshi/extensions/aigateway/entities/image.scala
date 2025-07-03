@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.ImageModelClient
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ImageModelClientDecorators
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api._
 import otoroshi.env.Env
@@ -47,7 +48,7 @@ case class ImageModel(
       _token
     }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
-    provider.toLowerCase() match {
+    val rawClient = provider.toLowerCase() match {
       case "openai" => {
         val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
         val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
@@ -84,6 +85,7 @@ case class ImageModel(
       }
       case _ => None
     }
+    rawClient.map(c => ImageModelClientDecorators(this, c, env))
   }
 }
 

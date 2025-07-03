@@ -917,16 +917,45 @@ case class ModerationResult(flagged: Boolean, categories: JsObject, categoryScor
   }
 }
 
+object ModerationResponseMetadataUsage {
+  val empty: ModerationResponseMetadataUsage = ModerationResponseMetadataUsage(
+    input = 0L, output = 0L, total = 0L
+  )
+}
+
+case class ModerationResponseMetadataUsage(input: Long, output: Long, total: Long) {
+  def toOpenAiJson: JsValue = {
+    Json.obj(
+      "total_tokens" -> total,
+      "input_tokens" -> input,
+      "output_tokens" -> output,
+    )
+  }
+}
+
+case class ModerationResponseMetadata(usage: ModerationResponseMetadataUsage, rateLimit: ChatResponseMetadataRateLimit, impacts: Option[ImpactsOutput] = None, costs: Option[CostsOutput] = None) {
+  def toOpenAiJson(env: Env): JsObject = Json.obj(
+    "usage" -> usage.toOpenAiJson,
+    "rate_limit" -> rateLimit.json,
+  ).applyOnWithOpt(impacts) {
+    case (obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(costs) {
+    case (obj, costs) => obj ++ Json.obj("costs" -> costs.json)
+  }
+}
+
+
 case class ModerationResponse(
                               model: String,
                               moderationResults: Seq[ModerationResult],
+                              metadata: ModerationResponseMetadata,
                             ) {
-  def toOpenAiJson: JsValue = {
+  def toOpenAiJson(env: Env): JsValue = {
     Json.obj(
       "results" -> moderationResults.map(_.toOpenAiJson),
       "model" -> model
     )
-  }
+  } ++ metadata.toOpenAiJson(env)
 }
 
 
@@ -957,7 +986,11 @@ object ModerationModelClientInputOptions {
 }
 
 trait ModerationModelClient {
-  def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]]
+  def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]]
+}
+
+object ModerationModelClient {
+  val ApiUsageKey = TypedKey[ModerationResponseMetadata]("otoroshi-extensions.cloud-apim.ai.llm.moderation.ApiUsage")
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1315,13 +1348,13 @@ case class ImagesGen(b64Json: Option[String], revisedPrompt: Option[String], url
   }
 }
 
-object ImagesGenResponseMetadata {
-  val empty: ImagesGenResponseMetadata = ImagesGenResponseMetadata(
+object ImagesGenResponseMetadataUsage {
+  val empty: ImagesGenResponseMetadataUsage = ImagesGenResponseMetadataUsage(
     totalTokens = 0L, tokenInput = 0L, tokenOutput = 0L, tokenText = 0L, tokenImage = 0L
   )
 }
 
-case class ImagesGenResponseMetadata(totalTokens: Long,tokenInput: Long, tokenOutput: Long, tokenText: Long, tokenImage: Long) {
+case class ImagesGenResponseMetadataUsage(totalTokens: Long,tokenInput: Long, tokenOutput: Long, tokenText: Long, tokenImage: Long) {
   def toOpenAiJson: JsValue = {
     Json.obj(
       "total_tokens" -> totalTokens,
@@ -1334,25 +1367,28 @@ case class ImagesGenResponseMetadata(totalTokens: Long,tokenInput: Long, tokenOu
     )
   }
 }
+
+case class ImagesGenResponseMetadata(usage: ImagesGenResponseMetadataUsage, rateLimit: ChatResponseMetadataRateLimit, impacts: Option[ImpactsOutput] = None, costs: Option[CostsOutput] = None) {
+  def toOpenAiJson(env: Env): JsValue = Json.obj(
+    "usage" -> usage.toOpenAiJson,
+    "rate_limit" -> rateLimit.json,
+  ).applyOnWithOpt(impacts) {
+    case (obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(costs) {
+    case (obj, costs) => obj ++ Json.obj("costs" -> costs.json)
+  }
+}
+
 case class ImagesGenResponse(
                               created: Long,
                               images: Seq[ImagesGen],
-                              metadata: Option[ImagesGenResponseMetadata],
+                              metadata: ImagesGenResponseMetadata,
                             ) {
-  def toOpenAiJson: JsValue = {
-    if(metadata.nonEmpty){
-      Json.obj(
-        "created" -> created,
-        "data" -> images.map(_.toOpenAiJson),
-        "usage" -> metadata.get.toOpenAiJson
-      )
-    }else{
-      Json.obj(
-        "created" -> created,
-        "data" -> images.map(_.toOpenAiJson)
-      )
-    }
-  }
+  def toOpenAiJson(env: Env): JsValue = Json.obj(
+    "created" -> created,
+    "data" -> images.map(_.toOpenAiJson),
+    "usage" -> metadata.toOpenAiJson(env)
+  )
 }
 
 trait ImageModelClient {

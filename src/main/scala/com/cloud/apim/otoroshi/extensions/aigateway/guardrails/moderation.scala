@@ -30,7 +30,7 @@ class ModerationGuardrail extends Guardrail {
           case Some(client) => {
             val message = messages.map(_.wholeTextContent).mkString(". ")
             val opts = ModerationModelClientInputOptions(message)
-            client.moderate(opts, Json.obj()).map {
+            client.moderate(opts, Json.obj(), attrs).map {
               case Left(err) => GuardrailResult.GuardrailError(err.stringify)
               case Right(res) => {
                 if (res.moderationResults.exists(_.isFlagged)) {

@@ -137,10 +137,10 @@ class OpenAICompatModeration extends NgBackendCall {
             case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
             case Some(client) => {
               val options = ModerationModelClientInputOptions.format.reads(jsonBody).getOrElse(ModerationModelClientInputOptions(""))
-              client.moderate(options, jsonBody).map {
+              client.moderate(options, jsonBody, ctx.attrs).map {
                 case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                 case Right(moderation) => {
-                  Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(moderation.toOpenAiJson)), None))
+                  Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(moderation.toOpenAiJson(env))), None))
                 }
               }
             }

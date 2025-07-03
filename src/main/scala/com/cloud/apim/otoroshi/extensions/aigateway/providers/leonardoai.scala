@@ -73,10 +73,25 @@ class LeonardoAIImageModelClient(val api: LeonardoAIApi, val genOptions: Leonard
 
     api.rawCall("POST", s"/generations", body.some).map { resp =>
       if (resp.status == 200) {
+        val headers = resp.headers.mapValues(_.last)
         Right(ImagesGenResponse(
           created = System.currentTimeMillis(),
           images = Seq(ImagesGen(None, None, resp.json.select("sdGenerationJob").select("generationId").asOpt[String].map(id => s"https://cloud.leonardo.ai/api/rest/v1/generations/${id}"))),
-          metadata = None
+          metadata = ImagesGenResponseMetadata(
+            rateLimit = ChatResponseMetadataRateLimit(
+              requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+              requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+              tokensLimit = headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+              tokensRemaining = headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+            ), impacts = None, costs = None,
+            usage = ImagesGenResponseMetadataUsage(
+              totalTokens = resp.json.at("usage.total_tokens").asOpt[Long].getOrElse(-1L),
+              tokenInput = resp.json.at("usage.input_tokens").asOpt[Long].getOrElse(-1L),
+              tokenOutput = resp.json.at("usage.output_tokens").asOpt[Long].getOrElse(-1L),
+              tokenText = resp.json.at("usage.input_tokens_details.text_tokens").asOpt[Long].getOrElse(-1L),
+              tokenImage = resp.json.at("usage.input_tokens_details.image_tokens").asOpt[Long].getOrElse(-1L),
+            )
+          )
         ))
       } else {
         Left(Json.obj("status" -> resp.status, "body" -> resp.json))

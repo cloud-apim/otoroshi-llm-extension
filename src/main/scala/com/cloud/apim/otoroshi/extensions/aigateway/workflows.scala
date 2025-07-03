@@ -96,7 +96,7 @@ class VectorStoreSearchFunction extends WorkflowFunction {
 }
 
 class ModerationCallFunction extends WorkflowFunction {
-  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -106,9 +106,9 @@ class ModerationCallFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instantiate client for moderation model", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = ModerationModelClientInputOptions.format.reads(payload).get
-          client.moderate(options, payload).map {
+          client.moderate(options, payload, wfr.attrs).map {
             case Left(error) => WorkflowError(s"error while calling moderation model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
-            case Right(response) => response.toOpenAiJson.right
+            case Right(response) => response.toOpenAiJson(env).right
           }
         }
       }
@@ -193,7 +193,7 @@ class GenerateImageFunction extends WorkflowFunction {
           val options = ImageModelClientGenerationInputOptions.format.reads(payload).get
           client.generate(options, payload, wfr.attrs).map {
             case Left(error) => WorkflowError(s"error while calling embedding model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
-            case Right(response) => response.toOpenAiJson.right
+            case Right(response) => response.toOpenAiJson(env).right
           }
         }
       }

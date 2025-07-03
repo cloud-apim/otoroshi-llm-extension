@@ -81,10 +81,25 @@ class HiveImageModelClient(val api: HiveApi, val genOptions: HiveImageModelClien
 
     api.rawCall("POST", s"/${finalModel}", body.some).map { resp =>
       if (resp.status == 200) {
+        val headers = resp.headers.mapValues(_.last)
         Right(ImagesGenResponse(
           created = resp.json.select("created_at").asOpt[Long].getOrElse(-1L),
           images = resp.json.select("output").as[Seq[JsObject]].map(o => ImagesGen(None, None, o.select("url").asOpt[String])),
-          metadata = None
+          metadata = ImagesGenResponseMetadata(
+            rateLimit = ChatResponseMetadataRateLimit(
+              requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+              requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+              tokensLimit = headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+              tokensRemaining = headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+            ), impacts = None, costs = None,
+            usage = ImagesGenResponseMetadataUsage(
+              totalTokens = resp.json.at("usage.total_tokens").asOpt[Long].getOrElse(-1L),
+              tokenInput = resp.json.at("usage.input_tokens").asOpt[Long].getOrElse(-1L),
+              tokenOutput = resp.json.at("usage.output_tokens").asOpt[Long].getOrElse(-1L),
+              tokenText = resp.json.at("usage.input_tokens_details.text_tokens").asOpt[Long].getOrElse(-1L),
+              tokenImage = resp.json.at("usage.input_tokens_details.image_tokens").asOpt[Long].getOrElse(-1L),
+            )
+          )
         ))
       } else {
         Left(Json.obj("status" -> resp.status, "body" -> resp.json))

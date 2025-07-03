@@ -172,7 +172,7 @@ class OpenAICompatImagesGen extends NgBackendCall {
                     val ctype = options.outputFormat.getOrElse("image/png")
                     Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(bytes).as(ctype)), None))
                   } else {
-                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(imageGen.toOpenAiJson)), None))
+                    Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(imageGen.toOpenAiJson(env))), None))
                   }
                 }
               }
@@ -355,7 +355,7 @@ class OpenAICompatImagesEdit extends NgBackendCall {
                 client.edit(options, jsonBody, ctx.attrs).map {
                   case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                   case Right(edition) => {
-                    val result = Results.Status(200).apply(edition.toOpenAiJson)
+                    val result = Results.Status(200).apply(edition.toOpenAiJson(env))
                     Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(result), None))
                   }
                 }

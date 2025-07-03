@@ -2,8 +2,8 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel, ModerationModel}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import play.api.libs.json.{JsObject, JsValue}
@@ -103,7 +103,6 @@ object ImageModelClientDecorators {
   }
 }
 
-
 trait DecoratorImageModelClient extends ImageModelClient {
 
   def imageModelClient: ImageModelClient
@@ -115,4 +114,21 @@ trait DecoratorImageModelClient extends ImageModelClient {
   override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = super.generate(opts, rawBody, attrs)
 
   override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = super.edit(opts, rawBody, attrs)
+}
+
+trait DecoratorModerationModelClient extends ModerationModelClient {
+  def moderationModelClient: ModerationModelClient
+  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = moderationModelClient.moderate(opts, rawBody, attrs)
+}
+
+object ModerationModelClientDecorators {
+  val possibleDecorators: Seq[Function[(ModerationModel, ModerationModelClient, Env), ModerationModelClient]] = Seq(
+    ModerationModelClientWithAuditing.applyIfPossible,
+  )
+
+  def apply(provider: ModerationModel, client: ModerationModelClient, env: Env): ModerationModelClient = {
+    possibleDecorators.foldLeft(client) {
+      case (client, predicate) => predicate((provider, client, env))
+    }
+  }
 }
