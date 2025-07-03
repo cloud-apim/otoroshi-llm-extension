@@ -11,6 +11,7 @@ import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
+import play.api.mvc.RequestHeader
 
 import java.nio.ByteOrder
 import java.util.Base64
@@ -747,7 +748,11 @@ object EmbeddingClientInputOptions {
 }
 
 trait EmbeddingModelClient {
-  def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]]
+  def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]]
+}
+
+object EmbeddingModelClient {
+  val ApiUsageKey = TypedKey[EmbeddingResponseMetadata]("otoroshi-extensions.cloud-apim.ai.llm.embedding.ApiUsage")
 }
 
 case class EmbeddingSearchMatch(score: Double, id: String, embedding: Embedding, embedded: String) {
@@ -958,14 +963,65 @@ trait ModerationModelClient {
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////                             Audio generation and transcription                                 ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-case class AudioTranscriptionResponse(
-                                       transcribedText: String
-                            ) {
-  def toOpenAiJson: JsValue = {
+case class AudioTranscriptionResponse(transcribedText: String, metadata: AudioTranscriptionResponseMetadata) {
+  def toOpenAiJson(env: Env): JsValue = {
     Json.obj(
-      "text" -> transcribedText
+      "text" -> transcribedText,
+    ) ++ metadata.toOpenAiJson(env)
+  }
+}
+
+case class AudioTranscriptionResponseMetadata(usage: AudioTranscriptionResponseMetadataUsage, rateLimit: ChatResponseMetadataRateLimit, impacts: Option[ImpactsOutput] = None, costs: Option[CostsOutput] = None) {
+  def toOpenAiJson(env: Env): JsObject = Json.obj(
+    "usage" -> usage.toOpenAiJson,
+    "rate_limit" -> rateLimit.json
+  ).applyOnWithOpt(impacts) {
+    case (obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(costs) {
+    case (obj, costs) => obj ++ Json.obj("costs" -> costs.json)
+  }
+}
+
+object AudioTranscriptionResponseMetadata {
+  def empty: AudioTranscriptionResponseMetadata = AudioTranscriptionResponseMetadata(
+    usage = AudioTranscriptionResponseMetadataUsage.empty,
+    rateLimit = ChatResponseMetadataRateLimit.empty,
+    impacts = None, costs = None
+  )
+  def fromOpenAiResponse(raw: JsObject, headers: Map[String, String]): AudioTranscriptionResponseMetadata = {
+    AudioTranscriptionResponseMetadata(
+      usage = AudioTranscriptionResponseMetadataUsage(
+        input = raw.select("usage").select("input_tokens").asOptLong.getOrElse(0L),
+        output = raw.select("usage").select("output_tokens").asOptLong.getOrElse(0L),
+        total = raw.select("usage").select("total_tokens").asOptLong.getOrElse(0L),
+        input_details = raw.select("usage").select("total_tokens").asOpt[Map[String, Long]].getOrElse(Map.empty),
+      ),
+      rateLimit = ChatResponseMetadataRateLimit(
+        requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+        requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+        tokensLimit = headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+        tokensRemaining = headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+      ),
+      impacts = None,
+      costs = None
     )
   }
+}
+
+object AudioTranscriptionResponseMetadataUsage {
+  val empty: AudioTranscriptionResponseMetadataUsage = AudioTranscriptionResponseMetadataUsage(
+    input = 0L, output = 0L, total = 0L, input_details = Map.empty
+  )
+}
+
+case class AudioTranscriptionResponseMetadataUsage(input: Long, output: Long, total: Long, input_details: Map[String, Long]) {
+  def toOpenAiJson: JsObject = Json.obj(
+    "type" -> "tokens",
+    "input_tokens" -> input,
+    "input_token_details" -> input_details,
+    "output_tokens" -> output,
+    "total_tokens" -> input,
+  )
 }
 
 case class AudioGenVoice(
@@ -1131,17 +1187,21 @@ trait AudioModelClient {
   def supportsStt: Boolean
   def supportsTranslation: Boolean
 
-  def translate(options: AudioModelClientTranslationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  def translate(options: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     Left(Json.obj("error" -> "audio translation not supported")).vfuture
   }
-  def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     Left(Json.obj("error" -> "speech to text not supported")).vfuture
   }
-  def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+  def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
     Left(Json.obj("error" -> "text to speech not supported")).vfuture
   }
   def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
   def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = Left(Json.obj("error" -> "voices list not supported")).vfuture
+}
+
+object AudioModelClient {
+  val ApiUsageKey = TypedKey[AudioTranscriptionResponseMetadata]("otoroshi-extensions.cloud-apim.ai.llm.audio.ApiUsage")
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

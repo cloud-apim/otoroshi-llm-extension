@@ -494,7 +494,7 @@ object OllamaEmbeddingModelClientOptions {
 
 class OllamaEmbeddingModelClient(val api: OllamaAiApi, val options: OllamaEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
 
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
     api.rawCall("POST", "/api/embed", (options.raw ++ Json.obj("input" -> opts.input)).some).map { resp =>
       if (resp.status == 200) {

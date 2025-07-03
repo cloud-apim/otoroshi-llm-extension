@@ -9,6 +9,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway._
 import dev.langchain4j.data.segment.TextSegment
 import otoroshi.env.Env
 import otoroshi.storage.drivers.inmemory.S3Configuration
+import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.Logger
 import play.api.libs.json._
@@ -28,7 +29,7 @@ class AllMiniLmL6V2EmbeddingModelClient(val options: JsObject, id: String) exten
 
   lazy val embeddingModel = new dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel()
 
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val r = embeddingModel.embedAll(seqAsJavaList(opts.input.map(s => TextSegment.from(s))))
     try {
       Right(EmbeddingResponse(

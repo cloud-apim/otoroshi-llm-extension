@@ -3,8 +3,9 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import akka.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, AudioTranscriptionResponseMetadata}
 import otoroshi.env.Env
+import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
 import play.api.libs.ws.WSResponse
@@ -96,7 +97,7 @@ class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenL
     }
   }
 
-  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
     val finalModel: String = opts.model.getOrElse(ttsOptions.model)
     val finalVoice: String = opts.voice.getOrElse(ttsOptions.voice)
     val finalFormat: String = opts.responseFormat.getOrElse(ttsOptions.format)
@@ -116,7 +117,7 @@ class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenL
     }
   }
 
-  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model).getOrElse("scribe_v1")
     val language = opts.language.orElse(sttOptions.language)
     val parts = List(
@@ -138,7 +139,7 @@ class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenL
     val form = Multipart.FormData(parts: _*)
     api.rawCallForm("POST", "/v1/speech-to-text", form).map { response =>
       if (response.status == 200) {
-        AudioTranscriptionResponse(response.json.select("text").asString).right
+        AudioTranscriptionResponse(response.json.select("text").asString, AudioTranscriptionResponseMetadata.empty).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }

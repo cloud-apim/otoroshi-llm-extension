@@ -494,7 +494,7 @@ object CohereAiEmbeddingModelClientOptions {
 
 class CohereAiEmbeddingModelClient(val api: CohereAiApi, val options: CohereAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
 
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
     api.rawCall("POST", "/v2/embed", (options.raw ++ Json.obj("texts" -> opts.input, "model" -> finalModel, "input_type" -> "classification", "embedding_types" -> Json.arr("float"))).some).map { resp =>
       if (resp.status == 200) {

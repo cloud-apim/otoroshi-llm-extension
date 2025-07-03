@@ -142,7 +142,7 @@ class OpenAICompatTextToSpeech extends NgBackendCall {
             case Some(client) if !client.supportsTts => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support text to speech"))).leftf
             case Some(client) => {
               val options = AudioModelClientTextToSpeechInputOptions.format.reads(jsonBody).getOrElse(AudioModelClientTextToSpeechInputOptions(""))
-              client.textToSpeech(options, jsonBody).map {
+              client.textToSpeech(options, jsonBody, ctx.attrs).map {
                 case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                 case Right((source, contentType)) => {
                   val result = Results.Status(200).streamed(source, None, Some(contentType))
@@ -319,7 +319,7 @@ class OpenAICompatSpeechToText extends NgBackendCall {
                       fileLength = file.fileSize,
                       fileName = file.filename.some,
                     )
-                    client.speechToText(options, jsonBody).map {
+                    client.speechToText(options, jsonBody, ctx.attrs).map {
                       case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                       case Right(transcription) => {
                         val result = Results.Status(200).apply(Json.obj(
@@ -415,7 +415,7 @@ class OpenAICompatTranslation extends NgBackendCall {
                       fileLength = file.fileSize,
                       fileName = file.filename.some,
                     )
-                    client.translate(options, jsonBody).map {
+                    client.translate(options, jsonBody, ctx.attrs).map {
                       case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                       case Right(transcription) => {
                         val result = Results.Status(200).apply(Json.obj(

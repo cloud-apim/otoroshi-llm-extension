@@ -706,7 +706,7 @@ object OpenAiEmbeddingModelClientOptions {
 
 class OpenAiEmbeddingModelClient(val api: OpenAiApi, val options: OpenAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
 
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
     api.rawCall("POST", "/embeddings", (options.raw ++ Json.obj("input" -> opts.input, "model" -> finalModel)).some).map { resp =>
       if (resp.status == 200) {
@@ -824,7 +824,7 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
     ).map(v => AudioGenVoice(v, v)).rightf
   }
 
-  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model)
     val prompt = opts.prompt.orElse(sttOptions.prompt)
     val responseFormat = opts.responseFormat.orElse(sttOptions.responseFormat)
@@ -862,14 +862,15 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
     val form = Multipart.FormData(parts: _*)
     api.rawCallForm("POST", "/audio/translations", form).map { response =>
       if (response.status == 200) {
-        AudioTranscriptionResponse(response.json.select("text").asString).right
+        val body = response.json
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
     }
   }
 
-  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
     val instructionsOpt: Option[String] = opts.instructions.orElse(ttsOptions.instructions)
     val responseFormatOpt: Option[String] = opts.responseFormat.orElse(ttsOptions.responseFormat)
     val speedOpt: Option[Double] = opts.speed.orElse(ttsOptions.speed)
@@ -896,7 +897,7 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
     }
   }
 
-  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model)
     val language = opts.language.orElse(sttOptions.language)
     val prompt = opts.prompt.orElse(sttOptions.prompt)
@@ -940,7 +941,8 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
     val form = Multipart.FormData(parts: _*)
     api.rawCallForm("POST", "/audio/transcriptions", form).map { response =>
       if (response.status == 200) {
-        AudioTranscriptionResponse(response.json.select("text").asString).right
+        val body = response.json
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }

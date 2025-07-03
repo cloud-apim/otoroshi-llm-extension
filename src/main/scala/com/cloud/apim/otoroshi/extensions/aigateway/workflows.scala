@@ -202,7 +202,7 @@ class GenerateImageFunction extends WorkflowFunction {
 }
 
 class ComputeEmbeddingFunction extends WorkflowFunction {
-  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -212,7 +212,7 @@ class ComputeEmbeddingFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instantiate client for llm provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = EmbeddingClientInputOptions.format.reads(payload).get
-          client.embed(options, payload).map {
+          client.embed(options, payload, wfr.attrs).map {
             case Left(error) => WorkflowError(s"error while calling embedding model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) => response.toOpenAiJson(options.encoding_format.getOrElse("float")).right
           }
@@ -256,7 +256,7 @@ class LlmCallFunction extends WorkflowFunction {
 }
 
 class AudioTtsFunction extends WorkflowFunction {
-  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val base64Encode = args.select("encode_base64").asOpt[Boolean].getOrElse(false)
@@ -266,7 +266,7 @@ class AudioTtsFunction extends WorkflowFunction {
       case None => WorkflowError(s"audio provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getAudioModelClient() match {
         case None => WorkflowError(s"unable to instantiate client for audio provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
-        case Some(client) => client.textToSpeech(AudioModelClientTextToSpeechInputOptions.format.reads(payload).get, payload).flatMap {
+        case Some(client) => client.textToSpeech(AudioModelClientTextToSpeechInputOptions.format.reads(payload).get, payload, wfr.attrs).flatMap {
           case Left(error) => WorkflowError(s"error while calling audio model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).leftf
           case Right(response) if base64Encode => response._1.runFold(ByteString.empty)(_ ++ _)(env.otoroshiMaterializer).map { bs =>
             Json.obj("content_type" -> response._2, "base64" -> bs.encodeBase64.utf8String).right
@@ -282,7 +282,7 @@ class AudioTtsFunction extends WorkflowFunction {
 }
 
 class AudioSttFunction extends WorkflowFunction {
-  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val base64Decode = args.select("decode_base64").asOpt[Boolean].getOrElse(false)
@@ -304,7 +304,7 @@ class AudioSttFunction extends WorkflowFunction {
             fileLength = bytes.length,
             fileName = payload.select("filename").asOptString,
           )
-          client.speechToText(options, payload).map {
+          client.speechToText(options, payload, wfr.attrs).map {
             case Left(error) => WorkflowError(s"error while calling audio model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) =>
               //println(s"transcribe: ${response.transcribedText}")

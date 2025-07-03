@@ -469,7 +469,7 @@ class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClien
     ).vfuture
   }
 
-  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model)
     val prompt = opts.prompt.orElse(sttOptions.prompt)
     val responseFormat = opts.responseFormat.orElse(sttOptions.responseFormat)
@@ -507,14 +507,15 @@ class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClien
     val form = Multipart.FormData(parts: _*)
     api.rawCallForm("POST", "/openai/v1/audio/translations", form).map { response =>
       if (response.status == 200) {
-        AudioTranscriptionResponse(response.json.select("text").asString).right
+        val body = response.json
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
     }
   }
 
-  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model)
     val language = opts.language.orElse(sttOptions.language)
     val prompt = opts.prompt.orElse(sttOptions.prompt)
@@ -558,14 +559,15 @@ class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClien
     val form = Multipart.FormData(parts: _*)
     api.rawCallForm("POST", "/openai/v1/audio/transcriptions", form).map { response =>
       if (response.status == 200) {
-        AudioTranscriptionResponse(response.json.select("text").asString).right
+        val body = response.json
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
     }
   }
 
-  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
     val instructionsOpt: Option[String] = opts.instructions.orElse(ttsOptions.instructions)
     val responseFormatOpt: Option[String] = opts.responseFormat.orElse(ttsOptions.responseFormat)
     val speedOpt: Option[Double] = opts.speed.orElse(ttsOptions.speed)

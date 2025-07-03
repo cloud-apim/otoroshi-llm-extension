@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.EmbeddingModelClient
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.EmbeddingModelClientDecorators
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api._
 import otoroshi.env.Env
@@ -46,7 +47,7 @@ case class EmbeddingModel(
       _token
     }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
-    provider.toLowerCase() match {
+    val rawClient = provider.toLowerCase() match {
       case "openai" => {
         val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
@@ -95,6 +96,7 @@ case class EmbeddingModel(
       case "all-minilm-l6-v2" => new AllMiniLmL6V2EmbeddingModelClient(options, id).some
       case _ => None
     }
+    rawClient.map(c => EmbeddingModelClientDecorators(this, c, env))
   }
 }
 

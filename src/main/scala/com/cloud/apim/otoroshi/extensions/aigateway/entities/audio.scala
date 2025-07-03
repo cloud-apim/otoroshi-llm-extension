@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.AudioModelClient
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.AudioModelClientDecorators
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api._
 import otoroshi.env.Env
@@ -55,7 +56,7 @@ case class AudioModel(
     val ttsOptions = config.select("tts").asOpt[JsObject].getOrElse(Json.obj())
     val sttOptions = config.select("stt").asOpt[JsObject].getOrElse(Json.obj())
     val translateOptions = config.select("translate").asOpt[JsObject].getOrElse(Json.obj())
-    provider.toLowerCase() match {
+    val rawClient = provider.toLowerCase() match {
       case "openai" => {
         val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
         val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
@@ -78,6 +79,7 @@ case class AudioModel(
       }
       case _ => None
     }
+    rawClient.map(c => AudioModelClientDecorators(this, c, env))
   }
 }
 

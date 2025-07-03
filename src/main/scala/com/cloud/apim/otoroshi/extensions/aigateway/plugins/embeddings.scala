@@ -137,7 +137,7 @@ class OpenAICompatEmbedding extends NgBackendCall {
             case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
             case Some(client) => {
               val options = EmbeddingClientInputOptions.format.reads(jsonBody).getOrElse(EmbeddingClientInputOptions(Seq.empty))
-              client.embed(options, jsonBody).map {
+              client.embed(options, jsonBody, ctx.attrs).map {
                 case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                 case Right(embedding) => {
                   Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(embedding.toOpenAiJson(options.encoding_format.getOrElse("float")))), None))
