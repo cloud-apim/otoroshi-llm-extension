@@ -2,8 +2,8 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel, ModerationModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities._
+import com.cloud.apim.otoroshi.extensions.aigateway._
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import play.api.libs.json.{JsObject, JsValue}
@@ -77,13 +77,10 @@ object AudioModelClientDecorators {
 }
 
 trait DecoratorAudioModelClient extends AudioModelClient {
-
   def audioModelClient: AudioModelClient
-
   override def supportsStt: Boolean = audioModelClient.supportsStt
   override def supportsTts: Boolean = audioModelClient.supportsTts
   override def supportsTranslation: Boolean = audioModelClient.supportsTranslation
-
   override def translate(options: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = audioModelClient.translate(options, rawBody, attrs)
   override def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = audioModelClient.speechToText(options, rawBody, attrs)
   override def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = audioModelClient.textToSpeech(options, rawBody, attrs)
@@ -104,15 +101,10 @@ object ImageModelClientDecorators {
 }
 
 trait DecoratorImageModelClient extends ImageModelClient {
-
   def imageModelClient: ImageModelClient
-
   override def supportsEdit: Boolean = imageModelClient.supportsEdit
-
   override def supportsGeneration: Boolean = imageModelClient.supportsGeneration
-
   override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = super.generate(opts, rawBody, attrs)
-
   override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = super.edit(opts, rawBody, attrs)
 }
 
@@ -132,3 +124,22 @@ object ModerationModelClientDecorators {
     }
   }
 }
+
+trait DecoratorVideoModelClient extends VideoModelClient {
+  def videoModelClient: VideoModelClient
+  override def supportsTextToVideo: Boolean = videoModelClient.supportsTextToVideo
+  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = videoModelClient.generate(opts, rawBody, attrs)
+}
+
+object VideosGenModelClientDecorators {
+  val possibleDecorators: Seq[Function[(VideoModel, VideoModelClient, Env), VideoModelClient]] = Seq(
+    VideoModelClientWithAuditing.applyIfPossible,
+  )
+
+  def apply(provider: VideoModel, client: VideoModelClient, env: Env): VideoModelClient = {
+    possibleDecorators.foldLeft(client) {
+      case (client, predicate) => predicate((provider, client, env))
+    }
+  }
+}
+

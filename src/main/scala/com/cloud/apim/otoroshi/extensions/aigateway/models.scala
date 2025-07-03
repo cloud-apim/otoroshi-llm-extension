@@ -1416,7 +1416,7 @@ case class VideosGen(b64Json: Option[String], revisedPrompt: Option[String], url
   }
 }
 
-case class VideosGenResponseMetadata(totalTokens: Long,tokenInput: Long, tokenOutput: Long, tokenText: Long, tokenImage: Long) {
+case class VideosGenResponseMetadataUsage(totalTokens: Long,tokenInput: Long, tokenOutput: Long, tokenText: Long, tokenImage: Long) {
   def toOpenAiJson: JsValue = {
     Json.obj(
       "total_tokens" -> totalTokens,
@@ -1429,24 +1429,29 @@ case class VideosGenResponseMetadata(totalTokens: Long,tokenInput: Long, tokenOu
     )
   }
 }
+
+case class VideosGenResponseMetadata(usage: VideosGenResponseMetadataUsage, rateLimit: ChatResponseMetadataRateLimit, impacts: Option[ImpactsOutput] = None, costs: Option[CostsOutput] = None) {
+  def toOpenAiJson(env: Env): JsObject = Json.obj(
+    "usage" -> usage.toOpenAiJson,
+    "rate_limit" -> rateLimit.json,
+  ).applyOnWithOpt(impacts) {
+    case (obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(costs) {
+    case (obj, costs) => obj ++ Json.obj("costs" -> costs.json)
+  }
+}
+
 case class VideosGenResponse(
                               created: Long,
                               videos: Seq[VideosGen],
-                              metadata: Option[VideosGenResponseMetadata],
+                              metadata: VideosGenResponseMetadata,
                             ) {
-  def toOpenAiJson: JsValue = {
-    if(metadata.nonEmpty){
-      Json.obj(
-        "created" -> created,
-        "data" -> videos.map(_.toOpenAiJson),
-        "usage" -> metadata.get.toOpenAiJson
-      )
-    }else{
-      Json.obj(
-        "created" -> created,
-        "data" -> videos.map(_.toOpenAiJson)
-      )
-    }
+  def toOpenAiJson(env: Env): JsValue = {
+    Json.obj(
+      "created" -> created,
+      "data" -> videos.map(_.toOpenAiJson),
+      "usage" -> metadata.toOpenAiJson(env)
+    )
   }
 }
 
@@ -1489,7 +1494,11 @@ object VideoModelClientTextToVideoInputOptions {
 
 trait VideoModelClient {
   def supportsTextToVideo: Boolean
-  def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]]
+  def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]]
+}
+
+object VideoModelClient {
+  val ApiUsageKey = TypedKey[VideosGenResponseMetadata]("otoroshi-extensions.cloud-apim.ai.llm.video.ApiUsage")
 }
 
 trait ChatClient {

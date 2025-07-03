@@ -138,10 +138,10 @@ class VideosGen extends NgBackendCall {
             case Some(client) if !client.supportsTextToVideo => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support text to speech"))).leftf
             case Some(client) => {
               val options = VideoModelClientTextToVideoInputOptions.format.reads(jsonBody).getOrElse(VideoModelClientTextToVideoInputOptions(""))
-              client.generate(options, jsonBody).map {
+              client.generate(options, jsonBody, ctx.attrs).map {
                 case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                 case Right(imageGen) => {
-                  Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(imageGen.toOpenAiJson)), None))
+                  Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(imageGen.toOpenAiJson(env))), None))
                 }
               }
             }

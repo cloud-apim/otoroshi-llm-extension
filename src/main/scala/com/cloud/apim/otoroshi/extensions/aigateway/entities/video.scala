@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.VideoModelClient
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.VideosGenModelClientDecorators
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api._
 import otoroshi.env.Env
@@ -46,7 +47,7 @@ case class VideoModel(
       _token
     }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
-    provider.toLowerCase() match {
+    val rawClient = provider.toLowerCase() match {
       case "luma" => {
         val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val opts = LumaVideoModelClientOptions.fromJson(options)
@@ -54,6 +55,7 @@ case class VideoModel(
       }
       case _ => None
     }
+    rawClient.map(c => VideosGenModelClientDecorators(this, c, env))
   }
 }
 
