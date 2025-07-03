@@ -588,7 +588,7 @@ class AzureOpenAiImageModelClient(val api: AzureOpenAiApi, val genOptions: Azure
   override def supportsGeneration: Boolean = genOptions.enabled
   override def supportsEdit: Boolean = false
 
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel = opts.model.orElse(genOptions.model).getOrElse("gpt-image-1")
     val finalSize: String = opts.size.orElse(genOptions.size).getOrElse("1024x1024").toLowerCase match {
       case "1024x1024" => "1024x1024"

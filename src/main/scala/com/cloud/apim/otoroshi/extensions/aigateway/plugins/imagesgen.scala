@@ -164,7 +164,7 @@ class OpenAICompatImagesGen extends NgBackendCall {
             case Some(client) if !client.supportsGeneration => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support image generation"))).leftf
             case Some(client) => {
               val options = ImageModelClientGenerationInputOptions.format.reads(jsonBody).getOrElse(ImageModelClientGenerationInputOptions(""))
-              client.generate(options, jsonBody).map {
+              client.generate(options, jsonBody, ctx.attrs).map {
                 case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                 case Right(imageGen) => {
                   if (config.decode && imageGen.images.length == 1 && imageGen.images.head.b64Json.isDefined) {
@@ -352,7 +352,7 @@ class OpenAICompatImagesEdit extends NgBackendCall {
                     length = file.fileSize,
                   )).toList
                 )
-                client.edit(options, jsonBody).map {
+                client.edit(options, jsonBody, ctx.attrs).map {
                   case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                   case Right(edition) => {
                     val result = Results.Status(200).apply(edition.toOpenAiJson)

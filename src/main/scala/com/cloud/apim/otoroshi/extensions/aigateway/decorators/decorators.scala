@@ -2,8 +2,8 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import play.api.libs.json.{JsObject, JsValue}
@@ -89,4 +89,30 @@ trait DecoratorAudioModelClient extends AudioModelClient {
   override def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = audioModelClient.textToSpeech(options, rawBody, attrs)
   override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = audioModelClient.listModels(raw)
   override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = audioModelClient.listVoices(raw)
+}
+
+object ImageModelClientDecorators {
+  val possibleDecorators: Seq[Function[(ImageModel, ImageModelClient, Env), ImageModelClient]] = Seq(
+    ImageModelClientWithAuditing.applyIfPossible,
+  )
+
+  def apply(provider: ImageModel, client: ImageModelClient, env: Env): ImageModelClient = {
+    possibleDecorators.foldLeft(client) {
+      case (client, predicate) => predicate((provider, client, env))
+    }
+  }
+}
+
+
+trait DecoratorImageModelClient extends ImageModelClient {
+
+  def imageModelClient: ImageModelClient
+
+  override def supportsEdit: Boolean = imageModelClient.supportsEdit
+
+  override def supportsGeneration: Boolean = imageModelClient.supportsGeneration
+
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = super.generate(opts, rawBody, attrs)
+
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = super.edit(opts, rawBody, attrs)
 }

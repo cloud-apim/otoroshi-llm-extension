@@ -1315,6 +1315,12 @@ case class ImagesGen(b64Json: Option[String], revisedPrompt: Option[String], url
   }
 }
 
+object ImagesGenResponseMetadata {
+  val empty: ImagesGenResponseMetadata = ImagesGenResponseMetadata(
+    totalTokens = 0L, tokenInput = 0L, tokenOutput = 0L, tokenText = 0L, tokenImage = 0L
+  )
+}
+
 case class ImagesGenResponseMetadata(totalTokens: Long,tokenInput: Long, tokenOutput: Long, tokenText: Long, tokenImage: Long) {
   def toOpenAiJson: JsValue = {
     Json.obj(
@@ -1352,8 +1358,12 @@ case class ImagesGenResponse(
 trait ImageModelClient {
   def supportsGeneration: Boolean
   def supportsEdit: Boolean
-  def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = Json.obj("error" -> "Image generation not supported").leftf
-  def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = Json.obj("error" -> "Image edition not supported").leftf
+  def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = Json.obj("error" -> "Image generation not supported").leftf
+  def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = Json.obj("error" -> "Image edition not supported").leftf
+}
+
+object ImageModelClient {
+  val ApiUsageKey = TypedKey[ImagesGenResponseMetadata]("otoroshi-extensions.cloud-apim.ai.llm.image.ApiUsage")
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

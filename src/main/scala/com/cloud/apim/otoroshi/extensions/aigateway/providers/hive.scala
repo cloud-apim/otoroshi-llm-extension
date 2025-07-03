@@ -2,6 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 import com.cloud.apim.otoroshi.extensions.aigateway._
 import otoroshi.env.Env
+import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
 import play.api.libs.ws.WSResponse
@@ -63,7 +64,7 @@ class HiveImageModelClient(val api: HiveApi, val genOptions: HiveImageModelClien
   override def supportsGeneration: Boolean = genOptions.enabled
   override def supportsEdit: Boolean = false
 
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = opts.model.orElse(genOptions.model).getOrElse("black-forest-labs/flux-schnell")
     val body = Json.obj(
         "prompt" -> opts.prompt,

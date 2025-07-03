@@ -513,7 +513,7 @@ class XAiImageModelClient(val api: XAiApi, val genOptions: XAiImageModelClientOp
   override def supportsGeneration: Boolean = genOptions.enabled
   override def supportsEdit: Boolean = false
 
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = opts.model.orElse(genOptions.model).getOrElse("grok-2-image")
     val body = Json.obj(
         "prompt" -> opts.prompt,

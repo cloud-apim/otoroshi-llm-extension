@@ -991,7 +991,7 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
   override def supportsGeneration: Boolean = genOptions.enabled
   override def supportsEdit: Boolean = editOptions.enabled
 
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel = opts.model.orElse(genOptions.model).getOrElse("gpt-image-1")
     val body = Json.obj(
         "prompt" -> opts.prompt,
@@ -1034,7 +1034,7 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
   }
 
 
-  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel = opts.model.orElse(editOptions.model).getOrElse("gpt-image-1")
     val model = finalModel
     val background = opts.background.orElse(editOptions.background)
