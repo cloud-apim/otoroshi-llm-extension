@@ -41,6 +41,14 @@ case class CostModel(name: String, raw: JsValue) {
   lazy val input_cost_per_token_batches = raw.select("input_cost_per_token_batches").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val output_cost_per_token_batches = raw.select("output_cost_per_token_batches").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val litellm_provider = raw.select("litellm_provider").asOptString.orElse(raw.select("provider").asOptString).getOrElse("openai")
+  lazy val nameWithoutProvider: String = {
+    if (name.startsWith(s"${litellm_provider}/")) {
+      val v = name.replaceFirst(s"${litellm_provider}/", "")
+      v
+    } else {
+      name
+    }
+  }
   lazy val mode = raw.select("mode").asOptString.getOrElse("completion")
   lazy val deprecation_date = raw.select("deprecation_date").asOpt[String]
   lazy val supports_function_calling = raw.select("supports_function_calling").asOptBoolean.getOrElse(false)
@@ -73,21 +81,21 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
     val json = Json.parse(getResourceCode("data/ltllm-prices.json")).asObject
     json.value.filterNot(_._1 == "sample_spec").map {
       case (name, obj) => CostModel(name, obj)
-    }.map(c => (s"${c.litellm_provider}-${c.name}", c)).toMap
+    }.map(c => (s"${c.litellm_provider}-${c.nameWithoutProvider}", c)).toMap
   }
 
   val customModels: Map[String, CostModel] = {
     val json = Json.parse(getResourceCode("data/custom-ltllm-prices.json")).asObject
     json.value.filterNot(_._1 == "sample_spec").map {
       case (name, obj) => CostModel(name, obj)
-    }.map(c => (s"${c.litellm_provider}-${c.name}", c)).toMap
+    }.map(c => (s"${c.litellm_provider}-${c.nameWithoutProvider}", c)).toMap
   }
 
   val userProvidedModels: Map[String, CostModel] = {
     val json = settings.configuration.getOptional[String]("custom-prices").getOrElse("{}").parseJson.asObject
     json.value.filterNot(_._1 == "sample_spec").map {
       case (name, obj) => CostModel(name, obj)
-    }.map(c => (s"${c.litellm_provider}-${c.name}", c)).toMap
+    }.map(c => (s"${c.litellm_provider}-${c.nameWithoutProvider}", c)).toMap
   }
 
   val models: Map[String, CostModel] = litllmModels ++ customModels ++ userProvidedModels
@@ -114,7 +122,7 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
     models.get(s"${provider}-${modelName}") match {
       case None => Left("model not found")
       case Some(model) => {
-        // println(s"using cost model ${model.litellm_provider} - ${model.name}")
+        // println(s"using cost model ${model.litellm_provider} - ${model.nameWithoutProvider}")
         Right(CostsOutput(
           inputCost = inputTokens * model.input_cost_per_token,
           outputCost = outputTokens * model.output_cost_per_token,

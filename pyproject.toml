@@ -5,8 +5,8 @@ description = "AConnect, setup, secure and seamlessly manage LLM models using an
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "ecologits>=0.6.3",
-    "litellm>=1.69.2",
+    "ecologits>=0.7.1",
+    "litellm>=1.73.6",
 ]
 
 [tool.uv.workspace]

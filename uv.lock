@@ -150,7 +150,7 @@ wheels = [
 
 [[package]]
 name = "ecologits"
-version = "0.6.3"
+version = "0.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -160,9 +160,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f7/c8/2cc3b6600ac25366f317da4d0ba6e682e41aa6d1732e7317c3d6ada5ba02/ecologits-0.6.3.tar.gz", hash = "sha256:6ecee491175212d9b933e79d8d65c8f8ce6c812a160fe3941a2ededa1f97eade", size = 31841, upload-time = "2025-04-04T16:00:20.627Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/9f/6a4a8adf6749457ca8b6517f37077bdfcdd743cea85307d1955ff27c32ee/ecologits-0.7.1.tar.gz", hash = "sha256:6253e2949906b881c5277b9b45325e49ba6f7c0d405fb1e1ea69d5e59dbe6592", size = 33009, upload-time = "2025-06-02T18:47:46.649Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/cd/5a56c0c9b30855bb2231b82e4521706d7de19aef0284012bbdbe4f4ded92/ecologits-0.6.3-py3-none-any.whl", hash = "sha256:6e269b369b2f6f3980ab20c0ae50c2135171f0e05095ac7c5bfc56641d3ae056", size = 39651, upload-time = "2025-04-04T16:00:19.584Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/e3/b6328320b657c41b569dec664ba6ae5d7be73a77091c21d3c87ad0576790/ecologits-0.7.1-py3-none-any.whl", hash = "sha256:d7f8e0d28e00e6850ace6e2d10c1ade1965dd2d89429a3842f5a991a494db568", size = 42159, upload-time = "2025-06-02T18:47:45.602Z" },
 ]
 
 [[package]]
@@ -366,7 +366,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.69.2"
+version = "1.73.6.post1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -381,9 +381,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/73/4d/61d957f001f61854ac2934bc88863882a8d6caf81c0218b2e539f7481b64/litellm-1.69.2.tar.gz", hash = "sha256:4be5748f8cf5263bd3db6ca9814b2b7cba68f423c52779c9def2e39568743e1a", size = 7384542, upload-time = "2025-05-13T19:23:22.177Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b4/99/889207aa89037da4cb381201918e91b6ab74088d401f9a1b8cfd7b5a48e9/litellm-1.73.6.post1.tar.gz", hash = "sha256:cc221818f572fdd64d22b89fa35e6153bfb4f0f755b68eec7da3542767e6a934", size = 8898978, upload-time = "2025-07-04T00:34:43.73Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/48/7f713426ce831bf4ac1e97c0293da0b92f045a3ac2a462692ba55fdc6dd7/litellm-1.69.2-py3-none-any.whl", hash = "sha256:dac2e7203ddee82631230f9186eebe1db756d3c05b61166b77abc5c7e333615e", size = 7727969, upload-time = "2025-05-13T19:23:18.556Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/34/0068ea25da50072d4f36a78299395afa3b3ed1c475be925fe33f8296c977/litellm-1.73.6.post1-py3-none-any.whl", hash = "sha256:c7a9ac5be16e176a8005e9196446b5c0ead0f08436c12a80920734ce6fa604d4", size = 8467486, upload-time = "2025-07-04T00:34:40.685Z" },
 ]
 
 [[package]]
@@ -487,8 +487,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ecologits", specifier = ">=0.6.3" },
-    { name = "litellm", specifier = ">=1.69.2" },
+    { name = "ecologits", specifier = ">=0.7.1" },
+    { name = "litellm", specifier = ">=1.73.6" },
 ]
 
 [[package]]
