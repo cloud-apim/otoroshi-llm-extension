@@ -35,7 +35,7 @@ lazy val root = (project in file("."))
       "spring-snapshots" at "https://repo.spring.io/snapshot"  
     ),
     libraryDependencies ++= Seq(
-      "fr.maif" %% "otoroshi" % "17.3.0" % "provided" excludeAll (netty: _*),
+      "fr.maif" %% "otoroshi" % "17.4.0" % "provided" excludeAll (netty: _*),
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
       "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
