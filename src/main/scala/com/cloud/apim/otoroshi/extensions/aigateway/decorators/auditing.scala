@@ -43,6 +43,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
+            "provider_kind" -> originalProvider.provider.toLowerCase,
             "consumed_using" -> "chat/completion/blocking",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -59,6 +60,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
               "error" -> err,
+              "provider_kind" -> originalProvider.provider.toLowerCase,
               "consumed_using" -> "chat/completion/blocking",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -108,6 +110,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
+            "provider_kind" -> originalProvider.provider.toLowerCase,
             "consumed_using" -> "chat/completion/streaming",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -125,6 +128,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
               "error" -> err,
+              "provider_kind" -> originalProvider.provider.toLowerCase,
               "consumed_using" -> "chat/completion/streaming",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -199,6 +203,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
+            "provider_kind" -> originalProvider.provider.toLowerCase,
             "consumed_using" -> "completion/blocking",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -215,6 +220,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
               "error" -> err,
+              "provider_kind" -> originalProvider.provider.toLowerCase,
               "consumed_using" -> "completion/blocking",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -263,6 +269,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
+            "provider_kind" -> originalProvider.provider.toLowerCase,
             "consumed_using" -> "completion/streaming",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -279,6 +286,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
               "error" -> err,
+              "provider_kind" -> originalProvider.provider.toLowerCase,
               "consumed_using" -> "completion/streaming",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
               "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -410,6 +418,7 @@ class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embedd
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "embedding_model/embedding",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -424,6 +433,7 @@ class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embedd
         AuditEvent.generic("LLMUsageAudit") {
           Json.obj(
             "error" -> err,
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "embedding_model/embedding",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -496,6 +506,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "audio_model/translate",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -510,6 +521,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
         AuditEvent.generic("LLMUsageAudit") {
           Json.obj(
             "error" -> err,
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "audio_model/translate",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -573,6 +585,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "audio_model/stt",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -587,6 +600,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
         AuditEvent.generic("LLMUsageAudit") {
           Json.obj(
             "error" -> err,
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "audio_model/stt",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -662,6 +676,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "image_model/edit",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -676,6 +691,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
         AuditEvent.generic("LLMUsageAudit") {
           Json.obj(
             "error" -> err,
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "image_model/edit",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -739,6 +755,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "image_model/generate",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -753,6 +770,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
         AuditEvent.generic("LLMUsageAudit") {
           Json.obj(
             "error" -> err,
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "image_model/generate",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -825,6 +843,7 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "moderation_model/moderate",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -839,6 +858,7 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
         AuditEvent.generic("LLMUsageAudit") {
           Json.obj(
             "error" -> err,
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "moderation_model/moderate",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -912,6 +932,7 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
             "error" -> Json.obj(
               "exception" -> exception.getMessage
             ),
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "video_model/generate",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
@@ -926,6 +947,7 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
         AuditEvent.generic("LLMUsageAudit") {
           Json.obj(
             "error" -> err,
+            "provider_kind" -> originalModel.provider.toLowerCase,
             "consumed_using" -> "video_model/generate",
             "user" -> user.map(_.json).getOrElse(JsNull).asValue,
             "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
