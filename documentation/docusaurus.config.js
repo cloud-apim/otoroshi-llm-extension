@@ -10,7 +10,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 const config = {
   title: 'Otoroshi LLM Extension',
   tagline: 'A set of Otoroshi plugins to interact with LLMs',
-  favicon: 'img/otoroshi-llm-extension-logo.png',
+  favicon: 'img/otoroshi-llm-extension-logo-no-bg-no-text.png',
 
   // Set the production url of your site here
   url: 'https://cloud-apim.github.io',
@@ -58,7 +58,7 @@ const config = {
         title: 'Otoroshi LLM Extension',
         logo: {
           alt: 'otoroshi-llm-extension Logo',
-          src: 'img/otoroshi-llm-extension-logo.png',
+          src: 'img/otoroshi-llm-extension-logo-no-bg-no-text.png',
         },
         items: [
           {

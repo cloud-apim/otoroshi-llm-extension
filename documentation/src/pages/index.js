@@ -16,7 +16,7 @@ function HomepageHeader() {
           {siteConfig.title}
         </Heading>
         <p className="hero__subtitle">{siteConfig.tagline}</p>
-        <img src={require('@site/static/img/otoroshi-llm-extension-logo.png').default} style={{ width: 250 }} />
+        <img src={require('@site/static/img/otoroshi-llm-extension-logo-no-bg-no-text.png').default} style={{ width: 250 }} />
         <div className={styles.buttons}>
           <a
             className="button button--secondary button--lg"

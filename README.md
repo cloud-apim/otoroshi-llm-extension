@@ -19,6 +19,8 @@
 
 Otoroshi LLM Extension is set of [Otoroshi](https://github.com/MAIF/otoroshi) plugins and resources to interact with LLMs. To know more about it, go to [documentation](https://cloud-apim.github.io/otoroshi-llm-extension/)
 
+![](/logo.png)
+
 ## Supported LLM providers
 
 All supported providers are available [here](https://cloud-apim.github.io/otoroshi-llm-extension/docs/providers/providers-list)
