@@ -363,7 +363,7 @@ object LlmToolFunctionBackendOptions {
         case None => "error, no workflow ref".vfuture
         case Some(ref) => {
           val extension = env.adminExtensions.extension[WorkflowAdminExtension].get
-          WorkflowHelper.getWorkflow(extension, ref) match {
+          extension.workflow(ref) match {
             case None => "error, workflow not found".vfuture
             case Some(workflow) => {
               val input: JsObject = if (arguments.startsWith("{")) {
@@ -371,7 +371,7 @@ object LlmToolFunctionBackendOptions {
               } else {
                 Json.obj("input" -> arguments)
               }
-              extension.engine.run(Node.from(workflow.config), input, attrs).map { res =>
+              extension.engine.run(ref, Node.from(workflow.config), input, attrs, workflow.functions).map { res =>
                 res.error match {
                   case Some(error) => Json.obj("error" -> error.json).stringify
                   case None => res.returned.getOrElse(Json.obj()).stringify
