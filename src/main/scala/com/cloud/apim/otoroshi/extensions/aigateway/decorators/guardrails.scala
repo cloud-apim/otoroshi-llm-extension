@@ -29,6 +29,7 @@ object Guardrails {
     }
     override def writes(o: Guardrails): JsValue = JsArray(o.items.map(_.json))
   }
+  def get(name: String): Option[Guardrail] = possibleGuardrails.get(name)
   val possibleGuardrails: Map[String, Guardrail] = Map(
     "regex" -> new RegexGuardrail(),
     "webhook" -> new WebhookGuardrail(),
@@ -86,7 +87,7 @@ case class Guardrails(items: Seq[GuardrailItem]) {
     def nextMessage(seq: Seq[ChatMessage], guardrail: Guardrail, config: JsObject): Future[GuardrailResult] = {
       if (seq.nonEmpty) {
         val head = seq.head
-        guardrail.pass(Seq(head), config, originalProvider, chatClient, attrs).andThen {
+        guardrail.pass(Seq(head), config, originalProvider.some, chatClient.some, attrs).andThen {
           case Success(GuardrailResult.GuardrailPass) => nextMessage(seq.tail, guardrail, config)
           case Success(GuardrailResult.GuardrailDenied(err)) => GuardrailResult.GuardrailDenied(err).vfuture
           case Failure(e) => GuardrailResult.GuardrailDenied(e.getMessage).vfuture
@@ -100,7 +101,7 @@ case class Guardrails(items: Seq[GuardrailItem]) {
       if (seq.nonEmpty) {
         val head = seq.head
         if (head._2.manyMessages) {
-          head._2.pass(messages, head._1.config, originalProvider, chatClient, attrs).andThen {
+          head._2.pass(messages, head._1.config, originalProvider.some, chatClient.some, attrs).andThen {
             case Success(GuardrailResult.GuardrailPass) => nextGuardrail(seq.tail)
             case Success(GuardrailResult.GuardrailDenied(msg)) => GuardrailResult.GuardrailDenied(msg).vfuture
             case Success(GuardrailResult.GuardrailError(err)) => GuardrailResult.GuardrailError(err).vfuture
@@ -173,7 +174,7 @@ trait Guardrail {
   def isBefore: Boolean
   def isAfter: Boolean
   def manyMessages: Boolean
-  def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult]
+  def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult]
 }
 
 class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {

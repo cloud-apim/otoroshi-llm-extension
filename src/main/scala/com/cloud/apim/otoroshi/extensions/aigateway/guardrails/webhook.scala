@@ -31,7 +31,7 @@ class WebhookGuardrail extends Guardrail {
 
   override def manyMessages: Boolean = true
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val key = messages.map(m => s"${m.role}:${m.wholeTextContent}").mkString(",").sha512
     val httpValidation = HttpValidationSettings.format.reads(config).getOrElse(HttpValidationSettings())
     httpValidation.url match {

@@ -20,7 +20,7 @@ class ContainsGuardrail extends Guardrail {
 
   override def manyMessages: Boolean = false
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val matchAllConversation = false //config.select("match_all_conversation").asOpt[Boolean].getOrElse(false)
     val operation = config.select("operation").asOpt[String].getOrElse("contains_all")
     val values = config.select("values").asOpt[Seq[String]].getOrElse(Seq.empty)
@@ -42,7 +42,7 @@ class SemanticContainsGuardrail extends Guardrail {
 
   override def manyMessages: Boolean = false
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = env.metrics.withTimer("semantic_contains") {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = env.metrics.withTimer("semantic_contains") {
     val operation = config.select("operation").asOpt[String].getOrElse("contains_all")
     val values = config.select("values").asOpt[Seq[String]].getOrElse(Seq.empty)
     val score = config.select("score").asOpt[Double].orElse(config.select("score").asOpt[String].map(_.toDouble)).getOrElse(0.8)
@@ -85,7 +85,7 @@ class CharactersCountGuardrail extends Guardrail {
 
   override def manyMessages: Boolean = false
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val message = messages.head
     val min = config.select("min").asOpt[Long].getOrElse(0L)
     val max = config.select("max").asOpt[Long].getOrElse(Long.MaxValue)
@@ -107,7 +107,7 @@ class WordsCountGuardrail extends Guardrail {
 
   override def manyMessages: Boolean = false
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val message = messages.head
     val min = config.select("min").asOpt[Long].getOrElse(0L)
     val max = config.select("max").asOpt[Long].getOrElse(Long.MaxValue)
@@ -129,7 +129,7 @@ class SentencesCountGuardrail extends Guardrail {
 
   override def manyMessages: Boolean = false
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val message = messages.head
     val min = config.select("min").asOpt[Long].getOrElse(0L)
     val max = config.select("max").asOpt[Long].getOrElse(Long.MaxValue)

@@ -19,7 +19,7 @@ class ModerationGuardrail extends Guardrail {
 
   override def manyMessages: Boolean = true
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val moderationModelRef = config.select("moderation_model").asString
     val ext = env.adminExtensions.extension[AiExtension].get
     ext.states.moderationModel(moderationModelRef) match {

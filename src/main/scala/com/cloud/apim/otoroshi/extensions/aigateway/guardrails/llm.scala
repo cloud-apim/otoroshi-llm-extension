@@ -23,11 +23,11 @@ class LLMGuardrail extends Guardrail {
 
   def fail(idx: Int): Future[GuardrailResult] = GuardrailResult.GuardrailDenied(s"request content did not pass llm validation (${idx})").vfuture
 
-  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val llmValidation = LlmValidationSettings.format.reads(config).getOrElse(LlmValidationSettings())
     llmValidation.provider match {
       case None => pass()
-      case Some(ref) if ref == provider.id => pass()
+      case Some(ref) if provider.isDefined && ref == provider.get.id => pass()
       case Some(ref) => {
         llmValidation.prompt match {
           case None => pass()

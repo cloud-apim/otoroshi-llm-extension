@@ -8,7 +8,7 @@ import io.otoroshi.wasm4s.scaladsl.{ResultsWrapper, WasmFunctionParameters}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
-import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
+import play.api.libs.json.{JsArray, JsNull, JsObject, JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -53,7 +53,7 @@ class WasmGuardrail extends Guardrail {
 
   override def manyMessages: Boolean = true
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val wasmPlugin: Option[String] = config.select("wasmPlugin").asOpt[String].orElse(config.select("plugin_ref").asOpt[String]).filter(_.trim.nonEmpty)
     wasmPlugin match {
       case None => GuardrailResult.GuardrailError("error, not wasm plugin ref").vfuture
@@ -73,7 +73,7 @@ class WasmGuardrail extends Guardrail {
                     plugin.config.functionName.orElse(localconfig.functionName).getOrElse("guardrail_call"),
                     Json.obj(
                       "config" -> config,
-                      "provider" -> provider.json,
+                      "provider" -> provider.map(_.json).getOrElse(JsNull).asValue,
                       "attrs" -> attrs.json,
                       "messages" -> JsArray(arr),
                     ).stringify
@@ -112,7 +112,7 @@ class QuickJsGuardrail extends Guardrail {
        |""".stripMargin.vfuture
   }
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val jsPath: Option[String] = config.select("jsPath").asOpt[String].orElse(config.select("quickjs_path").asOpt[String]).filter(_.trim.nonEmpty)
     jsPath match {
       case None => GuardrailResult.GuardrailError("error, not wasm plugin ref").vfuture
@@ -132,7 +132,7 @@ class QuickJsGuardrail extends Guardrail {
                     "code" -> code,
                     "arguments" -> Json.obj(
                       "config" -> config,
-                      "provider" -> provider.json,
+                      "provider" -> provider.map(_.json).getOrElse(JsNull).asValue,
                       "attrs" -> attrs.json,
                       "messages" -> JsArray(arr),
                     ),

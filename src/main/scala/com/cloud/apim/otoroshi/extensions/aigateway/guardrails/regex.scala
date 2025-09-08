@@ -24,7 +24,7 @@ class RegexGuardrail extends Guardrail {
     !denied && allowed
   }
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val allow = config.select("allow").asOpt[Seq[String]].getOrElse(Seq.empty)
     val deny = config.select("deny").asOpt[Seq[String]].getOrElse(Seq.empty)
 

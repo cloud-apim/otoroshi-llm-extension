@@ -250,11 +250,11 @@ abstract class HardCodedLLMGuardrail extends Guardrail {
     GuardrailResult.GuardrailDenied(msg).vfuture
   }
 
-  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val llmValidation = LlmValidationSettings.format.reads(config).getOrElse(LlmValidationSettings())
     llmValidation.provider match {
       case None => pass()
-      case Some(ref) if ref == provider.id => pass()
+      case Some(ref) if provider.isDefined && ref == provider.get.id => pass()
       case Some(ref) => {
         env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(ref).flatMap(_.getChatClient())) match {
           case None => GuardrailResult.GuardrailDenied("validation provider not found").vfuture

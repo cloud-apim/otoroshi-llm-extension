@@ -250,6 +250,13 @@ trait ChatMessage {
 }
 
 object ChatMessage {
+  def inputJson(raw: JsObject): InputChatMessage = {
+    val role = raw.select("role").asOpt[String].getOrElse("user")
+    val content = raw.select("content").asOpt[String].getOrElse("")
+    val prefix = raw.select("prefix").asOpt[Boolean]
+    val name = raw.select("name").asOpt[String]
+    InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, name, raw)
+  }
   def input(role: String, content: String, prefix: Option[Boolean], raw: JsObject): InputChatMessage = {
     InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None, raw)
   }
@@ -821,7 +828,7 @@ object EmbeddingSearchOptions {
       EmbeddingSearchOptions(
         embedding = Embedding(json.select("embedding").select("vector").as[Array[Float]]),
         maxResults = json.select("max_results").asOpt[Int].getOrElse(10),
-        minScore = json.select("minScore").asOpt[Double].getOrElse(0.9),
+        minScore = json.select("min_score").asOpt[Double].getOrElse(0.9),
       )
     } match {
       case Failure(e) => JsError(e.getMessage)

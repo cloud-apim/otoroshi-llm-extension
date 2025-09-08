@@ -2,6 +2,8 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 
 import akka.stream.scaladsl.FileIO
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.GuardrailResult.GuardrailPass
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailResult, Guardrails}
 import otoroshi.env.Env
 import otoroshi.next.workflow._
 import otoroshi.utils.TypedMap
@@ -18,21 +20,153 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.llm_call", new LlmCallFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.audio_tts", new AudioTtsFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.audio_stt", new AudioSttFunction())
-    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.embedding_compute", new ComputeEmbeddingFunction())
-    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.image_generate", new GenerateImageFunction())
-    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.video_generate", new GenerateVideoFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.compute_embedding", new ComputeEmbeddingFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.generate_image", new GenerateImageFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.generate_video", new GenerateVideoFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.tool_function_call", new CallToolFunctionFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.mcp_function_call", new CallMcpFunctionFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.moderation_call", new ModerationCallFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.guardrail_call", new GuardrailCallFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_add", new VectorStoreAddFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_remove", new VectorStoreRemoveFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_search", new VectorStoreSearchFunction())
     // text chunking ;)
+  }
+}
 
+class GuardrailCallFunction extends WorkflowFunction {
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.guardrail_call"
+  override def documentationDisplayName: String            = "Guardrail call"
+  override def documentationIcon: String                   = "fas fa-shield-check"
+  override def documentationDescription: String            = "This function calls a guardrail provider to validate the input"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("kind", "config", "input"),
+    "properties" -> Json.obj(
+      "kind" -> Json.obj("type" -> "string", "description" -> "The guardrail kind"),
+      "config"  -> Json.obj(
+        "type" -> "object",
+        "description" -> "The guardrail config",
+      ),
+      "input" -> Json.obj("type" -> "string", "description" -> "The input to validate"),
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "kind" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Guardrail kind",
+      "props" -> Json.obj(
+        "description" -> "The guardrail kind"
+      )
+    ),
+    "payload"  -> Json.obj(
+      "type"  -> "code",
+      "props" -> Json.obj(
+        "description" -> "The payload object",
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = None
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "guardrail_call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.guardrail_call",
+    "args" -> Json.obj(
+      "kind" -> "regex",
+      "config" -> Json.obj(
+        "deny" -> Json.arr(".*bye.*")
+      ),
+      "input" -> "Hello there !",
+    )
+  ))
+
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    val kind = args.select("kind").asString
+    val config = args.select("config").asOpt[JsObject].getOrElse(Json.obj())
+    val messages: Seq[ChatMessage] = args.select("input").asOptString match {
+      case None => args.select("input").asOpt[JsObject] match {
+        case None => args.select("input").asOpt[Seq[JsObject]] match {
+          case None => Seq.empty
+          case Some(arr) => arr.map(m => ChatMessage.inputJson(m))
+        }
+        case Some(m) => Seq(ChatMessage.inputJson(m))
+      }
+      case Some(str) => Seq(ChatMessage.input("user", str, None, Json.obj("role" -> "user", "content" -> str)))
+    }
+    Guardrails.get(kind) match {
+      case None => Json.obj("pass" -> false, "cause" -> s"no guardrail of kind '${kind}' available").rightf
+      case Some(guardrail) => {
+        guardrail.pass(messages, config, None, None, wfr.attrs).map {
+          case GuardrailResult.GuardrailPass => Json.obj("pass" -> true).right
+          case GuardrailResult.GuardrailDenied(error) => Json.obj("pass" -> false, "cause" -> error).right
+          case GuardrailResult.GuardrailError(error) => Json.obj("pass" -> false, "cause" -> "error", "error" -> error).right
+        }
+      }
+    }
   }
 }
 
 class VectorStoreAddFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.vector_store_add"
+  override def documentationDisplayName: String            = "Add to vector store"
+  override def documentationIcon: String                   = "fas fa-plus"
+  override def documentationDescription: String            = "This function adds an entry to a vector store"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The embedding store provider id"),
+      "payload"  -> Json.obj(
+        "type" -> "object",
+        "description" -> "The payload object",
+        "properties" -> Json.obj(
+          "id" -> Json.obj("type" -> "string", "description" -> "The id of the document"),
+          "input" -> Json.obj("type" -> "string", "description" -> "The document content"),
+          "embedding" -> Json.obj(
+            "type" -> "object",
+            "properties" -> Json.obj(
+              "vector" -> Json.obj("type" -> "array", "description" -> "The vector representation of the document content"),
+            )
+          ),
+        )
+      )
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Embedding store provider id",
+      "props" -> Json.obj(
+        "description" -> "The provider id"
+      )
+    ),
+    "payload"  -> Json.obj(
+      "type"  -> "code",
+      "props" -> Json.obj(
+        "description" -> "The payload object",
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = None
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.vector_store_add",
+    "args" -> Json.obj(
+      "provider" -> "embedding-store_f141df8b-2642-4fba-82c8-5e050f62c920",
+      "payload" -> Json.obj(
+        "id" -> "document_id",
+        "input" -> "Lorem ipsum dolor sit amet",
+        "embedding" -> Json.obj(
+          "vector" -> Json.arr(1.2, 2.3, 3.4, 4.5),
+        )
+      )
+    )
+  ))
+
   override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
@@ -54,6 +188,54 @@ class VectorStoreAddFunction extends WorkflowFunction {
 }
 
 class VectorStoreRemoveFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.vector_store_remove"
+  override def documentationDisplayName: String            = "Remove from vector store"
+  override def documentationIcon: String                   = "fas fa-minus"
+  override def documentationDescription: String            = "This function removes an entry from a vector store"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The embedding store provider id"),
+      "payload"  -> Json.obj(
+        "type" -> "object",
+        "description" -> "The payload object",
+        "properties" -> Json.obj(
+          "id" -> Json.obj("type" -> "string", "description" -> "The id of the document"),
+        )
+      )
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Embedding store provider id",
+      "props" -> Json.obj(
+        "description" -> "The provider id"
+      )
+    ),
+    "payload"  -> Json.obj(
+      "type"  -> "code",
+      "props" -> Json.obj(
+        "description" -> "The payload object",
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = None
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.vector_store_remove",
+    "args" -> Json.obj(
+      "provider" -> "embedding-store_f141df8b-2642-4fba-82c8-5e050f62c920",
+      "payload" -> Json.obj(
+        "id" -> "document_id",
+      )
+    )
+  ))
+
   override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
@@ -75,6 +257,62 @@ class VectorStoreRemoveFunction extends WorkflowFunction {
 }
 
 class VectorStoreSearchFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.vector_store_search"
+  override def documentationDisplayName: String            = "Search in vector store"
+  override def documentationIcon: String                   = "fas fa-search"
+  override def documentationDescription: String            = "This function searches for entries in a vector store"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The embedding store provider id"),
+      "payload"  -> Json.obj(
+        "type" -> "object",
+        "description" -> "The payload object",
+        "properties" -> Json.obj(
+          "embedding" -> Json.obj("type" -> "object", "description" -> "The embedding vector", "properties" -> Json.obj(
+            "vector" -> Json.obj("type" -> "array", "description" -> "The vector representation of the document content"),
+          )),
+          "max_results" -> Json.obj("type" -> "integer", "description" -> "The maximum number of results to return"),
+          "min_score" -> Json.obj("type" -> "number", "description" -> "The minimum score of the results"),
+        )
+      )
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Embedding store provider id",
+      "props" -> Json.obj(
+        "description" -> "The provider id"
+      )
+    ),
+    "payload"  -> Json.obj(
+      "type"  -> "code",
+      "props" -> Json.obj(
+        "description" -> "The payload object",
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = None
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.vector_store_search",
+    "args" -> Json.obj(
+      "provider" -> "embedding-store_f141df8b-2642-4fba-82c8-5e050f62c920",
+      "payload" -> Json.obj(
+        "embedding" -> Json.obj(
+          "vector" -> Json.arr(1.2, 2.3, 3.4, 4.5),
+        ),
+        "max_results" -> 10,
+        "min_score" -> 0.5,
+      )
+    )
+  ))
+
   override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
@@ -96,6 +334,59 @@ class VectorStoreSearchFunction extends WorkflowFunction {
 }
 
 class ModerationCallFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.moderation_call"
+  override def documentationDisplayName: String            = "Moderation call"
+  override def documentationIcon: String                   = "fas fa-shield-alt"
+  override def documentationDescription: String            = "This function calls a moderation model"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("input"),
+    "properties" -> Json.obj(
+      "model" -> Json.obj("type" -> "string", "description" -> "The moderation model name"),
+      "input"  -> Json.obj(
+        "type" -> "string",
+        "description" -> "The input text"
+      )
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "model" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Moderation model",
+      "props" -> Json.obj(
+        "description" -> "The moderation model name"
+      )
+    ),
+    "input"  -> Json.obj(
+      "type"  -> "code",
+      "props" -> Json.obj(
+        "description" -> "The input text"
+      ),
+      "label" -> "Input"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("results", "model"),
+    "properties" -> Json.obj(
+      "model" -> Json.obj("type" -> "string", "description" -> "The moderation model name"),
+      "results"  -> Json.obj(
+        "type" -> "array",
+        "description" -> "The moderation results"
+      )
+    )
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.moderation_call",
+    "args" -> Json.obj(
+      "model" -> "moderation-model_f141df8b-2642-4fba-82c8-5e050f62c920",
+      "input" -> "This is a test"
+    )
+  ))
+
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
@@ -117,6 +408,63 @@ class ModerationCallFunction extends WorkflowFunction {
 }
 
 class GenerateVideoFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.generate_video"
+  override def documentationDisplayName: String            = "Generate video"
+  override def documentationIcon: String                   = "fas fa-video"
+  override def documentationDescription: String            = "This function calls a video generation model"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The video generation provider"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The video generation payload", "properties" -> Json.obj(
+      "prompt" -> Json.obj("type" -> "string", "description" -> "The video generation prompt"),
+      "loop" -> Json.obj("type" -> "boolean", "description" -> "The video generation loop"),
+      "model" -> Json.obj("type" -> "string", "description" -> "The video generation model name"),
+      "aspect_ratio" -> Json.obj("type" -> "string", "description" -> "The video generation aspect ratio"),
+      "resolution" -> Json.obj("type" -> "string", "description" -> "The video generation resolution"),
+      "duration" -> Json.obj("type" -> "string", "description" -> "The video generation duration")
+    )),
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj( 
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "props" -> Json.obj(
+        "description" -> "The video generation provider"
+      ),
+      "label" -> "Provider"
+    ),
+    "payload" -> Json.obj(
+      "type"  -> "object",
+      "props" -> Json.obj(
+        "description" -> "The video generation payload"
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("model", "input"),
+    "properties" -> Json.obj(
+      "model" -> Json.obj("type" -> "string", "description" -> "The video generation model name"),
+      "input"  -> Json.obj(
+        "type" -> "string",
+        "description" -> "The input text"
+      )
+    )
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.generate_video",
+    "args" -> Json.obj(
+      "model" -> "video-model_f141df8b-2642-4fba-82c8-5e050f62c920",
+      "input" -> "This is a test"
+    )
+  ))
+
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
@@ -138,6 +486,58 @@ class GenerateVideoFunction extends WorkflowFunction {
 }
 
 class CallMcpFunctionFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.mcp_function_call"
+  override def documentationDisplayName: String            = "Call MCP function"
+  override def documentationIcon: String                   = "fas fa-code"
+  override def documentationDescription: String            = "This function calls a MCP function"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("provider", "function", "arguments"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The MCP connector provider"),
+      "function" -> Json.obj("type" -> "string", "description" -> "The MCP function name"),
+      "arguments" -> Json.obj("type" -> "string", "description" -> "The MCP function arguments")
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj( 
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "props" -> Json.obj(
+        "description" -> "The MCP connector provider"
+      ),
+      "label" -> "Provider"
+    ),
+    "function" -> Json.obj(
+      "type"  -> "string",
+      "props" -> Json.obj(
+        "description" -> "The MCP function name"
+      ),
+      "label" -> "Function"
+    ),
+    "arguments" -> Json.obj(
+      "type"  -> "string",
+      "props" -> Json.obj(
+        "description" -> "The MCP function arguments"
+      ),
+      "label" -> "Arguments"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "string",
+    "description" -> "The MCP function result"
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.mcp_function_call",
+    "args" -> Json.obj(
+      "provider" -> "mcp-connector",
+      "function" -> "my_function",
+      "arguments" -> "my_arguments"
+    )
+  ))
+
   override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val function = args.select("function").asString
@@ -160,6 +560,58 @@ class CallMcpFunctionFunction extends WorkflowFunction {
 }
 
 class CallToolFunctionFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.tool_function_call"
+  override def documentationDisplayName: String            = "Call tool function"
+  override def documentationIcon: String                   = "fas fa-code"
+  override def documentationDescription: String            = "This function calls a tool function"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("provider", "function", "arguments"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The tool function provider"),
+      "function" -> Json.obj("type" -> "string", "description" -> "The tool function name"),
+      "arguments" -> Json.obj("type" -> "string", "description" -> "The tool function arguments")
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "props" -> Json.obj(
+        "description" -> "The tool function provider"
+      ),
+      "label" -> "Provider"
+    ),
+    "function" -> Json.obj(
+      "type"  -> "string",
+      "props" -> Json.obj(
+        "description" -> "The tool function name"
+      ),
+      "label" -> "Function"
+    ),
+    "arguments" -> Json.obj(
+      "type"  -> "string",
+      "props" -> Json.obj(
+        "description" -> "The tool function arguments"
+      ),
+      "label" -> "Arguments"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "string",
+    "description" -> "The tool function result"
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.tool_function_call",
+    "args" -> Json.obj(
+      "provider" -> "tool-function",
+      "function" -> "my_function",
+      "arguments" -> "my_arguments"
+    )
+  ))
+
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val arguments = args.select("arguments").asOpt[JsObject].map(_.stringify)
@@ -181,6 +633,74 @@ class CallToolFunctionFunction extends WorkflowFunction {
 }
 
 class GenerateImageFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.generate_image"
+  override def documentationDisplayName: String            = "Generate image"
+  override def documentationIcon: String                   = "fas fa-image"
+  override def documentationDescription: String            = "This function calls an image generation model"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("provider", "model", "input"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The image generation provider"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The image generation payload", 
+      "properties" -> Json.obj(
+        "prompt" -> Json.obj("type" -> "string", "description" -> "The image generation prompt"),
+        "background" -> Json.obj("type" -> "string", "description" -> "The image generation background"),
+        "model" -> Json.obj("type" -> "string", "description" -> "The image generation model"),
+        "moderation" -> Json.obj("type" -> "string", "description" -> "The image generation moderation"),
+        "n" -> Json.obj("type" -> "integer", "description" -> "The image generation n"),
+        "outputCompression" -> Json.obj("type" -> "integer", "description" -> "The image generation output compression"),
+        "outputFormat" -> Json.obj("type" -> "string", "description" -> "The image generation output format"),
+        "responseFormat" -> Json.obj("type" -> "string", "description" -> "The image generation response format"),
+        "quality" -> Json.obj("type" -> "string", "description" -> "The image generation quality"),
+        "size" -> Json.obj("type" -> "string", "description" -> "The image generation size"),
+        "style" -> Json.obj("type" -> "string", "description" -> "The image generation style")
+      )),
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "props" -> Json.obj(
+        "description" -> "The image generation provider"
+      ),
+      "label" -> "Provider"
+    ),
+    "payload" -> Json.obj(
+      "type"  -> "object",
+      "props" -> Json.obj(
+        "description" -> "The image generation payload"
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "string",
+    "description" -> "The image generation result"
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.generate_image",
+    "args" -> Json.obj(
+      "provider" -> "image-generation",
+      "payload" -> Json.obj(
+        "prompt" -> "A beautiful landscape",
+        "background" -> "white",
+        "model" -> "dall-e-3",
+        "moderation" -> "none",
+        "n" -> 1,
+        "outputCompression" -> 100,
+        "outputFormat" -> "png",
+        "responseFormat" -> "url",
+        "quality" -> "standard",
+        "size" -> "1024x1024",
+        "style" -> "natural"
+      )
+    )
+  ))
+
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
@@ -202,6 +722,68 @@ class GenerateImageFunction extends WorkflowFunction {
 }
 
 class ComputeEmbeddingFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.compute_embedding"
+  override def documentationDisplayName: String            = "Compute embedding"
+  override def documentationIcon: String                   = "fas fa-robot"
+  override def documentationDescription: String            = "This function calls an embedding model"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The embedding model provider id"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The payload object", "properties" -> Json.obj(
+        "input" -> Json.obj("type" -> "array", "description" -> "The input strings", "items" -> Json.obj("type" -> "string")),
+        "model" -> Json.obj("type" -> "string", "description" -> "The embedding model"),
+        "dimensions" -> Json.obj("type" -> "integer", "description" -> "The embedding dimensions"),
+        "encoding_format" -> Json.obj("type" -> "string", "description" -> "The embedding encoding format"),
+        "user" -> Json.obj("type" -> "string", "description" -> "The embedding user")
+      ))
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Provider",
+      "props" -> Json.obj(
+        "description" -> "The embedding model provider id"
+      )
+    ),
+    "payload" -> Json.obj(
+      "type"  -> "code",
+      "label" -> "Payload",
+      "props" -> Json.obj(
+        "description" -> "The payload object"
+      )
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type" -> "object",
+    "properties" -> Json.obj(
+      "data" -> Json.obj("type" -> "array", "description" -> "The embedding data", "items" -> Json.obj("type" -> "number")),
+      "model" -> Json.obj("type" -> "string", "description" -> "The embedding model"),
+      "usage" -> Json.obj("type" -> "object", "description" -> "The embedding usage", "properties" -> Json.obj(
+        "prompt_tokens" -> Json.obj("type" -> "integer", "description" -> "The number of prompt tokens"),
+        "total_tokens" -> Json.obj("type" -> "integer", "description" -> "The number of total tokens")
+      ))
+    )
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.compute_embedding",
+    "args" -> Json.obj(
+      "provider" -> "embedding-model",
+      "payload" -> Json.obj(
+        "input" -> Seq("Hello, world!"),
+        "model" -> "text-embedding-ada-002",
+        "dimensions" -> 1536,
+        "encoding_format" -> "float",
+        "user" -> "user-123"
+      )
+    )
+  ))
+
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
@@ -223,6 +805,75 @@ class ComputeEmbeddingFunction extends WorkflowFunction {
 }
 
 class LlmCallFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.llm_call"
+  override def documentationDisplayName: String            = "Call LLM provider"
+  override def documentationIcon: String                   = "fas fa-brain"
+  override def documentationDescription: String            = "This function calls an LLM provider"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The LLM provider id"),
+      "openai_format" -> Json.obj("type" -> "boolean", "description" -> "The openai format"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The payload object", "properties" -> Json.obj(
+        "messages" -> Json.obj("type" -> "array", "description" -> "The messages", "items" -> Json.obj("type" -> "object")),
+        "tool_functions" -> Json.obj("type" -> "array", "description" -> "The tool functions", "items" -> Json.obj("type" -> "string")),
+        "mcp_connectors" -> Json.obj("type" -> "array", "description" -> "The mcp connectors", "items" -> Json.obj("type" -> "string")),
+        "wasm_tools" -> Json.obj("type" -> "array", "description" -> "The wasm tools", "items" -> Json.obj("type" -> "string"))
+      ))
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "props" -> Json.obj(
+        "description" -> "The LLM provider id"
+      ),
+      "label" -> "Provider"
+    ),
+    "openai_format" -> Json.obj(
+      "type"  -> "boolean",
+      "props" -> Json.obj(
+        "description" -> "The openai format"
+      ),
+      "label" -> "OpenAI format"
+    ),
+    "payload" -> Json.obj(
+      "type"  -> "code",
+      "props" -> Json.obj(
+        "description" -> "The payload object"
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("model", "input"),
+    "properties" -> Json.obj(
+      "model" -> Json.obj("type" -> "string", "description" -> "The LLM model name"),
+      "input"  -> Json.obj(
+        "type" -> "string",
+        "description" -> "The input text"
+      )
+    )
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.llm_call",
+    "args" -> Json.obj(
+      "provider" -> "llm-provider",
+      "openai_format" -> true,
+      "payload" -> Json.obj(
+        "messages" -> Seq(Json.obj(
+          "role" -> "user",
+          "content" -> "Hello, world!"
+        ))
+      )
+    )
+  ))
+
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val openai  = args.select("openai_format").asOptBoolean.getOrElse(true)
@@ -256,6 +907,73 @@ class LlmCallFunction extends WorkflowFunction {
 }
 
 class AudioTtsFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.audio_tts"
+  override def documentationDisplayName: String            = "Text to speech"
+  override def documentationIcon: String                   = "fas fa-volume-up"
+  override def documentationDescription: String            = "This function calls an audio model provider to convert text to audio"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The audio model provider id"),
+      "encode_base64" -> Json.obj("type" -> "boolean", "description" -> "Encode the audio in base64"),
+      "file_out" -> Json.obj("type" -> "string", "description" -> "The file path to save the audio"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The payload object", "properties" -> Json.obj(
+        "input" -> Json.obj("type" -> "string", "description" -> "The input text"),
+        "model" -> Json.obj("type" -> "string", "description" -> "The model name"),
+        "voice" -> Json.obj("type" -> "string", "description" -> "The voice name"),
+        "instructions" -> Json.obj("type" -> "string", "description" -> "The instructions"),
+        "responseFormat" -> Json.obj("type" -> "string", "description" -> "The response format"),
+        "speed" -> Json.obj("type" -> "number", "description" -> "The speed")
+      ))
+    )
+  ))
+  
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "props" -> Json.obj(
+        "description" -> "The audio model provider id"
+      ),
+      "label" -> "Provider"
+    ),
+    "payload" -> Json.obj(
+      "type"  -> "code",
+      "props" -> Json.obj(
+        "description" -> "The payload object"
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("content_type", "base64"),
+    "properties" -> Json.obj(
+      "content_type" -> Json.obj("type" -> "string", "description" -> "The content type"),
+      "base64"  -> Json.obj(
+        "type" -> "string",
+        "description" -> "The base64 encoded audio"
+      )
+    )
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.audio_tts",
+    "args" -> Json.obj(
+      "provider" -> "audio-provider",
+      "payload" -> Json.obj(
+        "input" -> "Hello, world!",
+        "model" -> "audio-model",
+        "voice" -> "voice",
+        "instructions" -> "instructions",
+        "responseFormat" -> "responseFormat",
+        "speed" -> 1.0
+      )
+    )
+  ))
+
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
@@ -282,6 +1000,72 @@ class AudioTtsFunction extends WorkflowFunction {
 }
 
 class AudioSttFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.audio_stt"
+  override def documentationDisplayName: String            = "Speech to text"
+  override def documentationIcon: String                   = "fas fa-volume-up"
+  override def documentationDescription: String            = "This function calls an audio model provider to convert audio to text"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The audio model provider id"),
+      "decode_base64" -> Json.obj("type" -> "boolean", "description" -> "Decode the base64 encoded audio"),
+      "file_in" -> Json.obj("type" -> "string", "description" -> "The file path to read the audio"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The payload object", "properties" -> Json.obj(
+        "file" -> Json.obj("type" -> "string", "description" -> "The file path to read the audio"),
+        "fileName" -> Json.obj("type" -> "string", "description" -> "The file name"),
+        "fileContentType" -> Json.obj("type" -> "string", "description" -> "The file content type"),
+        "fileLength" -> Json.obj("type" -> "number", "description" -> "The file length"),
+        "model" -> Json.obj("type" -> "string", "description" -> "The model name"),
+        "language" -> Json.obj("type" -> "string", "description" -> "The language"),
+        "prompt" -> Json.obj("type" -> "string", "description" -> "The prompt"),
+        "responseFormat" -> Json.obj("type" -> "string", "description" -> "The response format"),
+        "temperature" -> Json.obj("type" -> "number", "description" -> "The temperature")
+      ))
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "props" -> Json.obj(
+        "description" -> "The audio model provider id"
+      ),
+      "label" -> "Provider"
+    ),
+    "payload" -> Json.obj(
+      "type"  -> "code",
+      "props" -> Json.obj(
+        "description" -> "The payload object"
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("text"),
+    "properties" -> Json.obj(
+      "text" -> Json.obj("type" -> "string", "description" -> "The text")
+    )
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.audio_stt",
+    "args" -> Json.obj(
+      "provider" -> "audio-provider",
+      "decode_base64" -> true,
+      "file_in" -> "audio.mp3",
+      "payload" -> Json.obj(
+        "model" -> "audio-model",
+        "language" -> "en",
+        "prompt" -> "prompt",
+        "responseFormat" -> "responseFormat",
+        "temperature" -> 0.5
+      )
+    )
+  ))
+
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
