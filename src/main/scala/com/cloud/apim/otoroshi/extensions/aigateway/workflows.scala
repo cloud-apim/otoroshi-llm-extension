@@ -30,7 +30,219 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_add", new VectorStoreAddFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_remove", new VectorStoreRemoveFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_search", new VectorStoreSearchFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.memory_add_messages", new MemoryAddMessagesFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.memory_get_messages", new MemoryGetMessagesFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.memory_clear_messages", new MemoryClearMessagesFunction())
     // text chunking ;)
+  }
+}
+
+class MemoryAddMessagesFunction extends WorkflowFunction {
+
+  override def documentationName: String = "extensions.com.cloud-apim.llm-extension.memory_add_messages"
+  override def documentationDisplayName: String = "Memory add messages"
+  override def documentationIcon: String = "fas fa-plus"
+  override def documentationDescription: String = "Add messages to the memory for a session"
+  override def documentationInputSchema: Option[JsObject] = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The provider id"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The payload object", "properties" -> Json.obj(
+        "session_id" -> Json.obj("type" -> "string", "description" -> "The session id"),
+        "messages" -> Json.obj("type" -> "array", "description" -> "The messages", "items" -> Json.obj("type" -> "object", "properties" -> Json.obj(
+          "role" -> Json.obj("type" -> "string", "description" -> "The role"),
+          "content" -> Json.obj("type" -> "string", "description" -> "The content")
+        )))
+      ))
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Memory provider id",
+      "props" -> Json.obj(
+        "description" -> "The provider id"
+      )
+    ),
+    "payload"  -> Json.obj(
+      "type"  -> "code",
+      "props" -> Json.obj(
+        "description" -> "The payload object",
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String] = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = None
+  override def documentationExample: Option[JsObject] = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.memory_add_messages",
+    "args" -> Json.obj(
+      "provider" -> "memory_f141df8b-2642-4fba-82c8-5e050f62c920",
+      "payload" -> Json.obj(
+        "session_id" -> "session_id",
+        "messages" -> Json.arr(
+          Json.obj(
+            "role" -> "user",
+            "content" -> "Lorem ipsum dolor sit amet"
+          )
+        )
+      )
+    )
+  ))
+
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.persistentMemory(provider) match {
+      case None => WorkflowError(s"embedding store not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getPersistentMemoryClient() match {
+        case None => WorkflowError(s"unable to instantiate client for memory", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val sessionId = payload.select("session_id").as[String]
+          val messages = payload.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(o => PersistedChatMessage.from(o))
+          client.addMessages(sessionId, messages).map {
+            case Left(error) => WorkflowError(s"error while calling memory", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(_) => JsNull.right
+          }
+        }
+      }
+    }
+  }
+}
+
+class MemoryClearMessagesFunction extends WorkflowFunction {
+
+  override def documentationName: String = "extensions.com.cloud-apim.llm-extension.memory_clear_messages"
+  override def documentationDisplayName: String = "Memory clear messages"
+  override def documentationIcon: String = "fas fa-trash"
+  override def documentationDescription: String = "Clear messages from the memory for a session"
+  override def documentationInputSchema: Option[JsObject] = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The provider id"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The payload object", "properties" -> Json.obj(
+        "session_id" -> Json.obj("type" -> "string", "description" -> "The session id")
+      ))
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Memory provider id",
+      "props" -> Json.obj(
+        "description" -> "The provider id"
+      )
+    ),
+    "payload"  -> Json.obj(
+      "type"  -> "code",
+      "props" -> Json.obj(
+        "description" -> "The payload object",
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String] = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = None
+  override def documentationExample: Option[JsObject] = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.memory_clear_messages",
+    "args" -> Json.obj(
+      "provider" -> "memory_f141df8b-2642-4fba-82c8-5e050f62c920",
+      "payload" -> Json.obj(
+        "session_id" -> "session_id"
+      )
+    )
+  ))
+
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.persistentMemory(provider) match {
+      case None => WorkflowError(s"embedding store not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getPersistentMemoryClient() match {
+        case None => WorkflowError(s"unable to instantiate client for memory", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val sessionId = payload.select("session_id").as[String]
+          client.clearMemory(sessionId).map {
+            case Left(error) => WorkflowError(s"error while calling memory", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(_) => JsNull.right
+          }
+        }
+      }
+    }
+  }
+}
+
+class MemoryGetMessagesFunction extends WorkflowFunction {
+
+  override def documentationName: String = "extensions.com.cloud-apim.llm-extension.memory_get_messages"
+  override def documentationDisplayName: String = "Memory get messages"
+  override def documentationIcon: String = "fas fa-brain"
+  override def documentationDescription: String = "Get messages from the memory for a session"
+  override def documentationInputSchema: Option[JsObject] = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The provider id"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The payload object", "properties" -> Json.obj(
+        "session_id" -> Json.obj("type" -> "string", "description" -> "The session id")
+      ))
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Memory provider id",
+      "props" -> Json.obj(
+        "description" -> "The provider id"
+      )
+    ),
+    "payload"  -> Json.obj(
+      "type"  -> "code",
+      "props" -> Json.obj(
+        "description" -> "The payload object",
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String] = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type" -> "array",
+    "items" -> Json.obj("type" -> "object")
+  ))
+  override def documentationExample: Option[JsObject] = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.memory_get_messages",
+    "args" -> Json.obj(
+      "provider" -> "memory_f141df8b-2642-4fba-82c8-5e050f62c920",
+      "payload" -> Json.obj(
+        "session_id" -> "session_id"
+      )
+    )
+  ))
+
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.persistentMemory(provider) match {
+      case None => WorkflowError(s"embedding store not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getPersistentMemoryClient() match {
+        case None => WorkflowError(s"unable to instantiate client for memory", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val sessionId = payload.select("session_id").as[String]
+          client.getMessages(sessionId).map {
+            case Left(error) => WorkflowError(s"error while calling memory", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(messages) => JsArray(messages.map(_.raw)).right
+          }
+        }
+      }
+    }
   }
 }
 
