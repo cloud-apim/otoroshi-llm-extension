@@ -52,7 +52,7 @@ object Guardrails {
     "wasm" -> new WasmGuardrail(),
     "quickjs" -> new QuickJsGuardrail(),
     "moderation_model" -> new ModerationGuardrail(),
-    "faithfullness" -> new FaithfullnessGuardrail(),
+    "faithfulness" -> new FaithfulnessGuardrail(),
   )
 /*
 [
