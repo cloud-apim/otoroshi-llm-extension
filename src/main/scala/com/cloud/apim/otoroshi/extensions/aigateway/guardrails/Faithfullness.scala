@@ -23,7 +23,7 @@ class FaithfulnessGuardrail extends Guardrail {
 
   def pass(): Future[GuardrailResult] = GuardrailResult.GuardrailPass.vfuture
 
-  def fail(idx: Int): Future[GuardrailResult] = GuardrailResult.GuardrailDenied(s"request content did not pass faithfulness validation (${idx})").vfuture
+  def fail(): Future[GuardrailResult] = GuardrailResult.GuardrailDenied(s"request content is not faithful to the provided context").vfuture
 
   def createStatements(userInput: String, ref: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[String]] = {
     val instructions = """Given a question and an answer, analyze the complexity of each sentence in the answer.
@@ -109,7 +109,7 @@ class FaithfulnessGuardrail extends Guardrail {
         if (score > threshold) {
           pass()
         } else {
-          fail(0)
+          fail()
         }
       }
     }
