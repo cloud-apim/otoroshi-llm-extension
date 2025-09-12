@@ -494,7 +494,10 @@ object Architecture {
     Architecture(
       typ = typ,
       denseParameters = json.select("parameters").asOpt[JsObject].filter(_ => typ == "dense").filter(o => o.select("total").isEmpty).map { o =>
-        Right(RangeValue(o.select("min").asInt, o.select("max").asInt))
+        Right(RangeValue(
+          o.select("min").asOptInt.map(_.toDouble).orElse(o.select("min").asOpt[Double]).getOrElse(0.0),
+          o.select("max").asOptInt.map(_.toDouble).orElse(o.select("max").asOpt[Double]).getOrElse(0.0),
+        ))
       }.orElse {
         json.select("parameters").asOpt[JsNumber].filter(_ => typ == "dense").map { number =>
           Left(number.value.toDouble)
@@ -506,8 +509,8 @@ object Architecture {
             ParametersMoE(
               Left(o.select("total").as[JsNumber].value.toDouble),
               Right(RangeValue(
-                active.select("min").asInt,
-                active.select("max").asInt
+                active.select("min").asOptInt.map(_.toDouble).orElse(active.select("min").asOpt[Double]).getOrElse(0.0),
+                active.select("max").asOptInt.map(_.toDouble).orElse(active.select("max").asOpt[Double]).getOrElse(0.0),
               ))
             )
           }
@@ -515,16 +518,16 @@ object Architecture {
             ParametersMoE(
               Left(o.select("total").as[JsNumber].value.toDouble),
               Right(RangeValue(
-                active.toInt,
-                active.toInt
+                active.toDouble,
+                active.toDouble
               ))
             )
           }
           case _ => ParametersMoE(
             Left(o.select("total").as[JsNumber].value.toDouble),
             Right(RangeValue(
-              o.select("min").asInt,
-              o.select("max").asInt
+              o.select("min").asOptInt.map(_.toDouble).orElse(o.select("min").asOpt[Double]).getOrElse(0.0),
+              o.select("max").asOptInt.map(_.toDouble).orElse(o.select("max").asOpt[Double]).getOrElse(0.0),
             ))
           )
         }
