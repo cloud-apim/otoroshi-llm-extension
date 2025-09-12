@@ -14,8 +14,13 @@
   - **Key vault**: securely store your LLM API keys in Otoroshi vault or any other secret vault supported by Otoroshi.
   - **Observability and reporting**: every LLM request is audited with details about the consumer, the LLM provider and usage. All those audit events are exportable using multiple methods for further reporting
   - **Fine grained authorizations**: Use Otoroshi advanced fine grained authorizations capabilities to constrains model usage based on whatever you want: user identity, apikey, consumer metadata, request details, etc
-  - **Prompt Fences**: Validate your prompts and prompts responses to avoid sensitive or personal informations leakage, irrelevant or unhelpful responses, gibberish content, etc
+  - **Guardrails**: Validate your prompts and prompts responses to avoid sensitive or personal informations leakage, irrelevant or unhelpful responses, gibberish content, etc
   - **Prompt engineering**: enhance your experience by providing contextual information to your prompts, storing them in a library for reusability, and using prompt templates for increased efficiency
+  - **Multi-modal**: Audio (TTS, STT, translate), Image and Video model supported
+  - **Embeddings support**: compute embeddings from various providers and models through a unified API
+  - **Vector Stores support**: search through vector store to enrich LLM calls
+  - **Persistent memories**: automatically stores conversation messages and re-inject them on the next calls
+  - **Agentic workflows**: orchestrate LLM interactions using Otoroshi workflows
 
 Otoroshi LLM Extension is set of [Otoroshi](https://github.com/MAIF/otoroshi) plugins and resources to interact with LLMs. To know more about it, go to [documentation](https://cloud-apim.github.io/otoroshi-llm-extension/)
 

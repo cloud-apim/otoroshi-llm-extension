@@ -150,7 +150,7 @@ wheels = [
 
 [[package]]
 name = "ecologits"
-version = "0.7.1"
+version = "0.8.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -160,9 +160,21 @@ dependencies = [
     { name = "tqdm" },
     { name = "wrapt" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/9f/6a4a8adf6749457ca8b6517f37077bdfcdd743cea85307d1955ff27c32ee/ecologits-0.7.1.tar.gz", hash = "sha256:6253e2949906b881c5277b9b45325e49ba6f7c0d405fb1e1ea69d5e59dbe6592", size = 33009, upload-time = "2025-06-02T18:47:46.649Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/9c/f709b1b82022e2535cf3a7c9189be099bec452cea048d9f12e833d319e97/ecologits-0.8.2.tar.gz", hash = "sha256:f723ecdbe4c95a8b2f023a29c4d975295eacbf862c9c98bd408d21cd995b4b84", size = 36212, upload-time = "2025-08-16T18:29:43.074Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/e3/b6328320b657c41b569dec664ba6ae5d7be73a77091c21d3c87ad0576790/ecologits-0.7.1-py3-none-any.whl", hash = "sha256:d7f8e0d28e00e6850ace6e2d10c1ade1965dd2d89429a3842f5a991a494db568", size = 42159, upload-time = "2025-06-02T18:47:45.602Z" },
+    { url = "https://files.pythonhosted.org/packages/96/31/1b0c39a1a624998b6275a04e01fb58fea26e7c30f42dc6d2ffcaa34217d9/ecologits-0.8.2-py3-none-any.whl", hash = "sha256:8953b3c1470a99793a3c6554771e0be060e1bb8e5856d1bc76ab76f5e92e1698", size = 45287, upload-time = "2025-08-16T18:29:40.796Z" },
+]
+
+[[package]]
+name = "fastuuid"
+version = "0.12.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/19/17/13146a1e916bd2971d0a58db5e0a4ad23efdd49f78f33ac871c161f8007b/fastuuid-0.12.0.tar.gz", hash = "sha256:d0bd4e5b35aad2826403f4411937c89e7c88857b1513fe10f696544c03e9bd8e", size = 19180, upload-time = "2025-01-27T18:04:14.387Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/e8/d2bb4f19e5ee15f6f8e3192a54a897678314151aa17d0fb766d2c2cbc03d/fastuuid-0.12.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:7fe2407316a04ee8f06d3dbc7eae396d0a86591d92bafe2ca32fce23b1145786", size = 247512, upload-time = "2025-01-27T18:04:08.115Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/53/25e811d92fd60f5c65e098c3b68bd8f1a35e4abb6b77a153025115b680de/fastuuid-0.12.0-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b9b31dd488d0778c36f8279b306dc92a42f16904cba54acca71e107d65b60b0c", size = 258257, upload-time = "2025-01-27T18:03:56.408Z" },
+    { url = "https://files.pythonhosted.org/packages/10/23/73618e7793ea0b619caae2accd9e93e60da38dd78dd425002d319152ef2f/fastuuid-0.12.0-cp313-cp313-manylinux_2_34_x86_64.whl", hash = "sha256:b19361ee649365eefc717ec08005972d3d1eb9ee39908022d98e3bfa9da59e37", size = 278559, upload-time = "2025-01-27T18:03:58.661Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/41/6317ecfc4757d5f2a604e5d3993f353ba7aee85fa75ad8b86fce6fc2fa40/fastuuid-0.12.0-cp313-cp313-win_amd64.whl", hash = "sha256:8fc66b11423e6f3e1937385f655bedd67aebe56a3dcec0cb835351cfe7d358c9", size = 157276, upload-time = "2025-01-27T18:06:39.245Z" },
 ]
 
 [[package]]
@@ -366,11 +378,12 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.73.6.post1"
+version = "1.77.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
     { name = "click" },
+    { name = "fastuuid" },
     { name = "httpx" },
     { name = "importlib-metadata" },
     { name = "jinja2" },
@@ -381,9 +394,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b4/99/889207aa89037da4cb381201918e91b6ab74088d401f9a1b8cfd7b5a48e9/litellm-1.73.6.post1.tar.gz", hash = "sha256:cc221818f572fdd64d22b89fa35e6153bfb4f0f755b68eec7da3542767e6a934", size = 8898978, upload-time = "2025-07-04T00:34:43.73Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4e/25/72a400aa06e8cb3f18a6dd15ac634caa6f6fb2acf3c03dd208c41495fd79/litellm-1.77.0.tar.gz", hash = "sha256:7025a99c88e54209a64c05824ec1fab968343be1ed4be3573afacc92160d561c", size = 10211874, upload-time = "2025-09-09T14:50:21.796Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/34/0068ea25da50072d4f36a78299395afa3b3ed1c475be925fe33f8296c977/litellm-1.73.6.post1-py3-none-any.whl", hash = "sha256:c7a9ac5be16e176a8005e9196446b5c0ead0f08436c12a80920734ce6fa604d4", size = 8467486, upload-time = "2025-07-04T00:34:40.685Z" },
+    { url = "https://files.pythonhosted.org/packages/46/fa/f4f9cd0d04ef9d80dfb5c171ed80e40edc7bca331bca82c6eb31d88193e4/litellm-1.77.0-py3-none-any.whl", hash = "sha256:40c3ad4b4ef8eab109e04e71b62b9eab659d7af763d9e62d1a3a770ca25468ac", size = 9003845, upload-time = "2025-09-09T14:50:18.309Z" },
 ]
 
 [[package]]
@@ -459,7 +472,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.75.0"
+version = "1.107.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -471,9 +484,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/99/b1/318f5d4c482f19c5fcbcde190801bfaaaec23413cda0b88a29f6897448ff/openai-1.75.0.tar.gz", hash = "sha256:fb3ea907efbdb1bcfd0c44507ad9c961afd7dce3147292b54505ecfd17be8fd1", size = 429492, upload-time = "2025-04-16T16:49:29.25Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f3/e0/a62daa7ff769df969cc1b782852cace79615039630b297005356f5fb46fb/openai-1.107.1.tar.gz", hash = "sha256:7c51b6b8adadfcf5cada08a613423575258b180af5ad4bc2954b36ebc0d3ad48", size = 563671, upload-time = "2025-09-10T15:04:40.288Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/80/9a/f34f163294345f123673ed03e77c33dee2534f3ac1f9d18120384457304d/openai-1.75.0-py3-none-any.whl", hash = "sha256:fe6f932d2ded3b429ff67cc9ad118c71327db32eb9d32dd723de3acfca337125", size = 646972, upload-time = "2025-04-16T16:49:27.196Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/12/32c19999a58eec4a695e8ce334442b6135df949f0bb61b2ceaa4fa60d3a9/openai-1.107.1-py3-none-any.whl", hash = "sha256:168f9885b1b70d13ada0868a0d0adfd538c16a02f7fd9fe063851a2c9a025e72", size = 945177, upload-time = "2025-09-10T15:04:37.782Z" },
 ]
 
 [[package]]
@@ -487,8 +500,8 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "ecologits", specifier = ">=0.7.1" },
-    { name = "litellm", specifier = ">=1.73.6" },
+    { name = "ecologits", specifier = ">=0.8.2" },
+    { name = "litellm", specifier = ">=1.77.0" },
 ]
 
 [[package]]
