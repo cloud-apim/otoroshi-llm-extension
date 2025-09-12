@@ -70,7 +70,7 @@ class FaithfulnessGuardrail extends Guardrail {
         val instructions = if (outOfScope) instructions_outOfScope else instructions_notOutOfScope
         validationClient.call(ChatPrompt(Seq(
           ChatMessage.input("system", instructions, None, Json.obj()),
-          ChatMessage.input("user", s"<context>${context}</context>\n\n<statements>${statements.mkString("\n")}</statements>", None, Json.obj()),
+          ChatMessage.input("user", s"<context>${context}</context>\n\n<statements>${statements.map(s => s"<statement>${s}</statement>").mkString("\n")}</statements>", None, Json.obj()),
         )), attrs, Json.obj()).flatMap {
           case Left(err) => Future.failed(new RuntimeException(err.stringify))
           case Right(resp) => {
