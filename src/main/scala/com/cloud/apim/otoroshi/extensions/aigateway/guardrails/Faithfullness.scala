@@ -97,7 +97,7 @@ class FaithfulnessGuardrail extends Guardrail {
 
 
   override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
-    val provider = config.select("ref").as[String]
+    val provider = config.select("ref").asOpt[String].orElse(config.select("provider").asOpt[String]).get
     val outOfScope = config.select("exclude_out_of_scope_statements").asOptBoolean.getOrElse(true)
     val context = config.select("context").asOpt[Seq[String]].map(_.mkString(". ")).orElse(config.select("context").asOpt[String]).getOrElse("--")
     val userInput = _messages.map(_.wholeTextContent).mkString(". ")

@@ -195,6 +195,7 @@ class Guardrail extends Component {
     if (id === 'wasm') return [...def, 'config.plugin_ref', ...tail];
     if (id === 'quickjs') return [...def, 'config.quickjs_path', ...tail];
     if (id === 'moderation_model') return [...def, 'config.moderation_model', ...tail];
+    if (id === 'faithfulness') return [...def, 'config.provider', 'config.context', 'config.exclude_out_of_scope_statements', 'config.threshold', ...tail];
     return [...def, ...tail];
   }
   render() {
@@ -238,6 +239,7 @@ class Guardrail extends Component {
                 {label: 'No gender bias', value: 'gender_bias'},
                 {label: 'No personal health information', value: 'personal_health_information'},
                 {label: 'No prompt injection/prompt jailbreak', value: 'prompt_injection'},
+                {label: 'Faithfulness', value: 'faithfulness'},
                 {label: 'Sentences count', value: 'sentences'},
                 {label: 'Words count', value: 'words'},
                 {label: 'Characters count', value: 'characters'},
@@ -249,6 +251,9 @@ class Guardrail extends Component {
             }
           },
           config: { type: 'jsonobjectcode', props: { label: 'Config.', height: '150px' } },
+          'config.context': { type: 'string', props: { label: 'Context' } },
+          'config.exclude_out_of_scope_statements': { type: 'bool', props: { label: 'Exclude Out of Scope statements' } },
+          'config.threshold': { type: 'number', props: { label: 'Score threshold' } },
           'config.max_injection_score': { type: 'number', props: { label: 'Max injection detection score' } },
           'config.min': { type: 'number', props: { label: 'Minimum' } },
           'config.max': { type: 'number', props: { label: 'Maximum' } },
