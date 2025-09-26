@@ -705,54 +705,88 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            nodeToJson,
             |            removeReturnedFromWorkflow }) => {
             |            const { kind } = node.data;
-            |            const flow = node.data.content;
-            |            const nodeLoop = connections.find((conn) => conn.sourceHandle.startsWith('Custom Source'));
+            |            subflow = node.data.sourceHandles.reduce(
+            |              (acc, source, idx) => {
+            |                const connection = connections.find((conn) => conn.sourceHandle === source.id);
             |
-            |            if (nodeLoop) {
-            |              let [node, seen] = removeReturnedFromWorkflow(
-            |                nodeToJson(nodes.find((n) => n.id === nodeLoop.target))
-            |              );
-            |              alreadySeen = alreadySeen.concat([seen]);
+            |                if (!connection) {
+            |                  // keep all fields except previous node
+            |                  const rest = Object.fromEntries(
+            |                    Object.entries(node.data.content.paths[idx]).filter(([key]) => key !== 'node')
+            |                  );
+            |                  return {
+            |                    ...acc,
+            |                    paths: [...acc.paths, rest],
+            |                  };
+            |                }
             |
+            |                const target = nodes.find((n) => n.id === connection.target);
+            |                const [pathNode, seen] = removeReturnedFromWorkflow(
+            |                  nodeToJson(target, emptyWorkflow, false, alreadySeen)
+            |                );
             |
-            |              if (node.paths.length === 1) node = node.paths[0];
+            |                alreadySeen = alreadySeen.concat([seen]);
             |
-            |              return {
-            |                ...flow,
-            |                node,
+            |                const isSubFlowEmpty = pathNode.kind === 'workflow' && pathNode.steps.length === 0;
+            |                const isOneNodeSubFlow = pathNode.kind === 'workflow' && pathNode.steps.length === 1;
+            |
+            |                return {
+            |                  ...acc,
+            |                  paths: [
+            |                    ...acc.paths,
+            |                    {
+            |                      ...node.data.content.paths[idx],
+            |                      node: isSubFlowEmpty ? undefined : isOneNodeSubFlow ? pathNode.steps[0] : pathNode,
+            |                    },
+            |                  ],
+            |                };
+            |              },
+            |              {
+            |                ...node.data.content,
+            |                paths: [],
             |                kind,
             |              }
-            |            } else {
-            |              return subflow = {
-            |                ...flow,
-            |                kind,
-            |              };
-            |            }
+            |            );
             |          },
             |          buildGraph: ({ workflow, addInformationsToNode, targetId, handleId, buildGraph, current, me }) => {
-            |
             |            let nodes = []
             |            let edges = []
             |
-            |            if (workflow.node) {
-            |              const subGraph = buildGraph([workflow.node], addInformationsToNode);
+            |            let paths = [];
             |
-            |              if (subGraph.nodes.length > 0) {
-            |                nodes = nodes.concat(subGraph.nodes);
-            |                edges = edges.concat(subGraph.edges);
+            |            if (workflow.paths) {
+            |              for (let i = 0; i < workflow.paths.length; i++) {
+            |                const subflow = workflow.paths[i].node;
             |
-            |                const handle = current.data.sources[0];
+            |                if (subflow) {
+            |                  const nestedPath = buildGraph([subflow], addInformationsToNode, targetId, handleId);
             |
-            |                edges.push({
-            |                  id: `$${me}-$${handle}`,
-            |                  source: me,
-            |                  sourceHandle: `$${handle}-$${me}`,
-            |                  target: subGraph.nodes[0].id,
-            |                  targetHandle: `input-$${subGraph.nodes[0].id}`,
-            |                  type: 'customEdge',
-            |                  animated: true,
-            |                });
+            |                  paths.push({
+            |                    idx: i,
+            |                    nestedPath,
+            |                  });
+            |                }
             |              }
+            |
+            |              current.customSourceHandles = [...Array(workflow.paths.length)].map((_, i) => ({
+            |                id: path-$${i},
+            |              }));
+            |
+            |              paths.forEach((path) => {
+            |                if (path.nestedPath.nodes.length > 0)
+            |                  edges.push({
+            |                    id: $${me}-path-$${path.idx},
+            |                    source: me,
+            |                    sourceHandle: path-$${path.idx},
+            |                    target: path.nestedPath.nodes[0].id,
+            |                    targetHandle: input-$${path.nestedPath.nodes[0].id},
+            |                    type: 'customEdge',
+            |                    animated: true,
+            |                  });
+            |
+            |                nodes = nodes.concat(path.nestedPath.nodes);
+            |                edges = edges.concat(path.nestedPath.edges);
+            |              });
             |            }
             |
             |            return { nodes, edges }
