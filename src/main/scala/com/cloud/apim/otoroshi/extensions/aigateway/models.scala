@@ -303,18 +303,26 @@ case class InputChatMessage(role: String, contentParts: Seq[ChatMessageContent],
   def isAssistant: Boolean = role == "assistant"
   def isSystem: Boolean = role == "system"
 
+  val tool_call_id = raw.select("tool_call_id").asOpt[String]
+  val tool_calls = raw.select("tool_calls").asOpt[Seq[JsObject]]
+  val hasContent = contentParts.nonEmpty
+
   def json(flavor: ChatMessageContentFlavor): JsValue = Json.obj(
     "role" -> role,
-  ).applyOnIf(isSingleTextContent) { obj =>
+  ).applyOnIf(hasContent && isSingleTextContent) { obj =>
     val text: String = singleTextContentUnsafe
     obj ++ Json.obj("content" -> text)
-  }.applyOnIf(!isSingleTextContent) { obj =>
+  }.applyOnIf(hasContent && !isSingleTextContent) { obj =>
     val arr: JsArray = JsArray(contentParts.map(_.json(flavor)))
     obj ++ Json.obj("content" -> arr)
   }.applyOnWithOpt(prefix) {
     case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
   }.applyOnWithOpt(name) {
     case (obj, name) => obj ++ Json.obj("name" -> name)
+  }.applyOnWithOpt(tool_call_id) {
+    case (obj, tool_call_id) => obj ++ Json.obj("tool_call_id" -> tool_call_id)
+  }.applyOnWithOpt(tool_calls) {
+    case (obj, tool_calls) => obj ++ Json.obj("tool_calls" -> tool_calls)
   }.applyOnIf(flavor == ChatMessageContentFlavor.Anthropic && isSystem) { obj =>
      Json.obj("type" -> "text", "text" -> wholeTextContent)
   }.applyOnIf(flavor == ChatMessageContentFlavor.Ollama && hasImage) { obj =>
