@@ -223,15 +223,65 @@ case class RouterNode(json: JsObject) extends Node {
   override def documentationInputSchema: Option[JsObject] = Node.baseInputSchema
     .deepMerge(
       Json.obj(
-        "properties" -> Json.obj()
+        "properties" -> Json.obj(
+          "paths" -> Json.obj(
+            "type"        -> "array",
+            "description" -> "the nodes to be executed",
+            "items"       -> Json.obj(
+              "type"       -> "object",
+              "required" -> Json.arr("id", "description"),
+              "properties" -> Json.obj(
+                "id" -> Json.obj("type" -> "string", "description" -> "the id of the node"),
+                "description" -> Json.obj("type" -> "string", "description" -> "the description of the node"),
+              )
+            )
+          )
+        )
       )
     )
     .some
   override def documentationExample: Option[JsObject]     = Some(
-    Json.obj(
-      "kind"        -> "extensions.com.cloud-apim.llm-extension.router",
-      "paths"       -> Json.arr()
-    )
+    Json.parse(s"""{
+                  |  "kind": "extensions.com.cloud-apim.llm-extension.router",
+                  |  "result": "call_res",
+                  |  "provider": "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
+                  |  "input": "$${input.question}",
+                  |  "instructions": [
+                  |    "You determine which agent to use based on the user's homework question"
+                  |  ],
+                  |  "paths": [
+                  |    {
+                  |      "id": "math_tutor",
+                  |      "kind": "call",
+                  |      "function": "extensions.com.cloud-apim.llm-extension.agent",
+                  |      "args": {
+                  |        "name": "math_tutor",
+                  |        "provider": "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
+                  |        "description": "Specialist agent for math questions",
+                  |        "instructions": [
+                  |          "You provide help with math problems. Explain your reasoning at each step and include examples."
+                  |        ],
+                  |        "input": "$${input.question}"
+                  |      },
+                  |      "result": "call_res"
+                  |    },
+                  |    {
+                  |      "id": "history_tutor",
+                  |      "kind": "call",
+                  |      "function": "extensions.com.cloud-apim.llm-extension.agent",
+                  |      "args": {
+                  |        "name": "history_tutor",
+                  |        "provider": "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
+                  |        "description": "Specialist agent for historical questions",
+                  |        "instructions": [
+                  |          "You provide assistance with historical queries. Explain important events and context clearly."
+                  |        ],
+                  |        "input": "$${input.question}"
+                  |      },
+                  |      "result": "call_res"
+                  |    }
+                  |  ]
+                  |}""".stripMargin).asObject
   )
   override def run(
                     wfr: WorkflowRun,

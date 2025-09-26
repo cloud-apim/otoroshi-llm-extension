@@ -682,6 +682,83 @@ class AiExtension(val env: Env) extends AdminExtension {
             |
             |    return {
             |      id: extensionId,
+            |      workflowNodes: [
+            |        {
+            |          name: 'extensions.com.cloud-apim.llm-extension.router',
+            |          kind: 'extensions.com.cloud-apim.llm-extension.router',
+            |          description: 'AI agent router',
+            |          display_name: "AI agent router",
+            |          icon: 'fas fa-road',
+            |          type: 'group',
+            |          flow: [],
+            |          form_schema: {},
+            |          sourcesIsArray: true,
+            |          handlePrefix: "Path",
+            |          sources: [],
+            |          height: (data) => `$${110 + 20 * data?.sourceHandles?.length}px`,
+            |          nodeToJson: ({
+            |            edges,
+            |            nodes,
+            |            node,
+            |            alreadySeen,
+            |            connections,
+            |            nodeToJson,
+            |            removeReturnedFromWorkflow }) => {
+            |            const { kind } = node.data;
+            |            const flow = node.data.content;
+            |            const nodeLoop = connections.find((conn) => conn.sourceHandle.startsWith('Custom Source'));
+            |
+            |            if (nodeLoop) {
+            |              let [node, seen] = removeReturnedFromWorkflow(
+            |                nodeToJson(nodes.find((n) => n.id === nodeLoop.target))
+            |              );
+            |              alreadySeen = alreadySeen.concat([seen]);
+            |
+            |
+            |              if (node.paths.length === 1) node = node.paths[0];
+            |
+            |              return {
+            |                ...flow,
+            |                node,
+            |                kind,
+            |              }
+            |            } else {
+            |              return subflow = {
+            |                ...flow,
+            |                kind,
+            |              };
+            |            }
+            |          },
+            |          buildGraph: ({ workflow, addInformationsToNode, targetId, handleId, buildGraph, current, me }) => {
+            |
+            |            let nodes = []
+            |            let edges = []
+            |
+            |            if (workflow.node) {
+            |              const subGraph = buildGraph([workflow.node], addInformationsToNode);
+            |
+            |              if (subGraph.nodes.length > 0) {
+            |                nodes = nodes.concat(subGraph.nodes);
+            |                edges = edges.concat(subGraph.edges);
+            |
+            |                const handle = current.data.sources[0];
+            |
+            |                edges.push({
+            |                  id: `$${me}-$${handle}`,
+            |                  source: me,
+            |                  sourceHandle: `$${handle}-$${me}`,
+            |                  target: subGraph.nodes[0].id,
+            |                  targetHandle: `input-$${subGraph.nodes[0].id}`,
+            |                  type: 'customEdge',
+            |                  animated: true,
+            |                });
+            |              }
+            |            }
+            |
+            |            return { nodes, edges }
+            |          }
+            |        }
+            |      ],
             |      categories:[{
             |        title: 'AI - LLM',
             |        description: 'All the features provided the Cloud APIM AI - LLM extension',

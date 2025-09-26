@@ -48,16 +48,81 @@ class AgentFunction extends WorkflowFunction {
   override def documentationDescription: String = "A powerful AI agent"
   override def documentationInputSchema: Option[JsObject] = Some(Json.obj(
     "type" -> "object",
-    "required" -> Json.arr(),
-    "properties" -> Json.obj()
+    "required" -> Json.arr("name", "provider", "description", "instructions", "input"),
+    "properties" -> Json.obj(
+      "name" -> Json.obj("type" -> "string", "description" -> "Name of the agent"),
+      "provider" -> Json.obj("type" -> "string", "description" -> "Id of the llm provider"),
+      "description" -> Json.obj("type" -> "string", "description" -> "Description of the agent (useful for handoff)"),
+      "instructions" -> Json.obj("type" -> "array", "description" -> "System instructions for the agent"),
+      "input" -> Json.obj("type" -> "string", "description" -> "The agent input"),
+      "tools" -> Json.obj("type" -> "array", "description" -> "List of tool function ids"),
+      "handoffs" -> Json.obj("type" -> "array", "description" -> "List of handoff objects", "properties" -> Json.obj(
+        "agent" -> Json.obj("type" -> "object", "description" -> "an agent config"),
+        "enabled" -> Json.obj("type" -> "boolean", "description" -> "is handoff enabled"),
+        "tool_name_override" -> Json.obj("type" -> "string", "description" -> "tool name override"),
+        "tool_description_override" -> Json.obj("type" -> "string", "description" -> "tool description"),
+      )),
+    )
   ))
-  override def documentationFormSchema: Option[JsObject] = Some(Json.obj())
+  override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "LLM provider id",
+      "props" -> Json.obj(
+        "description" -> "The LLM provider id"
+      )
+    ),
+    "name" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Name",
+      "props" -> Json.obj(
+        "description" -> "Name"
+      )
+    ),
+    "description" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Description",
+      "props" -> Json.obj(
+        "description" -> "Description"
+      )
+    ),
+    "instructions" -> Json.obj(
+      "type"  -> "array",
+      "label" -> "Instructions",
+      "props" -> Json.obj(
+        "description" -> "Instructions"
+      )
+    ),
+    "input" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Agent input",
+      "props" -> Json.obj(
+        "description" -> "Agent input"
+      )
+    ),
+    "tools" -> Json.obj(
+      "type"  -> "array",
+      "label" -> "Tools",
+      "props" -> Json.obj(
+        "description" -> "Tools"
+      )
+    ),
+  ))
   override def documentationCategory: Option[String] = Some("Cloud APIM - LLM extension")
   override def documentationOutputSchema: Option[JsObject] = None
   override def documentationExample: Option[JsObject] = Some(Json.obj(
+    "id" -> "math_tutor",
     "kind" -> "call",
     "function" -> "extensions.com.cloud-apim.llm-extension.agent",
-    "args" -> Json.obj()
+    "args" -> Json.obj(
+      "name" -> "math_tutor",
+      "provider" -> "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
+      "description" -> "Specialist agent for math questions",
+      "instructions" -> Json.arr(
+        "You provide help with math problems. Explain your reasoning at each step and include examples."
+      ),
+      "input" -> "${input.question}"
+    )
   ))
 
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
