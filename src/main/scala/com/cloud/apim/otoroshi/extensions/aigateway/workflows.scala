@@ -2,6 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 
 import akka.stream.scaladsl.FileIO
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.agents.{AgentConfig, RouterNode}
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.GuardrailResult.GuardrailPass
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailResult, Guardrails}
 import otoroshi.env.Env
@@ -33,9 +34,47 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.memory_add_messages", new MemoryAddMessagesFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.memory_get_messages", new MemoryGetMessagesFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.memory_clear_messages", new MemoryClearMessagesFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.agent", new AgentFunction())
+    Node.registerNode("extensions.com.cloud-apim.llm-extension.router", json => new RouterNode(json))
     // text chunking ;)
   }
 }
+
+class AgentFunction extends WorkflowFunction {
+
+  override def documentationName: String = "extensions.com.cloud-apim.llm-extension.agent"
+  override def documentationDisplayName: String = "AI Agent"
+  override def documentationIcon: String = "fas fa-brain"
+  override def documentationDescription: String = "A powerful AI agent"
+  override def documentationInputSchema: Option[JsObject] = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Json.arr(),
+    "properties" -> Json.obj()
+  ))
+  override def documentationFormSchema: Option[JsObject] = Some(Json.obj())
+  override def documentationCategory: Option[String] = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = None
+  override def documentationExample: Option[JsObject] = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.agent",
+    "args" -> Json.obj()
+  ))
+
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    val agent = AgentConfig.from(args)
+    val input = args.select("input")
+      .asOpt[JsValue]
+      .map(v => WorkflowOperator.processOperators(v, wfr, env))
+      .orElse(wfr.memory.get("input"))
+      .flatMap(_.asOptString)
+      .getOrElse("--")
+    agent.run(input, wfr.attrs).map {
+      case Left(error) => Left(WorkflowError(s"Error executing workflow", error.asObject.some))
+      case Right(resp) => resp.json.right
+    }
+  }
+}
+
 
 class MemoryAddMessagesFunction extends WorkflowFunction {
 

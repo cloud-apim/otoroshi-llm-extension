@@ -10,18 +10,17 @@ import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, In
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
 import otoroshi.models._
-import otoroshi.next.extensions.{AdminExtensionBackofficeAuthRoute, _}
+import otoroshi.next.extensions._
 import otoroshi.utils.TypedMap
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiLlmProxy
-import play.api.{Configuration, Logger}
-import play.api.libs.json.{JsArray, JsError, JsObject, JsSuccess, Json}
+import play.api.libs.json._
 import play.api.mvc.{RequestHeader, Result, Results}
+import play.api.{Configuration, Logger}
 
-import java.lang.management.ManagementFactory
 import scala.concurrent.Future
-import scala.concurrent.duration.{DurationInt, FiniteDuration}
+import scala.concurrent.duration.DurationInt
 
 class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val providersDatastore: AiProviderDataStore = new KvAiProviderDataStore(extensionId, env.datastores.redis, env)

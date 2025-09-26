@@ -424,6 +424,7 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
   lazy val annotations = raw.select("message").select("annotations").asOpt[Seq[JsObject]]
   lazy val audio = raw.select("message").select("audio").asOpt[JsObject]
   lazy val tool_calls = raw.select("message").select("tool_calls").asOpt[Seq[JsObject]]
+  lazy val has_tool_calls = tool_calls.isDefined
 
   /// Anthropic responses
   lazy val is_server_tool_use = raw.select("type").asOpt[String].contains("server_tool_use")
@@ -463,18 +464,24 @@ case class ChatGeneration(message: OutputChatMessage) {
   def json: JsValue = Json.obj(
     "message" -> message.json
   )
-  def openaiJson(idx: Int): JsValue = Json.obj(
-    "index" -> idx,
-    "message" -> message.json,
-    "logprobs" -> JsNull,
-    "finish_reason" -> "stop",
-  )
-  def openaiCompletionJson(idx: Int): JsValue = Json.obj(
-    "index" -> idx,
-    "text" -> message.content,
-    "logprobs" -> JsNull,
-    "finish_reason" -> "stop",
-  )
+  def openaiJson(idx: Int): JsValue = {
+    val finish_reason = if (message.has_tool_calls) "tool_calls" else "stop"
+    Json.obj(
+      "index" -> idx,
+      "message" -> message.json,
+      "logprobs" -> JsNull,
+      "finish_reason" -> finish_reason,
+    )
+  }
+  def openaiCompletionJson(idx: Int): JsValue = {
+    val finish_reason = if (message.has_tool_calls) "tool_calls" else "stop"
+    Json.obj(
+      "index" -> idx,
+      "text" -> message.content,
+      "logprobs" -> JsNull,
+      "finish_reason" -> finish_reason,
+    )
+  }
 }
 case class ChatResponse(
   generations: Seq[ChatGeneration],
