@@ -204,7 +204,7 @@ class AgentRunner(env: Env) {
   }
 }
 
-case class RouterNode(json: JsObject) extends Node {
+class RouterNode(val json: JsObject) extends Node {
 
   def from(json: JsObject): Node = {
     val kind = json.select("kind").asOpt[String].getOrElse("--").toLowerCase()
@@ -217,10 +217,10 @@ case class RouterNode(json: JsObject) extends Node {
   override def subNodes: Seq[NodeLike]                    =
     json.select("paths").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(v => from(v))
   override def documentationName: String                  = "extensions.com.cloud-apim.llm-extension.router"
-  override def documentationDisplayName: String           = "LLM Router"
+  override def documentationDisplayName: String           = "AI Agent Router"
   override def documentationIcon: String                  = "fas fa-exchange-alt"
   override def documentationDescription: String           = "This node uses an LLM to choose which path to follow"
-  override def documentationInputSchema: Option[JsObject] = Node.baseInputSchema
+  override def documentationInputSchema: Option[JsObject] = None /*Node.baseInputSchema
     .deepMerge(
       Json.obj(
         "properties" -> Json.obj(
@@ -239,7 +239,7 @@ case class RouterNode(json: JsObject) extends Node {
         )
       )
     )
-    .some
+    .some*/
   override def documentationExample: Option[JsObject]     = Some(
     Json.parse(s"""{
                   |  "kind": "extensions.com.cloud-apim.llm-extension.router",

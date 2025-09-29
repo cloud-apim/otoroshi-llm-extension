@@ -66,10 +66,15 @@ class AgentFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
+      "type"  -> "select",
       "label" -> "LLM provider id",
       "props" -> Json.obj(
-        "description" -> "The LLM provider id"
+        "description" -> "The LLM provider id",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
       )
     ),
     "name" -> Json.obj(
@@ -80,24 +85,24 @@ class AgentFunction extends WorkflowFunction {
       )
     ),
     "description" -> Json.obj(
-      "type"  -> "string",
+      "type" -> "any",
       "label" -> "Description",
       "props" -> Json.obj(
-        "description" -> "Description"
+        "height" -> "200px"
       )
     ),
     "instructions" -> Json.obj(
-      "type"  -> "array",
+      "type" -> "any",
       "label" -> "Instructions",
       "props" -> Json.obj(
-        "description" -> "Instructions"
+        "height" -> "200px"
       )
     ),
     "input" -> Json.obj(
-      "type"  -> "string",
+      "type" -> "any",
       "label" -> "Agent input",
       "props" -> Json.obj(
-        "description" -> "Agent input"
+        "height" -> "200px"
       )
     ),
     "tools" -> Json.obj(

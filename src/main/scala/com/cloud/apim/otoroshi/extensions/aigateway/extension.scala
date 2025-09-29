@@ -236,6 +236,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val imagesModelsPage = getResourceCode("cloudapim/extensions/ai/ImageModelsPage.js")
   lazy val videoModelsPage = getResourceCode("cloudapim/extensions/ai/VideoModelsPage.js")
   lazy val memoriesPage = getResourceCode("cloudapim/extensions/ai/MemoriesPage.js")
+  lazy val workflowNodeSwitchFile = getResourceCode("cloudapim/extensions/ai/WorkflowNodes.js")
   lazy val imgCode = getResourceCode("cloudapim/extensions/ai/undraw_visionary_technology_re_jfp7.svg")
 
   def handleProviderTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
@@ -679,120 +680,11 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    ${videoModelsPage}
             |    ${audioModelsPage}
             |    ${memoriesPage}
+            |    ${workflowNodeSwitchFile}
             |
             |    return {
             |      id: extensionId,
-            |      workflowNodes: [
-            |        {
-            |          name: 'extensions.com.cloud-apim.llm-extension.router',
-            |          kind: 'extensions.com.cloud-apim.llm-extension.router',
-            |          description: 'AI Agent router',
-            |          display_name: "AI Agent router",
-            |          icon: 'fas fa-brain',
-            |          type: 'group',
-            |          flow: [],
-            |          form_schema: {},
-            |          sourcesIsArray: true,
-            |          handlePrefix: "Path",
-            |          sources: [],
-            |          height: (data) => `$${110 + 20 * data?.sourceHandles?.length}px`,
-            |          nodeToJson: ({
-            |            edges,
-            |            nodes,
-            |            node,
-            |            alreadySeen,
-            |            connections,
-            |            nodeToJson,
-            |            removeReturnedFromWorkflow }) => {
-            |            const { kind } = node.data;
-            |            subflow = node.data.sourceHandles.reduce(
-            |              (acc, source, idx) => {
-            |                const connection = connections.find((conn) => conn.sourceHandle === source.id);
-            |
-            |                if (!connection) {
-            |                  // keep all fields except previous node
-            |                  const rest = Object.fromEntries(
-            |                    Object.entries(node.data.content.paths[idx]).filter(([key]) => key !== 'node')
-            |                  );
-            |                  return {
-            |                    ...acc,
-            |                    paths: [...acc.paths, rest],
-            |                  };
-            |                }
-            |
-            |                const target = nodes.find((n) => n.id === connection.target);
-            |                const [pathNode, seen] = removeReturnedFromWorkflow(
-            |                  nodeToJson(target, emptyWorkflow, false, alreadySeen)
-            |                );
-            |
-            |                alreadySeen = alreadySeen.concat([seen]);
-            |
-            |                const isSubFlowEmpty = pathNode.kind === 'workflow' && pathNode.steps.length === 0;
-            |                const isOneNodeSubFlow = pathNode.kind === 'workflow' && pathNode.steps.length === 1;
-            |
-            |                return {
-            |                  ...acc,
-            |                  paths: [
-            |                    ...acc.paths,
-            |                    {
-            |                      ...node.data.content.paths[idx],
-            |                      node: isSubFlowEmpty ? undefined : isOneNodeSubFlow ? pathNode.steps[0] : pathNode,
-            |                    },
-            |                  ],
-            |                };
-            |              },
-            |              {
-            |                ...node.data.content,
-            |                paths: [],
-            |                kind,
-            |              }
-            |            );
-            |          },
-            |          buildGraph: ({ workflow, addInformationsToNode, targetId, handleId, buildGraph, current, me }) => {
-            |            let nodes = []
-            |            let edges = []
-            |
-            |            let paths = [];
-            |
-            |            if (workflow.paths) {
-            |              for (let i = 0; i < workflow.paths.length; i++) {
-            |                const subflow = workflow.paths[i].node;
-            |
-            |                if (subflow) {
-            |                  const nestedPath = buildGraph([subflow], addInformationsToNode, targetId, handleId);
-            |
-            |                  paths.push({
-            |                    idx: i,
-            |                    nestedPath,
-            |                  });
-            |                }
-            |              }
-            |
-            |              current.customSourceHandles = [...Array(workflow.paths.length)].map((_, i) => ({
-            |                id: path-$${i},
-            |              }));
-            |
-            |              paths.forEach((path) => {
-            |                if (path.nestedPath.nodes.length > 0)
-            |                  edges.push({
-            |                    id: $${me}-path-$${path.idx},
-            |                    source: me,
-            |                    sourceHandle: path-$${path.idx},
-            |                    target: path.nestedPath.nodes[0].id,
-            |                    targetHandle: input-$${path.nestedPath.nodes[0].id},
-            |                    type: 'customEdge',
-            |                    animated: true,
-            |                  });
-            |
-            |                nodes = nodes.concat(path.nestedPath.nodes);
-            |                edges = edges.concat(path.nestedPath.edges);
-            |              });
-            |            }
-            |
-            |            return { nodes, edges }
-            |          }
-            |        }
-            |      ],
+            |      workflowNodes: [ workflowNodeSwitch ],
             |      categories:[{
             |        title: 'AI - LLM',
             |        description: 'All the features provided the Cloud APIM AI - LLM extension',
