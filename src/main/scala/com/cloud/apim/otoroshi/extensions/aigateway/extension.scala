@@ -686,9 +686,9 @@ class AiExtension(val env: Env) extends AdminExtension {
             |        {
             |          name: 'extensions.com.cloud-apim.llm-extension.router',
             |          kind: 'extensions.com.cloud-apim.llm-extension.router',
-            |          description: 'AI agent router',
-            |          display_name: "AI agent router",
-            |          icon: 'fas fa-road',
+            |          description: 'AI Agent router',
+            |          display_name: "AI Agent router",
+            |          icon: 'fas fa-brain',
             |          type: 'group',
             |          flow: [],
             |          form_schema: {},
