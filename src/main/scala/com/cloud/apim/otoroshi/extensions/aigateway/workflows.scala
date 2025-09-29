@@ -67,9 +67,9 @@ class AgentFunction extends WorkflowFunction {
   override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
     "provider" -> Json.obj(
       "type"  -> "select",
-      "label" -> "LLM provider id",
+      "label" -> "LLM provider",
       "props" -> Json.obj(
-        "description" -> "The LLM provider id",
+        "description" -> "The LLM provider",
         "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers",
         "optionsTransformer" -> Json.obj(
           "label" -> "name",
@@ -168,16 +168,22 @@ class MemoryAddMessagesFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
-      "label" -> "Memory provider id",
+      "type" -> "select",
+      "description" -> "The Memory provider id",
       "props" -> Json.obj(
-        "description" -> "The provider id"
+        "description" -> "The Memory provider id",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/persistent-memories",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
       )
     ),
     "payload"  -> Json.obj(
-      "type"  -> "code",
+      "type"  -> "any",
       "props" -> Json.obj(
         "description" -> "The payload object",
+        "height" -> "200px"
       ),
       "label" -> "Payload"
     )
@@ -240,16 +246,22 @@ class MemoryClearMessagesFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
-      "label" -> "Memory provider id",
+      "type" -> "select",
+      "description" -> "The Memory provider id",
       "props" -> Json.obj(
-        "description" -> "The provider id"
+        "description" -> "The Memory provider id",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/persistent-memories",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
       )
     ),
     "payload"  -> Json.obj(
-      "type"  -> "code",
+      "type"  -> "any",
       "props" -> Json.obj(
         "description" -> "The payload object",
+        "height" -> "200px"
       ),
       "label" -> "Payload"
     )
@@ -305,16 +317,22 @@ class MemoryGetMessagesFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
-      "label" -> "Memory provider id",
+      "type" -> "select",
+      "description" -> "The Memory provider id",
       "props" -> Json.obj(
-        "description" -> "The provider id"
+        "description" -> "The Memory provider id",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/persistent-memories",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
       )
     ),
     "payload"  -> Json.obj(
-      "type"  -> "code",
+      "type"  -> "any",
       "props" -> Json.obj(
         "description" -> "The payload object",
+        "height" -> "200px"
       ),
       "label" -> "Payload"
     )
@@ -380,10 +398,11 @@ class GuardrailCallFunction extends WorkflowFunction {
         "description" -> "The guardrail kind"
       )
     ),
-    "payload"  -> Json.obj(
-      "type"  -> "code",
+    "config"  -> Json.obj(
+      "type"  -> "any",
       "props" -> Json.obj(
-        "description" -> "The payload object",
+        "description" -> "The config object",
+        "height" -> "200px"
       ),
       "label" -> "Payload"
     )
@@ -457,16 +476,22 @@ class VectorStoreAddFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
-      "label" -> "Embedding store provider id",
+      "type" -> "select",
+      "description" -> "The Embedding store provider id",
       "props" -> Json.obj(
-        "description" -> "The provider id"
+        "description" -> "The Embedding store provider id",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/embedding-stores",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
       )
     ),
     "payload"  -> Json.obj(
-      "type"  -> "code",
+      "type"  -> "any",
       "props" -> Json.obj(
         "description" -> "The payload object",
+        "height" -> "200px"
       ),
       "label" -> "Payload"
     )
@@ -530,16 +555,22 @@ class VectorStoreRemoveFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
-      "label" -> "Embedding store provider id",
+      "type" -> "select",
+      "description" -> "The Embedding store provider id",
       "props" -> Json.obj(
-        "description" -> "The provider id"
+        "description" -> "The Embedding store provider id",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/embedding-stores",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
       )
     ),
     "payload"  -> Json.obj(
-      "type"  -> "code",
+      "type"  -> "any",
       "props" -> Json.obj(
         "description" -> "The payload object",
+        "height" -> "200px"
       ),
       "label" -> "Payload"
     )
@@ -603,16 +634,22 @@ class VectorStoreSearchFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
-      "label" -> "Embedding store provider id",
+      "type" -> "select",
+      "description" -> "The Embedding store provider id",
       "props" -> Json.obj(
-        "description" -> "The provider id"
+        "description" -> "The Embedding store provider id",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/embedding-stores",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
       )
     ),
     "payload"  -> Json.obj(
-      "type"  -> "code",
+      "type"  -> "any",
       "props" -> Json.obj(
         "description" -> "The payload object",
+        "height" -> "200px"
       ),
       "label" -> "Payload"
     )
@@ -673,16 +710,22 @@ class ModerationCallFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
     "model" -> Json.obj(
-      "type"  -> "string",
-      "label" -> "Moderation model",
+      "type" -> "select",
+      "description" -> "The moderation model",
       "props" -> Json.obj(
-        "description" -> "The moderation model name"
+        "description" -> "The moderation model",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/moderation-models",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
       )
     ),
     "input"  -> Json.obj(
-      "type"  -> "code",
+      "type"  -> "any",
       "props" -> Json.obj(
-        "description" -> "The input text"
+        "description" -> "The input text",
+        "height" -> "200px"
       ),
       "label" -> "Input"
     )
@@ -751,16 +794,22 @@ class GenerateVideoFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject]   = Some(Json.obj( 
     "provider" -> Json.obj(
-      "type"  -> "string",
+      "type" -> "select",
+      "description" -> "The video generation model",
       "props" -> Json.obj(
-        "description" -> "The video generation provider"
-      ),
-      "label" -> "Provider"
+        "description" -> "The video generation model",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/video-models",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
     ),
     "payload" -> Json.obj(
-      "type"  -> "object",
+      "type"  -> "any",
       "props" -> Json.obj(
-        "description" -> "The video generation payload"
+        "description" -> "The video generation payload",
+        "height" -> "200px"
       ),
       "label" -> "Payload"
     )
@@ -823,11 +872,16 @@ class CallMcpFunctionFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject]   = Some(Json.obj( 
     "provider" -> Json.obj(
-      "type"  -> "string",
+      "type" -> "select",
+      "description" -> "The MCP Connector",
       "props" -> Json.obj(
-        "description" -> "The MCP connector provider"
-      ),
-      "label" -> "Provider"
+        "description" -> "The MCP Connector",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-connectors",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
     ),
     "function" -> Json.obj(
       "type"  -> "string",
@@ -897,11 +951,16 @@ class CallToolFunctionFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
+      "type" -> "select",
+      "description" -> "The tool function",
       "props" -> Json.obj(
-        "description" -> "The tool function provider"
-      ),
-      "label" -> "Provider"
+        "description" -> "The tool function",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/tool-functions",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
     ),
     "function" -> Json.obj(
       "type"  -> "string",
@@ -982,11 +1041,16 @@ class GenerateImageFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
+      "type" -> "select",
+      "description" -> "The image generation model",
       "props" -> Json.obj(
-        "description" -> "The image generation provider"
-      ),
-      "label" -> "Provider"
+        "description" -> "The image generation model",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/image-models",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
     ),
     "payload" -> Json.obj(
       "type"  -> "object",
@@ -1064,17 +1128,23 @@ class ComputeEmbeddingFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
-      "label" -> "Provider",
+      "type" -> "select",
+      "description" -> "The embedding model",
       "props" -> Json.obj(
-        "description" -> "The embedding model provider id"
+        "description" -> "The embedding model",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/embedding-models",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
       )
     ),
     "payload" -> Json.obj(
-      "type"  -> "code",
+      "type"  -> "any",
       "label" -> "Payload",
       "props" -> Json.obj(
-        "description" -> "The payload object"
+        "description" -> "The payload object",
+        "height" -> "200px"
       )
     )
   ))
@@ -1147,11 +1217,16 @@ class LlmCallFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
+      "type" -> "select",
+      "description" -> "The LLM provider",
       "props" -> Json.obj(
-        "description" -> "The LLM provider id"
-      ),
-      "label" -> "Provider"
+        "description" -> "The LLM provider",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
     ),
     "openai_format" -> Json.obj(
       "type"  -> "boolean",
@@ -1161,9 +1236,10 @@ class LlmCallFunction extends WorkflowFunction {
       "label" -> "OpenAI format"
     ),
     "payload" -> Json.obj(
-      "type"  -> "code",
+      "type"  -> "any",
       "props" -> Json.obj(
-        "description" -> "The payload object"
+        "description" -> "The payload object",
+        "height" -> "200px"
       ),
       "label" -> "Payload"
     )
@@ -1259,10 +1335,23 @@ class AudioTtsFunction extends WorkflowFunction {
       ),
       "label" -> "Provider"
     ),
-    "payload" -> Json.obj(
-      "type"  -> "code",
+    "provider" -> Json.obj(
+      "type" -> "select",
+      "description" -> "The audio model provider",
       "props" -> Json.obj(
-        "description" -> "The payload object"
+        "description" -> "The audio model provider",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/audio-models",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
+    ),
+    "payload" -> Json.obj(
+      "type"  -> "any",
+      "props" -> Json.obj(
+        "description" -> "The payload object",
+        "height" -> "200px"
       ),
       "label" -> "Payload"
     )
@@ -1348,16 +1437,22 @@ class AudioSttFunction extends WorkflowFunction {
   ))
   override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
     "provider" -> Json.obj(
-      "type"  -> "string",
+      "type" -> "select",
+      "description" -> "The audio model provider",
       "props" -> Json.obj(
-        "description" -> "The audio model provider id"
-      ),
-      "label" -> "Provider"
+        "description" -> "The audio model provider",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/audio-models",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
     ),
     "payload" -> Json.obj(
-      "type"  -> "code",
+      "type"  -> "any",
       "props" -> Json.obj(
-        "description" -> "The payload object"
+        "description" -> "The payload object",
+        "height" -> "200px"
       ),
       "label" -> "Payload"
     )
