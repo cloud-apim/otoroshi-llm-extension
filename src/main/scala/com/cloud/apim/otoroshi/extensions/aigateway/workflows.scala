@@ -34,6 +34,7 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.memory_clear_messages", new MemoryClearMessagesFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.agent", new AgentFunction())
     Node.registerNode("extensions.com.cloud-apim.llm-extension.router", json => new RouterNode(json))
+    Node.registerNode("extensions.com.cloud-apim.llm-extension.ai_agent", json => new AiAgentNode(json))
     // text chunking ;)
   }
 }
@@ -54,6 +55,7 @@ class AgentFunction extends WorkflowFunction {
       "instructions" -> Json.obj("type" -> "array", "description" -> "System instructions for the agent"),
       "input" -> Json.obj("type" -> "string", "description" -> "The agent input"),
       "tools" -> Json.obj("type" -> "array", "description" -> "List of tool function ids"),
+      "inline_tools" -> Json.obj("type" -> "array", "description" -> "List of inline tool function"),
       "memory" -> Json.obj(),
       "guardrails" -> Json.obj(),
       "handoffs" -> Json.obj("type" -> "array", "description" -> "List of handoff objects", "properties" -> Json.obj(

@@ -502,3 +502,197 @@ class RouterNode(val json: JsObject) extends Node {
     }
   }
 }
+
+class AiAgentNode(val json: JsObject) extends Node {
+
+  def from(json: JsObject): Node = {
+    val kind = json.select("kind").asOpt[String].getOrElse("--").toLowerCase()
+    Node.nodes.get(kind) match {
+      case None       => NoopNode(json)
+      case Some(node) => node(json)
+    }
+  }
+
+  override def subNodes: Seq[NodeLike]                    =
+    json.select("inline_tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(v => from(v.select("node").asObject))
+
+  override def documentationName: String                  = "extensions.com.cloud-apim.llm-extension.ai_agent"
+  override def documentationDisplayName: String           = "AI Agent (node)"
+  override def documentationIcon: String                  = "fas fa-robot"
+  override def documentationDescription: String           = "This node acts like an LLM Agen"
+  override def documentationInputSchema: Option[JsObject] = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Json.arr("name", "provider", "description", "instructions", "input"),
+    "properties" -> Json.obj(
+      "name" -> Json.obj("type" -> "string", "description" -> "Name of the agent"),
+      "provider" -> Json.obj("type" -> "string", "description" -> "Id of the llm provider"),
+      "description" -> Json.obj("type" -> "string", "description" -> "Description of the agent (useful for handoff)"),
+      "instructions" -> Json.obj("type" -> "array", "description" -> "System instructions for the agent"),
+      "input" -> Json.obj("type" -> "string", "description" -> "The agent input"),
+      "tools" -> Json.obj("type" -> "array", "description" -> "List of tool function ids"),
+      "inline_tools" -> Json.obj("type" -> "array", "description" -> "List of inline tool function"),
+      "memory" -> Json.obj(),
+      "guardrails" -> Json.obj(),
+      "handoffs" -> Json.obj("type" -> "array", "description" -> "List of handoff objects", "properties" -> Json.obj(
+        "agent" -> Json.obj("type" -> "object", "description" -> "an agent config"),
+        "enabled" -> Json.obj("type" -> "boolean", "description" -> "is handoff enabled"),
+        "tool_name_override" -> Json.obj("type" -> "string", "description" -> "tool name override"),
+        "tool_description_override" -> Json.obj("type" -> "string", "description" -> "tool description"),
+      )),
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "LLM provider",
+      "props" -> Json.obj(
+        "description" -> "The LLM provider",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
+    ),
+    "name" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Name",
+      "props" -> Json.obj(
+        "description" -> "Name"
+      )
+    ),
+    "description" -> Json.obj(
+      "type" -> "any",
+      "label" -> "Description",
+      "props" -> Json.obj(
+        "height" -> "200px"
+      )
+    ),
+    "instructions" -> Json.obj(
+      "type" -> "any",
+      "label" -> "Instructions",
+      "props" -> Json.obj(
+        "height" -> "200px",
+      )
+    ),
+    "input" -> Json.obj(
+      "type" -> "any",
+      "label" -> "Agent input",
+      "props" -> Json.obj(
+        "height" -> "200px"
+      )
+    ),
+    "tools" -> Json.obj(
+      "type"  -> "select",
+      "array" -> true,
+      "label" -> "Tools",
+      "props" -> Json.obj(
+        "description" -> "Tools",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/tool-functions",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
+    ),
+    "memory" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Persistent memory",
+      "props" -> Json.obj(
+        "description" -> "Persistent memory",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/persistent-memories",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
+    ),
+    "guardrails" -> Json.obj(
+      "label" -> "Guardrails",
+      "type" -> "array",
+      "array" -> true,
+      "format" -> "form",
+      "schema" -> Json.obj(
+        "id" -> Json.obj(
+          "label" -> "Guardrail",
+          "type" -> "select",
+          "props" -> Json.obj(
+            "possibleValues" -> Json.arr(
+              Json.obj("label" -> "Regex", "value" -> "regex"),
+              Json.obj("label" -> "Webhook", "value" -> "webhook"),
+              Json.obj("label" -> "LLM", "value" -> "llm"),
+              Json.obj("label" -> "Secrets leakage", "value" -> "secrets_leakage"),
+              Json.obj("label" -> "Auto Secrets leakage", "value" -> "auto_secrets_leakage"),
+              Json.obj("label" -> "No gibberish", "value" -> "gibberish"),
+              Json.obj("label" -> "No personal information", "value" -> "pif"),
+              Json.obj("label" -> "Language moderation", "value" -> "moderation"),
+              Json.obj("label" -> "Moderation model", "value" -> "moderation_model"),
+              Json.obj("label" -> "No toxic language", "value" -> "toxic_language"),
+              Json.obj("label" -> "No racial bias", "value" -> "racial_bias"),
+              Json.obj("label" -> "No gender bias", "value" -> "gender_bias"),
+              Json.obj("label" -> "No personal health information", "value" -> "personal_health_information"),
+              Json.obj("label" -> "No prompt injection/prompt jailbreak", "value" -> "prompt_injection"),
+              Json.obj("label" -> "Faithfulness", "value" -> "faithfulness"),
+              Json.obj("label" -> "Sentences count", "value" -> "sentences"),
+              Json.obj("label" -> "Words count", "value" -> "words"),
+              Json.obj("label" -> "Characters count", "value" -> "characters"),
+              Json.obj("label" -> "Text contains", "value" -> "contains"),
+              Json.obj("label" -> "Semantic contains", "value" -> "semantic_contains"),
+              Json.obj("label" -> "QuickJS", "value" -> "quickjs"),
+              Json.obj("label" -> "Wasm", "value" -> "wasm"),
+            )
+          )
+        ),
+        "before" -> Json.obj("type" -> "boolean", "label" -> "Before", "props" -> Json.obj()),
+        "after" ->  Json.obj("type" -> "boolean", "label" -> "After", "props" -> Json.obj()),
+        "config" -> Json.obj("type" -> "any", "label" -> "Config", "props" -> Json.obj("height" -> "200px")),
+      ),
+      "flow" -> Json.arr("id", "before", "after", "config"),
+    ),
+  ))
+  override def documentationCategory: Option[String] = Some("Cloud APIM - LLM extension")
+  override def documentationExample: Option[JsObject] = Some(Json.obj(
+    "id" -> "math_tutor",
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.agent",
+    "args" -> Json.obj(
+      "name" -> "math_tutor",
+      "provider" -> "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
+      "description" -> "Specialist agent for math questions",
+      "instructions" -> Json.arr(
+        "You provide help with math problems. Explain your reasoning at each step and include examples."
+      ),
+      "input" -> "${input.question}"
+    )
+  ))
+  override def run(
+                    wfr: WorkflowRun,
+                    prefix: Seq[Int],
+                    from: Seq[Int]
+                  )(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    if (from.nonEmpty) {
+      WorkflowError(
+        s"AI Agent Node (${prefix.mkString(".")}) does not support resume: ${from.mkString(".")}",
+        None,
+        None
+      ).leftf
+    } else {
+      val agent = AgentConfig.from(json)
+      val rcfg = AgentRunConfig.from(json.select("run_config").asOpt[JsObject].getOrElse(Json.obj()))
+      val input: AgentInput = json.select("input")
+        .asOpt[JsValue]
+        .map(v => WorkflowOperator.processOperators(v, wfr, env))
+        .map {
+          case JsString(str) => AgentInput.from(str)
+          case JsArray(seq) => AgentInput(seq.map(v => ChatMessage.inputJson(v.asObject)))
+          case obj @ JsObject(_) => AgentInput(Seq(ChatMessage.inputJson(obj)))
+          case _ => AgentInput.empty
+        }
+        .getOrElse(AgentInput.empty)
+      agent.run(input, rcfg, wfr.attrs, wfr.some).map {
+        case Left(error) => Left(WorkflowError(s"Error executing workflow", error.asObject.some))
+        case Right(resp) => resp.json.right
+      }
+    }
+  }
+}
