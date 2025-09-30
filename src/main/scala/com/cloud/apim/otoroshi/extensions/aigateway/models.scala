@@ -260,6 +260,9 @@ object ChatMessage {
   def input(role: String, content: String, prefix: Option[Boolean], raw: JsObject): InputChatMessage = {
     InputChatMessage(role, Seq(ChatMessageContent.TextContent(content)), prefix, None, raw)
   }
+  def userStrInput(content: String, raw: JsObject = Json.obj()): InputChatMessage = {
+    InputChatMessage("user", Seq(ChatMessageContent.TextContent(content)), None, None, raw)
+  }
   def output(role: String, content: String, prefix: Option[Boolean], raw: JsObject): OutputChatMessage = {
     OutputChatMessage(role, content, prefix, raw)
   }

@@ -2,12 +2,10 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 
 import akka.stream.scaladsl.FileIO
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.agents.{AgentConfig, RouterNode}
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.GuardrailResult.GuardrailPass
+import com.cloud.apim.otoroshi.extensions.aigateway.agents._
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailResult, Guardrails}
 import otoroshi.env.Env
 import otoroshi.next.workflow._
-import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
@@ -56,6 +54,8 @@ class AgentFunction extends WorkflowFunction {
       "instructions" -> Json.obj("type" -> "array", "description" -> "System instructions for the agent"),
       "input" -> Json.obj("type" -> "string", "description" -> "The agent input"),
       "tools" -> Json.obj("type" -> "array", "description" -> "List of tool function ids"),
+      "memory" -> Json.obj(),
+      "guardrails" -> Json.obj(),
       "handoffs" -> Json.obj("type" -> "array", "description" -> "List of handoff objects", "properties" -> Json.obj(
         "agent" -> Json.obj("type" -> "object", "description" -> "an agent config"),
         "enabled" -> Json.obj("type" -> "boolean", "description" -> "is handoff enabled"),
@@ -95,7 +95,7 @@ class AgentFunction extends WorkflowFunction {
       "type" -> "any",
       "label" -> "Instructions",
       "props" -> Json.obj(
-        "height" -> "200px"
+        "height" -> "200px",
       )
     ),
     "input" -> Json.obj(
@@ -106,11 +106,71 @@ class AgentFunction extends WorkflowFunction {
       )
     ),
     "tools" -> Json.obj(
-      "type"  -> "array",
+      "type"  -> "select",
+      "array" -> true,
       "label" -> "Tools",
       "props" -> Json.obj(
-        "description" -> "Tools"
+        "description" -> "Tools",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/tool-functions",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
       )
+    ),
+    "memory" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Persistent memory",
+      "props" -> Json.obj(
+        "description" -> "Persistent memory",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/persistent-memories",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
+    ),
+    "guardrails" -> Json.obj(
+      "label" -> "Guardrails",
+      "type" -> "array",
+      "array" -> true,
+      "format" -> "form",
+      "schema" -> Json.obj(
+        "id" -> Json.obj(
+          "label" -> "Guardrail",
+          "type" -> "select",
+          "props" -> Json.obj(
+            "possibleValues" -> Json.arr(
+              Json.obj("label" -> "Regex", "value" -> "regex"),
+              Json.obj("label" -> "Webhook", "value" -> "webhook"),
+              Json.obj("label" -> "LLM", "value" -> "llm"),
+              Json.obj("label" -> "Secrets leakage", "value" -> "secrets_leakage"),
+              Json.obj("label" -> "Auto Secrets leakage", "value" -> "auto_secrets_leakage"),
+              Json.obj("label" -> "No gibberish", "value" -> "gibberish"),
+              Json.obj("label" -> "No personal information", "value" -> "pif"),
+              Json.obj("label" -> "Language moderation", "value" -> "moderation"),
+              Json.obj("label" -> "Moderation model", "value" -> "moderation_model"),
+              Json.obj("label" -> "No toxic language", "value" -> "toxic_language"),
+              Json.obj("label" -> "No racial bias", "value" -> "racial_bias"),
+              Json.obj("label" -> "No gender bias", "value" -> "gender_bias"),
+              Json.obj("label" -> "No personal health information", "value" -> "personal_health_information"),
+              Json.obj("label" -> "No prompt injection/prompt jailbreak", "value" -> "prompt_injection"),
+              Json.obj("label" -> "Faithfulness", "value" -> "faithfulness"),
+              Json.obj("label" -> "Sentences count", "value" -> "sentences"),
+              Json.obj("label" -> "Words count", "value" -> "words"),
+              Json.obj("label" -> "Characters count", "value" -> "characters"),
+              Json.obj("label" -> "Text contains", "value" -> "contains"),
+              Json.obj("label" -> "Semantic contains", "value" -> "semantic_contains"),
+              Json.obj("label" -> "QuickJS", "value" -> "quickjs"),
+              Json.obj("label" -> "Wasm", "value" -> "wasm"),
+            )
+          )
+        ),
+        "before" -> Json.obj("type" -> "boolean", "label" -> "Before", "props" -> Json.obj()),
+        "after" ->  Json.obj("type" -> "boolean", "label" -> "After", "props" -> Json.obj()),
+        "config" -> Json.obj("type" -> "any", "label" -> "Config", "props" -> Json.obj("height" -> "200px")),
+      ),
+      "flow" -> Json.arr("id", "before", "after", "config"),
     ),
   ))
   override def documentationCategory: Option[String] = Some("Cloud APIM - LLM extension")
@@ -132,19 +192,23 @@ class AgentFunction extends WorkflowFunction {
 
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val agent = AgentConfig.from(args)
-    val input = args.select("input")
+    val rcfg = AgentRunConfig.from(args.select("run_config").asOpt[JsObject].getOrElse(Json.obj()))
+    val input: AgentInput = args.select("input")
       .asOpt[JsValue]
       .map(v => WorkflowOperator.processOperators(v, wfr, env))
-      .orElse(wfr.memory.get("input"))
-      .flatMap(_.asOptString)
-      .getOrElse("--")
-    agent.run(input, wfr.attrs).map {
+      .map {
+        case JsString(str) => AgentInput.from(str)
+        case JsArray(seq) => AgentInput(seq.map(v => ChatMessage.inputJson(v.asObject)))
+        case obj @ JsObject(_) => AgentInput(Seq(ChatMessage.inputJson(obj)))
+        case _ => AgentInput.empty
+      }
+      .getOrElse(AgentInput.empty)
+    agent.run(input, rcfg, wfr.attrs).map {
       case Left(error) => Left(WorkflowError(s"Error executing workflow", error.asObject.some))
       case Right(resp) => resp.json.right
     }
   }
 }
-
 
 class MemoryAddMessagesFunction extends WorkflowFunction {
 

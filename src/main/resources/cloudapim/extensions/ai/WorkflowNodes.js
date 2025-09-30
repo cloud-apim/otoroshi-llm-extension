@@ -2,7 +2,7 @@ const workflowNodeSwitch = {
   name: 'extensions.com.cloud-apim.llm-extension.router',
   kind: 'extensions.com.cloud-apim.llm-extension.router',
   description: 'AI agent router',
-  display_name: "AI agent router front",
+  display_name: "AI agent router",
   icon: 'fas fa-brain',
   type: 'group',
   flow: ['provider', 'input', 'instructions'],

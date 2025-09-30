@@ -1,12 +1,13 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.agents
 
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.Guardrails
+import com.cloud.apim.otoroshi.extensions.aigateway._
 import otoroshi.env.Env
 import otoroshi.next.workflow.{Node, NodeLike, NoopNode, WorkflowError, WorkflowOperator, WorkflowRun}
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsNull, JsObject, JsValue, Json}
+import play.api.libs.json.{JsArray, JsNull, JsObject, JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -17,7 +18,7 @@ case class Handoff(
   enabled: Boolean = true,
   tool_name_override: Option[String] = None,
   tool_description_override: Option[String] = None,
-  on_handoff: Option[Function[String, Unit]] = None,
+  on_handoff: Option[Function[AgentInput, Unit]] = None,
 ) {
 
   def functionName: String = tool_name_override.getOrElse(s"transfer_to_${agent.name.slugifyWithSlash}")
@@ -60,9 +61,14 @@ case class AgentConfig(
   modelOptions: Option[JsObject] = None,
   tools: Seq[String] = Seq.empty,
   handoffs: Seq[Handoff] = Seq.empty,
+  memory: Option[String] = None,
+  guardrails: Guardrails = Guardrails(Seq.empty),
 ) {
-  def run(input: String, attrs: TypedMap = TypedMap.empty, providerRef: Option[String] = None)(implicit env: Env):  Future[Either[JsValue, String]] = {
-    new AgentRunner(env).run(this, input, attrs, providerRef)
+  def runStr(input: String, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty)(implicit env: Env):  Future[Either[JsValue, String]] = {
+    run(AgentInput.from(input), rcfg, attrs)
+  }
+  def run(input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty)(implicit env: Env):  Future[Either[JsValue, String]] = {
+    new AgentRunner(env).run(this, input, rcfg, attrs)
   }
   def toHandoff(): Handoff = {
     Handoff(
@@ -79,15 +85,39 @@ object AgentConfig {
   def from(json: JsValue): AgentConfig = {
     AgentConfig(
       name = json.select("name").asString,
-      description = json.select("description").asString,
-      instructions = json.select("instructions").asOpt[Seq[String]].getOrElse(Seq.empty),
+      description = json.select("description").asOptString.getOrElse(""),
+      instructions = json.select("instructions").asOpt[Seq[String]].orElse(json.select("instructions").asOptString.map(s => Seq(s))).getOrElse(Seq.empty),
       provider = json.select("provider").asOpt[String],
       model = json.select("model").asOpt[String],
       modelOptions = json.select("model_options").asOpt[JsObject],
       tools = json.select("tools").asOpt[Seq[String]].getOrElse(Seq.empty),
-      handoffs = json.select("handoffs").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(o => Handoff.from(o))
+      handoffs = json.select("handoffs").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(o => Handoff.from(o)),
+      memory = json.select("memory").asOptString,
+      guardrails = json.select("guardrails").asOpt[JsArray].flatMap(seq => Guardrails.format.reads(seq).asOpt).getOrElse(Guardrails.empty),
     )
   }
+}
+
+object AgentRunConfig {
+  def from(json: JsValue): AgentRunConfig = {
+    AgentRunConfig(
+      provider = json.select("provider").asOpt[String],
+      model = json.select("model").asOpt[String],
+      modelOptions = json.select("model_options").asOpt[JsObject],
+      maxTurns = json.select("max_turns").asOpt[Int].getOrElse(10),
+    )
+  }
+}
+
+case class AgentRunConfig(provider: Option[String] = None, model: Option[String] = None, modelOptions: Option[JsObject] = None, maxTurns: Int = 10)
+
+case class AgentContext(iteration: Int = 0)
+
+case class AgentInput(messages: Seq[InputChatMessage])
+
+object AgentInput {
+  val empty: AgentInput = AgentInput(Seq.empty)
+  def from(str: String): AgentInput = AgentInput(Seq(ChatMessage.userStrInput(str)))
 }
 
 class AgentRunner(env: Env) {
@@ -98,69 +128,86 @@ class AgentRunner(env: Env) {
 
   lazy val ext = env.adminExtensions.extension[AiExtension].get
 
-  def run(agent: AgentConfig, input: String, attrs: TypedMap = TypedMap.empty, providerRef: Option[String] = None): Future[Either[JsValue, String]] = {
-    agent.provider.orElse(providerRef) match {
-      case None => Json.obj("error" -> "no provider ref").leftf
-      case Some(pref) => {
-        ext.states.provider(pref) match {
-          case None => Json.obj("error" -> "no provider").leftf
-          case Some(provider) => {
-            val over = Json.obj()
-              .applyOnWithOpt(agent.modelOptions) {
-                case (obj, options) => obj.deepMerge(options)
-              }
-              .applyOnWithOpt(agent.model) {
-                case (obj, model) => obj ++ Json.obj("model" -> model)
-              }
-              .applyOnIf(agent.tools.nonEmpty && agent.handoffs.isEmpty) { obj =>
-                obj ++ Json.obj("tools" -> agent.tools)
-              }
-            val hasHandoff = agent.handoffs.exists(_.enabled)
-            val body = Json.obj()
-              .applyOnIf(hasHandoff) { obj =>
-                val tools = agent.handoffs.filter(_.enabled).map(_.toFunction)
-                obj ++ Json.obj("tools" -> tools)
-              }
-            provider.copy(
-              options = provider.options.deepMerge(over)
-            ).getChatClient() match {
-              case None => Json.obj("error" -> "no client").leftf
-              case Some(client) => {
-                client.call(
-                  ChatPrompt(Seq(
-                    ChatMessage.input("system", agent.instructions.mkString(" "), prefix = None, Json.obj()),
-                    ChatMessage.input("user", input, prefix = None, Json.obj()),
-                  )),
-                  attrs,
-                  body
-                ).flatMap {
-                  case Left(err) => Left(err).vfuture
-                  case Right(resp) => {
-                    resp.generations.headOption match {
-                      case None => Json.obj("error" -> "no generated message").leftf
-                      case Some(gen) => {
-                        if (gen.message.has_tool_calls && hasHandoff) {
-                          val possibleNames = agent.handoffs.map(_.functionName)
-                          val handoff_call = gen.message.tool_calls.get.map { tool_call =>
-                            val functionName = tool_call.select("function").select("name").asOpt[String].orElse(
-                              tool_call.select("functionName").asOpt[String]
-                            ).orElse(
-                              tool_call.select("name").asOpt[String]
-                            ).getOrElse("--")
-                            (functionName, tool_call)
-                          }.find(tuple => possibleNames.contains(tuple._1))
-                          handoff_call match {
-                            case None => Json.obj("error" -> "no handoff found").leftf
-                            case Some((name, handoff_call)) => {
-                              val handoff = agent.handoffs.find(_.functionName == name).get
-                              handoff.on_handoff.foreach(_.apply(input))
-                              run(handoff.agent, input, attrs, providerRef)
+  def run(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty): Future[Either[JsValue, String]] = {
+    internalRun(agent, input, rcfg, AgentContext(1), attrs)
+  }
+
+  private def internalRun(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), ctx: AgentContext = AgentContext(), attrs: TypedMap = TypedMap.empty): Future[Either[JsValue, String]] = {
+    if (ctx.iteration > rcfg.maxTurns) {
+      Json.obj("error" -> "Max turns reached").leftf
+    } else {
+      agent.provider.orElse(rcfg.provider) match {
+        case None => Json.obj("error" -> "no provider ref").leftf
+        case Some(pref) => {
+          ext.states.provider(pref) match {
+            case None => Json.obj("error" -> "no provider").leftf
+            case Some(provider) => {
+              val over = Json.obj()
+                .applyOnWithOpt(agent.modelOptions.orElse(rcfg.modelOptions)) {
+                  case (obj, options) => obj.deepMerge(options)
+                }
+                .applyOnWithOpt(agent.model.orElse(rcfg.model)) {
+                  case (obj, model) => obj ++ Json.obj("model" -> model)
+                }
+                .applyOnIf(agent.tools.nonEmpty && agent.handoffs.isEmpty) { obj =>
+                  obj ++ Json.obj("tools" -> agent.tools)
+                }
+              val hasHandoff = agent.handoffs.exists(_.enabled)
+              val body = Json.obj()
+                .applyOnIf(hasHandoff) { obj =>
+                  val tools = agent.handoffs.filter(_.enabled).map(_.toFunction)
+                  obj ++ Json.obj("tools" -> tools)
+                }
+              provider.copy(
+                options = provider.options.deepMerge(over),
+                memory = agent.memory,
+                guardrailsFailOnDeny = true,
+                guardrails = agent.guardrails.copy(items = agent.guardrails.items.map { it =>
+                  val actualProvider = it.config.select("provider").asOptString.orElse(agent.model.orElse(rcfg.model)).get
+                  it.copy(config = it.config ++ Json.obj("provider" -> actualProvider))
+                }),
+              ).getChatClient() match {
+                case None => Json.obj("error" -> "no client").leftf
+                case Some(client) => {
+                  client.call(
+                    ChatPrompt(Seq(
+                      ChatMessage.input("system", agent.instructions.mkString(" "), prefix = None, Json.obj()),
+                    ) ++ input.messages),
+                    attrs,
+                    body
+                  ).flatMap {
+                    case Left(err) => Left(err).vfuture
+                    case Right(resp) => {
+                      resp.generations.headOption match {
+                        case None => Json.obj("error" -> "no generated message").leftf
+                        case Some(gen) => {
+                          if (gen.message.has_tool_calls && hasHandoff) {
+                            val possibleNames = agent.handoffs.map(_.functionName)
+                            val handoff_call = gen.message.tool_calls.get.map { tool_call =>
+                              val functionName = tool_call.select("function").select("name").asOpt[String].orElse(
+                                tool_call.select("functionName").asOpt[String]
+                              ).orElse(
+                                tool_call.select("name").asOpt[String]
+                              ).getOrElse("--")
+                              (functionName, tool_call)
+                            }.find(tuple => possibleNames.contains(tuple._1))
+                            handoff_call match {
+                              case None => Json.obj("error" -> "no handoff found").leftf
+                              case Some((name, handoff_call)) => {
+                                val handoff = agent.handoffs.find(_.functionName == name).get
+                                handoff.on_handoff.foreach(_.apply(input))
+                                internalRun(handoff.agent, input, rcfg.copy(
+                                  provider = agent.provider.orElse(rcfg.provider),
+                                  model = agent.model.orElse(rcfg.model),
+                                  modelOptions = agent.modelOptions.orElse(rcfg.modelOptions),
+                                ), ctx.copy(iteration = ctx.iteration + 1), attrs)
+                              }
                             }
+                          } else if (gen.message.has_tool_calls && hasHandoff) {
+                            Json.obj("error" -> "pending tool_call").leftf
+                          } else {
+                            gen.message.wholeTextContent.rightf
                           }
-                        } else if (gen.message.has_tool_calls && hasHandoff) {
-                          Json.obj("error" -> "pending tool_call").leftf
-                        } else {
-                          gen.message.wholeTextContent.rightf
                         }
                       }
                     }
@@ -197,7 +244,7 @@ class AgentRunner(env: Env) {
       )
     )
 
-    run(triage_agent, "who was the first president of the united states?", providerRef = "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691".some).map {
+    run(triage_agent, AgentInput.from("who was the first president of the united states?"), AgentRunConfig(provider = "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691".some)).map {
       case Left(err) => println(s"test error: ${err.prettify}")
       case Right(resp) => println(s"resp: ${resp}")
     }
