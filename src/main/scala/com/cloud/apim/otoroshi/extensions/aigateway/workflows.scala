@@ -42,7 +42,7 @@ class AgentFunction extends WorkflowFunction {
 
   override def documentationName: String = "extensions.com.cloud-apim.llm-extension.agent"
   override def documentationDisplayName: String = "AI Agent"
-  override def documentationIcon: String = "fas fa-brain"
+  override def documentationIcon: String = "fas fa-robot"
   override def documentationDescription: String = "A powerful AI agent"
   override def documentationInputSchema: Option[JsObject] = Some(Json.obj(
     "type" -> "object",
