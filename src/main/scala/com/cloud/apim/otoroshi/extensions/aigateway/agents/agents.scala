@@ -150,7 +150,7 @@ class AgentRunner(env: Env) {
                   case (obj, model) => obj ++ Json.obj("model" -> model)
                 }
                 .applyOnIf(agent.tools.nonEmpty && agent.handoffs.isEmpty) { obj =>
-                  obj ++ Json.obj("tools" -> agent.tools)
+                  obj ++ Json.obj("tool_functions" -> agent.tools)
                 }
               val hasHandoff = agent.handoffs.exists(_.enabled)
               val body = Json.obj()
