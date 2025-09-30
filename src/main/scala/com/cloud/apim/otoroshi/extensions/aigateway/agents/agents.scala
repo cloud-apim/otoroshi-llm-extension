@@ -7,9 +7,18 @@ import otoroshi.next.workflow.{Node, NodeLike, NoopNode, WorkflowError, Workflow
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsArray, JsNull, JsObject, JsValue, Json}
+import play.api.libs.json._
+import play.api.libs.typedmap.TypedKey
 
 import scala.concurrent.{ExecutionContext, Future}
+
+object InlineFunctions {
+  val InlineFunctionsKey = TypedKey[Map[String, InlineFunction]]("cloud-apim.ai-gateway.InlineFunctions")
+  val InlineFunctionWfrKey = TypedKey[Option[WorkflowRun]]("cloud-apim.ai-gateway.InlineFunctionsWorkflowRun")
+}
+
+case class InlineFunctionDeclaration(name: String, description: String = "", strict: Boolean = true, parameters: JsObject, required: Seq[String] = Seq.empty)
+case class InlineFunction(declaration: InlineFunctionDeclaration, call: Function4[String, TypedMap, Env, ExecutionContext, Future[String]])
 
 case class ToolRef(kind: String, ref: Option[String], node: Option[JsValue])
 
@@ -60,15 +69,16 @@ case class AgentConfig(
   model: Option[String] = None,
   modelOptions: Option[JsObject] = None,
   tools: Seq[String] = Seq.empty,
+  inlineTools: Seq[InlineFunction] = Seq.empty,
   handoffs: Seq[Handoff] = Seq.empty,
   memory: Option[String] = None,
   guardrails: Guardrails = Guardrails(Seq.empty),
 ) {
-  def runStr(input: String, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty)(implicit env: Env):  Future[Either[JsValue, String]] = {
-    run(AgentInput.from(input), rcfg, attrs)
+  def runStr(input: String, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(implicit env: Env):  Future[Either[JsValue, String]] = {
+    run(AgentInput.from(input), rcfg, attrs, wfr)
   }
-  def run(input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty)(implicit env: Env):  Future[Either[JsValue, String]] = {
-    new AgentRunner(env).run(this, input, rcfg, attrs)
+  def run(input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(implicit env: Env):  Future[Either[JsValue, String]] = {
+    new AgentRunner(env).run(this, input, rcfg, attrs, wfr)
   }
   def toHandoff(): Handoff = {
     Handoff(
@@ -82,6 +92,15 @@ case class AgentConfig(
 }
 
 object AgentConfig {
+
+  def node_from(json: JsObject): Node = {
+    val kind = json.select("kind").asOpt[String].getOrElse("--").toLowerCase()
+    Node.nodes.get(kind) match {
+      case None       => NoopNode(json)
+      case Some(node) => node(json)
+    }
+  }
+
   def from(json: JsValue): AgentConfig = {
     AgentConfig(
       name = json.select("name").asString,
@@ -91,6 +110,37 @@ object AgentConfig {
       model = json.select("model").asOpt[String],
       modelOptions = json.select("model_options").asOpt[JsObject],
       tools = json.select("tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      inlineTools = json.select("inline_tools").asOpt[Seq[JsObject]].map { seq =>
+        seq.map { tool =>
+          val nodeJson = tool.select("node").as[JsObject]
+          val node = node_from(nodeJson)
+          InlineFunction(
+            InlineFunctionDeclaration(
+              name = tool.select("name").asString,
+              description = tool.select("description").asString,
+              strict = tool.select("strict").asOptBoolean.getOrElse(true),
+              parameters = tool.select("parameters").asOpt[JsObject].getOrElse(Json.obj()),
+              required = tool.select("required").asOpt[Seq[String]].getOrElse(Seq.empty),
+            ),
+            call = (args, attrs, env, ec) => {
+              attrs.get(InlineFunctions.InlineFunctionWfrKey).flatten match {
+                case None => "Workflow runner not available".vfuture
+                case Some(wfr) => {
+                  //println(s"callllllll: ${args}")
+                  wfr.memory.set("tool_input", args.json)
+                  node.internalRun(wfr, Seq.empty, Seq.empty)(env, ec).map {
+                    case Left(err) =>
+                      err.json.stringify
+                    case Right(v) =>
+                      //println(s"responssssss: ${v.stringify}")
+                      v.stringify
+                  }(ec)
+                }
+              }
+            },
+          )
+        }
+      }.getOrElse(Seq.empty),
       handoffs = json.select("handoffs").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(o => Handoff.from(o)),
       memory = json.select("memory").asOptString,
       guardrails = json.select("guardrails").asOpt[JsArray].flatMap(seq => Guardrails.format.reads(seq).asOpt).getOrElse(Guardrails.empty),
@@ -128,11 +178,11 @@ class AgentRunner(env: Env) {
 
   lazy val ext = env.adminExtensions.extension[AiExtension].get
 
-  def run(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty): Future[Either[JsValue, String]] = {
-    internalRun(agent, input, rcfg, AgentContext(1), attrs)
+  def run(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, String]] = {
+    internalRun(agent, input, rcfg, AgentContext(1), attrs, wfr)
   }
 
-  private def internalRun(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), ctx: AgentContext = AgentContext(), attrs: TypedMap = TypedMap.empty): Future[Either[JsValue, String]] = {
+  private def internalRun(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), ctx: AgentContext = AgentContext(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, String]] = {
     if (ctx.iteration > rcfg.maxTurns) {
       Json.obj("error" -> "Max turns reached").leftf
     } else {
@@ -142,6 +192,15 @@ class AgentRunner(env: Env) {
           ext.states.provider(pref) match {
             case None => Json.obj("error" -> "no provider").leftf
             case Some(provider) => {
+              var additionToolFunctions = Seq.empty[String]
+              var inlineFunctions = Map.empty[String, InlineFunction]
+              if (agent.inlineTools.nonEmpty) {
+                additionToolFunctions = additionToolFunctions ++ agent.inlineTools.map("__inline_" + _.declaration.name)
+                inlineFunctions = inlineFunctions ++ agent.inlineTools.map(v => ("__inline_" + v.declaration.name, v)).toMap
+              }
+              if (agent.tools.nonEmpty) {
+                additionToolFunctions = additionToolFunctions ++ agent.tools
+              }
               val over = Json.obj()
                 .applyOnWithOpt(agent.modelOptions.orElse(rcfg.modelOptions)) {
                   case (obj, options) => obj.deepMerge(options)
@@ -149,8 +208,11 @@ class AgentRunner(env: Env) {
                 .applyOnWithOpt(agent.model.orElse(rcfg.model)) {
                   case (obj, model) => obj ++ Json.obj("model" -> model)
                 }
-                .applyOnIf(agent.tools.nonEmpty && agent.handoffs.isEmpty) { obj =>
-                  obj ++ Json.obj("tool_functions" -> agent.tools)
+                // .applyOnIf(agent.tools.nonEmpty && agent.handoffs.isEmpty) { obj =>
+                //   obj ++ Json.obj("tool_functions" -> agent.tools)
+                // }
+                .applyOnIf(additionToolFunctions.nonEmpty && agent.handoffs.isEmpty) { obj =>
+                  obj ++ Json.obj("tool_functions" -> additionToolFunctions)
                 }
               val hasHandoff = agent.handoffs.exists(_.enabled)
               val body = Json.obj()
@@ -158,6 +220,10 @@ class AgentRunner(env: Env) {
                   val tools = agent.handoffs.filter(_.enabled).map(_.toFunction)
                   obj ++ Json.obj("tools" -> tools)
                 }
+              attrs.put(
+                InlineFunctions.InlineFunctionsKey -> inlineFunctions,
+                InlineFunctions.InlineFunctionWfrKey -> wfr
+              )
               provider.copy(
                 options = provider.options.deepMerge(over),
                 memory = agent.memory,
@@ -200,7 +266,7 @@ class AgentRunner(env: Env) {
                                   provider = agent.provider.orElse(rcfg.provider),
                                   model = agent.model.orElse(rcfg.model),
                                   modelOptions = agent.modelOptions.orElse(rcfg.modelOptions),
-                                ), ctx.copy(iteration = ctx.iteration + 1), attrs)
+                                ), ctx.copy(iteration = ctx.iteration + 1), attrs, wfr)
                               }
                             }
                           } else if (gen.message.has_tool_calls && hasHandoff) {
@@ -244,7 +310,7 @@ class AgentRunner(env: Env) {
       )
     )
 
-    run(triage_agent, AgentInput.from("who was the first president of the united states?"), AgentRunConfig(provider = "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691".some)).map {
+    run(triage_agent, AgentInput.from("who was the first president of the united states?"), AgentRunConfig(provider = "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691".some), wfr = None).map {
       case Left(err) => println(s"test error: ${err.prettify}")
       case Right(resp) => println(s"resp: ${resp}")
     }

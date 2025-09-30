@@ -203,7 +203,7 @@ class AgentFunction extends WorkflowFunction {
         case _ => AgentInput.empty
       }
       .getOrElse(AgentInput.empty)
-    agent.run(input, rcfg, wfr.attrs).map {
+    agent.run(input, rcfg, wfr.attrs, wfr.some).map {
       case Left(error) => Left(WorkflowError(s"Error executing workflow", error.asObject.some))
       case Right(resp) => resp.json.right
     }

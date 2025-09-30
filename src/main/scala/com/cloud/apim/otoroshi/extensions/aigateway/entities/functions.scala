@@ -10,12 +10,14 @@ object LlmFunctions {
 
   def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val (wasmFunctions, mcpConnectors) = functions.partition(_.isWasm)
-    val wasmFunctionsF = LlmToolFunction._callToolsOpenai(wasmFunctions, providerName, attrs)(ec, env)
+    val inlineFunctionsF = LlmToolFunction._callInlineToolsOpenai(wasmFunctions.filter(_.isInline), providerName, attrs)(ec, env)
+    val wasmFunctionsF = LlmToolFunction._callToolsOpenai(wasmFunctions.filterNot(_.isInline), providerName, attrs)(ec, env)
     val mcpConnectorsF = McpSupport.callToolsOpenai(mcpConnectors, conns, providerName)(ec, env)
     for {
       wasmFunctionsR <- wasmFunctionsF
       mcpConnectorsR <- mcpConnectorsF
-    } yield wasmFunctionsR ++ mcpConnectorsR
+      inlineFunctionsR <- inlineFunctionsF
+    } yield inlineFunctionsR ++ wasmFunctionsR ++ mcpConnectorsR
   }
 
   def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
@@ -46,6 +48,13 @@ object LlmFunctions {
       wasmFunctionsR <- wasmFunctionsF
       mcpConnectorsR <- mcpConnectorsF
     } yield wasmFunctionsR ++ mcpConnectorsR
+  }
+
+  def toolsWithInline(wasmFunctions: Seq[String], inlineFunctions: Seq[String], mcpConnectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): JsObject = {
+    val tools: Seq[JsObject] = LlmToolFunction._tools(wasmFunctions) ++ LlmToolFunction._inlineTools(inlineFunctions, attrs) ++ McpSupport.tools(mcpConnectors, includeFunctions, excludeFunctions)
+    Json.obj(
+      "tools" -> tools
+    )
   }
 
   def tools(wasmFunctions: Seq[String], mcpConnectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String])(implicit ec: ExecutionContext, env: Env): JsObject = {

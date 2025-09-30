@@ -401,6 +401,10 @@ case class OpenAiChatClientOptions(
   mcpExcludeFunctions: Seq[String] = Seq.empty,
 ) extends ChatOptions {
 
+  lazy val wasmToolsNoInline: Seq[String] = wasmTools.filterNot(_.startsWith("__inline_"))
+
+  lazy val wasmToolsInline: Seq[String] = wasmTools.filter(_.startsWith("__inline_"))
+
   override def temperature: Float = _temperature.getOrElse(1.0f)
 
   override def topP: Float = _topP.getOrElse(1.0f)
@@ -574,7 +578,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     val finalModel = _mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
     val mergedOptions = if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
+      val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
       // println(s"tools added: ${tools.prettify}")
       api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs)
     } else {

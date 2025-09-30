@@ -5,6 +5,7 @@ import akka.stream.alpakka.s3.scaladsl.S3
 import akka.stream.scaladsl.{Sink, Source}
 import akka.stream.{Attributes, Materializer}
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.agents.InlineFunctions
 import com.github.blemale.scaffeine.Scaffeine
 import io.otoroshi.wasm4s.scaladsl.{WasmFunctionParameters, WasmSource, WasmSourceKind}
 import otoroshi.api._
@@ -475,6 +476,7 @@ case class LlmToolFunction(
 case class GenericApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
   lazy val raw_name: String = raw.select("name").asString
   lazy val name: String = raw_name.replaceFirst("wasm___", "").replaceFirst("mcp___", "")
+  lazy val isInline: Boolean = raw_name.startsWith("wasm_____inline_")
   lazy val isWasm: Boolean = raw_name.startsWith("wasm___")
   lazy val isMcp: Boolean = raw_name.startsWith("mcp___")
   lazy val connectorId: Int = if (isMcp) raw_name.split("___")(1).toInt else 0
@@ -491,6 +493,7 @@ case class GenericApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
 case class GenericApiResponseChoiceMessageToolCall(raw: JsObject) {
   lazy val id: String = raw.select("id").asOpt[String].getOrElse(raw.select("function").select("name").asString)
   lazy val function: GenericApiResponseChoiceMessageToolCallFunction = GenericApiResponseChoiceMessageToolCallFunction(raw.select("function").asObject)
+  lazy val isInline: Boolean = function.isInline
   lazy val isWasm: Boolean = function.isWasm
   lazy val isMcp: Boolean = function.isMcp
 }
@@ -527,6 +530,29 @@ object LlmToolFunction {
 
   val modulesCache = Scaffeine().maximumSize(1000).expireAfterWrite(120.seconds).build[String, String]
   val logger = Logger("LlmToolFunction")
+
+  def _inlineTools(functions: Seq[String], attrs: TypedMap)(implicit env: Env): Seq[JsObject] = {
+    attrs.get(InlineFunctions.InlineFunctionsKey) match {
+      case None => Seq.empty
+      case Some(inlineFunctions) => functions.flatMap(key => inlineFunctions.get(key)).map { function =>
+        val required: JsArray = JsArray(function.declaration.required.map(_.json))
+        Json.obj(
+          "type" -> "function",
+          "function" -> Json.obj(
+            "name" -> s"wasm_____inline_${function.declaration.name}",
+            "description" -> function.declaration.description,
+            "strict" -> function.declaration.strict,
+            "parameters" -> Json.obj(
+              "type" -> "object",
+              "required" -> required,
+              "additionalProperties" -> false,
+              "properties" -> function.declaration.parameters
+            )
+          )
+        )
+      }
+    }
+  }
 
   def _tools(functions: Seq[String])(implicit env: Env): Seq[JsObject] = {
     /*Json.obj(
@@ -587,6 +613,29 @@ object LlmToolFunction {
         )
       )
     }
+  }
+
+  private def callInline(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    Source(functions.toList)
+      .mapAsync(1) { toolCall =>
+        val fid = toolCall.function.name.stripPrefix("wasm___")
+        attrs.get(InlineFunctions.InlineFunctionsKey).flatMap(_.get(fid)) match {
+          case None => (s"undefined function ${fid}", toolCall).some.vfuture
+          case Some(function) => {
+            println(s"calling function '${function.declaration.name}' with args: '${toolCall.function.arguments}'")
+            function.call(toolCall.function.arguments, attrs, env, ec).map { r =>
+              (r, toolCall).some
+            }
+          }
+        }
+      }
+      .collect {
+        case Some(t) => t
+      }
+      .flatMapConcat {
+        case (resp, tc) => f(resp, tc)
+      }
+      .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
   private def call(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
@@ -660,6 +709,22 @@ object LlmToolFunction {
         case (resp, tc) => f(resp, tc)
       }
       .runWith(Sink.seq)(env.otoroshiMaterializer)
+  }
+
+  def _callInlineToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callInline(functions, attrs) { (resp, tc) =>
+      Source(List(
+        Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)),
+        Json.obj(
+          "role" -> "tool",
+          "content" -> resp,
+          "tool_call_id" -> tc.id
+        ))).applyOnIf(providerName.toLowerCase().contains("deepseek")) { s => // temporary fix for https://github.com/deepseek-ai/DeepSeek-V3/issues/15
+        s.concat(Source(List(
+          Json.obj("role" -> "user", "content" -> resp)
+        )))
+      }
+    }
   }
 
   def _callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
