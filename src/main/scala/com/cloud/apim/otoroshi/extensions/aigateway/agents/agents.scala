@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.agents
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.Guardrails
 import com.cloud.apim.otoroshi.extensions.aigateway._
 import otoroshi.env.Env
-import otoroshi.next.workflow.{Node, NodeLike, NoopNode, WorkflowError, WorkflowOperator, WorkflowRun}
+import otoroshi.next.workflow.{Node, NodeLike, NoopNode, WorkflowAdminExtension, WorkflowError, WorkflowOperator, WorkflowRun}
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
@@ -126,12 +126,39 @@ object AgentConfig {
               attrs.get(InlineFunctions.InlineFunctionWfrKey).flatten match {
                 case None => "Workflow runner not available".vfuture
                 case Some(wfr) => {
+                  wfr.attrs.get(otoroshi.next.workflow.WorkflowAdminExtension.liveUpdatesSourceKey).foreach { source =>
+                    source.tryEmitNext(Json.obj("kind" -> "progress", "data" -> Json.obj(
+                      "timestamp" -> System.currentTimeMillis(),
+                      "message"   -> s"starting '${tool.select("id").asOpt[String].orElse(tool.select("name").asOpt[String]).getOrElse("--")}'",
+                      "node"      -> tool,
+                      "memory"    -> wfr.memory.json,
+                      "error"     -> JsNull
+                    )))
+                  }
                   //println(s"callllllll: ${args}")
                   wfr.memory.set("tool_input", args.json)
                   node.internalRun(wfr, Seq.empty, Seq.empty)(env, ec).map {
                     case Left(err) =>
+                      wfr.attrs.get(otoroshi.next.workflow.WorkflowAdminExtension.liveUpdatesSourceKey).foreach { source =>
+                        source.tryEmitNext(Json.obj("kind" -> "progress", "data" -> Json.obj(
+                          "timestamp" -> System.currentTimeMillis(),
+                          "message"   -> s"stopping '${tool.select("id").asOpt[String].orElse(tool.select("name").asOpt[String]).getOrElse("--")}'",
+                          "node"      -> tool,
+                          "memory"    -> wfr.memory.json,
+                          "error"     -> JsNull
+                        )))
+                      }
                       err.json.stringify
                     case Right(v) =>
+                      wfr.attrs.get(otoroshi.next.workflow.WorkflowAdminExtension.liveUpdatesSourceKey).foreach { source =>
+                        source.tryEmitNext(Json.obj("kind" -> "progress", "data" -> Json.obj(
+                          "timestamp" -> System.currentTimeMillis(),
+                          "message"   -> s"stopping '${tool.select("id").asOpt[String].orElse(tool.select("name").asOpt[String]).getOrElse("--")}'",
+                          "node"      -> tool,
+                          "memory"    -> wfr.memory.json,
+                          "error"     -> JsNull
+                        )))
+                      }
                       //println(s"responssssss: ${v.stringify}")
                       v.stringify
                   }(ec)
