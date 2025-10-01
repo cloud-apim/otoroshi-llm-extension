@@ -684,7 +684,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |
             |    return {
             |      id: extensionId,
-            |      workflowNodes: [ workflowNodeSwitch, workflowAiAgentNode ],
+            |      workflowNodes: workflowNodes,
             |      categories:[{
             |        title: 'AI - LLM',
             |        description: 'All the features provided the Cloud APIM AI - LLM extension',
