@@ -147,10 +147,10 @@ object AgentConfig {
                       wfr.attrs.get(otoroshi.next.workflow.WorkflowAdminExtension.liveUpdatesSourceKey).foreach { source =>
                         source.tryEmitNext(Json.obj("kind" -> "progress", "data" -> Json.obj(
                           "timestamp" -> System.currentTimeMillis(),
-                          "message"   -> s"stopping '${tool.select("id").asOpt[String].orElse(tool.select("name").asOpt[String]).getOrElse("--")}'",
+                          "message"   -> s"ending with error '${tool.select("id").asOpt[String].orElse(tool.select("name").asOpt[String]).getOrElse("--")}'",
                           "node"      -> tool,
                           "memory"    -> wfr.memory.json,
-                          "error"     -> JsNull
+                          "error"     -> err.json
                         )))
                       }
                       err.json.stringify
@@ -158,7 +158,7 @@ object AgentConfig {
                       wfr.attrs.get(otoroshi.next.workflow.WorkflowAdminExtension.liveUpdatesSourceKey).foreach { source =>
                         source.tryEmitNext(Json.obj("kind" -> "progress", "data" -> Json.obj(
                           "timestamp" -> System.currentTimeMillis(),
-                          "message"   -> s"stopping '${tool.select("id").asOpt[String].orElse(tool.select("name").asOpt[String]).getOrElse("--")}'",
+                          "message"   -> s"ending '${tool.select("id").asOpt[String].orElse(tool.select("name").asOpt[String]).getOrElse("--")}'",
                           "node"      -> tool,
                           "memory"    -> wfr.memory.json,
                           "error"     -> JsNull
@@ -252,8 +252,9 @@ class AgentRunner(env: Env) {
                   val tools = agent.handoffs.filter(_.enabled).map(_.toFunction)
                   obj ++ Json.obj("tools" -> tools)
                 }
+              val finalInlineFunctions = attrs.get(InlineFunctions.InlineFunctionsKey).getOrElse(Map.empty) ++ inlineFunctions
               attrs.put(
-                InlineFunctions.InlineFunctionsKey -> inlineFunctions,
+                InlineFunctions.InlineFunctionsKey -> finalInlineFunctions,
                 InlineFunctions.InlineFunctionWfrKey -> wfr
               )
               provider.copy(
@@ -549,9 +550,9 @@ class AiAgentNode(val json: JsObject) extends Node {
     json.select("inline_tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(v => from(v.select("node").asObject))
 
   override def documentationName: String                  = "extensions.com.cloud-apim.llm-extension.ai_agent"
-  override def documentationDisplayName: String           = "AI Agent (node)"
+  override def documentationDisplayName: String           = "AI Agent"
   override def documentationIcon: String                  = "fas fa-robot"
-  override def documentationDescription: String           = "This node acts like an LLM Agen"
+  override def documentationDescription: String           = "This node acts like an AI Agent using a LLM provider"
   override def documentationInputSchema: Option[JsObject] = Some(Json.obj(
     "type" -> "object",
     "required" -> Json.arr("name", "provider", "description", "instructions", "input"),
@@ -682,7 +683,7 @@ class AiAgentNode(val json: JsObject) extends Node {
       "flow" -> Json.arr("id", "before", "after", "config"),
     ),
   ))
-  override def documentationCategory: Option[String] = Some("Cloud APIM - LLM extension")
+  //override def documentationCategory: Option[String] = Some("Cloud APIM - LLM extension")
   override def documentationExample: Option[JsObject] = Some(Json.obj(
     "id" -> "math_tutor",
     "kind" -> "call",

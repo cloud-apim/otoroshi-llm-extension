@@ -42,9 +42,9 @@ object WorkflowFunctionsInitializer {
 class AgentFunction extends WorkflowFunction {
 
   override def documentationName: String = "extensions.com.cloud-apim.llm-extension.agent"
-  override def documentationDisplayName: String = "AI Agent"
+  override def documentationDisplayName: String = "AI Agent (function)"
   override def documentationIcon: String = "fas fa-robot"
-  override def documentationDescription: String = "A powerful AI agent"
+  override def documentationDescription: String = "Deprecated way to do AI agents"
   override def documentationInputSchema: Option[JsObject] = Some(Json.obj(
     "type" -> "object",
     "required" -> Json.arr("name", "provider", "description", "instructions", "input"),
@@ -67,7 +67,7 @@ class AgentFunction extends WorkflowFunction {
       )),
     )
   ))
-  override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
+  /*override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
     "provider" -> Json.obj(
       "type"  -> "select",
       "label" -> "LLM provider",
@@ -177,7 +177,7 @@ class AgentFunction extends WorkflowFunction {
     ),
   ))
   override def documentationCategory: Option[String] = Some("Cloud APIM - LLM extension")
-  override def documentationOutputSchema: Option[JsObject] = None
+  override def documentationOutputSchema: Option[JsObject] = None*/
   override def documentationExample: Option[JsObject] = Some(Json.obj(
     "id" -> "math_tutor",
     "kind" -> "call",
