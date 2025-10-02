@@ -316,8 +316,12 @@ const workflowNodes = [
     kind: 'inline_tool',
     name: 'inline_tool',
     icon: 'fas fa-wrench',
-    flow: ["name", 'description', 'strict', 'parameters', 'required'],
+    flow: ["name", 'description', 'strict', 'parameters', 'required', 'input_json_parse'],
     form_schema: {
+      input_json_parse: {
+        type: 'bool',
+        description: 'Parse input as json',
+      },
       name: {
         type: 'string',
         label: 'Name',

@@ -58,6 +58,7 @@ class AgentFunction extends WorkflowFunction {
       "inline_tools" -> Json.obj("type" -> "array", "description" -> "List of inline tool function"),
       "memory" -> Json.obj(),
       "guardrails" -> Json.obj(),
+      "response_json_parse" -> Json.obj(),
       "handoffs" -> Json.obj("type" -> "array", "description" -> "List of handoff objects", "properties" -> Json.obj(
         "agent" -> Json.obj("type" -> "object", "description" -> "an agent config"),
         "enabled" -> Json.obj("type" -> "boolean", "description" -> "is handoff enabled"),

@@ -11,6 +11,7 @@ import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
 
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Try
 
 object InlineFunctions {
   val InlineFunctionsKey = TypedKey[Map[String, InlineFunction]]("cloud-apim.ai-gateway.InlineFunctions")
@@ -136,7 +137,11 @@ object AgentConfig {
                     )))
                   }
                   //println(s"callllllll: ${args}")
-                  wfr.memory.set("tool_input", args.json)
+                  if (tool.select("response_json_parse").asOptBoolean.orElse(tool.select("input_json_parse").asOptBoolean).getOrElse(false)) {
+                    wfr.memory.set("tool_input", Try(args.parseJson).getOrElse(args.json))
+                  } else {
+                    wfr.memory.set("tool_input", args.json)
+                  }
                   node.internalRun(wfr, Seq.empty, Seq.empty)(env, ec).map {
                     case Left(err) =>
                       wfr.attrs.get(otoroshi.next.workflow.WorkflowAdminExtension.liveUpdatesSourceKey).foreach { source =>
