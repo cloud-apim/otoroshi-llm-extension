@@ -318,7 +318,7 @@ const workflowNodes = [
     display_name: 'Agent Tool',
     icon: 'fas fa-wrench',
     description: 'AI Agent tool made of workflow nodes.',
-    flow: ["name", 'description', 'strict', 'parameters', 'required', 'input_json_parse'],
+    flow: ["name", 'strict', 'parameters', 'required', 'input_json_parse'],
     form_schema: {
       input_json_parse: {
         type: 'bool',
