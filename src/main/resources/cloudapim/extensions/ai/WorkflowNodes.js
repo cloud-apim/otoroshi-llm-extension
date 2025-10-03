@@ -314,7 +314,7 @@ const workflowNodes = [
   },
   {
     kind: 'inline_tool',
-    name: 'Agent Tool',
+    name: 'inline_tool',
     display_name: 'Agent Tool',
     icon: 'fas fa-wrench',
     description: 'AI Agent tool made of workflow nodes.',
