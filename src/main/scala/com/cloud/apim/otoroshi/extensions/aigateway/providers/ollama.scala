@@ -339,7 +339,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
       val role = resp.body.select("message").select("role").asOpt[String].getOrElse("user")
       val content = resp.body.select("message").select("content").asOpt[String].getOrElse("")
       val message = ChatGeneration(ChatMessage.output(role, content, None, resp.body.asObject))
-      Right(ChatResponse(Seq(message), usage))
+      Right(ChatResponse(Seq(message), usage, resp.body))
     }
   }
 
@@ -479,7 +479,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         val content = obj.select("text").asString
         ChatGeneration(ChatMessage.output("assistant", content, None, obj))
       }
-      Right(ChatResponse(messages, usage))
+      Right(ChatResponse(messages, usage, resp.body))
     }
   }
 }

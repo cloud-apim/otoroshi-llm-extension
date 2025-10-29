@@ -388,7 +388,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
         val content = obj.select("message").select("content").asOpt[String].getOrElse("")
         ChatGeneration(ChatMessage.output(role, content, None, obj))
       }
-      Right(ChatResponse(messages, usage))
+      Right(ChatResponse(messages, usage, resp.body))
     }
   }
 
@@ -450,7 +450,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
         val content = obj.select("text").asString
         ChatGeneration(ChatMessage.output("assistant", content, None, obj))
       }
-      Right(ChatResponse(messages, usage))
+      Right(ChatResponse(messages, usage, resp.body))
     }
   }
 }

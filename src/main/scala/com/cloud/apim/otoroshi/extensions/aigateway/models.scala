@@ -489,48 +489,56 @@ case class ChatGeneration(message: OutputChatMessage) {
 case class ChatResponse(
   generations: Seq[ChatGeneration],
   metadata: ChatResponseMetadata,
+  raw: JsValue,
 ) {
   def json(env: Env): JsValue = Json.obj(
     "generations" -> JsArray(generations.map(_.json)),
     "metadata" -> metadata.json(env),
   )
-  def openaiJson(model: String, env: Env): JsValue = Json.obj(
-    "id" -> s"chatcmpl-${IdGenerator.token(32)}",
-    "object" -> "chat.completion",
-    "created" -> (System.currentTimeMillis() / 1000).toLong,
-    "model" -> model,
-    "system_fingerprint" -> s"fp-${IdGenerator.token(32)}",
-    "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiJson(t._2))),
-    "usage" -> metadata.usage.openaiJson,
-  ).applyOnWithOpt(metadata.impacts) {
-    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
-  }.applyOnWithOpt(metadata.costs) {
-    case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+  def openaiJson(model: String, env: Env): JsValue = {
+    val finalModel = raw.select("model").asOpt[String].getOrElse(model)
+    Json.obj(
+      "id" -> s"chatcmpl-${IdGenerator.token(32)}",
+      "object" -> "chat.completion",
+      "created" -> (System.currentTimeMillis() / 1000).toLong,
+      "model" -> finalModel,
+      "system_fingerprint" -> s"fp-${IdGenerator.token(32)}",
+      "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiJson(t._2))),
+      "usage" -> metadata.usage.openaiJson,
+    ).applyOnWithOpt(metadata.impacts) {
+      case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+    }.applyOnWithOpt(metadata.costs) {
+      case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+    }
   }
-  def openaiCompletionJson(model: String, echo: Boolean, prompt: String, env: Env): JsValue = Json.obj(
-    "id" -> s"cmpl-${IdGenerator.token(32)}",
-    "object" -> "text_completion",
-    "created" -> (System.currentTimeMillis() / 1000).toLong,
-    "model" -> model,
-    "system_fingerprint" -> s"fp_${IdGenerator.token(32)}",
-    "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiCompletionJson(t._2))),
-    "usage" -> metadata.usage.openaiJson,
-  ).applyOnWithOpt(metadata.impacts) {
-    case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
-  }.applyOnWithOpt(metadata.costs) {
-    case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+  def openaiCompletionJson(model: String, echo: Boolean, prompt: String, env: Env): JsValue = {
+    val finalModel = raw.select("model").asOpt[String].getOrElse(model)
+    Json.obj(
+      "id" -> s"cmpl-${IdGenerator.token(32)}",
+      "object" -> "text_completion",
+      "created" -> (System.currentTimeMillis() / 1000).toLong,
+      "model" -> finalModel,
+      "system_fingerprint" -> s"fp_${IdGenerator.token(32)}",
+      "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiCompletionJson(t._2))),
+      "usage" -> metadata.usage.openaiJson,
+    ).applyOnWithOpt(metadata.impacts) {
+      case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+    }.applyOnWithOpt(metadata.costs) {
+      case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+    }
   }
   def toSource(model: String): Source[ChatResponseChunk, _] = {
     val id = s"chatgen-${IdGenerator.token(32)}"
+    val finalModel = raw.select("model").asOpt[String].getOrElse(model)
     Source(generations.toList)
       .flatMapConcat { gen =>
         gen.message.content.chunks(5)
       }
       .map { chunk =>
-        ChatResponseChunk(id, System.currentTimeMillis() / 1000, model, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(chunk.some), None)))
+        ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(chunk.some), None)))
       }
       .concat(Source.single(
-        ChatResponseChunk(id, System.currentTimeMillis() / 1000, model, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(None), Some("stop"))))
+        ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(None), Some("stop"))))
       ))
   }
 }

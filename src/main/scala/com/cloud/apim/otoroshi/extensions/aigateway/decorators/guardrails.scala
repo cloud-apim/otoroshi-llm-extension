@@ -187,6 +187,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
       case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
         Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
         ChatResponseMetadata.empty,
+        Json.obj(),
       )).vfuture
       case GuardrailResult.GuardrailPass => {
         chatClient.call(originalPrompt, attrs, originalBody).flatMap {
@@ -198,6 +199,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
               case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
                 Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
                 ChatResponseMetadata.empty,
+                Json.obj(),
               )).vfuture
               case GuardrailResult.GuardrailPass => Right(r).vfuture
             }
@@ -213,6 +215,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
       case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
         Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
         ChatResponseMetadata.empty,
+        Json.obj(),
       ).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
       case GuardrailResult.GuardrailPass => {
         chatClient.stream(originalPrompt, attrs, originalBody).flatMap {
@@ -229,6 +232,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
       case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
         Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
         ChatResponseMetadata.empty,
+        Json.obj(),
       )).vfuture
       case GuardrailResult.GuardrailPass => {
         chatClient.completion(originalPrompt, attrs, originalBody).flatMap {
@@ -239,6 +243,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
               case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
                 Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
                 ChatResponseMetadata.empty,
+                Json.obj(),
               )).vfuture
               case GuardrailResult.GuardrailPass => Right(r).vfuture
             }
@@ -254,6 +259,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
       case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
         Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
         ChatResponseMetadata.empty,
+        Json.obj(),
       ).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
       case GuardrailResult.GuardrailPass => {
         chatClient.completionStream(originalPrompt, attrs, originalBody).flatMap {

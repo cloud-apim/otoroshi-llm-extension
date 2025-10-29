@@ -148,7 +148,7 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
           val content = obj.select("response").asOpt[String].getOrElse("")
           ChatGeneration(ChatMessage.output(role, content, None, obj))
         }
-        Right(ChatResponse(messages, usage))
+        Right(ChatResponse(messages, usage, resp.body))
     }
   }
 }

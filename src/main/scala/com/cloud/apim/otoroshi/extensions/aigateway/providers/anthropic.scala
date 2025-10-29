@@ -420,7 +420,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
           val content = obj.select("text").asOpt[String].getOrElse("")
           ChatGeneration(ChatMessage.output(role, content, None, obj))
         }
-        Right(ChatResponse(messages, usage))
+        Right(ChatResponse(messages, usage, resp.body))
     }
   }
 

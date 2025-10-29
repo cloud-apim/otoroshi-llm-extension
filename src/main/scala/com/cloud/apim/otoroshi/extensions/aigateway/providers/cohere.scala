@@ -404,7 +404,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
           ChatGeneration(ChatMessage.output(role, text, None, c))
         }
       }.toSeq.flatten
-      Right(ChatResponse(messages, usage))
+      Right(ChatResponse(messages, usage, resp.body))
     }
   }
 

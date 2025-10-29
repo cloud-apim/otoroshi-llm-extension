@@ -223,6 +223,7 @@ object JlamaChatClient {
           case None => Json.obj("ai" -> Seq(slug))
         }
         ChatResponse(
+          raw = Json.obj(),
           generations = Seq(
             ChatGeneration(OutputChatMessage(
               role = "assistant",

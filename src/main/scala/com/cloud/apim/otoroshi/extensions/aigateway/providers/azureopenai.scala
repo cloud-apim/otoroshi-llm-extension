@@ -426,7 +426,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
         val content = obj.select("message").select("content").asOpt[String].getOrElse("")
         ChatGeneration(ChatMessage.output(role, content, None, obj))
       }
-      Right(ChatResponse(messages, usage))
+      Right(ChatResponse(messages, usage, resp.body))
     }
   }
 
@@ -556,7 +556,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
         val content = obj.select("text").asString
         ChatGeneration(ChatMessage.output("assistant", content, None, obj))
       }
-      Right(ChatResponse(messages, usage))
+      Right(ChatResponse(messages, usage, resp.body))
     }
   }
 }

@@ -163,6 +163,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   "input_prompt" -> prompt.json,
                   "output_stream" -> JsArray(seq.map(_.json(env))),
                   "output" -> ChatResponse(
+                    raw = Json.obj(),
                     generations = Seq(ChatGeneration(OutputChatMessage("assistant", seq.flatMap(_.choices.flatMap(_.delta.content)).mkString(""), None, Json.obj()))),
                     metadata = ChatResponseMetadata(
                       rateLimit =  ChatResponseMetadataRateLimit(
