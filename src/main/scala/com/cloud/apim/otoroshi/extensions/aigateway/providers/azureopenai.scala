@@ -120,26 +120,42 @@ object AzureAiFoundry {
 
 object AzureOpenAiApi {
   // POST https://{your-resource-name}.openai.azure.com/openai/deployments/{deployment-id}/completions?api-version={api-version}
-  def url(resourceName: String, deploymentId: String, path: String): String = {
-    s"https://${resourceName}.openai.azure.com/openai/deployments/${deploymentId}${path}?api-version=2024-02-01"
+  def urlPreV1(resourceName: String, deploymentId: String, version: String, path: String): String = {
+    s"https://${resourceName}.openai.azure.com/openai/deployments/${deploymentId}${path}?api-version=${version}"
+  }
+  def urlPostV1(resourceName: String, deploymentId: String, version: String, path: String): String = {
+    s"https://${resourceName}.openai.azure.com/openai/${version}${path}"
+  }
+  def url(resourceName: String, deploymentId: String, version: String, path: String): String = {
+    if (version == "v1") {
+      urlPostV1(resourceName, deploymentId, version, path)
+    } else {
+      urlPreV1(resourceName, deploymentId, version, path)
+    }
   }
 }
 // https://learn.microsoft.com/en-us/azure/ai-services/openai/reference
-class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[AzureOpenAiApiResponse, AzureOpenAiChatResponseChunk] {
+class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val version: String, apikey: Option[String], bearer: Option[String], timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[AzureOpenAiApiResponse, AzureOpenAiChatResponseChunk] {
 
   override def supportsTools: Boolean = true
   override def supportsStreaming: Boolean = true
   override def supportsCompletion: Boolean = false
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
-    val url = s"${AzureOpenAiApi.url(resourceName, deploymentId, path)}"
+    val url = s"${AzureOpenAiApi.url(resourceName, deploymentId, version, path)}"
     ProviderHelpers.logCall("AzureOpenai", method, url, body)(env)
     env.Ws
       .url(url)
       .withHttpHeaders(
-        "api-key" -> apikey,
         "Accept" -> "application/json",
-      ).applyOnWithOpt(body) {
+      )
+      .applyOnWithOpt(apikey) {
+        case (builder, apikey) => builder.addHttpHeaders("api-key" -> apikey)
+      }
+      .applyOnWithOpt(bearer) {
+        case (builder, bearer) => builder.addHttpHeaders("Authorization" -> s"Bearer ${bearer}")
+      }
+      .applyOnWithOpt(body) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
           .withBody(body)
@@ -185,14 +201,20 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, apikey:
   }
 
   override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = {
-    val url = s"${AzureOpenAiApi.url(resourceName, deploymentId, path)}"
+    val url = s"${AzureOpenAiApi.url(resourceName, deploymentId, version, path)}"
     ProviderHelpers.logStream("AzureOpenai", method, url, body)(env)
     env.Ws
       .url(url)
       .withHttpHeaders(
-        "api-key" -> apikey,
         "Accept" -> "application/json",
-      ).applyOnWithOpt(body) {
+      )
+      .applyOnWithOpt(apikey) {
+        case (builder, apikey) => builder.addHttpHeaders("api-key" -> apikey)
+      }
+      .applyOnWithOpt(bearer) {
+        case (builder, bearer) => builder.addHttpHeaders("Authorization" -> s"Bearer ${bearer}")
+      }
+      .applyOnWithOpt(body) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
           .withBody(body.asObject ++ Json.obj(

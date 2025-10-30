@@ -598,6 +598,10 @@ class AiProvidersPage extends Component {
       type: 'string',
       props: { label: 'Deployment id of your model' },
     },
+    'connection.version': {
+      type: 'string',
+      props: { label: 'Version of the API used' },
+    },
     'connection.api_key': {
       type: 'string',
       props: { label: 'Apikey' },
@@ -1339,7 +1343,9 @@ class AiProvidersPage extends Component {
         '<<<API Connection',
         'connection.resource_name',
         'connection.deployment_id',
+        'connection.version',
         'connection.api_key',
+        'connection.token',
         'connection.timeout',
         '>>>API Connection raw',
         'connection',
@@ -1837,6 +1843,7 @@ class AiProvidersPage extends Component {
                 connection: {
                   resource_name: "resource name",
                   deployment_id: "model id",
+                  version: "2024-02-01",
                   api_key: 'xxx',
                   timeout: 180000,
                 },
