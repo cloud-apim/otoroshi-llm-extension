@@ -63,8 +63,10 @@ case class ImageModel(
       case "azure-openai" => {
         val resourceName = connection.select("resource_name").as[String]
         val deploymentId = connection.select("deployment_id").as[String]
-        val apikey = connection.select("api_key").as[String]
-        val api = new AzureOpenAiApi(resourceName, deploymentId, apikey, timeout.getOrElse(3.minutes), env = env)
+        val version = connection.select("api_version").asOpt[String].getOrElse("2024-02-01")
+        val apikey = connection.select("api_key").asOpt[String]
+        val bearer = Some(token).filterNot(_ == "xxx")
+        val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env)
         val opts = AzureOpenAiImageModelClientOptions.fromJson(genOptions)
         new AzureOpenAiImageModelClient(api, opts, id).some
       }
