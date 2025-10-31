@@ -288,9 +288,9 @@ object AnthropicChatClientOptions {
       tools = json.select("tools").asOpt[Seq[JsValue]],
       tool_choice = json.select("tool_choice").asOpt[Seq[JsValue]],
       max_tokens = json.select("max_tokens").asOpt[Int].getOrElse(1024),
-      temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
-      topP = json.select("top_p").asOpt[Float].getOrElse(1.0f),
-      topK = json.select("top_k").asOpt[Int].getOrElse(0),
+      temperature = json.select("temperature").asOpt[Float],
+      topP = json.select("top_p").asOpt[Float],
+      topK = json.select("top_k").asOpt[Int],
       system = json.select("system").asOpt[String],
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].filter(_.nonEmpty).orElse(json.select("tool_functions").asOpt[Seq[String]]).getOrElse(Seq.empty),
@@ -308,11 +308,11 @@ case class AnthropicChatClientOptions(
   stop_sequences: Option[Seq[String]] = None,
   stream: Option[Boolean] = Some(false),
   system: Option[String] = None,
-  temperature: Float = 1,
+  temperature: Option[Float] = None,
   tools: Option[Seq[JsValue]] = None,
   tool_choice: Option[Seq[JsValue]] =  None,
-  topK: Int = 0,
-  topP: Float = 1,
+  topK: Option[Int] = None,
+  topP: Option[Float] = None,
   allowConfigOverride: Boolean = true,
   wasmTools: Seq[String] = Seq.empty,
   mcpConnectors: Seq[String] = Seq.empty,
@@ -325,9 +325,6 @@ case class AnthropicChatClientOptions(
     "max_tokens" -> max_tokens,
     "stream" -> stream,
     "system" -> system,
-    "temperature" -> temperature,
-    "top_p" -> topP,
-    "top_k" -> topK,
     "tools" -> tools,
     "tool_choice" -> tool_choice,
     "metadata" -> metadata,
@@ -338,6 +335,16 @@ case class AnthropicChatClientOptions(
     "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
   )
+  .applyOnWithOpt(temperature) {
+    case (obj, _) if topK.isDefined || topP.isDefined => obj
+    case (obj, temperature) => obj ++ Json.obj("temperature" -> temperature)
+  }
+  .applyOnWithOpt(topK) {
+    case (obj, k) => obj ++ Json.obj("top_k" -> k)
+  }
+  .applyOnWithOpt(topP) {
+    case (obj, p) => obj ++ Json.obj("top_p" -> p)
+  }
 
   def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }

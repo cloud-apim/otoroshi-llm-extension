@@ -283,8 +283,6 @@ case class OVHAiEndpointsChatClientOptions(
   topP: Float = 1,
   allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
-  override def topK: Int = 0
-
   override def json: JsObject = Json.obj(
     "model" -> model,
     "max_tokens" -> max_tokens,

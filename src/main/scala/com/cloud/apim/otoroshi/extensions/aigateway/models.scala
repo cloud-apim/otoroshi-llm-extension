@@ -20,9 +20,9 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
 trait ChatOptions {
-  def temperature: Float
-  def topP: Float
-  def topK: Int
+  //def temperature: Float
+  //def topP: Float
+  //def topK: Int
   def json: JsObject
   def jsonForCall: JsObject
   def allowConfigOverride: Boolean

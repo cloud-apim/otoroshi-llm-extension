@@ -346,7 +346,6 @@ case class AzureOpenAiChatClientOptions(
   mcpIncludeFunctions: Seq[String] = Seq.empty,
   mcpExcludeFunctions: Seq[String] = Seq.empty,
 ) extends ChatOptions {
-  override def topK: Int = 0
 
   override def json: JsObject = Json.obj(
     "frequency_penalty" -> frequency_penalty,

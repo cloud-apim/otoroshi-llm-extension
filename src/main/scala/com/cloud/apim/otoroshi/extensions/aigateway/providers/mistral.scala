@@ -229,8 +229,6 @@ case class MistralAiChatClientOptions(
   mcpIncludeFunctions: Seq[String] = Seq.empty,
   mcpExcludeFunctions: Seq[String] = Seq.empty,
 ) extends ChatOptions {
-  override def topK: Int = 0
-
   override def json: JsObject = Json.obj(
     "model" -> model,
     "max_tokens" -> max_tokens,

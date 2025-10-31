@@ -389,8 +389,8 @@ case class OpenAiChatClientOptions(
   presence_penalty: Option[Double] = None,
   response_format: Option[String] = None,
   stop: Option[String] = None,
-  _temperature: Option[Float] = 1.0f.some,
-  _topP: Option[Float] = 1.0f.some,
+  _temperature: Option[Float] = None,
+  _topP: Option[Float] = None,
   user: Option[String] = None,
   tools: Option[Seq[JsValue]] = None,
   tool_choice: Option[Seq[JsValue]] =  None,
@@ -405,11 +405,7 @@ case class OpenAiChatClientOptions(
 
   lazy val wasmToolsInline: Seq[String] = wasmTools.filter(_.startsWith("__inline_"))
 
-  override def temperature: Float = _temperature.getOrElse(1.0f)
-
-  override def topP: Float = _topP.getOrElse(1.0f)
-
-  override def topK: Int = 0
+  //override def temperature: Float = _temperature.getOrElse(1.0f)
 
   override def json: JsObject = Json.obj(
     "model" -> model,

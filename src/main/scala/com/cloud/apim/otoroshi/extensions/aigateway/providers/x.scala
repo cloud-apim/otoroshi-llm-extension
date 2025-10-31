@@ -222,8 +222,6 @@ case class XAiChatClientOptions(
                                     mcpExcludeFunctions: Seq[String] = Seq.empty,
                                   ) extends ChatOptions {
 
-  override def topK: Int = 0
-
   override def json: JsObject = Json.obj(
     "model" -> model,
     "frequency_penalty" -> frequency_penalty,

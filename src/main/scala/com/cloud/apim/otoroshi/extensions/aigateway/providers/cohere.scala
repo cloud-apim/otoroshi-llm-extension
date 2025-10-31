@@ -308,8 +308,6 @@ case class CohereAiChatClientOptions(
     "max_input_tokens" -> max_input_tokens,
     "stream" -> stream,
     "temperature" -> temperature,
-    "k" -> topK,
-    "p" -> topP,
     "frequency_penalty" -> frequency_penalty,
     "seed" -> seed,
     "allow_config_override" -> allowConfigOverride,
@@ -320,11 +318,14 @@ case class CohereAiChatClientOptions(
     "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
   )
+  .applyOnWithOpt(k) {
+    case (obj, k) => obj ++ Json.obj("k" -> k)
+  }
+  .applyOnWithOpt(p) {
+    case (obj, p) => obj ++ Json.obj("p" -> p)
+  }
 
   def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
-
-  override def topP: Float = p.map(_.toFloat).getOrElse(0.75f)
-  override def topK: Int = k.getOrElse(0)
 }
 
 class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, id: String) extends ChatClient {

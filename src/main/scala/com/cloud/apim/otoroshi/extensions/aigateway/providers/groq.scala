@@ -256,8 +256,6 @@ case class GroqChatClientOptions(
   )
 
   def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
-
-  override def topK: Int = 0
 }
 
 class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) extends ChatClient {
