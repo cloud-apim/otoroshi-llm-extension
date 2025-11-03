@@ -435,6 +435,7 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
         val snowflake = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
         val request = attrs.get(otoroshi.plugins.Keys.RequestKey).map(r => JsonHelpers.requestToJson(r, attrs))
         val ctx = Json.obj(
+          "foo" -> "bar",
           "snowflake" -> snowflake,
           "apikey" -> apikey.map(_.lightJson).getOrElse(JsNull).as[JsValue],
           "user" -> user.map(_.lightJson).getOrElse(JsNull).as[JsValue],

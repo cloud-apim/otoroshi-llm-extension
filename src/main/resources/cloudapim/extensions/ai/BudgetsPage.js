@@ -50,24 +50,27 @@ function RemainingBudget(props) {
 
 function RuleComponent(props) {
 
+  console.log(props);
+
   const changePath = (e) => {
     const value = props.value;
-    value[props.idx] = { path: e.target.value, value: value[props.idx].value };
+    value[props.idx] = { ...props.itemValue, path: e.target.value };
     props.onChange(value);
   };
 
   const changeValue = (e) => {
     const value = props.value;
-    value[props.idx] = { path: value[props.idx].path, value: e.target.value };
+    value[props.idx] = { ...props.itemValue, value: e.target.value };
     props.onChange(value);
   };
+
   return (
     React.createElement("div", { className: "row mb-3" },
       React.createElement("div", { className: "col-xs-12 col-sm-2 col-form-label" }, ''),
       React.createElement("div", { className: "col-sm-10" },
         React.createElement("div", { className: "input-group justify-content-between" },
-          React.createElement("input", { type: "text", placeholder: 'JSON Path ($.apikey.metadata.budget)', className: "form-control", value: props.value.path, onChange: changePath }),
-          React.createElement("input", { type: "text", placeholder: 'Expected value', className: "form-control", value: props.value.value, onChange: changeValue }),
+          React.createElement("input", { type: "text", placeholder: 'JSON Path ($.apikey.metadata.budget)', className: "form-control", value: props.itemValue.path, onChange: changePath }),
+          React.createElement("input", { type: "text", placeholder: 'Expected value', className: "form-control", value: props.itemValue.value, onChange: changeValue }),
         )
       )
     )
@@ -144,19 +147,19 @@ class BudgetsPage extends Component {
       props: {label: 'Limits remaining' },
     },
     'scope.extract_from_apikey_meta': {
-      type: 'boolean',
+      type: 'bool',
       props: {label: 'Extract from API key meta' },
     },
     'scope.extract_from_apikey_group_meta': {
-      type: 'boolean',
+      type: 'bool',
       props: {label: 'Extract from API key group meta'},
     },
     'scope.extract_from_user_meta': {
-      type: 'boolean',
+      type: 'bool',
       props: {label: 'Extract from user meta'},
     },
     'scope.extract_from_user_auth_module_meta': {
-      type: 'boolean',
+      type: 'bool',
       props: {label: 'Extract from user auth module meta'},
     },
     'scope.rules': {
