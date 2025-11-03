@@ -320,6 +320,10 @@ case class AnthropicChatClientOptions(
   mcpExcludeFunctions: Seq[String] = Seq.empty,
 ) extends ChatOptions {
 
+  lazy val wasmToolsNoInline: Seq[String] = wasmTools.filterNot(_.startsWith("__inline_"))
+
+  lazy val wasmToolsInline: Seq[String] = wasmTools.filter(_.startsWith("__inline_"))
+
   override def json: JsObject = Json.obj(
     "model" -> model,
     "max_tokens" -> max_tokens,
@@ -379,7 +383,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
     val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val tools = LlmFunctions.toolsAnthropic(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
+      val tools = LlmFunctions.toolsAnthropicWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
       api.callWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> messages, "system" -> systemMessages)), options.mcpConnectors, attrs)
     } else {
       api.call("POST", "/v1/messages", Some(mergedOptions ++ Json.obj("messages" -> messages, "system" -> systemMessages)))

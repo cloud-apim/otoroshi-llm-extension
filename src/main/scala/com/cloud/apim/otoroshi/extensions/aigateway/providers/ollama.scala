@@ -232,6 +232,10 @@ case class OllamaAiChatClientOptions(
    mcpExcludeFunctions: Seq[String] = Seq.empty,
 ) extends ChatOptions {
 
+  lazy val wasmToolsNoInline: Seq[String] = wasmTools.filterNot(_.startsWith("__inline_"))
+
+  lazy val wasmToolsInline: Seq[String] = wasmTools.filter(_.startsWith("__inline_"))
+
   def temperature: Float = temper.toFloat
   def topP: Float = top_p.toFloat
   def topK: Int = top_k
@@ -283,7 +287,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     val mergedOptionsWithoutModel = mergedOptions - "model"
     val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
+      val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
       api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(
         "model" -> finalModel,
         "stream" -> false,

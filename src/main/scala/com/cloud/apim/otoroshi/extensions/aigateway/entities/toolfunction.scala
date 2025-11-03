@@ -502,6 +502,7 @@ case class AnthropicApiResponseChoiceMessageToolCall(raw: JsObject) {
   lazy val id: String = raw.select("id").asOpt[String].getOrElse(raw.select("function").select("name").asString)
   lazy val raw_name: String = raw.select("name").asString
   lazy val name: String = raw_name.replaceFirst("wasm___", "").replaceFirst("mcp___", "")
+  lazy val isInline: Boolean = raw_name.startsWith("wasm_____inline_")
   lazy val isWasm: Boolean = raw_name.startsWith("wasm___")
   lazy val isMcp: Boolean = raw_name.startsWith("mcp___")
   lazy val connectorId: Int = if (isMcp) raw_name.split("___")(1).toInt else 0
@@ -531,6 +532,30 @@ object LlmToolFunction {
   val modulesCache = Scaffeine().maximumSize(1000).expireAfterWrite(120.seconds).build[String, String]
   val logger = Logger("LlmToolFunction")
 
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  def _tools(functions: Seq[String])(implicit env: Env): Seq[JsObject] = {
+    /*Json.obj(
+      "tools" -> JsArray(*/functions.flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(ext => ext.states.toolFunction(id))).map { function =>
+      val required: JsArray = function.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(function.parameters.value.keySet.toSeq.map(_.json)))
+      Json.obj(
+        "type" -> "function",
+        "function" -> Json.obj(
+          "name" -> s"wasm___${function.id}", //function.name,
+          "description" -> function.description,
+          "strict" -> function.strict,
+          "parameters" -> Json.obj(
+            "type" -> "object",
+            "required" -> required,
+            "additionalProperties" -> false,
+            "properties" -> function.parameters
+          )
+        )
+      )
+    }/*)
+    )*/
+  }
+
   def _inlineTools(functions: Seq[String], attrs: TypedMap)(implicit env: Env): Seq[JsObject] = {
     attrs.get(InlineFunctions.InlineFunctionsKey) match {
       case None => Seq.empty
@@ -554,27 +579,7 @@ object LlmToolFunction {
     }
   }
 
-  def _tools(functions: Seq[String])(implicit env: Env): Seq[JsObject] = {
-    /*Json.obj(
-      "tools" -> JsArray(*/functions.flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(ext => ext.states.toolFunction(id))).map { function =>
-        val required: JsArray = function.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(function.parameters.value.keySet.toSeq.map(_.json)))
-        Json.obj(
-          "type" -> "function",
-          "function" -> Json.obj(
-            "name" -> s"wasm___${function.id}", //function.name,
-            "description" -> function.description,
-            "strict" -> function.strict,
-            "parameters" -> Json.obj(
-              "type" -> "object",
-              "required" -> required,
-              "additionalProperties" -> false,
-              "properties" -> function.parameters
-            )
-          )
-        )
-      }/*)
-    )*/
-  }
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   def toolsCohere(functions: Seq[String])(implicit env: Env): (Seq[JsObject], Map[String, String]) = {
     val map = new TrieMap[String, String]()
@@ -599,6 +604,34 @@ object LlmToolFunction {
     }, map.toMap)
   }
 
+  def inlineToolsCohere(functions: Seq[String], attrs: TypedMap)(implicit env: Env): (Seq[JsObject], Map[String, String]) = {
+    val map = new TrieMap[String, String]()
+    (attrs.get(InlineFunctions.InlineFunctionsKey) match {
+      case None => Seq.empty
+      case Some(inlineFunctions) => functions.flatMap(key => inlineFunctions.get(key)).map { function =>
+        val required: JsArray = JsArray(function.declaration.required.map(_.json))
+        val fname = ("wasm___" + s"${function.declaration.name}".sha256)
+        map.put(s"${function.declaration.name}".sha256, s"${function.declaration.name}")
+        Json.obj(
+          "type" -> "function",
+          "function" -> Json.obj(
+            "name" -> fname, //function.name,
+            "description" -> function.declaration.description,
+            "strict" -> function.declaration.strict,
+            "parameters" -> Json.obj(
+              "type" -> "object",
+              "required" -> required,
+              "additionalProperties" -> false,
+              "properties" -> function.declaration.parameters
+            )
+          )
+        )
+      }
+    }, map.toMap)
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
   def _toolsAnthropic(functions: Seq[String])(implicit env: Env): Seq[JsObject] = {
     functions.flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(ext => ext.states.toolFunction(id))).map { function =>
       val required: JsArray = function.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(function.parameters.value.keySet.toSeq.map(_.json)))
@@ -614,6 +647,27 @@ object LlmToolFunction {
       )
     }
   }
+
+  def _inlineToolsAnthropic(functions: Seq[String], attrs: TypedMap)(implicit env: Env): Seq[JsObject] = {
+    attrs.get(InlineFunctions.InlineFunctionsKey) match {
+      case None => Seq.empty
+      case Some(inlineFunctions) => functions.flatMap(key => inlineFunctions.get(key)).map { function =>
+        val required: JsArray = JsArray(function.declaration.required.map(_.json))
+        Json.obj(
+          "name" -> s"wasm___${function.declaration.name}", //function.name,
+          "description" -> function.declaration.description,
+          "input_schema" -> Json.obj(
+            "type" -> "object",
+            "required" -> required,
+            "additionalProperties" -> false,
+            "properties" -> function.declaration.parameters
+          )
+        )
+      }
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   private def callInline(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
@@ -662,6 +716,8 @@ object LlmToolFunction {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
   private def callCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], fmap: Map[String, String], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
@@ -685,6 +741,31 @@ object LlmToolFunction {
       }
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
+
+  private def callInlineCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], fmap: Map[String, String], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    Source(functions.toList)
+      .mapAsync(1) { toolCall =>
+        val fid = toolCall.function.name.stripPrefix("wasm___")
+        attrs.get(InlineFunctions.InlineFunctionsKey).flatMap(_.get(fid)) match {
+          case None => (s"undefined function ${fid}", toolCall).some.vfuture
+          case Some(function) => {
+            println(s"calling function '${function.declaration.name}' with args: '${toolCall.function.arguments}'")
+            function.call(toolCall.function.arguments, attrs, env, ec).map { r =>
+              (r, toolCall).some
+            }
+          }
+        }
+      }
+      .collect {
+        case Some(t) => t
+      }
+      .flatMapConcat {
+        case (resp, tc) => f(resp, tc)
+      }
+      .runWith(Sink.seq)(env.otoroshiMaterializer)
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   private def callAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
@@ -710,6 +791,31 @@ object LlmToolFunction {
       }
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
+
+  private def callInlineAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    Source(functions.toList)
+      .mapAsync(1) { toolCall =>
+        val fid = toolCall.name.stripPrefix("wasm___")
+        attrs.get(InlineFunctions.InlineFunctionsKey).flatMap(_.get(fid)) match {
+          case None => (s"undefined function ${fid}", toolCall).some.vfuture
+          case Some(function) => {
+            println(s"calling function '${function.declaration.name}' with args: '${toolCall.arguments}'")
+            function.call(toolCall.arguments, attrs, env, ec).map { r =>
+              (r, toolCall).some
+            }
+          }
+        }
+      }
+      .collect {
+        case Some(t) => t
+      }
+      .flatMapConcat {
+        case (resp, tc) => f(resp, tc)
+      }
+      .runWith(Sink.seq)(env.otoroshiMaterializer)
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   def _callInlineToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     callInline(functions, attrs) { (resp, tc) =>
@@ -743,6 +849,8 @@ object LlmToolFunction {
     }
   }
 
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
   def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, fmap: Map[String, String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     callCohere(functions, fmap, attrs) { (resp, tc) =>
       Source(List(
@@ -758,6 +866,24 @@ object LlmToolFunction {
       }
     }
   }
+
+  def callInlineToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, fmap: Map[String, String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callInlineCohere(functions, fmap, attrs) { (resp, tc) =>
+      Source(List(
+        Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)),
+        Json.obj(
+          "role" -> "tool",
+          "content" -> resp,
+          "tool_call_id" -> tc.id
+        ))).applyOnIf(providerName.toLowerCase().contains("deepseek")) { s => // temporary fix for https://github.com/deepseek-ai/DeepSeek-V3/issues/15
+        s.concat(Source(List(
+          Json.obj("role" -> "user", "content" -> resp)
+        )))
+      }
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   def _callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     callAnthropic(functions, attrs) { (resp, tc) =>
@@ -777,6 +903,26 @@ object LlmToolFunction {
     }
   }
 
+  def _callInlineToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callInlineAnthropic(functions, attrs) { (resp, tc) =>
+      Source(List(
+        Json.obj("role" -> "assistant", "content" -> Json.arr(Json.obj(
+          "type" -> "tool_use",
+          "id" -> tc.id,
+          "name" -> tc.name,
+          "input" -> tc.input,
+
+        ))),
+        Json.obj("role" -> "user", "content" -> Json.arr(Json.obj(
+          "type" -> "tool_result",
+          "tool_use_id" -> tc.id,
+          "content" -> resp
+        )))))
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
   def _callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     call(functions, attrs) { (resp, tc) =>
       Source(List(
@@ -788,6 +934,18 @@ object LlmToolFunction {
     }
   }
 
+  def _callInlineToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callInline(functions, attrs) { (resp, tc) =>
+      Source(List(
+        Json.obj("role" -> "assistant", "content" -> "", "tool_calls" -> Json.arr(tc.raw)),
+        Json.obj(
+          "role" -> "tool",
+          "content" -> resp,
+        )))
+    }
+  }
+
+  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   val format = new Format[LlmToolFunction] {
     override def writes(o: LlmToolFunction): JsValue = o.location.jsonWithKey ++ Json.obj(
       "id"          -> o.id,

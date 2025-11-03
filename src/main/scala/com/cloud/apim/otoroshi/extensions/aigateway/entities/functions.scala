@@ -22,32 +22,38 @@ object LlmFunctions {
 
   def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val (wasmFunctions, mcpConnectors) = functions.partition(_.isWasm)
+    val inlineFunctionsF = LlmToolFunction._callInlineToolsOllama(wasmFunctions.filter(_.isInline), attrs)(ec, env)
     val wasmFunctionsF = LlmToolFunction._callToolsOllama(wasmFunctions, attrs)(ec, env)
     val mcpConnectorsF = McpSupport.callToolsOllama(mcpConnectors, conns)(ec, env)
     for {
       wasmFunctionsR <- wasmFunctionsF
       mcpConnectorsR <- mcpConnectorsF
-    } yield wasmFunctionsR ++ mcpConnectorsR
+      inlineFunctionsR <- inlineFunctionsF
+    } yield inlineFunctionsR ++ wasmFunctionsR ++ mcpConnectorsR
   }
 
   def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], conns: Seq[String], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val (wasmFunctions, mcpConnectors) = functions.partition(_.isWasm)
+    val inlineFunctionsF = LlmToolFunction._callInlineToolsAnthropic(wasmFunctions.filter(_.isInline), providerName, attrs)(ec, env)
     val wasmFunctionsF = LlmToolFunction._callToolsAnthropic(wasmFunctions, providerName, attrs)(ec, env)
     val mcpConnectorsF = McpSupport.callToolsAnthropic(mcpConnectors, conns, providerName)(ec, env)
     for {
       wasmFunctionsR <- wasmFunctionsF
       mcpConnectorsR <- mcpConnectorsF
-    } yield wasmFunctionsR ++ mcpConnectorsR
+      inlineFunctionsR <- inlineFunctionsF
+    } yield inlineFunctionsR ++ wasmFunctionsR ++ mcpConnectorsR
   }
 
   def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], conns: Seq[String], providerName: String, fmap: Map[String, String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val (wasmFunctions, mcpConnectors) = functions.partition(_.isWasm)
+    val inlineFunctionsF = LlmToolFunction.callInlineToolsCohere(wasmFunctions.filter(_.isInline), providerName, fmap, attrs)(ec, env)
     val wasmFunctionsF = LlmToolFunction.callToolsCohere(wasmFunctions, providerName, fmap, attrs)(ec, env)
     val mcpConnectorsF = McpSupport.callToolsCohere(mcpConnectors, conns, providerName, fmap)(ec, env)
     for {
       wasmFunctionsR <- wasmFunctionsF
       mcpConnectorsR <- mcpConnectorsF
-    } yield wasmFunctionsR ++ mcpConnectorsR
+      inlineFunctionsR <- inlineFunctionsF
+    } yield inlineFunctionsR ++ wasmFunctionsR ++ mcpConnectorsR
   }
 
   def toolsWithInline(wasmFunctions: Seq[String], inlineFunctions: Seq[String], mcpConnectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): JsObject = {
@@ -71,11 +77,29 @@ object LlmFunctions {
     )
   }
 
+  def toolsAnthropicWithInline(wasmFunctions: Seq[String], inlineFunctions: Seq[String], mcpConnectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): JsObject = {
+    val tools: Seq[JsObject] = LlmToolFunction._toolsAnthropic(wasmFunctions) ++ LlmToolFunction._inlineToolsAnthropic(inlineFunctions, attrs) ++ McpSupport.toolsAnthropic(mcpConnectors, includeFunctions, excludeFunctions)
+    Json.obj(
+      "tools" -> tools
+    )
+  }
+
   def toolsCohere(wasmFunctions: Seq[String], mcpConnectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String])(implicit ec: ExecutionContext, env: Env): (JsObject, Map[String, String]) = {
     val (wasmTools, wasmMap) = LlmToolFunction.toolsCohere(wasmFunctions)
     val (mcpTools, mcpMap) =  McpSupport.toolsCohere(mcpConnectors, includeFunctions, excludeFunctions)
     val tools: Seq[JsObject] = wasmTools ++ mcpTools
     val map = wasmMap ++ mcpMap
+    (Json.obj(
+      "tools" -> tools
+    ), map)
+  }
+
+  def toolsCohereWithInline(wasmFunctions: Seq[String], inlineFunctions: Seq[String], mcpConnectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): (JsObject, Map[String, String]) = {
+    val (wasmTools, wasmMap) = LlmToolFunction.toolsCohere(wasmFunctions)
+    val (mcpTools, mcpMap) =  McpSupport.toolsCohere(mcpConnectors, includeFunctions, excludeFunctions)
+    val (inlineTools, inlineMap) =  LlmToolFunction.inlineToolsCohere(inlineFunctions, attrs)
+    val tools: Seq[JsObject] = wasmTools ++ inlineTools ++ mcpTools
+    val map = wasmMap ++ inlineMap ++ mcpMap
     (Json.obj(
       "tools" -> tools
     ), map)
