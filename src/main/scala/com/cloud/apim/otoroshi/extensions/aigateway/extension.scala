@@ -36,6 +36,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val imageModelsDataStore: ImageModelsDataStore = new KvImageModelsDataStore(extensionId, env.datastores.redis, env)
   val videoModelsDataStore: VideoModelsDataStore = new KvVideoModelsDataStore(extensionId, env.datastores.redis, env)
   val persistentMemoriesDataStore: PersistentMemoryDataStore = new KvPersistentMemoryDataStore(extensionId, env.datastores.redis, env)
+  val budgetsDataStore: AiBudgetsDataStore = new KvAiBudgetsDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
@@ -154,15 +155,24 @@ class AiGatewayExtensionState(env: Env) {
   def updatePersistentMemories(values: Seq[PersistentMemory]): Unit = {
     _persistentMemories.addAll(values.map(v => (v.id, v))).remAll(_persistentMemories.keySet.toSeq.diff(values.map(_.id)))
   }
+
+  private val _budgets = new UnboundedTrieMap[String, AiBudget]()
+  def hasBudgets: Boolean = _budgets.values.nonEmpty
+  def budget(id: String): Option[AiBudget] = _budgets.get(id)
+  def allBudgets(): Seq[AiBudget]          = _budgets.values.toSeq
+  def updateBudgets(values: Seq[AiBudget]): Unit = {
+    _budgets.addAll(values.map(v => (v.id, v))).remAll(_budgets.keySet.toSeq.diff(values.map(_.id)))
+  }
 }
 
 object AiExtension {
   val logger = Logger("cloud-apim-llm-extension")
+  val id = AdminExtensionId("cloud-apim.extensions.LlmExtension")
 }
 
 class AiExtension(val env: Env) extends AdminExtension {
 
-  private val datastores = new AiGatewayExtensionDatastores(env, id)
+  val datastores = new AiGatewayExtensionDatastores(env, id)
 
   val states = new AiGatewayExtensionState(env)
 
@@ -179,7 +189,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     .expireAfterWrite(1.hour)
     .build[String, Seq[String]]()
 
-  override def id: AdminExtensionId = AdminExtensionId("cloud-apim.extensions.LlmExtension")
+  override def id: AdminExtensionId = AiExtension.id
 
   override def name: String = "LLM Extension"
 
@@ -236,6 +246,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val imagesModelsPage = getResourceCode("cloudapim/extensions/ai/ImageModelsPage.js")
   lazy val videoModelsPage = getResourceCode("cloudapim/extensions/ai/VideoModelsPage.js")
   lazy val memoriesPage = getResourceCode("cloudapim/extensions/ai/MemoriesPage.js")
+  lazy val budgetsPage = getResourceCode("cloudapim/extensions/ai/BudgetsPage.js")
   lazy val workflowNodeSwitchFile = getResourceCode("cloudapim/extensions/ai/WorkflowNodes.js")
   lazy val imgCode = getResourceCode("cloudapim/extensions/ai/undraw_visionary_technology_re_jfp7.svg")
 
@@ -549,6 +560,33 @@ class AiExtension(val env: Env) extends AdminExtension {
     Results.Ok(Json.obj("can_execute" -> JlamaChatClient.canExecuteJlama, "msg" -> JlamaChatClient.errorMsg)).vfuture
   }
 
+  def handleRemainingBudget(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val ev = env
+    req.getQueryString("budget") match {
+      case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
+      case Some(budgetId) => {
+        states.budget(budgetId) match {
+          case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
+          case Some(budget) => {
+            budget.getUsd().flatMap { usd =>
+              budget.getTokens().map { tokens =>
+                val remainingUsd = budget.limits.usd.getOrElse(BigDecimal(0))
+                val remainingTokens = budget.limits.tokens.getOrElse(0L)
+                Results.Ok(Json.obj(
+                  "consumed_usd" -> usd,
+                  "remaining_usd" -> remainingUsd,
+                  "consumed_tokens" -> tokens,
+                  "remaining_tokens" -> remainingTokens,
+                ))
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
   override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = Seq(
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
@@ -598,6 +636,12 @@ class AiExtension(val env: Env) extends AdminExtension {
       wantsBody = false,
       handle = handleJlamaStatus
     ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "GET",
+      path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_remaining",
+      wantsBody = false,
+      handle = handleRemainingBudget
+    )
   )
 
   override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
@@ -621,6 +665,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    const _         = dependencies.lodash;
             |    const Component = React.Component;
             |    const showdown  = dependencies.showdown;
+            |    const moment  = dependencies.moment;
             |    const uuid      = dependencies.uuid;
             |    const Table     = dependencies.Components.Inputs.Table;
             |    const Form      = dependencies.Components.Inputs.Form;
@@ -680,6 +725,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    ${videoModelsPage}
             |    ${audioModelsPage}
             |    ${memoriesPage}
+            |    ${budgetsPage}
             |    ${workflowNodeSwitchFile}
             |
             |    return {
@@ -792,6 +838,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            link: '/extensions/cloud-apim/ai-gateway/persistent-memories',
             |            display: () => true,
             |            icon: () => 'fa-brain',
+            |          },
+            |          {
+            |            title: 'AI Budgets',
+            |            description: 'All your AI Budgets',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/ai-budgets',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
             |          }
             |        ]
             |      }],
@@ -899,6 +953,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          link: '/extensions/cloud-apim/ai-gateway/persistent-memories',
             |          display: () => true,
             |          icon: () => 'fa-brain',
+            |        },
+            |        {
+            |          title: 'AI Budgets',
+            |          description: 'All your AI Budgets',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/ai-budgets',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
             |        }
             |      ],
             |      sidebarItems: [
@@ -978,6 +1040,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'Persistent memories',
             |          text: 'All your Persistent memories',
             |          path: 'extensions/cloud-apim/ai-gateway/persistent-memories',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'AI Budgets',
+            |          text: 'All your AI Budgets',
+            |          path: 'extensions/cloud-apim/ai-gateway/ai-budgets',
             |          icon: 'brain'
             |        }
             |      ],
@@ -1085,6 +1153,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'Persistent memories',
             |          value: 'persistent-memories',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/ai-budgets`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'AI Budgets',
+            |          value: 'ai-budgets',
             |        }
             |      ],
             |      routes: [
@@ -1321,6 +1397,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          component: (props) => {
             |            return React.createElement(MemoriesPage, props, null)
             |          },
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/ai-budgets/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(BudgetsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/ai-budgets/:taction',
+            |          component: (props) => {
+            |            return React.createElement(BudgetsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/ai-budgets',
+            |          component: (props) => {
+            |            return React.createElement(BudgetsPage, props, null)
+            |          },
             |        }
             |      ]
             |    }
@@ -1348,6 +1442,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       imageModels <- datastores.imageModelsDataStore.findAllAndFillSecrets()
       videosModels <- datastores.videoModelsDataStore.findAllAndFillSecrets()
       persistentMemories <- datastores.persistentMemoriesDataStore.findAllAndFillSecrets()
+      budgets <- datastores.budgetsDataStore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
@@ -1362,6 +1457,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateImageModels(imageModels)
       states.updateVideoModels(videosModels)
       states.updatePersistentMemories(persistentMemories)
+      states.updateBudgets(budgets)
       Future {
         McpSupport.restartConnectorsIfNeeded()
         McpSupport.stopConnectorsIfNeeded()
@@ -1385,6 +1481,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(ImageModel.resource(env, datastores, states)),
       AdminExtensionEntity(VideoModel.resource(env, datastores, states)),
       AdminExtensionEntity(PersistentMemory.resource(env, datastores, states)),
+      AdminExtensionEntity(AiBudget.resource(env, datastores, states)),
     )
   }
 }

@@ -73,11 +73,14 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           }.toAnalytics()
         }
         case Right(value) => {
-          val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+          val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
           val impacts = attrs.get(ChatClientWithEcoImpact.key)
           val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
           val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
+          val totalCost = costs.map(_.totalCost)
+          val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
           AuditEvent.generic("LLMUsageAudit") {
             usageSlug ++ Json.obj(
               "error" -> JsNull,
@@ -148,10 +151,13 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
               seq = seq :+ chunk
             })
             .alsoTo(Sink.onComplete { _ =>
-              val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+              val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
               val impacts = attrs.get(ChatClientWithEcoImpact.key)
               val costs = attrs.get(ChatClientWithCostsTracking.key)
               val ext = env.adminExtensions.extension[AiExtension].get
+              val totalCost = costs.map(_.totalCost)
+              val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
+              ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
               val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
               AuditEvent.generic("LLMUsageAudit") {
                 usageSlug ++ Json.obj(
@@ -234,10 +240,13 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
           }.toAnalytics()
         }
         case Right(value) => {
-          val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+          val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
           val impacts = attrs.get(ChatClientWithEcoImpact.key)
           val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
+          val totalCost = costs.map(_.totalCost)
+          val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
           val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
           AuditEvent.generic("LLMUsageAudit") {
             usageSlug ++ Json.obj(
@@ -306,10 +315,13 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
               seq = seq :+ chunk
             })
             .alsoTo(Sink.onComplete { _ =>
-              val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+              val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
               val impacts = attrs.get(ChatClientWithEcoImpact.key)
               val costs = attrs.get(ChatClientWithCostsTracking.key)
               val ext = env.adminExtensions.extension[AiExtension].get
+              val totalCost = costs.map(_.totalCost)
+              val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
+              ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
               val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
               AuditEvent.generic("LLMUsageAudit") {
                 usageSlug ++ Json.obj(
@@ -449,6 +461,9 @@ class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embedd
         val impacts = attrs.get(ChatClientWithEcoImpact.key)
         val costs = attrs.get(ChatClientWithCostsTracking.key)
         val ext = env.adminExtensions.extension[AiExtension].get
+        val totalCost = costs.map(_.totalCost)
+        val totalTokens = attrs.get(EmbeddingModelClient.ApiUsageKey).map(_.tokenUsage)
+        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
         val _output = resp.toOpenAiJson("vector").asObject
         val slug = Json.obj(
           "provider_kind" -> originalModel.provider.toLowerCase,
@@ -537,6 +552,9 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
         val impacts = attrs.get(ChatClientWithEcoImpact.key)
         val costs = attrs.get(ChatClientWithCostsTracking.key)
         val ext = env.adminExtensions.extension[AiExtension].get
+        val totalCost = costs.map(_.totalCost)
+        val totalTokens = attrs.get(AudioModelClient.ApiUsageKey).map(_.usage.total)
+        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
         val _output = resp.toOpenAiJson(env).asObject
         val slug = Json.obj(
           "provider_kind" -> originalModel.provider.toLowerCase,
@@ -616,6 +634,9 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
         val impacts = attrs.get(ChatClientWithEcoImpact.key)
         val costs = attrs.get(ChatClientWithCostsTracking.key)
         val ext = env.adminExtensions.extension[AiExtension].get
+        val totalCost = costs.map(_.totalCost)
+        val totalTokens = attrs.get(AudioModelClient.ApiUsageKey).map(_.usage.total)
+        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
         val _output = resp.toOpenAiJson(env).asObject
         val slug = Json.obj(
           "provider_kind" -> originalModel.provider.toLowerCase,
@@ -707,6 +728,9 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
         val impacts = attrs.get(ChatClientWithEcoImpact.key)
         val costs = attrs.get(ChatClientWithCostsTracking.key)
         val ext = env.adminExtensions.extension[AiExtension].get
+        val totalCost = costs.map(_.totalCost)
+        val totalTokens = attrs.get(ImageModelClient.ApiUsageKey).map(_.usage.totalTokens)
+        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
         val _output = resp.toOpenAiJson(env).asObject
         val slug = Json.obj(
           "provider_kind" -> originalModel.provider.toLowerCase,
@@ -786,6 +810,9 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
         val impacts = attrs.get(ChatClientWithEcoImpact.key)
         val costs = attrs.get(ChatClientWithCostsTracking.key)
         val ext = env.adminExtensions.extension[AiExtension].get
+        val totalCost = costs.map(_.totalCost)
+        val totalTokens = attrs.get(ImageModelClient.ApiUsageKey).map(_.usage.totalTokens)
+        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
         val _output = resp.toOpenAiJson(env).asObject
         val slug = Json.obj(
           "provider_kind" -> originalModel.provider.toLowerCase,
@@ -874,6 +901,9 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
         val impacts = attrs.get(ChatClientWithEcoImpact.key)
         val costs = attrs.get(ChatClientWithCostsTracking.key)
         val ext = env.adminExtensions.extension[AiExtension].get
+        val totalCost = costs.map(_.totalCost)
+        val totalTokens = attrs.get(ModerationModelClient.ApiUsageKey).map(_.usage.total)
+        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
         val _output = resp.toOpenAiJson(env).asObject
         val slug = Json.obj(
           "provider_kind" -> originalModel.provider.toLowerCase,
@@ -911,7 +941,6 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
     }
   }
 }
-
 
 object VideoModelClientWithAuditing {
   def applyIfPossible(tuple: (VideoModel, VideoModelClient, Env)): VideoModelClient = {
@@ -963,6 +992,9 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
         val impacts = attrs.get(ChatClientWithEcoImpact.key)
         val costs = attrs.get(ChatClientWithCostsTracking.key)
         val ext = env.adminExtensions.extension[AiExtension].get
+        val totalCost = costs.map(_.totalCost)
+        val totalTokens = attrs.get(VideoModelClient.ApiUsageKey).map(_.usage.totalTokens)
+        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
         val _output = resp.toOpenAiJson(env).asObject
         val slug = Json.obj(
           "provider_kind" -> originalModel.provider.toLowerCase,

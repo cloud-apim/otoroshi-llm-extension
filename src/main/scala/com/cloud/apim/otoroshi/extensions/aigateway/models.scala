@@ -610,6 +610,7 @@ object ChatResponseMetadataUsage {
 }
 
 case class ChatResponseMetadataUsage(promptTokens: Long, generationTokens: Long, reasoningTokens: Long) {
+  def totalTokens: Long = promptTokens + generationTokens + reasoningTokens
   def json: JsValue = Json.obj(
     "prompt_tokens" -> promptTokens,
     "generation_tokens" -> generationTokens,

@@ -66,6 +66,7 @@ case class CostModel(name: String, raw: JsValue) {
 }
 
 case class CostsOutput(inputCost: BigDecimal, outputCost: BigDecimal, reasoningCost: BigDecimal) {
+  def totalCost: BigDecimal = inputCost + outputCost + reasoningCost
   def json: JsValue = Json.obj(
     "input_cost" -> inputCost,
     "output_cost" -> outputCost,
