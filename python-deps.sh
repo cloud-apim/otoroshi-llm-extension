@@ -1,4 +1,7 @@
-uv sync
+uv add --upgrade ecologits
+uv add --upgrade litellm
+
+uv sync --upgrade --refresh
 
 cp ./.venv/lib/python3.13/site-packages/ecologits/data/electricity_mixes.csv ./src/main/resources/data/eg-elec.csv
 cp ./.venv/lib/python3.13/site-packages/ecologits/data/models.json ./src/main/resources/data/eg-models.json

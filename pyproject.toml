@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "ecologits>=0.8.2",
-    "litellm>=1.77.0",
+    "litellm>=1.79.1",
 ]
 
 [tool.uv.workspace]
