@@ -186,6 +186,29 @@ case class AiProvider(
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "openai").some
       }
+      case "openai-compatible" => {
+        val supportsCompletion = connection.select("supports_completion").asOptBoolean.getOrElse(true)
+        val api = new OpenAiApi(
+          _baseUrl = baseUrl.getOrElse(OpenAiApi.baseUrl),
+          token = token,
+          timeout = timeout.getOrElse(3.minutes),
+          providerName = "OpenAI Compatible",
+          env = env,
+          supportsTools = connection.select("supports_tools").asOptBoolean.getOrElse(true),
+          supportsStreaming = connection.select("supports_streaming").asOptBoolean.getOrElse(true),
+          supportsCompletion = supportsCompletion,
+        )
+        val opts = OpenAiChatClientOptions.fromJson(options)
+        new OpenAiChatClient(
+          api = api,
+          options = opts,
+          id = id,
+          providerName = "openai-compatible",
+          modelsPath = connection.select("models_path").asOptString.getOrElse("/models"),
+          completion = supportsCompletion,
+          accumulateStreamConsumptions = connection.select("acc_stream_consumptions").asOptBoolean.getOrElse(false),
+        ).some
+      }
       case "scaleway" => {
         val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Scaleway", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)

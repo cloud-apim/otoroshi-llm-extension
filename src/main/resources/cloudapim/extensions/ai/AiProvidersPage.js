@@ -537,6 +537,7 @@ class AiProvidersPage extends Component {
 
   providerList = _.sortBy([
     { 'label': 'OpenAI', value: 'openai' },
+    { 'label': 'OpenAI Compatible', value: 'openai-compatible' },
     { 'label': 'Azure AI Foundry', value: 'azure-ai-foundry' },
     { 'label': 'Azure OpenAI', value: 'azure-openai' },
     { 'label': 'Mistral', value: 'mistral' },
@@ -621,6 +622,26 @@ class AiProvidersPage extends Component {
     'connection.timeout': {
       type: 'number',
       props: { label: 'Timeout', suffix: 'ms.' },
+    },
+    'connection.models_path': {
+      type: 'string',
+      props: { label: 'Models endpoint path' },
+    },
+    'connection.supports_completion': {
+      type: 'bool',
+      props: { label: 'Provider supports completion' },
+    },
+    'connection.supports_tools': {
+      type: 'bool',
+      props: { label: 'Provider tool calling' },
+    },
+    'connection.supports_streaming': {
+      type: 'bool',
+      props: { label: 'Provider supports streaming' },
+    },
+    'connection.acc_stream_consumptions': {
+      type: 'bool',
+      props: { label: 'Accumulate stream consumptions' },
     },
     'options.model': this.providerModels(state.provider || 'none', state),
     'options.provider_models_reload': {
@@ -1514,6 +1535,59 @@ class AiProvidersPage extends Component {
         'metadata',
       ];
     }
+    if (state.provider === "openai-compatible") {
+      return [
+      '_loc', 'id', 'name', 'description',
+      '<<<Provider',
+      'provider',
+      '<<<API Connection',
+      'connection.base_url',
+      'connection.token',
+      'connection.timeout',
+      'connection.models_path',
+      'connection.supports_completion',
+      'connection.supports_tools',
+      'connection.supports_streaming',
+      'connection.acc_stream_consumptions',
+      '>>>API Connection raw',
+      'connection',
+      '<<<Connection options',
+      'options.allow_config_override',
+      'options.model',
+      'options.provider_models_reload',
+      'options.max_tokens',
+      'options.n',
+      'options.temperature',
+      'options.topP',
+      '>>>Connection options raw',
+      'options',
+      '>>>Context settings',
+      'context.default',
+      'context.contexts',
+      '>>>Models restriction settings',
+      'models.include',
+      'models.exclude',
+      '>>>Provider fallback',
+      'provider_fallback', '>>> Persistent memory', 'memory',
+      '>>>Cache',
+      'cache.strategy',
+      'cache.ttl',
+      state.cache.strategy === 'semantic' ? 'cache.score' : null,
+      '>>>Guardrails validation',
+      'guardrails_fail_on_deny',
+      'guardrails',
+      '>>>Tools',
+      'options.tool_functions',
+      'options.mcp_connectors',
+      'options.mcp_include_functions',
+      'options.mcp_exclude_functions',
+      '>>>Tester',
+      'tester',
+      '>>>Metadata and tags',
+      'tags',
+      'metadata',
+      ];
+    }
     return [
       '_loc', 'id', 'name', 'description',
       '<<<Provider',
@@ -1723,6 +1797,26 @@ class AiProvidersPage extends Component {
                   base_url: BaseUrls.openai,
                   token: 'xxx',
                   timeout: 180000,
+                },
+                options: ClientOptions.openai,
+              });
+            } else if (state.provider === 'openai-compatible') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'openai-compatible',
+                connection: {
+                  base_url: '',
+                  token: 'xxx',
+                  timeout: 180000,
+                  models_path: '/models',
+                  supports_completion: true,
+                  supports_tools: true,
+                  supports_streaming: true,
+                  acc_stream_consumptions: false,
                 },
                 options: ClientOptions.openai,
               });

@@ -118,11 +118,11 @@ object OpenAiApi {
   val baseUrl = "https://api.openai.com/v1"
 }
 
-class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, providerName: String, env: Env) extends ApiClient[OpenAiApiResponse, OpenAiChatResponseChunk] {
+class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, providerName: String, env: Env, val supportsTools: Boolean = true, val supportsStreaming: Boolean = true, val supportsCompletion: Boolean = true) extends ApiClient[OpenAiApiResponse, OpenAiChatResponseChunk] {
 
-  val supportsTools: Boolean = true
-  val supportsStreaming: Boolean = true
-  val supportsCompletion: Boolean = true
+  // val supportsTools: Boolean = true
+  // val supportsStreaming: Boolean = true
+  // val supportsCompletion: Boolean = true
 
   lazy val baseUrl: String = {
     if (_baseUrl.startsWith("https://api.openai.com") && !_baseUrl.startsWith("https://api.openai.com/v1")) {
