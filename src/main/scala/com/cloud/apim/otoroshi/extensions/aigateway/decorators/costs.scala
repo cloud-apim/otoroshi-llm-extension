@@ -153,7 +153,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
 
   def getModel(originalBody: JsValue): String = {
     val allowConfigOverride = originalProvider.options.select("allow_config_override").asOptBoolean.getOrElse(true)
-    if (allowConfigOverride) originalBody.select("model").asOptString.getOrElse(chatClient.model.get) else chatClient.model.get
+    if (allowConfigOverride) originalBody.select("model").asOptString.getOrElse(chatClient.computeModel(originalBody).getOrElse("--")) else chatClient.computeModel(originalBody).getOrElse("--")
   }
 
   def getProvider(): Option[String] = {

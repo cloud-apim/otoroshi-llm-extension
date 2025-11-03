@@ -95,7 +95,7 @@ class OpenAiCompatProxy extends NgBackendCall {
           } else {
             client.call(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
-              case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiJson(client.model.getOrElse("none"), env))
+              case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiJson(client.computeModel(jsonBody).getOrElse("none"), env))
                 .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
             }
           }
@@ -208,7 +208,7 @@ class OpenAiCompletionProxy extends NgBackendCall {
           } else {
             client.tryCompletion(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
-              case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiCompletionJson(client.model.getOrElse("none"), echo, messages.head.content, env))
+              case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiCompletionJson(client.computeModel(jsonBody).getOrElse("none"), echo, messages.head.content, env))
                 .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
             }
           }

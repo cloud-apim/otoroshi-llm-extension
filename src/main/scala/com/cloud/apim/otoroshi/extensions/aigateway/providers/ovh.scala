@@ -302,7 +302,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = api.supportsCompletion
 
-  override def model: Option[String] = options.model.some
+  override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
 
   override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     if (raw) {
@@ -329,7 +329,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val body = mergedOptions ++ Json.obj("messages" -> prompt.json)
     val startTime = System.currentTimeMillis()
     api.call(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(body)).map {
@@ -383,7 +383,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     api.stream(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi)))).map {
       case Left(err) => err.left
@@ -453,7 +453,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
-    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val callF = api.call(options.model, "POST", "/api/openai_compat/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
     callF.map {
       case Left(err) => err.left

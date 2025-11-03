@@ -36,7 +36,7 @@ class JlamaChatClient(options: JlamaChatClientOptions, id: String) extends ChatC
   override def supportsTools: Boolean = false
   override def supportsStreaming: Boolean = true
   override def supportsCompletion: Boolean = true
-  override def model: Option[String] = options.model.some
+  override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
 
   lazy val canExecuteJlama: Boolean = JlamaChatClient.canExecuteJlama
   lazy val errorMsg: String = JlamaChatClient.errorMsg

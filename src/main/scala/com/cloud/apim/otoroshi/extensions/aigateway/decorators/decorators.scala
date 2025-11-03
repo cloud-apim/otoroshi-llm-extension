@@ -35,7 +35,7 @@ object ChatClientDecorators {
 
 trait DecoratorChatClient extends ChatClient {
   def chatClient: ChatClient
-  override def model: Option[String] = chatClient.model
+  override def computeModel(payload: JsValue): Option[String] = chatClient.computeModel(payload)
   override def supportsStreaming: Boolean = chatClient.supportsStreaming
   override def supportsTools: Boolean = chatClient.supportsTools
   override def supportsCompletion: Boolean = chatClient.supportsCompletion

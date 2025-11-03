@@ -716,7 +716,7 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
 
   def getModel(originalBody: JsValue): String = {
     val allowConfigOverride = originalProvider.options.select("allow_config_override").asOptBoolean.getOrElse(true)
-    if (allowConfigOverride) originalBody.select("model").asOptString.getOrElse(chatClient.model.get) else chatClient.model.get
+    if (allowConfigOverride) originalBody.select("model").asOptString.getOrElse(chatClient.computeModel(originalBody).getOrElse("--")) else chatClient.computeModel(originalBody).getOrElse("--")
   }
 
   /**

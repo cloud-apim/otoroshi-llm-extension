@@ -98,7 +98,7 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = false
 
-  override def model: Option[String] = api.modelName.some
+  override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(api.modelName.some)
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"

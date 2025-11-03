@@ -80,7 +80,7 @@ case class LoadBalancingTarget(ref: String, weight: Int, selector: Option[String
 
 class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
 
-  override def model: Option[String] = None
+  override def computeModel(payload: JsValue): Option[String] = None
 
   def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: ChatClient => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val refs: Seq[LoadBalancingTarget] = provider.options.select("refs")

@@ -255,7 +255,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = true
-  override def model: Option[String] = options.model.some
+  override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
 
   override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/v1/models", None).map { resp =>
@@ -270,7 +270,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
@@ -329,7 +329,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
@@ -406,7 +406,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val callF = api.call("POST", "/v1/fim/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
     callF.map {

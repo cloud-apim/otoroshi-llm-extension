@@ -23,28 +23,28 @@ object ChatClientWithModelConstraints {
 class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    originalBody.select("model").asOptString.orElse(chatClient.model) match {
+    originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
       case Some(model) if originalProvider.models.matches(model) => chatClient.call(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    originalBody.select("model").asOptString.orElse(chatClient.model) match {
+    originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
       case Some(model) if originalProvider.models.matches(model) => chatClient.stream(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
 
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    originalBody.select("model").asOptString.orElse(chatClient.model) match {
+    originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
       case Some(model) if originalProvider.models.matches(model) => chatClient.completion(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
 
   override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    originalBody.select("model").asOptString.orElse(chatClient.model) match {
+    originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
       case Some(model) if originalProvider.models.matches(model) => chatClient.completionStream(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }

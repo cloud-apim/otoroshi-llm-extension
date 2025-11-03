@@ -252,7 +252,7 @@ case class XAiChatClientOptions(
 
 class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: String) extends ChatClient {
 
-  override def model: Option[String] = options.model.some
+  override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = true
@@ -260,7 +260,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
-    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
@@ -335,7 +335,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
-    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
@@ -403,7 +403,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
-    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
     callF.map {

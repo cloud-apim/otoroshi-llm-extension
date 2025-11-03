@@ -1540,7 +1540,7 @@ trait ChatClient {
   def supportsTools: Boolean = false
   def supportsCompletion: Boolean = false
 
-  def model: Option[String]
+  def computeModel(payload: JsValue): Option[String]
 
   def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
 
@@ -1564,7 +1564,7 @@ trait ChatClient {
     } else {
       call(prompt, attrs, originalBody).map {
         case Left(err) => Left(err)
-        case Right(resp) => Right(resp.toSource(model.getOrElse("none")))
+        case Right(resp) => Right(resp.toSource(computeModel(originalBody).getOrElse("none")))
       }
     }
   }
@@ -1585,7 +1585,7 @@ trait ChatClient {
       val cleanBody = originalBody.asObject - "prompt" - "suffix"
       completion(prompt, attrs, cleanBody).map {
         case Left(err) => Left(err)
-        case Right(resp) => Right(resp.toSource(model.getOrElse("none")))
+        case Right(resp) => Right(resp.toSource(computeModel(originalBody).getOrElse("none")))
       }
     }
   }

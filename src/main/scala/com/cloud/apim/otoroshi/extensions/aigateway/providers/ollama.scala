@@ -261,7 +261,7 @@ case class OllamaAiChatClientOptions(
 
 class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, id: String) extends ChatClient {
 
-  override def model: Option[String] = options.model.some
+  override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsTools: Boolean = api.supportsTools
   override def supportsCompletion: Boolean = api.supportsCompletion
@@ -279,7 +279,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
-    val finalModel: String = mergedOptions.select("model").asOptString.getOrElse(options.model)
+    val finalModel: String = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val mergedOptionsWithoutModel = mergedOptions - "model"
     val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
@@ -355,7 +355,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     } else {
       val obody = originalBody.asObject - "messages" - "provider"
       val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
-      val finalModel: String = mergedOptions.select("model").asOptString.getOrElse(options.model)
+      val finalModel: String = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
       val mergedOptionsWithoutModel = mergedOptions - "model"
       api.stream("POST", "/api/chat", Some(Json.obj(
         "model" -> finalModel,

@@ -437,7 +437,7 @@ case class OpenAiChatClientOptions(
 
 class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String, modelsPath: String = "/models", completion: Boolean = true, accumulateStreamConsumptions: Boolean = false) extends ChatClient {
 
-  override def model: Option[String] = options.model.some
+  override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = completion //api.supportsCompletion
@@ -445,7 +445,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val _mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
-    val finalModel = _mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = _mergedOptions.select("model").asOptString.orElse(computeModel(_mergedOptions)).getOrElse("--")
     val mergedOptions = if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
@@ -571,7 +571,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val _mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
-    val finalModel = _mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = _mergedOptions.select("model").asOptString.orElse(computeModel(_mergedOptions)).getOrElse("--")
     val mergedOptions = if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)

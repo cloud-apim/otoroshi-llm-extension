@@ -260,7 +260,7 @@ case class GroqChatClientOptions(
 
 class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) extends ChatClient {
 
-  override def model: Option[String] = options.model.some
+  override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
 
@@ -277,7 +277,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
@@ -335,7 +335,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    val finalModel = mergedOptions.select("model").asOptString.orElse(model).getOrElse("--")
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
       val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
