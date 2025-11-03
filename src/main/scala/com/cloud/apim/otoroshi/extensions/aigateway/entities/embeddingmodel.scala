@@ -58,6 +58,11 @@ case class EmbeddingModel(
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       }
+      case "azure-ai-foundry" => {
+        val api = new OpenAiApi(baseUrl.getOrElse(AzureAiFoundry.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "Azure AI Foundry", env = env)
+        val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
+        new OpenAiEmbeddingModelClient(api, opts, id).some
+      }
       case "scaleway" => {
         val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Scaleway", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
