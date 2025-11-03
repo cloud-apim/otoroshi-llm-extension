@@ -27,6 +27,7 @@ class EmbeddingModelsPage extends Component {
       'type': 'select',
       props: { label: 'Provider', possibleValues: _.sortBy([
           { label: 'OpenAI', value: "openai" },
+          { label: 'Azure OpenAI', value: "azure-openai" },
           { label: 'Ollama', value: "ollama" },
           { label: 'Mistral', value: "mistral" },
           { label: 'Scaleway', value: "scaleway" },
