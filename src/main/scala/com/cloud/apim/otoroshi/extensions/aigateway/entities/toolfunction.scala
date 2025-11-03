@@ -407,6 +407,8 @@ case class LlmToolFunction(
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
 
+  def toolId: String = name // was id, but could be problematic when using very long ids
+
   //def callWasmPlugin(ref: String, arguments: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
   //  env.proxyState.wasmPlugin(ref) match {
   //    case None => "error, wasm plugin not found".vfuture
@@ -541,7 +543,7 @@ object LlmToolFunction {
       Json.obj(
         "type" -> "function",
         "function" -> Json.obj(
-          "name" -> s"wasm___${function.id}", //function.name,
+          "name" -> s"wasm___${function.toolId}",
           "description" -> function.description,
           "strict" -> function.strict,
           "parameters" -> Json.obj(
@@ -585,8 +587,8 @@ object LlmToolFunction {
     val map = new TrieMap[String, String]()
     (functions.flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(ext => ext.states.toolFunction(id))).map { function =>
       val required: JsArray = function.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(function.parameters.value.keySet.toSeq.map(_.json)))
-      val fname = ("wasm___" + s"${function.id}".sha256)
-      map.put(s"${function.id}".sha256, s"${function.id}")
+      val fname = ("wasm___" + s"${function.toolId}".sha256)
+      map.put(s"${function.toolId}".sha256, s"${function.toolId}")
       Json.obj(
         "type" -> "function",
         "function" -> Json.obj(
@@ -636,7 +638,7 @@ object LlmToolFunction {
     functions.flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(ext => ext.states.toolFunction(id))).map { function =>
       val required: JsArray = function.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(function.parameters.value.keySet.toSeq.map(_.json)))
       Json.obj(
-        "name" -> s"wasm___${function.id}", //function.name,
+        "name" -> s"wasm___${function.toolId}",
         "description" -> function.description,
         "input_schema" -> Json.obj(
           "type" -> "object",
