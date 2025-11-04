@@ -569,17 +569,51 @@ class AiExtension(val env: Env) extends AdminExtension {
         states.budget(budgetId) match {
           case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
           case Some(budget) => {
-            budget.getUsd().flatMap { usd =>
-              budget.getTokens().map { tokens =>
-                val remainingUsd = budget.limits.usd.getOrElse(BigDecimal(0))
-                val remainingTokens = budget.limits.tokens.getOrElse(0L)
-                Results.Ok(Json.obj(
-                  "consumed_usd" -> usd,
-                  "remaining_usd" -> remainingUsd,
-                  "consumed_tokens" -> tokens,
-                  "remaining_tokens" -> remainingTokens,
-                ))
-              }
+            budget.getAllMetrics().map { metrics =>
+              val totalUsd = metrics.totalUsd
+              val totalTokens = metrics.totalTokens
+              val inferenceUsd = metrics.inferenceUsd
+              val inferenceTokens = metrics.inferenceTokens
+              val imageUsd = metrics.imageUsd
+              val imageTokens = metrics.imageTokens
+              val audioUsd = metrics.audioUsd
+              val audioTokens = metrics.audioTokens
+              val videoUsd = metrics.videoUsd
+              val videoTokens = metrics.videoTokens
+              val embeddingUsd = metrics.embeddingUsd
+              val embeddingTokens = metrics.embeddingTokens
+              val moderationUsd = metrics.moderationUsd
+              val moderationTokens = metrics.moderationTokens
+              Results.Ok(Json.obj(
+                "consumed_total_usd" -> totalUsd,
+                "consumed_total_tokens" -> totalTokens,
+                "consumed_inference_usd" -> inferenceUsd,
+                "consumed_inference_tokens" -> inferenceTokens,
+                "consumed_image_usd" -> imageUsd,
+                "consumed_image_tokens" -> imageTokens,
+                "consumed_audio_usd" -> audioUsd,
+                "consumed_audio_tokens" -> audioTokens,
+                "consumed_video_usd" -> videoUsd,
+                "consumed_video_tokens" -> videoTokens,
+                "consumed_embedding_usd" -> embeddingUsd,
+                "consumed_embedding_tokens" -> embeddingTokens,
+                "consumed_moderation_usd" -> moderationUsd,
+                "consumed_moderation_tokens" -> moderationTokens,
+                "remaining_total_usd" -> JsNumber(budget.limits.total_usd.map(v => v - totalUsd).getOrElse(BigDecimal(0))),
+                "remaining_total_tokens" -> JsNumber(BigDecimal(budget.limits.total_tokens.map(_ - totalTokens).getOrElse(0L))),
+                "remaining_inference_usd" -> JsNumber(budget.limits.inference_usd.map(_ - inferenceUsd).getOrElse(BigDecimal(0))),
+                "remaining_inference_tokens" -> JsNumber(BigDecimal(budget.limits.inference_tokens.map(_ - inferenceTokens).getOrElse(0L))),
+                "remaining_image_usd" -> JsNumber(budget.limits.image_usd.map(_ - imageUsd).getOrElse(BigDecimal(0))),
+                "remaining_image_tokens" -> JsNumber(BigDecimal(budget.limits.image_tokens.map(_ - imageTokens).getOrElse(0L))),
+                "remaining_audio_usd" -> JsNumber(budget.limits.audio_usd.map(_ - audioUsd).getOrElse(BigDecimal(0))),
+                "remaining_audio_tokens" -> JsNumber(BigDecimal(budget.limits.audio_tokens.map(_ - audioTokens).getOrElse(0L))),
+                "remaining_video_usd" -> JsNumber(budget.limits.video_usd.map(_ - videoUsd).getOrElse(BigDecimal(0))),
+                "remaining_video_tokens" -> JsNumber(BigDecimal(budget.limits.video_tokens.map(_ - videoTokens).getOrElse(0L))),
+                "remaining_embedding_usd" -> JsNumber(budget.limits.embedding_usd.map(_ - embeddingUsd).getOrElse(BigDecimal(0))),
+                "remaining_embedding_tokens" -> JsNumber(BigDecimal(budget.limits.embedding_tokens.map(_ - embeddingTokens).getOrElse(0L))),
+                "remaining_moderation_usd" -> JsNumber(budget.limits.moderation_usd.map(_ - moderationUsd).getOrElse(BigDecimal(0))),
+                "remaining_moderation_tokens" -> JsNumber(BigDecimal(budget.limits.moderation_tokens.map(_ - moderationTokens).getOrElse(0L))),
+              ))
             }
           }
         }

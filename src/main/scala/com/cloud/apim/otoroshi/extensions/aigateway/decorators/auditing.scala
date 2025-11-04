@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 import akka.http.scaladsl.util.FastFuture
 import akka.stream.scaladsl.{Sink, Source}
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel, ModerationModel, VideoModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudgetUsageKind, AiBudgetsDataStore, AiProvider, AudioModel, EmbeddingModel, ImageModel, ModerationModel, VideoModel}
 import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ImagesGenResponseMetadata, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
@@ -35,31 +35,16 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    // val request = attrs.get(otoroshi.plugins.Keys.RequestKey)
-    chatClient.call(prompt, attrs, originalBody).andThen {
-      case Failure(exception) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> Json.obj(
-              "exception" -> exception.getMessage
-            ),
-            "provider_kind" -> originalProvider.provider.toLowerCase,
-            "consumed_using" -> "chat/completion/blocking",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_prompt" -> prompt.json,
-            "output" -> JsNull,
-            "provider_details" -> originalProvider.json
-            //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-          )
-        }.toAnalytics()
-      }
-      case Success(value) => value match {
-        case Left(err) => {
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      // val request = attrs.get(otoroshi.plugins.Keys.RequestKey)
+      chatClient.call(prompt, attrs, originalBody).andThen {
+        case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
-              "error" -> err,
+              "error" -> Json.obj(
+                "exception" -> exception.getMessage
+              ),
               "provider_kind" -> originalProvider.provider.toLowerCase,
               "consumed_using" -> "chat/completion/blocking",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
@@ -72,33 +57,51 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             )
           }.toAnalytics()
         }
-        case Right(value) => {
-          val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-          val impacts = attrs.get(ChatClientWithEcoImpact.key)
-          val costs = attrs.get(ChatClientWithCostsTracking.key)
-          val ext = env.adminExtensions.extension[AiExtension].get
-          val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
-          val totalCost = costs.map(_.totalCost)
-          val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
-          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
-          AuditEvent.generic("LLMUsageAudit") {
-            usageSlug ++ Json.obj(
-              "error" -> JsNull,
-              "consumed_using" -> "chat/completion/blocking",
-              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-              "input_prompt" -> prompt.json,
-              "output" -> value.json(env),
-              "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
-              "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-              "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-              //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-            )
-          }.toAnalytics()
+        case Success(value) => value match {
+          case Left(err) => {
+            AuditEvent.generic("LLMUsageAudit") {
+              Json.obj(
+                "error" -> err,
+                "provider_kind" -> originalProvider.provider.toLowerCase,
+                "consumed_using" -> "chat/completion/blocking",
+                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+                "input_prompt" -> prompt.json,
+                "output" -> JsNull,
+                "provider_details" -> originalProvider.json
+                //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
+              )
+            }.toAnalytics()
+          }
+          case Right(value) => {
+            val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+            val impacts = attrs.get(ChatClientWithEcoImpact.key)
+            val costs = attrs.get(ChatClientWithCostsTracking.key)
+            val ext = env.adminExtensions.extension[AiExtension].get
+            val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
+            val totalCost = costs.map(_.totalCost)
+            val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
+            ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs)
+            AuditEvent.generic("LLMUsageAudit") {
+              usageSlug ++ Json.obj(
+                "error" -> JsNull,
+                "consumed_using" -> "chat/completion/blocking",
+                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+                "input_prompt" -> prompt.json,
+                "output" -> value.json(env),
+                "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
+                "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+                "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+                //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
+              )
+            }.toAnalytics()
+          }
         }
       }
-    }
+    )
   }
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
@@ -106,31 +109,15 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
     // val request = attrs.get(otoroshi.plugins.Keys.RequestKey)
-    chatClient.stream(prompt, attrs, originalBody).transformWith {
-      case Failure(exception) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> Json.obj(
-              "exception" -> exception.getMessage
-            ),
-            "provider_kind" -> originalProvider.provider.toLowerCase,
-            "consumed_using" -> "chat/completion/streaming",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_prompt" -> prompt.json,
-            "output" -> JsNull,
-            "provider_details" -> originalProvider.json
-            //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-          )
-        }.toAnalytics()
-        FastFuture.failed(exception)
-      }
-      case Success(value) => value match {
-        case Left(err) => {
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      chatClient.stream(prompt, attrs, originalBody).transformWith {
+        case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
-              "error" -> err,
+              "error" -> Json.obj(
+                "exception" -> exception.getMessage
+              ),
               "provider_kind" -> originalProvider.provider.toLowerCase,
               "consumed_using" -> "chat/completion/streaming",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
@@ -142,91 +129,95 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
               //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
             )
           }.toAnalytics()
-          FastFuture.successful(Left(err))
+          FastFuture.failed(exception)
         }
-        case Right(value) => {
-          var seq = Seq.empty[ChatResponseChunk]
-          val source = value
-            .alsoTo(Sink.foreach { chunk =>
-              seq = seq :+ chunk
-            })
-            .alsoTo(Sink.onComplete { _ =>
-              val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-              val impacts = attrs.get(ChatClientWithEcoImpact.key)
-              val costs = attrs.get(ChatClientWithCostsTracking.key)
-              val ext = env.adminExtensions.extension[AiExtension].get
-              val totalCost = costs.map(_.totalCost)
-              val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
-              ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
-              val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
-              AuditEvent.generic("LLMUsageAudit") {
-                usageSlug ++ Json.obj(
-                  "error" -> JsNull,
-                  "consumed_using" -> "chat/completion/streaming",
-                  "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-                  "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-                  "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-                  "input_prompt" -> prompt.json,
-                  "output_stream" -> JsArray(seq.map(_.json(env))),
-                  "output" -> ChatResponse(
-                    raw = Json.obj(),
-                    generations = Seq(ChatGeneration(OutputChatMessage("assistant", seq.flatMap(_.choices.flatMap(_.delta.content)).mkString(""), None, Json.obj()))),
-                    metadata = ChatResponseMetadata(
-                      rateLimit =  ChatResponseMetadataRateLimit(
-                        requestsLimit = usageSlug.select("rate_limit").select("requests_limit").asOptLong.getOrElse(-1L),
-                        requestsRemaining = usageSlug.select("rate_limit").select("requests_remaining").asOptLong.getOrElse(-1L),
-                        tokensLimit = usageSlug.select("rate_limit").select("tokens_limit").asOptLong.getOrElse(-1L),
-                        tokensRemaining = usageSlug.select("rate_limit").select("tokens_remaining").asOptLong.getOrElse(-1L),
-                      ),
-                      usage = ChatResponseMetadataUsage(
-                        promptTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L),
-                        generationTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L),
-                        reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L),
-                      ),
-                      cache = None
-                    )
-                  ).json(env),
-                  "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
-                  "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-                  "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                  //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-                )
-              }.toAnalytics()
-            })
-          FastFuture.successful(Right(source))
+        case Success(value) => value match {
+          case Left(err) => {
+            AuditEvent.generic("LLMUsageAudit") {
+              Json.obj(
+                "error" -> err,
+                "provider_kind" -> originalProvider.provider.toLowerCase,
+                "consumed_using" -> "chat/completion/streaming",
+                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+                "input_prompt" -> prompt.json,
+                "output" -> JsNull,
+                "provider_details" -> originalProvider.json
+                //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
+              )
+            }.toAnalytics()
+            FastFuture.successful(Left(err))
+          }
+          case Right(value) => {
+            var seq = Seq.empty[ChatResponseChunk]
+            val source = value
+              .alsoTo(Sink.foreach { chunk =>
+                seq = seq :+ chunk
+              })
+              .alsoTo(Sink.onComplete { _ =>
+                val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+                val impacts = attrs.get(ChatClientWithEcoImpact.key)
+                val costs = attrs.get(ChatClientWithCostsTracking.key)
+                val ext = env.adminExtensions.extension[AiExtension].get
+                val totalCost = costs.map(_.totalCost)
+                val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
+                ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs)
+                val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
+                AuditEvent.generic("LLMUsageAudit") {
+                  usageSlug ++ Json.obj(
+                    "error" -> JsNull,
+                    "consumed_using" -> "chat/completion/streaming",
+                    "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+                    "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+                    "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+                    "input_prompt" -> prompt.json,
+                    "output_stream" -> JsArray(seq.map(_.json(env))),
+                    "output" -> ChatResponse(
+                      raw = Json.obj(),
+                      generations = Seq(ChatGeneration(OutputChatMessage("assistant", seq.flatMap(_.choices.flatMap(_.delta.content)).mkString(""), None, Json.obj()))),
+                      metadata = ChatResponseMetadata(
+                        rateLimit =  ChatResponseMetadataRateLimit(
+                          requestsLimit = usageSlug.select("rate_limit").select("requests_limit").asOptLong.getOrElse(-1L),
+                          requestsRemaining = usageSlug.select("rate_limit").select("requests_remaining").asOptLong.getOrElse(-1L),
+                          tokensLimit = usageSlug.select("rate_limit").select("tokens_limit").asOptLong.getOrElse(-1L),
+                          tokensRemaining = usageSlug.select("rate_limit").select("tokens_remaining").asOptLong.getOrElse(-1L),
+                        ),
+                        usage = ChatResponseMetadataUsage(
+                          promptTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L),
+                          generationTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L),
+                          reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L),
+                        ),
+                        cache = None
+                      )
+                    ).json(env),
+                    "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
+                    "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+                    "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+                    //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
+                  )
+                }.toAnalytics()
+              })
+            FastFuture.successful(Right(source))
+          }
         }
       }
-    }
+    )
   }
 
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    chatClient.completion(prompt, attrs, originalBody).andThen {
-      case Failure(exception) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> Json.obj(
-              "exception" -> exception.getMessage
-            ),
-            "provider_kind" -> originalProvider.provider.toLowerCase,
-            "consumed_using" -> "completion/blocking",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_prompt" -> prompt.json,
-            "output" -> JsNull,
-            "provider_details" -> originalProvider.json
-            //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-          )
-        }.toAnalytics()
-      }
-      case Success(value) => value match {
-        case Left(err) => {
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      chatClient.completion(prompt, attrs, originalBody).andThen {
+        case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
-              "error" -> err,
+              "error" -> Json.obj(
+                "exception" -> exception.getMessage
+              ),
               "provider_kind" -> originalProvider.provider.toLowerCase,
               "consumed_using" -> "completion/blocking",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
@@ -239,63 +230,66 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             )
           }.toAnalytics()
         }
-        case Right(value) => {
-          val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-          val impacts = attrs.get(ChatClientWithEcoImpact.key)
-          val costs = attrs.get(ChatClientWithCostsTracking.key)
-          val ext = env.adminExtensions.extension[AiExtension].get
-          val totalCost = costs.map(_.totalCost)
-          val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
-          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
-          val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
-          AuditEvent.generic("LLMUsageAudit") {
-            usageSlug ++ Json.obj(
-              "error" -> JsNull,
-              "consumed_using" -> "completion/blocking",
-              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-              "input_prompt" -> prompt.json,
-              "output" -> value.json(env),
-              "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
-              "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-              "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-            //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-            )
-          }.toAnalytics()
+        case Success(value) => value match {
+          case Left(err) => {
+            AuditEvent.generic("LLMUsageAudit") {
+              Json.obj(
+                "error" -> err,
+                "provider_kind" -> originalProvider.provider.toLowerCase,
+                "consumed_using" -> "completion/blocking",
+                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+                "input_prompt" -> prompt.json,
+                "output" -> JsNull,
+                "provider_details" -> originalProvider.json
+                //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
+              )
+            }.toAnalytics()
+          }
+          case Right(value) => {
+            val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+            val impacts = attrs.get(ChatClientWithEcoImpact.key)
+            val costs = attrs.get(ChatClientWithCostsTracking.key)
+            val ext = env.adminExtensions.extension[AiExtension].get
+            val totalCost = costs.map(_.totalCost)
+            val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
+            ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs)
+            val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
+            AuditEvent.generic("LLMUsageAudit") {
+              usageSlug ++ Json.obj(
+                "error" -> JsNull,
+                "consumed_using" -> "completion/blocking",
+                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+                "input_prompt" -> prompt.json,
+                "output" -> value.json(env),
+                "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
+                "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+                "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+              //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
+              )
+            }.toAnalytics()
+          }
         }
       }
-    }
+    )
   }
 
   override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    chatClient.completionStream(prompt, attrs, originalBody).andThen {
-      case Failure(exception) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> Json.obj(
-              "exception" -> exception.getMessage
-            ),
-            "provider_kind" -> originalProvider.provider.toLowerCase,
-            "consumed_using" -> "completion/streaming",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_prompt" -> prompt.json,
-            "output" -> JsNull,
-            "provider_details" -> originalProvider.json
-            //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-          )
-        }.toAnalytics()
-      }
-      case Success(value) => value match {
-        case Left(err) => {
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      chatClient.completionStream(prompt, attrs, originalBody).andThen {
+        case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {
             Json.obj(
-              "error" -> err,
+              "error" -> Json.obj(
+                "exception" -> exception.getMessage
+              ),
               "provider_kind" -> originalProvider.provider.toLowerCase,
               "consumed_using" -> "completion/streaming",
               "user" -> user.map(_.json).getOrElse(JsNull).asValue,
@@ -308,40 +302,58 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
             )
           }.toAnalytics()
         }
-        case Right(value) => {
-          var seq = Seq.empty[ChatResponseChunk]
-          value
-            .alsoTo(Sink.foreach { chunk =>
-              seq = seq :+ chunk
-            })
-            .alsoTo(Sink.onComplete { _ =>
-              val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-              val impacts = attrs.get(ChatClientWithEcoImpact.key)
-              val costs = attrs.get(ChatClientWithCostsTracking.key)
-              val ext = env.adminExtensions.extension[AiExtension].get
-              val totalCost = costs.map(_.totalCost)
-              val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
-              ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
-              val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
-              AuditEvent.generic("LLMUsageAudit") {
-                usageSlug ++ Json.obj(
-                  "error" -> JsNull,
-                  "consumed_using" -> "completion/streaming",
-                  "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-                  "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-                  "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-                  "input_prompt" -> prompt.json,
-                  "output" -> JsArray(seq.map(_.json(env))),
-                  "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
-                  "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-                  "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                  //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-                )
-              }.toAnalytics()
-            })
+        case Success(value) => value match {
+          case Left(err) => {
+            AuditEvent.generic("LLMUsageAudit") {
+              Json.obj(
+                "error" -> err,
+                "provider_kind" -> originalProvider.provider.toLowerCase,
+                "consumed_using" -> "completion/streaming",
+                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+                "input_prompt" -> prompt.json,
+                "output" -> JsNull,
+                "provider_details" -> originalProvider.json
+                //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
+              )
+            }.toAnalytics()
+          }
+          case Right(value) => {
+            var seq = Seq.empty[ChatResponseChunk]
+            value
+              .alsoTo(Sink.foreach { chunk =>
+                seq = seq :+ chunk
+              })
+              .alsoTo(Sink.onComplete { _ =>
+                val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+                val impacts = attrs.get(ChatClientWithEcoImpact.key)
+                val costs = attrs.get(ChatClientWithCostsTracking.key)
+                val ext = env.adminExtensions.extension[AiExtension].get
+                val totalCost = costs.map(_.totalCost)
+                val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
+                ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs)
+                val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
+                AuditEvent.generic("LLMUsageAudit") {
+                  usageSlug ++ Json.obj(
+                    "error" -> JsNull,
+                    "consumed_using" -> "completion/streaming",
+                    "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+                    "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+                    "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+                    "input_prompt" -> prompt.json,
+                    "output" -> JsArray(seq.map(_.json(env))),
+                    "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
+                    "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+                    "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+                    //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
+                  )
+                }.toAnalytics()
+              })
+          }
         }
       }
-    }
+    )
   }
 }
 
@@ -424,81 +436,84 @@ class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embedd
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    embeddingModelClient.embed(opts, rawBody, attrs).andThen {
-      case Failure(exception) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> Json.obj(
-              "exception" -> exception.getMessage
-            ),
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "embedding_model/embedding",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Left(err)) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> err,
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "embedding_model/embedding",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Right(resp)) => {
-        val impacts = attrs.get(ChatClientWithEcoImpact.key)
-        val costs = attrs.get(ChatClientWithCostsTracking.key)
-        val ext = env.adminExtensions.extension[AiExtension].get
-        val totalCost = costs.map(_.totalCost)
-        val totalTokens = attrs.get(EmbeddingModelClient.ApiUsageKey).map(_.tokenUsage)
-        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
-        val _output = resp.toOpenAiJson("vector").asObject
-        val slug = Json.obj(
-          "provider_kind" -> originalModel.provider.toLowerCase,
-          "provider" -> originalModel.id,
-          "duration" -> (System.currentTimeMillis() - startTime),
-        ) ++ _output
-        attrs.update(EmbeddingModelClient.ApiUsageKey -> resp.metadata)
-        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-          case Some(obj@JsObject(_)) => {
-            val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-            val newArr = arr ++ Seq(slug)
-            obj ++ Json.obj("ai-embedding" -> newArr)
-          }
-          case Some(other) => other
-          case None => Json.obj("ai-embedding" -> Seq(slug))
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      embeddingModelClient.embed(opts, rawBody, attrs).andThen {
+        case Failure(exception) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> Json.obj(
+                "exception" -> exception.getMessage
+              ),
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "embedding_model/embedding",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
         }
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
+        case Success(Left(err)) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> err,
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "embedding_model/embedding",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
+        }
+        case Success(Right(resp)) => {
+          val impacts = attrs.get(ChatClientWithEcoImpact.key)
+          val costs = attrs.get(ChatClientWithCostsTracking.key)
+          val ext = env.adminExtensions.extension[AiExtension].get
+          val totalCost = costs.map(_.totalCost)
+          val totalTokens = attrs.get(EmbeddingModelClient.ApiUsageKey).map(_.tokenUsage)
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Embedding, attrs)
+          val _output = resp.toOpenAiJson("vector").asObject
+          val slug = Json.obj(
             "provider_kind" -> originalModel.provider.toLowerCase,
             "provider" -> originalModel.id,
             "duration" -> (System.currentTimeMillis() - startTime),
-            "error" -> JsNull,
-            "consumed_using" -> "embedding_model/embedding",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> _output,
-            "provider_details" -> originalModel.json,
-            "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-            "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-          )
-        }.toAnalytics()
+          ) ++ _output
+          attrs.update(EmbeddingModelClient.ApiUsageKey -> resp.metadata)
+          attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+            case Some(obj@JsObject(_)) => {
+              val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+              val newArr = arr ++ Seq(slug)
+              obj ++ Json.obj("ai-embedding" -> newArr)
+            }
+            case Some(other) => other
+            case None => Json.obj("ai-embedding" -> Seq(slug))
+          }
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "provider" -> originalModel.id,
+              "duration" -> (System.currentTimeMillis() - startTime),
+              "error" -> JsNull,
+              "consumed_using" -> "embedding_model/embedding",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> _output,
+              "provider_details" -> originalModel.json,
+              "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+              "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+            )
+          }.toAnalytics()
+        }
       }
-    }
+    )
   }
 }
 
@@ -515,81 +530,84 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    audioModelClient.translate(opts, rawBody, attrs).andThen {
-      case Failure(exception) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> Json.obj(
-              "exception" -> exception.getMessage
-            ),
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "audio_model/translate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Left(err)) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> err,
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "audio_model/translate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Right(resp)) => {
-        val impacts = attrs.get(ChatClientWithEcoImpact.key)
-        val costs = attrs.get(ChatClientWithCostsTracking.key)
-        val ext = env.adminExtensions.extension[AiExtension].get
-        val totalCost = costs.map(_.totalCost)
-        val totalTokens = attrs.get(AudioModelClient.ApiUsageKey).map(_.usage.total)
-        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
-        val _output = resp.toOpenAiJson(env).asObject
-        val slug = Json.obj(
-          "provider_kind" -> originalModel.provider.toLowerCase,
-          "provider" -> originalModel.id,
-          "duration" -> (System.currentTimeMillis() - startTime),
-        ) ++ _output
-        attrs.update(AudioModelClient.ApiUsageKey -> resp.metadata)
-        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-          case Some(obj@JsObject(_)) => {
-            val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-            val newArr = arr ++ Seq(slug)
-            obj ++ Json.obj("ai-embedding" -> newArr)
-          }
-          case Some(other) => other
-          case None => Json.obj("ai-embedding" -> Seq(slug))
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      audioModelClient.translate(opts, rawBody, attrs).andThen {
+        case Failure(exception) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> Json.obj(
+                "exception" -> exception.getMessage
+              ),
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "audio_model/translate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
         }
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
+        case Success(Left(err)) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> err,
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "audio_model/translate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
+        }
+        case Success(Right(resp)) => {
+          val impacts = attrs.get(ChatClientWithEcoImpact.key)
+          val costs = attrs.get(ChatClientWithCostsTracking.key)
+          val ext = env.adminExtensions.extension[AiExtension].get
+          val totalCost = costs.map(_.totalCost)
+          val totalTokens = attrs.get(AudioModelClient.ApiUsageKey).map(_.usage.total)
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Audio, attrs)
+          val _output = resp.toOpenAiJson(env).asObject
+          val slug = Json.obj(
             "provider_kind" -> originalModel.provider.toLowerCase,
             "provider" -> originalModel.id,
             "duration" -> (System.currentTimeMillis() - startTime),
-            "error" -> JsNull,
-            "consumed_using" -> "audio_model/translate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> _output,
-            "provider_details" -> originalModel.json,
-            "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-            "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-          )
-        }.toAnalytics()
+          ) ++ _output
+          attrs.update(AudioModelClient.ApiUsageKey -> resp.metadata)
+          attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+            case Some(obj@JsObject(_)) => {
+              val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+              val newArr = arr ++ Seq(slug)
+              obj ++ Json.obj("ai-embedding" -> newArr)
+            }
+            case Some(other) => other
+            case None => Json.obj("ai-embedding" -> Seq(slug))
+          }
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "provider" -> originalModel.id,
+              "duration" -> (System.currentTimeMillis() - startTime),
+              "error" -> JsNull,
+              "consumed_using" -> "audio_model/translate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> _output,
+              "provider_details" -> originalModel.json,
+              "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+              "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+            )
+          }.toAnalytics()
+        }
       }
-    }
+    )
   }
 
   override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
@@ -597,81 +615,84 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    audioModelClient.speechToText(opts, rawBody, attrs).andThen {
-      case Failure(exception) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> Json.obj(
-              "exception" -> exception.getMessage
-            ),
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "audio_model/stt",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Left(err)) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> err,
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "audio_model/stt",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Right(resp)) => {
-        val impacts = attrs.get(ChatClientWithEcoImpact.key)
-        val costs = attrs.get(ChatClientWithCostsTracking.key)
-        val ext = env.adminExtensions.extension[AiExtension].get
-        val totalCost = costs.map(_.totalCost)
-        val totalTokens = attrs.get(AudioModelClient.ApiUsageKey).map(_.usage.total)
-        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
-        val _output = resp.toOpenAiJson(env).asObject
-        val slug = Json.obj(
-          "provider_kind" -> originalModel.provider.toLowerCase,
-          "provider" -> originalModel.id,
-          "duration" -> (System.currentTimeMillis() - startTime),
-        ) ++ _output
-        attrs.update(AudioModelClient.ApiUsageKey -> resp.metadata)
-        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-          case Some(obj@JsObject(_)) => {
-            val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-            val newArr = arr ++ Seq(slug)
-            obj ++ Json.obj("ai-embedding" -> newArr)
-          }
-          case Some(other) => other
-          case None => Json.obj("ai-embedding" -> Seq(slug))
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      audioModelClient.speechToText(opts, rawBody, attrs).andThen {
+        case Failure(exception) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> Json.obj(
+                "exception" -> exception.getMessage
+              ),
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "audio_model/stt",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
         }
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
+        case Success(Left(err)) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> err,
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "audio_model/stt",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
+        }
+        case Success(Right(resp)) => {
+          val impacts = attrs.get(ChatClientWithEcoImpact.key)
+          val costs = attrs.get(ChatClientWithCostsTracking.key)
+          val ext = env.adminExtensions.extension[AiExtension].get
+          val totalCost = costs.map(_.totalCost)
+          val totalTokens = attrs.get(AudioModelClient.ApiUsageKey).map(_.usage.total)
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Audio, attrs)
+          val _output = resp.toOpenAiJson(env).asObject
+          val slug = Json.obj(
             "provider_kind" -> originalModel.provider.toLowerCase,
             "provider" -> originalModel.id,
             "duration" -> (System.currentTimeMillis() - startTime),
-            "error" -> JsNull,
-            "consumed_using" -> "audio_model/stt",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> _output,
-            "provider_details" -> originalModel.json,
-            "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-            "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-          )
-        }.toAnalytics()
+          ) ++ _output
+          attrs.update(AudioModelClient.ApiUsageKey -> resp.metadata)
+          attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+            case Some(obj@JsObject(_)) => {
+              val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+              val newArr = arr ++ Seq(slug)
+              obj ++ Json.obj("ai-embedding" -> newArr)
+            }
+            case Some(other) => other
+            case None => Json.obj("ai-embedding" -> Seq(slug))
+          }
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "provider" -> originalModel.id,
+              "duration" -> (System.currentTimeMillis() - startTime),
+              "error" -> JsNull,
+              "consumed_using" -> "audio_model/stt",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> _output,
+              "provider_details" -> originalModel.json,
+              "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+              "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+            )
+          }.toAnalytics()
+        }
       }
-    }
+    )
   }
 
   // no metrics right now !!!
@@ -691,81 +712,84 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    imageModelClient.edit(opts, rawBody, attrs).andThen {
-      case Failure(exception) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> Json.obj(
-              "exception" -> exception.getMessage
-            ),
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "image_model/edit",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Left(err)) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> err,
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "image_model/edit",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Right(resp)) => {
-        val impacts = attrs.get(ChatClientWithEcoImpact.key)
-        val costs = attrs.get(ChatClientWithCostsTracking.key)
-        val ext = env.adminExtensions.extension[AiExtension].get
-        val totalCost = costs.map(_.totalCost)
-        val totalTokens = attrs.get(ImageModelClient.ApiUsageKey).map(_.usage.totalTokens)
-        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
-        val _output = resp.toOpenAiJson(env).asObject
-        val slug = Json.obj(
-          "provider_kind" -> originalModel.provider.toLowerCase,
-          "provider" -> originalModel.id,
-          "duration" -> (System.currentTimeMillis() - startTime),
-        ) ++ _output
-        attrs.update(ImageModelClient.ApiUsageKey -> resp.metadata)
-        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-          case Some(obj@JsObject(_)) => {
-            val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-            val newArr = arr ++ Seq(slug)
-            obj ++ Json.obj("ai-embedding" -> newArr)
-          }
-          case Some(other) => other
-          case None => Json.obj("ai-embedding" -> Seq(slug))
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      imageModelClient.edit(opts, rawBody, attrs).andThen {
+        case Failure(exception) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> Json.obj(
+                "exception" -> exception.getMessage
+              ),
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "image_model/edit",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
         }
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
+        case Success(Left(err)) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> err,
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "image_model/edit",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
+        }
+        case Success(Right(resp)) => {
+          val impacts = attrs.get(ChatClientWithEcoImpact.key)
+          val costs = attrs.get(ChatClientWithCostsTracking.key)
+          val ext = env.adminExtensions.extension[AiExtension].get
+          val totalCost = costs.map(_.totalCost)
+          val totalTokens = attrs.get(ImageModelClient.ApiUsageKey).map(_.usage.totalTokens)
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Image, attrs)
+          val _output = resp.toOpenAiJson(env).asObject
+          val slug = Json.obj(
             "provider_kind" -> originalModel.provider.toLowerCase,
             "provider" -> originalModel.id,
             "duration" -> (System.currentTimeMillis() - startTime),
-            "error" -> JsNull,
-            "consumed_using" -> "image_model/edit",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> _output,
-            "provider_details" -> originalModel.json,
-            "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-            "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-          )
-        }.toAnalytics()
+          ) ++ _output
+          attrs.update(ImageModelClient.ApiUsageKey -> resp.metadata)
+          attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+            case Some(obj@JsObject(_)) => {
+              val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+              val newArr = arr ++ Seq(slug)
+              obj ++ Json.obj("ai-embedding" -> newArr)
+            }
+            case Some(other) => other
+            case None => Json.obj("ai-embedding" -> Seq(slug))
+          }
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "provider" -> originalModel.id,
+              "duration" -> (System.currentTimeMillis() - startTime),
+              "error" -> JsNull,
+              "consumed_using" -> "image_model/edit",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> _output,
+              "provider_details" -> originalModel.json,
+              "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+              "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+            )
+          }.toAnalytics()
+        }
       }
-    }
+    )
   }
 
   override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
@@ -773,81 +797,84 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    imageModelClient.generate(opts, rawBody, attrs).andThen {
-      case Failure(exception) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> Json.obj(
-              "exception" -> exception.getMessage
-            ),
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "image_model/generate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Left(err)) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> err,
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "image_model/generate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Right(resp)) => {
-        val impacts = attrs.get(ChatClientWithEcoImpact.key)
-        val costs = attrs.get(ChatClientWithCostsTracking.key)
-        val ext = env.adminExtensions.extension[AiExtension].get
-        val totalCost = costs.map(_.totalCost)
-        val totalTokens = attrs.get(ImageModelClient.ApiUsageKey).map(_.usage.totalTokens)
-        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
-        val _output = resp.toOpenAiJson(env).asObject
-        val slug = Json.obj(
-          "provider_kind" -> originalModel.provider.toLowerCase,
-          "provider" -> originalModel.id,
-          "duration" -> (System.currentTimeMillis() - startTime),
-        ) ++ _output
-        attrs.update(ImageModelClient.ApiUsageKey -> resp.metadata)
-        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-          case Some(obj@JsObject(_)) => {
-            val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-            val newArr = arr ++ Seq(slug)
-            obj ++ Json.obj("ai-embedding" -> newArr)
-          }
-          case Some(other) => other
-          case None => Json.obj("ai-embedding" -> Seq(slug))
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      imageModelClient.generate(opts, rawBody, attrs).andThen {
+        case Failure(exception) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> Json.obj(
+                "exception" -> exception.getMessage
+              ),
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "image_model/generate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
         }
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
+        case Success(Left(err)) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> err,
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "image_model/generate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
+        }
+        case Success(Right(resp)) => {
+          val impacts = attrs.get(ChatClientWithEcoImpact.key)
+          val costs = attrs.get(ChatClientWithCostsTracking.key)
+          val ext = env.adminExtensions.extension[AiExtension].get
+          val totalCost = costs.map(_.totalCost)
+          val totalTokens = attrs.get(ImageModelClient.ApiUsageKey).map(_.usage.totalTokens)
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Image, attrs)
+          val _output = resp.toOpenAiJson(env).asObject
+          val slug = Json.obj(
             "provider_kind" -> originalModel.provider.toLowerCase,
             "provider" -> originalModel.id,
             "duration" -> (System.currentTimeMillis() - startTime),
-            "error" -> JsNull,
-            "consumed_using" -> "image_model/generate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> _output,
-            "provider_details" -> originalModel.json,
-            "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-            "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-          )
-        }.toAnalytics()
+          ) ++ _output
+          attrs.update(ImageModelClient.ApiUsageKey -> resp.metadata)
+          attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+            case Some(obj@JsObject(_)) => {
+              val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+              val newArr = arr ++ Seq(slug)
+              obj ++ Json.obj("ai-embedding" -> newArr)
+            }
+            case Some(other) => other
+            case None => Json.obj("ai-embedding" -> Seq(slug))
+          }
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "provider" -> originalModel.id,
+              "duration" -> (System.currentTimeMillis() - startTime),
+              "error" -> JsNull,
+              "consumed_using" -> "image_model/generate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> _output,
+              "provider_details" -> originalModel.json,
+              "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+              "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+            )
+          }.toAnalytics()
+        }
       }
-    }
+    )
   }
 }
 
@@ -864,81 +891,84 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    moderationModelClient.moderate(opts, rawBody, attrs).andThen {
-      case Failure(exception) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> Json.obj(
-              "exception" -> exception.getMessage
-            ),
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "moderation_model/moderate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Left(err)) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> err,
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "moderation_model/moderate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Right(resp)) => {
-        val impacts = attrs.get(ChatClientWithEcoImpact.key)
-        val costs = attrs.get(ChatClientWithCostsTracking.key)
-        val ext = env.adminExtensions.extension[AiExtension].get
-        val totalCost = costs.map(_.totalCost)
-        val totalTokens = attrs.get(ModerationModelClient.ApiUsageKey).map(_.usage.total)
-        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
-        val _output = resp.toOpenAiJson(env).asObject
-        val slug = Json.obj(
-          "provider_kind" -> originalModel.provider.toLowerCase,
-          "provider" -> originalModel.id,
-          "duration" -> (System.currentTimeMillis() - startTime),
-        ) ++ _output
-        attrs.update(ModerationModelClient.ApiUsageKey -> resp.metadata)
-        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-          case Some(obj@JsObject(_)) => {
-            val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-            val newArr = arr ++ Seq(slug)
-            obj ++ Json.obj("ai-embedding" -> newArr)
-          }
-          case Some(other) => other
-          case None => Json.obj("ai-embedding" -> Seq(slug))
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      moderationModelClient.moderate(opts, rawBody, attrs).andThen {
+        case Failure(exception) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> Json.obj(
+                "exception" -> exception.getMessage
+              ),
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "moderation_model/moderate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
         }
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
+        case Success(Left(err)) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> err,
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "moderation_model/moderate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
+        }
+        case Success(Right(resp)) => {
+          val impacts = attrs.get(ChatClientWithEcoImpact.key)
+          val costs = attrs.get(ChatClientWithCostsTracking.key)
+          val ext = env.adminExtensions.extension[AiExtension].get
+          val totalCost = costs.map(_.totalCost)
+          val totalTokens = attrs.get(ModerationModelClient.ApiUsageKey).map(_.usage.total)
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Moderation, attrs)
+          val _output = resp.toOpenAiJson(env).asObject
+          val slug = Json.obj(
             "provider_kind" -> originalModel.provider.toLowerCase,
             "provider" -> originalModel.id,
             "duration" -> (System.currentTimeMillis() - startTime),
-            "error" -> JsNull,
-            "consumed_using" -> "moderation_model/moderate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> _output,
-            "provider_details" -> originalModel.json,
-            "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-            "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-          )
-        }.toAnalytics()
+          ) ++ _output
+          attrs.update(ModerationModelClient.ApiUsageKey -> resp.metadata)
+          attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+            case Some(obj@JsObject(_)) => {
+              val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+              val newArr = arr ++ Seq(slug)
+              obj ++ Json.obj("ai-embedding" -> newArr)
+            }
+            case Some(other) => other
+            case None => Json.obj("ai-embedding" -> Seq(slug))
+          }
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "provider" -> originalModel.id,
+              "duration" -> (System.currentTimeMillis() - startTime),
+              "error" -> JsNull,
+              "consumed_using" -> "moderation_model/moderate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> _output,
+              "provider_details" -> originalModel.json,
+              "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+              "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+            )
+          }.toAnalytics()
+        }
       }
-    }
+    )
   }
 }
 
@@ -955,80 +985,83 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    videoModelClient.generate(opts, rawBody, attrs).andThen {
-      case Failure(exception) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> Json.obj(
-              "exception" -> exception.getMessage
-            ),
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "video_model/generate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Left(err)) => {
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
-            "error" -> err,
-            "provider_kind" -> originalModel.provider.toLowerCase,
-            "consumed_using" -> "video_model/generate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> JsNull,
-            "provider_details" -> originalModel.json
-          )
-        }.toAnalytics()
-      }
-      case Success(Right(resp)) => {
-        val impacts = attrs.get(ChatClientWithEcoImpact.key)
-        val costs = attrs.get(ChatClientWithCostsTracking.key)
-        val ext = env.adminExtensions.extension[AiExtension].get
-        val totalCost = costs.map(_.totalCost)
-        val totalTokens = attrs.get(VideoModelClient.ApiUsageKey).map(_.usage.totalTokens)
-        ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, attrs)
-        val _output = resp.toOpenAiJson(env).asObject
-        val slug = Json.obj(
-          "provider_kind" -> originalModel.provider.toLowerCase,
-          "provider" -> originalModel.id,
-          "duration" -> (System.currentTimeMillis() - startTime),
-        ) ++ _output
-        attrs.update(VideoModelClient.ApiUsageKey -> resp.metadata)
-        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-          case Some(obj@JsObject(_)) => {
-            val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-            val newArr = arr ++ Seq(slug)
-            obj ++ Json.obj("ai-embedding" -> newArr)
-          }
-          case Some(other) => other
-          case None => Json.obj("ai-embedding" -> Seq(slug))
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      videoModelClient.generate(opts, rawBody, attrs).andThen {
+        case Failure(exception) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> Json.obj(
+                "exception" -> exception.getMessage
+              ),
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "video_model/generate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
         }
-        AuditEvent.generic("LLMUsageAudit") {
-          Json.obj(
+        case Success(Left(err)) => {
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "error" -> err,
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "consumed_using" -> "video_model/generate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> JsNull,
+              "provider_details" -> originalModel.json
+            )
+          }.toAnalytics()
+        }
+        case Success(Right(resp)) => {
+          val impacts = attrs.get(ChatClientWithEcoImpact.key)
+          val costs = attrs.get(ChatClientWithCostsTracking.key)
+          val ext = env.adminExtensions.extension[AiExtension].get
+          val totalCost = costs.map(_.totalCost)
+          val totalTokens = attrs.get(VideoModelClient.ApiUsageKey).map(_.usage.totalTokens)
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs)
+          val _output = resp.toOpenAiJson(env).asObject
+          val slug = Json.obj(
             "provider_kind" -> originalModel.provider.toLowerCase,
             "provider" -> originalModel.id,
             "duration" -> (System.currentTimeMillis() - startTime),
-            "error" -> JsNull,
-            "consumed_using" -> "video_model/generate",
-            "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-            "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-            "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-            "input_body" -> rawBody,
-            "output" -> _output,
-            "provider_details" -> originalModel.json,
-            "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-            "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-          )
-        }.toAnalytics()
+          ) ++ _output
+          attrs.update(VideoModelClient.ApiUsageKey -> resp.metadata)
+          attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+            case Some(obj@JsObject(_)) => {
+              val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+              val newArr = arr ++ Seq(slug)
+              obj ++ Json.obj("ai-embedding" -> newArr)
+            }
+            case Some(other) => other
+            case None => Json.obj("ai-embedding" -> Seq(slug))
+          }
+          AuditEvent.generic("LLMUsageAudit") {
+            Json.obj(
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "provider" -> originalModel.id,
+              "duration" -> (System.currentTimeMillis() - startTime),
+              "error" -> JsNull,
+              "consumed_using" -> "video_model/generate",
+              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+              "input_body" -> rawBody,
+              "output" -> _output,
+              "provider_details" -> originalModel.json,
+              "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+              "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+            )
+          }.toAnalytics()
+        }
       }
-    }
+    )
   }
 }
