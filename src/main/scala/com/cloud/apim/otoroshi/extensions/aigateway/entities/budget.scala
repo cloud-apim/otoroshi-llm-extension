@@ -1072,6 +1072,7 @@ object AiBudgetsDataStore {
           if (budgets.isEmpty) {
             inBudget
           } else {
+            val soft = budgets.forall(_.actionOnExceed.mode == AiBudgetActionOnExceedMode.Soft)
             val budgetIds = budgets.map(_.id)
             AlertEvent.generic("AiBudgetExceeded", "otoroshi")(Json.obj(
               "budgets" -> budgetIds,
@@ -1081,7 +1082,11 @@ object AiBudgetsDataStore {
               "provider" -> user.map(_.json).getOrElse(JsNull).as[JsValue],
               "route" -> route.map(_.json).getOrElse(JsNull).as[JsValue],
             )).toAnalytics()
-            notInBudget
+            if (soft) {
+              inBudget
+            } else {
+              notInBudget
+            }
           }
         }
       }
