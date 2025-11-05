@@ -1,9 +1,14 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
+import akka.actor.Cancellable
+import akka.http.scaladsl.util.FastFuture
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ChatClientWithAuding
 import org.joda.time.DateTime
 import otoroshi.api._
+import otoroshi.cluster.Cluster
 import otoroshi.env.Env
+import otoroshi.events.AlertEvent
+import otoroshi.gateway.Retry
 import otoroshi.models._
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.next.utils.JsonHelpers
@@ -13,10 +18,143 @@ import otoroshi.utils.syntax.implicits._
 import otoroshi.utils.{JsonPathValidator, RegexPool, TypedMap}
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
 import play.api.libs.json._
+import play.api.libs.ws.WSAuthScheme
 
-import java.time.Instant
-import scala.concurrent.{ExecutionContext, Future}
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic._
+import scala.collection.concurrent.TrieMap
+import scala.concurrent._
+import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
+
+object AiBudgetClusterAgent {
+  val totalUsdCounters = new TrieMap[String, DoubleAdder]()
+  val totalTokensCounters = new TrieMap[String, AtomicLong]()
+
+  val inferenceUsdCounters = new TrieMap[String, DoubleAdder]()
+  val inferenceTokensCounters = new TrieMap[String, AtomicLong]()
+
+  val imageUsdCounters = new TrieMap[String, DoubleAdder]()
+  val imageTokensCounters = new TrieMap[String, AtomicLong]()
+
+  val audioUsdCounters = new TrieMap[String, DoubleAdder]()
+  val audioTokensCounters = new TrieMap[String, AtomicLong]()
+
+  val videoUsdCounters = new TrieMap[String, DoubleAdder]()
+  val videoTokensCounters = new TrieMap[String, AtomicLong]()
+
+  val embeddingUsdCounters = new TrieMap[String, DoubleAdder]()
+  val embeddingTokensCounters = new TrieMap[String, AtomicLong]()
+
+  val moderationUsdCounters = new TrieMap[String, DoubleAdder]()
+  val moderationTokensCounters = new TrieMap[String, AtomicLong]()
+
+  private val schedulerRef = new AtomicReference[Cancellable]()
+  private val counter = new AtomicInteger(0)
+
+  def start(env: Env, ext: AiExtension): Unit = {
+    if (env.clusterConfig.mode.isWorker) {
+      implicit val ev = env
+      implicit val ec = env.otoroshiExecutionContext
+      schedulerRef.set(env.otoroshiScheduler.scheduleAtFixedRate(10.seconds, env.clusterConfig.worker.state.pollEvery.millis) { () =>
+        sendDeltas(env, ext)
+      })
+    }
+  }
+
+  def stop(): Unit = {
+    Option(schedulerRef.get()).foreach(_.cancel())
+  }
+
+  private def reset(): Unit = {
+    totalUsdCounters.clear()
+    totalTokensCounters.clear()
+    inferenceUsdCounters.clear()
+    inferenceTokensCounters.clear()
+    imageUsdCounters.clear()
+    imageTokensCounters.clear()
+    audioUsdCounters.clear()
+    audioTokensCounters.clear()
+    videoUsdCounters.clear()
+    videoTokensCounters.clear()
+    embeddingUsdCounters.clear()
+    embeddingTokensCounters.clear()
+    moderationUsdCounters.clear()
+    moderationTokensCounters.clear()
+  }
+
+  private def otoroshiUrl(env: Env): String = {
+    val config = env.clusterConfig
+    val count = counter.incrementAndGet() % (if (config.leader.urls.nonEmpty) config.leader.urls.size else 1)
+    config.leader.urls.zipWithIndex.find(t => t._2 == count).map(_._1).getOrElse(config.leader.urls.head)
+  }
+
+  private def sendDeltas(env: Env, ext: AiExtension): Unit = {
+    import otoroshi.utils.http.Implicits._
+    implicit val ev = env
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val sc = env.otoroshiScheduler
+    implicit val mat = env.otoroshiMaterializer
+    if (env.clusterConfig.mode.isWorker) {
+      val config = env.clusterConfig
+      val payload = Json.obj(
+        "total_usd" -> JsObject(totalUsdCounters.toMap.mapValues(_.sum.json)),
+        "total_tokens" -> JsObject(totalTokensCounters.toMap.mapValues(_.get.json)),
+        "inference_usd" -> JsObject(inferenceUsdCounters.toMap.mapValues(_.sum.json)),
+        "inference_tokens" -> JsObject(inferenceTokensCounters.toMap.mapValues(_.get.json)),
+        "image_usd" -> JsObject(imageUsdCounters.toMap.mapValues(_.sum.json)),
+        "image_tokens" -> JsObject(imageTokensCounters.toMap.mapValues(_.get.json)),
+        "audio_usd" -> JsObject(audioUsdCounters.toMap.mapValues(_.sum.json)),
+        "audio_tokens" -> JsObject(audioTokensCounters.toMap.mapValues(_.get.json)),
+        "video_usd" -> JsObject(videoUsdCounters.toMap.mapValues(_.sum.json)),
+        "video_tokens" -> JsObject(videoTokensCounters.toMap.mapValues(_.get.json)),
+        "embedding_usd" -> JsObject(embeddingUsdCounters.toMap.mapValues(_.sum.json)),
+        "embedding_tokens" -> JsObject(embeddingTokensCounters.toMap.mapValues(_.get.json)),
+        "moderation_usd" -> JsObject(moderationUsdCounters.toMap.mapValues(_.sum.json)),
+        "moderation_tokens" -> JsObject(moderationTokensCounters.toMap.mapValues(_.get.json)),
+      )
+      Retry
+        .retry(
+          times = config.worker.retries,
+          delay = config.retryDelay,
+          factor = config.retryFactor,
+          ctx = "leader-save-workflow-session"
+        ) { tryCount =>
+          if (Cluster.logger.isDebugEnabled)
+            Cluster.logger.debug(s"Pushing ai budgets deltas to leaders")
+          env.MtlsWs
+            .url(
+              otoroshiUrl(env) + s"/api/extensions/cloud-apim/extensions/ai-extension/cluster/budgets/deltas",
+              config.mtlsConfig
+            )
+            .withHttpHeaders(
+              "Host"                                             -> config.leader.host,
+            )
+            .withAuth(config.leader.clientId, config.leader.clientSecret, WSAuthScheme.BASIC)
+            .withRequestTimeout(Duration(config.worker.timeout, TimeUnit.MILLISECONDS))
+            .withMaybeProxyServer(config.proxy)
+            .put(payload)
+            .map { resp =>
+              if (resp.status == 200 && Cluster.logger.isDebugEnabled)
+                Cluster.logger.debug(s"Ai budgets deltas has been pushed")
+              if (resp.status == 200) {
+                reset()
+              }
+              Some(Json.parse(resp.body))
+            }
+        }
+        .recover { case e =>
+          if (Cluster.logger.isDebugEnabled)
+            Cluster.logger.debug(
+              s"[${env.clusterConfig.mode.name}] Error while pushing ai budgets deltas Otoroshi leader cluster"
+            )
+          None
+        }
+    } else {
+      FastFuture.successful(None)
+    }
+  }
+}
 
 sealed trait AiBudgetUsageKind {
   def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Unit
@@ -364,7 +502,24 @@ case class AiBudgetMetrics(
   embeddingTokens: Long,
   moderationUsd: BigDecimal,
   moderationTokens: Long,
-)
+) {
+  def json: JsValue = Json.obj(
+    "total_usd" -> totalUsd,
+    "total_tokens" -> totalTokens,
+    "inference_usd" -> inferenceUsd,
+    "inference_tokens" -> inferenceTokens,
+    "image_usd" -> imageUsd,
+    "image_tokens" -> imageTokens,
+    "audio_usd" -> audioUsd,
+    "audio_tokens" -> audioTokens,
+    "video_usd" -> videoUsd,
+    "video_tokens" -> videoTokens,
+    "embedding_usd" -> embeddingUsd,
+    "embedding_tokens" -> embeddingTokens,
+    "moderation_usd" -> moderationUsd,
+    "moderation_tokens" -> moderationTokens,
+  )
+}
 
 case class AiBudget(
                        location: EntityLocation,
@@ -453,58 +608,100 @@ case class AiBudget(
   def moderationTokensKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:moderation-tokens"
 
   def incrTotalUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.totalUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
+    }
     env.datastores.rawDataStore.incrby(totalUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
   def incrTotalTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.totalTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
+    }
     env.datastores.rawDataStore.incrby(totalTokensKey, by)
   }
 
   def incrInferenceUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.inferenceUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
+    }
     env.datastores.rawDataStore.incrby(inferenceUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
   def incrInferenceTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.inferenceTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
+    }
     env.datastores.rawDataStore.incrby(inferenceTokensKey, by)
   }
 
   def incrImageUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.imageUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
+    }
     env.datastores.rawDataStore.incrby(imageUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
   def incrImageTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.imageTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
+    }
     env.datastores.rawDataStore.incrby(imageTokensKey, by)
   }
 
   def incrAudioUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.audioUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
+    }
     env.datastores.rawDataStore.incrby(audioUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
   def incrAudioTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.audioTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
+    }
     env.datastores.rawDataStore.incrby(audioTokensKey, by)
   }
 
   def incrVideoUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.videoUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
+    }
     env.datastores.rawDataStore.incrby(videoUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
   def incrVideoTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.videoTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
+    }
     env.datastores.rawDataStore.incrby(videoTokensKey, by)
   }
 
   def incrEmbeddingUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.embeddingUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
+    }
     env.datastores.rawDataStore.incrby(embeddingUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
   def incrEmbeddingTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.embeddingTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
+    }
     env.datastores.rawDataStore.incrby(embeddingTokensKey, by)
   }
 
   def incrModerationUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.moderationUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
+    }
     env.datastores.rawDataStore.incrby(moderationUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
   def incrModerationTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.moderationTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
+    }
     env.datastores.rawDataStore.incrby(moderationTokensKey, by)
   }
 
@@ -691,6 +888,42 @@ case class AiBudget(
         } else if (limits.moderation_tokens.isDefined && metrics.moderationTokens >= limits.moderation_tokens.get) {
           false
         } else {
+          val percentageConsumedTotalUsd: Double = limits.total_usd.map(tusd => metrics.totalUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedTotalTokens: Double = limits.total_tokens.map(ttokens => metrics.totalTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedInferenceUsd: Double = limits.inference_usd.map(tusd => metrics.inferenceUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedInferenceTokens: Double = limits.inference_tokens.map(ttokens => metrics.inferenceTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedImageUsd: Double = limits.image_usd.map(tusd => metrics.imageUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedImageTokens: Double = limits.image_tokens.map(ttokens => metrics.imageTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedAudioUsd: Double = limits.audio_usd.map(tusd => metrics.audioUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedAudioTokens: Double = limits.audio_tokens.map(ttokens => metrics.audioTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedVideoUsd: Double = limits.video_usd.map(tusd => metrics.videoUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedVideoTokens: Double = limits.video_tokens.map(ttokens => metrics.videoTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedEmbeddingUsd: Double = limits.embedding_usd.map(tusd => metrics.embeddingUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedEmbeddingTokens: Double = limits.embedding_tokens.map(ttokens => metrics.embeddingTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedModerationUsd: Double = limits.moderation_usd.map(tusd => metrics.moderationUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedModerationTokens: Double = limits.moderation_tokens.map(ttokens => metrics.moderationTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          if (percentageConsumedTotalUsd > 90.0 || percentageConsumedTotalTokens > 90.0 || percentageConsumedInferenceUsd > 90.0 || percentageConsumedInferenceTokens > 90.0 || percentageConsumedImageUsd > 90.0 || percentageConsumedImageTokens > 90.0 || percentageConsumedAudioUsd > 90.0 || percentageConsumedAudioTokens > 90.0 || percentageConsumedVideoUsd > 90.0 || percentageConsumedVideoTokens > 90.0 || percentageConsumedEmbeddingUsd > 90.0 || percentageConsumedEmbeddingTokens > 90.0 || percentageConsumedModerationUsd > 90.0 || percentageConsumedModerationTokens > 90.0) {
+             AlertEvent.generic("AiBudgetAlmostExceeded", "otoroshi")(Json.obj(
+              "budget" -> json,
+              "consumption" -> metrics.json,
+              "percentages" -> Json.obj(
+                "total_usd" -> percentageConsumedTotalUsd,
+                "total_tokens" -> percentageConsumedTotalTokens,
+                "inference_usd" -> percentageConsumedInferenceUsd,
+                "inference_tokens" -> percentageConsumedInferenceTokens,
+                "image_usd" -> percentageConsumedImageUsd,
+                "image_tokens" -> percentageConsumedImageTokens,
+                "audio_usd" -> percentageConsumedAudioUsd,
+                "audio_tokens" -> percentageConsumedAudioTokens,
+                "video_usd" -> percentageConsumedVideoUsd,
+                "video_tokens" -> percentageConsumedVideoTokens,
+                "embedding_usd" -> percentageConsumedEmbeddingUsd,
+                "embedding_tokens" -> percentageConsumedEmbeddingTokens,
+                "moderation_usd" -> percentageConsumedModerationUsd,
+                "moderation_tokens" -> percentageConsumedModerationTokens
+              )
+            )).toAnalytics()
+          }
           true
         }
       }
@@ -813,55 +1046,7 @@ trait AiBudgetsDataStore extends BasicStore[AiBudget] {
 object AiBudgetsDataStore {
   def handleWithinBudget[A](attrs: TypedMap)(notInBudget: => Future[A], inBudget: => Future[A])(implicit env: Env, ec: ExecutionContext): Future[A] = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
-    val user = attrs.get(otoroshi.plugins.Keys.UserKey)
-    val snowflake = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
-    val request = attrs.get(otoroshi.plugins.Keys.RequestKey).map(r => JsonHelpers.requestToJson(r, attrs))
-    val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    val provider = attrs.get(ChatClientWithAuding.ProviderKey)
-    val model = attrs.get(ChatClientWithAuding.ModelKey)
-    val ctx = Json.obj(
-      "foo" -> "bar",
-      "snowflake" -> snowflake,
-      "apikey" -> apikey.map(_.lightJson).getOrElse(JsNull).as[JsValue],
-      "user" -> user.map(_.lightJson).getOrElse(JsNull).as[JsValue],
-      "route" -> route.map(_.json).getOrElse(JsNull).as[JsValue],
-      "request" -> request,
-      "config" -> Json.obj(),
-      "global_config" -> Json.obj(),
-      "provider" -> provider.map(_.json).getOrElse(JsNull).as[JsValue],
-      "model" -> model.map(_.json).getOrElse(JsNull).as[JsValue],
-      //"attrs" -> attrs.json
-    )
-    ext.datastores.budgetsDataStore.findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { budgets =>
-      budgets.filterAsync(_.isNotWithinBudget()).flatMap { budgets =>
-        if (budgets.isEmpty) {
-          inBudget
-        } else {
-          notInBudget
-        }
-      }
-    }
-  }
-}
-
-class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
-  extends AiBudgetsDataStore
-    with RedisLikeStore[AiBudget] {
-
-  override def fmt: Format[AiBudget] = AiBudget.format
-
-  override def redisLike(implicit env: Env): RedisLike = redisCli
-
-  override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:aibudgets:$id"
-
-  override def extractId(value: AiBudget): String = value.id
-
-  def updateUsage(cost: Option[BigDecimal], tokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Future[Seq[String]] = {
-    val ext = _env.adminExtensions.extension[AiExtension].get
-    if (ext.states.hasBudgets && ((cost.isDefined && cost.get.>(BigDecimal(0))) || (tokens.isDefined && tokens.get > 0L))) {
-      implicit val ec = _env.analyticsExecutionContext
-      implicit val env = _env
+    if (ext.budgetsEnabled) {
       val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
       val user = attrs.get(otoroshi.plugins.Keys.UserKey)
       val snowflake = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
@@ -882,16 +1067,81 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
         "model" -> model.map(_.json).getOrElse(JsNull).as[JsValue],
         //"attrs" -> attrs.json
       )
-      findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { budgets =>
-        budgets.foreachAsync { budget =>
-          budget.isWithinBudget().map { withinBudget =>
-            if (withinBudget) {
-              usageKind.updateUsage(budget, cost, tokens, attrs)
-            }
+      ext.datastores.budgetsDataStore.findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { budgets =>
+        budgets.filterAsync(_.isNotWithinBudget()).flatMap { budgets =>
+          if (budgets.isEmpty) {
+            inBudget
+          } else {
+            val budgetIds = budgets.map(_.id)
+            AlertEvent.generic("AiBudgetExceeded", "otoroshi")(Json.obj(
+              "budgets" -> budgetIds,
+              "apikey" -> apikey.map(_.lightJson).getOrElse(JsNull).as[JsValue],
+              "user" -> user.map(_.lightJson).getOrElse(JsNull).as[JsValue],
+              "model" -> user.map(_.json).getOrElse(JsNull).as[JsValue],
+              "provider" -> user.map(_.json).getOrElse(JsNull).as[JsValue],
+              "route" -> route.map(_.json).getOrElse(JsNull).as[JsValue],
+            )).toAnalytics()
+            notInBudget
           }
-        }.map { _ =>
-          budgets.map(_.id)
         }
+      }
+    } else {
+      inBudget
+    }
+  }
+}
+
+class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
+  extends AiBudgetsDataStore
+    with RedisLikeStore[AiBudget] {
+
+  override def fmt: Format[AiBudget] = AiBudget.format
+
+  override def redisLike(implicit env: Env): RedisLike = redisCli
+
+  override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:aibudgets:$id"
+
+  override def extractId(value: AiBudget): String = value.id
+
+  def updateUsage(cost: Option[BigDecimal], tokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Future[Seq[String]] = {
+    val ext = _env.adminExtensions.extension[AiExtension].get
+    if (ext.budgetsEnabled) {
+      if (ext.states.hasBudgets && ((cost.isDefined && cost.get.>(BigDecimal(0))) || (tokens.isDefined && tokens.get > 0L))) {
+        implicit val ec = _env.analyticsExecutionContext
+        implicit val env = _env
+        val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
+        val user = attrs.get(otoroshi.plugins.Keys.UserKey)
+        val snowflake = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
+        val request = attrs.get(otoroshi.plugins.Keys.RequestKey).map(r => JsonHelpers.requestToJson(r, attrs))
+        val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
+        val provider = attrs.get(ChatClientWithAuding.ProviderKey)
+        val model = attrs.get(ChatClientWithAuding.ModelKey)
+        val ctx = Json.obj(
+          "foo" -> "bar",
+          "snowflake" -> snowflake,
+          "apikey" -> apikey.map(_.lightJson).getOrElse(JsNull).as[JsValue],
+          "user" -> user.map(_.lightJson).getOrElse(JsNull).as[JsValue],
+          "route" -> route.map(_.json).getOrElse(JsNull).as[JsValue],
+          "request" -> request,
+          "config" -> Json.obj(),
+          "global_config" -> Json.obj(),
+          "provider" -> provider.map(_.json).getOrElse(JsNull).as[JsValue],
+          "model" -> model.map(_.json).getOrElse(JsNull).as[JsValue],
+          //"attrs" -> attrs.json
+        )
+        findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { budgets =>
+          budgets.foreachAsync { budget =>
+            budget.isWithinBudget().map { withinBudget =>
+              if (withinBudget) {
+                usageKind.updateUsage(budget, cost, tokens, attrs)
+              }
+            }
+          }.map { _ =>
+            budgets.map(_.id)
+          }
+        }
+      } else {
+        Seq.empty.vfuture
       }
     } else {
       Seq.empty.vfuture
@@ -901,29 +1151,33 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
   def findMatchingBudgets(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String]): Future[Seq[AiBudget]] = {
     implicit val env = _env
     val ext = _env.adminExtensions.extension[AiExtension].get
-    if (ext.states.hasBudgets) {
-      val authModule = user.map(_.authConfigId).flatMap(id => _env.proxyState.authModule(id))
-      val groups = apikey.toSeq.flatMap(_.authorizedEntities.collect {
-        case ServiceGroupIdentifier(id) => id
-      }).flatMap(id => _env.proxyState.serviceGroup(id))
-      val apikeyRef = apikey.flatMap(_.metadata.get("ai_budget_ref"))
-      val userRef = user.flatMap(_.metadata.get("ai_budget_ref"))
-      val providerRef = provider.flatMap(_.theMetadata.get("ai_budget_ref"))
-      val authModuleRef = authModule.flatMap(_.metadata.get("ai_budget_ref"))
-      val groupsRef = groups.flatMap(_.metadata.get("ai_budget_ref"))
-      ext.states
-        .allBudgets()
-        .filter(b => b.enabled && b.startAt.isBeforeNow && b.endAt.isAfterNow)
-        .filter {
-          case budget if budget.scope.extractFromProviderMeta && providerRef.contains(budget.id) => true
-          case budget if budget.scope.extractFromApikeyMeta && apikeyRef.contains(budget.id) => true
-          case budget if budget.scope.extractFromUserMeta && userRef.contains(budget.id) => true
-          case budget if budget.scope.extractFromUserAuthModuleMeta && authModuleRef.contains(budget.id) => true
-          case budget if budget.scope.extractFromApikeyGroupMeta && groupsRef.contains(budget.id) => true
-          case budget if budget.matches(ctx, apikey, user, provider, model) => true
-          case _ => false
-        }
-        .vfuture
+    if (ext.budgetsEnabled) {
+      if (ext.states.hasBudgets) {
+        val authModule = user.map(_.authConfigId).flatMap(id => _env.proxyState.authModule(id))
+        val groups = apikey.toSeq.flatMap(_.authorizedEntities.collect {
+          case ServiceGroupIdentifier(id) => id
+        }).flatMap(id => _env.proxyState.serviceGroup(id))
+        val apikeyRef = apikey.flatMap(_.metadata.get("ai_budget_ref"))
+        val userRef = user.flatMap(_.metadata.get("ai_budget_ref"))
+        val providerRef = provider.flatMap(_.theMetadata.get("ai_budget_ref"))
+        val authModuleRef = authModule.flatMap(_.metadata.get("ai_budget_ref"))
+        val groupsRef = groups.flatMap(_.metadata.get("ai_budget_ref"))
+        ext.states
+          .allBudgets()
+          .filter(b => b.enabled && b.startAt.isBeforeNow && b.endAt.isAfterNow)
+          .filter {
+            case budget if budget.scope.extractFromProviderMeta && providerRef.contains(budget.id) => true
+            case budget if budget.scope.extractFromApikeyMeta && apikeyRef.contains(budget.id) => true
+            case budget if budget.scope.extractFromUserMeta && userRef.contains(budget.id) => true
+            case budget if budget.scope.extractFromUserAuthModuleMeta && authModuleRef.contains(budget.id) => true
+            case budget if budget.scope.extractFromApikeyGroupMeta && groupsRef.contains(budget.id) => true
+            case budget if budget.matches(ctx, apikey, user, provider, model) => true
+            case _ => false
+          }
+          .vfuture
+      } else {
+        Seq.empty[AiBudget].vfuture
+      }
     } else {
       Seq.empty[AiBudget].vfuture
     }

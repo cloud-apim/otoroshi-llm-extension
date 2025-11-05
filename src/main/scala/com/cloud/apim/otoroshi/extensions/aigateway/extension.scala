@@ -189,6 +189,8 @@ class AiExtension(val env: Env) extends AdminExtension {
     .expireAfterWrite(1.hour)
     .build[String, Seq[String]]()
 
+  lazy val budgetsEnabled = configuration.getOptional[Boolean]("budgets.enabled").getOrElse(true)
+
   override def id: AdminExtensionId = AiExtension.id
 
   override def name: String = "LLM Extension"
@@ -203,6 +205,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     implicit val ev = env
     implicit val ec = env.otoroshiExecutionContext
     WorkflowFunctionsInitializer.initDefaults()
+    AiBudgetClusterAgent.start(env, this)
     env.datastores.wasmPluginsDataStore.findById(LlmToolFunction.wasmPluginId).flatMap {
       case Some(_) => ().vfuture
       case None => {
@@ -217,6 +220,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   }
 
   override def stop(): Unit = {
+    AiBudgetClusterAgent.stop()
   }
 
   override def frontendExtensions(): Seq[AdminExtensionFrontendExtension] = Seq(
@@ -620,6 +624,88 @@ class AiExtension(val env: Env) extends AdminExtension {
       }
     }
   }
+
+  def handleClusterDeltaReceive(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val mat = env.otoroshiMaterializer
+    implicit val ev = env
+    (body match {
+      case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
+      case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
+        val bodyJson = bodyRaw.utf8String.parseJson
+        val total_usd = bodyJson.select("total_usd").asObject.value
+        val total_tokens = bodyJson.select("total_tokens").asObject.value
+        val inference_usd = bodyJson.select("inference_usd").asObject.value
+        val inference_tokens = bodyJson.select("inference_tokens").asObject.value
+        val image_usd = bodyJson.select("image_usd").asObject.value
+        val image_tokens = bodyJson.select("image_tokens").asObject.value
+        val audio_usd = bodyJson.select("audio_usd").asObject.value
+        val audio_tokens = bodyJson.select("audio_tokens").asObject.value
+        val video_usd = bodyJson.select("video_usd").asObject.value
+        val video_tokens = bodyJson.select("video_tokens").asObject.value
+        val embedding_usd = bodyJson.select("embedding_usd").asObject.value
+        val embedding_tokens = bodyJson.select("embedding_tokens").asObject.value
+        val moderation_usd = bodyJson.select("moderation_usd").asObject.value
+        val moderation_tokens = bodyJson.select("moderation_tokens").asObject.value
+        total_usd.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrTotalUsd(value.as[BigDecimal]))
+        }
+        total_tokens.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrTotalTokens(value.as[Long]))
+        }
+        inference_usd.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrInferenceUsd(value.as[BigDecimal]))
+        }
+        inference_tokens.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrInferenceTokens(value.as[Long]))
+        }
+        image_usd.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrImageUsd(value.as[BigDecimal]))
+        }
+        image_tokens.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrImageTokens(value.as[Long]))
+        }
+        audio_usd.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrAudioUsd(value.as[BigDecimal]))
+        }
+        audio_tokens.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrAudioTokens(value.as[Long]))
+        }
+        video_usd.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrVideoUsd(value.as[BigDecimal]))
+        }
+        video_tokens.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrVideoTokens(value.as[Long]))
+        }
+        embedding_usd.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrEmbeddingUsd(value.as[BigDecimal]))
+        }
+        embedding_tokens.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrEmbeddingTokens(value.as[Long]))
+        }
+        moderation_usd.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrModerationUsd(value.as[BigDecimal]))
+        }
+        moderation_tokens.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrModerationTokens(value.as[Long]))
+        }
+        Results.Ok(Json.obj("done" -> true)).vfuture
+      }
+    }).recover {
+      case e: Throwable => {
+        Results.InternalServerError(Json.obj("done" -> false, "error" -> e.getMessage))
+      }
+    }
+  }
+
+  override def adminApiRoutes(): Seq[AdminExtensionAdminApiRoute] = Seq(
+    AdminExtensionAdminApiRoute(
+      method = "PUT",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/cluster/budgets/deltas",
+      wantsBody = true,
+      handle = handleClusterDeltaReceive,
+    )
+  )
 
   override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = Seq(
     AdminExtensionBackofficeAuthRoute(
