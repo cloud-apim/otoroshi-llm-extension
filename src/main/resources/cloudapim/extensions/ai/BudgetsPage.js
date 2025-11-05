@@ -252,9 +252,33 @@ class BudgetsPage extends Component {
       type: 'bool',
       props: {label: 'Extract from user meta'},
     },
+    'scope.extract_from_provider_meta': {
+      type: 'bool',
+      props: {label: 'Extract from provider meta'},
+    },
     'scope.extract_from_user_auth_module_meta': {
       type: 'bool',
       props: {label: 'Extract from user auth module meta'},
+    },
+    'scope.apikeys': {
+      type: 'array',
+      props: {label: 'API keys', 'suffix': 'regex'},
+    },
+    'scope.users': {
+      type: 'array',
+      props: {label: 'Users', 'suffix': 'regex'},
+    },
+    'scope.groups': {
+      type: 'array',
+      props: {label: 'Groups', 'suffix': 'regex'},
+    },
+    'scope.providers': {
+      type: 'array',
+      props: {label: 'Providers', 'suffix': 'regex'},
+    },
+    'scope.models': {
+      type: 'array',
+      props: {label: 'Models', 'suffix': 'regex'},
     },
     'scope.rules': {
       type: 'array',
@@ -340,12 +364,19 @@ class BudgetsPage extends Component {
       'limits.embedding_usd',
       'limits.moderation_tokens',
       'limits.moderation_usd',
+      '>>>Consumption',
       'limits.remaining',
       '>>>Scope',
       'scope.extract_from_apikey_meta',
       'scope.extract_from_apikey_group_meta',
       'scope.extract_from_user_meta',
       'scope.extract_from_user_auth_module_meta',
+      'scope.extract_from_provider_meta',
+      'scope.apikeys',
+      'scope.users',
+      'scope.groups',
+      'scope.providers',
+      'scope.models',
       'scope.rules_match_mode',
       'scope.rules',
       '>>>Action on exceed',

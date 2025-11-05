@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ChatClientWithAuding
 import org.joda.time.DateTime
 import otoroshi.api._
 import otoroshi.env.Env
@@ -9,7 +10,7 @@ import otoroshi.next.utils.JsonHelpers
 import otoroshi.security.IdGenerator
 import otoroshi.storage._
 import otoroshi.utils.syntax.implicits._
-import otoroshi.utils.{JsonPathValidator, TypedMap}
+import otoroshi.utils.{JsonPathValidator, RegexPool, TypedMap}
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
 import play.api.libs.json._
 
@@ -252,6 +253,12 @@ case class AiBudgetScope(
   extractFromApikeyGroupMeta: Boolean,
   extractFromUserMeta: Boolean,
   extractFromUserAuthModuleMeta: Boolean,
+  extractFromProviderMeta: Boolean,
+  apikeys: Seq[String],
+  users: Seq[String],
+  groups: Seq[String],
+  providers: Seq[String],
+  models: Seq[String],
   rules: Seq[JsonPathValidator],
   rulesMatchMode: AiBudgetScopeMode,
 ) {
@@ -265,6 +272,12 @@ object AiBudgetScope {
       "extract_from_apikey_group_meta" -> o.extractFromApikeyGroupMeta,
       "extract_from_user_meta" -> o.extractFromUserMeta,
       "extract_from_user_auth_module_meta" -> o.extractFromUserAuthModuleMeta,
+      "extract_from_provider_meta" -> o.extractFromProviderMeta,
+      "apikeys" -> o.apikeys,
+      "users" -> o.users,
+      "groups" -> o.groups,
+      "providers" -> o.providers,
+      "models" -> o.models,
       "rules" -> o.rules.map(JsonPathValidator.format.writes),
       "rules_match_mode" -> o.rulesMatchMode.json
     )
@@ -274,6 +287,12 @@ object AiBudgetScope {
         extractFromApikeyGroupMeta = (json \ "extract_from_apikey_group_meta").asOpt[Boolean].getOrElse(false),
         extractFromUserMeta = (json \ "extract_from_user_meta").asOpt[Boolean].getOrElse(false),
         extractFromUserAuthModuleMeta = (json \ "extract_from_user_auth_module_meta").asOpt[Boolean].getOrElse(false),
+        extractFromProviderMeta = (json \ "extract_from_provider_meta").asOpt[Boolean].getOrElse(false),
+        apikeys = (json \ "apikeys").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
+        users = (json \ "users").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
+        groups = (json \ "groups").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
+        providers = (json \ "providers").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
+        models = (json \ "models").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         rules = (json \ "rules").asOpt[Seq[JsObject]].getOrElse(Seq.empty[JsObject]).flatMap(obj => JsonPathValidator.format.reads(obj).asOpt),
         rulesMatchMode = json.select("rules_match_mode").asOptString.map(s => AiBudgetScopeMode.fromString(s)).getOrElse(AiBudgetScopeMode.All),
       )
@@ -604,13 +623,23 @@ case class AiBudget(
   }
     
 
-  def matches(ctx: JsValue)(implicit env: Env): Boolean = {
+  def matches(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String])(implicit env: Env): Boolean = {
     if (!enabled) {
       false
     } else if (startAt.isAfterNow) {
       false
     } else if (endAt.isBeforeNow) {
       false
+    } else if (scope.apikeys.nonEmpty && apikey.nonEmpty && scope.apikeys.exists(id => RegexPool.regex(id).matches(apikey.get.clientId))) {
+      true
+    } else if (scope.users.nonEmpty && user.nonEmpty && scope.users.exists(id => RegexPool.regex(id).matches(user.get.email))) {
+      true
+    } else if (scope.groups.nonEmpty && apikey.nonEmpty && scope.groups.exists(id => apikey.get.authorizedEntities.exists(ae => ae.prefix == "group" && RegexPool.regex(id).matches(ae.id)))) {
+      true
+    } else if (scope.providers.nonEmpty && provider.nonEmpty && scope.providers.exists(id => RegexPool.regex(id).matches(provider.get.theId))) {
+      true
+    } else if (scope.models.nonEmpty && model.nonEmpty && scope.models.exists(id => RegexPool.regex(id).matches(model.get))) {
+      true
     } else {
       if (scope.rules.isEmpty) {
         false
@@ -759,7 +788,7 @@ object AiBudget {
               moderation_tokens = None,
               moderation_usd = None,
             ),
-            scope = AiBudgetScope(true, true, true, true, Seq.empty, AiBudgetScopeMode.All),
+            scope = AiBudgetScope(true, true, true, true, true, Seq.empty, Seq.empty, Seq.empty, Seq.empty, Seq.empty, Seq.empty, AiBudgetScopeMode.All),
             actionOnExceed = AiBudgetActionOnExceed(AiBudgetActionOnExceedMode.Block)
           ).json
         },
@@ -777,8 +806,8 @@ object AiBudget {
 }
 
 trait AiBudgetsDataStore extends BasicStore[AiBudget] {
-  def findMatchingBudgets(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser]): Future[Seq[AiBudget]]
-  def updateUsage(totalCost: Option[BigDecimal], totalTokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Unit
+  def findMatchingBudgets(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String]): Future[Seq[AiBudget]]
+  def updateUsage(totalCost: Option[BigDecimal], totalTokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Future[Seq[String]]
 }
 
 object AiBudgetsDataStore {
@@ -789,6 +818,8 @@ object AiBudgetsDataStore {
     val snowflake = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
     val request = attrs.get(otoroshi.plugins.Keys.RequestKey).map(r => JsonHelpers.requestToJson(r, attrs))
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
+    val provider = attrs.get(ChatClientWithAuding.ProviderKey)
+    val model = attrs.get(ChatClientWithAuding.ModelKey)
     val ctx = Json.obj(
       "foo" -> "bar",
       "snowflake" -> snowflake,
@@ -798,9 +829,11 @@ object AiBudgetsDataStore {
       "request" -> request,
       "config" -> Json.obj(),
       "global_config" -> Json.obj(),
+      "provider" -> provider.map(_.json).getOrElse(JsNull).as[JsValue],
+      "model" -> model.map(_.json).getOrElse(JsNull).as[JsValue],
       //"attrs" -> attrs.json
     )
-    ext.datastores.budgetsDataStore.findMatchingBudgets(ctx, apikey, user).flatMap { budgets =>
+    ext.datastores.budgetsDataStore.findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { budgets =>
       budgets.filterAsync(_.isNotWithinBudget()).flatMap { budgets =>
         if (budgets.isEmpty) {
           inBudget
@@ -824,44 +857,48 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
 
   override def extractId(value: AiBudget): String = value.id
 
-  def updateUsage(cost: Option[BigDecimal], tokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Unit = {
-    try {
-      val ext = _env.adminExtensions.extension[AiExtension].get
-      if (ext.states.hasBudgets && ((cost.isDefined && cost.get.>(BigDecimal(0))) || (tokens.isDefined && tokens.get > 0L))) {
-        implicit val ec = _env.analyticsExecutionContext
-        implicit val env = _env
-        val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
-        val user = attrs.get(otoroshi.plugins.Keys.UserKey)
-        val snowflake = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
-        val request = attrs.get(otoroshi.plugins.Keys.RequestKey).map(r => JsonHelpers.requestToJson(r, attrs))
-        val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-        val ctx = Json.obj(
-          "foo" -> "bar",
-          "snowflake" -> snowflake,
-          "apikey" -> apikey.map(_.lightJson).getOrElse(JsNull).as[JsValue],
-          "user" -> user.map(_.lightJson).getOrElse(JsNull).as[JsValue],
-          "route" -> route.map(_.json).getOrElse(JsNull).as[JsValue],
-          "request" -> request,
-          "config" -> Json.obj(),
-          "global_config" -> Json.obj(),
-          //"attrs" -> attrs.json
-        )
-        findMatchingBudgets(ctx, apikey, user).map { budgets =>
-          budgets.foreachAsync { budget =>
-            budget.isWithinBudget().map { withinBudget =>
-              if (withinBudget) {
-                usageKind.updateUsage(budget, cost, tokens, attrs)
-              }
+  def updateUsage(cost: Option[BigDecimal], tokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Future[Seq[String]] = {
+    val ext = _env.adminExtensions.extension[AiExtension].get
+    if (ext.states.hasBudgets && ((cost.isDefined && cost.get.>(BigDecimal(0))) || (tokens.isDefined && tokens.get > 0L))) {
+      implicit val ec = _env.analyticsExecutionContext
+      implicit val env = _env
+      val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
+      val user = attrs.get(otoroshi.plugins.Keys.UserKey)
+      val snowflake = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
+      val request = attrs.get(otoroshi.plugins.Keys.RequestKey).map(r => JsonHelpers.requestToJson(r, attrs))
+      val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
+      val provider = attrs.get(ChatClientWithAuding.ProviderKey)
+      val model = attrs.get(ChatClientWithAuding.ModelKey)
+      val ctx = Json.obj(
+        "foo" -> "bar",
+        "snowflake" -> snowflake,
+        "apikey" -> apikey.map(_.lightJson).getOrElse(JsNull).as[JsValue],
+        "user" -> user.map(_.lightJson).getOrElse(JsNull).as[JsValue],
+        "route" -> route.map(_.json).getOrElse(JsNull).as[JsValue],
+        "request" -> request,
+        "config" -> Json.obj(),
+        "global_config" -> Json.obj(),
+        "provider" -> provider.map(_.json).getOrElse(JsNull).as[JsValue],
+        "model" -> model.map(_.json).getOrElse(JsNull).as[JsValue],
+        //"attrs" -> attrs.json
+      )
+      findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { budgets =>
+        budgets.foreachAsync { budget =>
+          budget.isWithinBudget().map { withinBudget =>
+            if (withinBudget) {
+              usageKind.updateUsage(budget, cost, tokens, attrs)
             }
           }
+        }.map { _ =>
+          budgets.map(_.id)
         }
       }
-    } catch {
-      case err: Throwable => err.printStackTrace()
+    } else {
+      Seq.empty.vfuture
     }
   }
 
-  def findMatchingBudgets(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser]): Future[Seq[AiBudget]] = {
+  def findMatchingBudgets(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String]): Future[Seq[AiBudget]] = {
     implicit val env = _env
     val ext = _env.adminExtensions.extension[AiExtension].get
     if (ext.states.hasBudgets) {
@@ -871,17 +908,19 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
       }).flatMap(id => _env.proxyState.serviceGroup(id))
       val apikeyRef = apikey.flatMap(_.metadata.get("ai_budget_ref"))
       val userRef = user.flatMap(_.metadata.get("ai_budget_ref"))
+      val providerRef = provider.flatMap(_.theMetadata.get("ai_budget_ref"))
       val authModuleRef = authModule.flatMap(_.metadata.get("ai_budget_ref"))
       val groupsRef = groups.flatMap(_.metadata.get("ai_budget_ref"))
       ext.states
         .allBudgets()
-        .filter(_.enabled)
+        .filter(b => b.enabled && b.startAt.isBeforeNow && b.endAt.isAfterNow)
         .filter {
-          case budget if apikeyRef.contains(budget.id) => true
-          case budget if userRef.contains(budget.id) => true
-          case budget if authModuleRef.contains(budget.id) => true
-          case budget if groupsRef.contains(budget.id) => true
-          case budget if budget.matches(ctx) => true
+          case budget if budget.scope.extractFromProviderMeta && providerRef.contains(budget.id) => true
+          case budget if budget.scope.extractFromApikeyMeta && apikeyRef.contains(budget.id) => true
+          case budget if budget.scope.extractFromUserMeta && userRef.contains(budget.id) => true
+          case budget if budget.scope.extractFromUserAuthModuleMeta && authModuleRef.contains(budget.id) => true
+          case budget if budget.scope.extractFromApikeyGroupMeta && groupsRef.contains(budget.id) => true
+          case budget if budget.matches(ctx, apikey, user, provider, model) => true
           case _ => false
         }
         .vfuture
