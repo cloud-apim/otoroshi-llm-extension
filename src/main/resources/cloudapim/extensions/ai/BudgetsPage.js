@@ -321,6 +321,11 @@ class BudgetsPage extends Component {
       content: (item) => item.description,
     },
     {
+      title: 'Enabled',
+      filterId: 'enabled',
+      content: (item) => item.enabled ? React.createElement('span', { className: 'badge bg-xs bg-success' }, 'yes') : React.createElement('span', { className: 'badge bg-xs bg-danger' }, 'no'),
+    },
+    {
       title: 'Start at',
       filterId: 'start_at',
       content: (item) => item.start_at,
@@ -433,11 +438,19 @@ class BudgetsPage extends Component {
             "extract_from_apikey_group_meta" : true,
             "extract_from_user_meta" : true,
             "extract_from_user_auth_module_meta" : true,
+            "apikeys": [],
+            "users": [],
+            "groups": [],
+            "providers": [],
+            "models": [],
             "rules" : [ ],
             "rules_match_mode" : "all"
           },
           "action_on_exceed" : {
-            "mode" : "block"
+            "mode" : "block",
+            "alert_on_exceed": true,
+            "alert_on_almost_exceed" : true,
+            "alert_on_almost_exceed_percentage" : 80,
           }
         }),
         itemName: "AI Budget",
