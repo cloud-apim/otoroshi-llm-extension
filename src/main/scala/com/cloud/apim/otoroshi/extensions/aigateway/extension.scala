@@ -10,7 +10,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, In
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
 import otoroshi.models._
-import otoroshi.next.extensions._
+import otoroshi.next.extensions.{AdminExtensionAdminApiRoute, _}
 import otoroshi.utils.TypedMap
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits._
@@ -573,7 +573,7 @@ class AiExtension(val env: Env) extends AdminExtension {
         states.budget(budgetId) match {
           case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
           case Some(budget) => {
-            budget.getAllMetrics().map { metrics =>
+            budget.getConsumptions().map { metrics =>
               val totalUsd = metrics.totalUsd
               val totalTokens = metrics.totalTokens
               val inferenceUsd = metrics.inferenceUsd
@@ -698,12 +698,64 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
+  def handleReset(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val mat = env.otoroshiMaterializer
+    implicit val ev = env
+    val all = req.getQueryString("all").contains("true")
+    ctx.named("id") match {
+      case None => Results.BadRequest(Json.obj("error" -> "no budget id found")).vfuture
+      case Some(budgetId) => {
+        datastores.budgetsDataStore.findById(budgetId).flatMap {
+          case None => Results.NotFound(Json.obj("error" -> "budget not found")).vfuture
+          case Some(budget) if all => {
+            budget.resetAll().map(_ => Results.Ok(Json.obj("done" -> true)))
+          }
+          case Some(budget) => {
+            budget.resetCurrentCycle().map(_ => Results.Ok(Json.obj("done" -> true)))
+          }
+        }
+      }
+    }
+  }
+
+  def handleCurrentBudgetConsumption(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val mat = env.otoroshiMaterializer
+    implicit val ev = env
+    ctx.named("id") match {
+      case None => Results.BadRequest(Json.obj("error" -> "no budget id found")).vfuture
+      case Some(budgetId) => {
+        datastores.budgetsDataStore.findById(budgetId).flatMap {
+          case None => Results.NotFound(Json.obj("error" -> "budget not found")).vfuture
+          case Some(budget) => {
+            budget.getConsumptions().map { metrics =>
+              Results.Ok(metrics.json)
+            }
+          }
+        }
+      }
+    }
+  }
+
   override def adminApiRoutes(): Seq[AdminExtensionAdminApiRoute] = Seq(
     AdminExtensionAdminApiRoute(
       method = "PUT",
       path = "/api/extensions/cloud-apim/extensions/ai-extension/cluster/budgets/deltas",
       wantsBody = true,
       handle = handleClusterDeltaReceive,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "GET",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption",
+      wantsBody = false,
+      handle = handleCurrentBudgetConsumption,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "POST",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_reset",
+      wantsBody = false,
+      handle = handleReset,
     )
   )
 

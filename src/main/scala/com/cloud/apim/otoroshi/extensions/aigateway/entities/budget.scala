@@ -788,7 +788,23 @@ case class AiBudget(
     env.datastores.rawDataStore.get(moderationTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
   }
 
-  def getAllMetrics()(implicit ec: ExecutionContext, env: Env): Future[AiBudgetMetrics] = {
+  def resetCurrentCycle()(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+    env.datastores.rawDataStore.keys(s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:*").flatMap { keys =>
+      env.datastores.rawDataStore.del(keys).map { _ =>
+        ()
+      }
+    }
+  }
+
+  def resetAll()(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+    env.datastores.rawDataStore.keys(s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:*").flatMap { keys =>
+      env.datastores.rawDataStore.del(keys).map { _ =>
+        ()
+      }
+    }
+  }
+
+  def getConsumptions()(implicit ec: ExecutionContext, env: Env): Future[AiBudgetMetrics] = {
     env.datastores.rawDataStore.mget(Seq(
       totalUsdKey,
       totalTokensKey,
@@ -864,7 +880,7 @@ case class AiBudget(
     } else if (limits.total_tokens.isEmpty && limits.total_usd.isEmpty && limits.inference_tokens.isEmpty && limits.inference_usd.isEmpty && limits.image_tokens.isEmpty && limits.image_usd.isEmpty && limits.audio_tokens.isEmpty && limits.audio_usd.isEmpty && limits.video_tokens.isEmpty && limits.video_usd.isEmpty && limits.embedding_tokens.isEmpty && limits.embedding_usd.isEmpty) {
       true.vfuture
     } else {
-      getAllMetrics().map { metrics =>
+      getConsumptions().map { metrics =>
         if (limits.total_usd.isDefined && metrics.totalUsd >= limits.total_usd.get) {
           false
         } else if (limits.total_tokens.isDefined && metrics.totalTokens >= limits.total_tokens.get) {
