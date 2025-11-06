@@ -468,17 +468,23 @@ object AiBudgetActionOnExceedMode {
   }
 }
 
-case class AiBudgetActionOnExceed(mode: AiBudgetActionOnExceedMode) {
+case class AiBudgetActionOnExceed(mode: AiBudgetActionOnExceedMode, alertOnExceed: Boolean, alertOnAlmostExceed: Boolean, alertOnAlmostExceedPercentage: Int) {
   def json: JsValue = AiBudgetActionOnExceed.format.writes(this)
 }
 object AiBudgetActionOnExceed {
   val format = new Format[AiBudgetActionOnExceed] {
     override def writes(o: AiBudgetActionOnExceed): JsValue = Json.obj(
       "mode" -> o.mode.json,
+      "alert_on_exceed" -> o.alertOnExceed,
+      "alert_on_almost_exceed" -> o.alertOnAlmostExceed,
+      "alert_on_almost_exceed_percentage" -> o.alertOnAlmostExceedPercentage,
     )
     override def reads(json: JsValue): JsResult[AiBudgetActionOnExceed] = Try {
       AiBudgetActionOnExceed(
         mode = AiBudgetActionOnExceedMode.fromString((json \ "mode").asOpt[String].getOrElse("soft")),
+        alertOnExceed = (json \ "alert_on_exceed").asOpt[Boolean].getOrElse(true),
+        alertOnAlmostExceed = (json \ "alert_on_almost_exceed").asOpt[Boolean].getOrElse(true),
+        alertOnAlmostExceedPercentage = (json \ "alert_on_almost_exceed_percentage").asOpt[Int].getOrElse(80),
       )
     } match {
       case Failure(ex) => JsError(ex.getMessage)
@@ -902,7 +908,8 @@ case class AiBudget(
           val percentageConsumedEmbeddingTokens: Double = limits.embedding_tokens.map(ttokens => metrics.embeddingTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
           val percentageConsumedModerationUsd: Double = limits.moderation_usd.map(tusd => metrics.moderationUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
           val percentageConsumedModerationTokens: Double = limits.moderation_tokens.map(ttokens => metrics.moderationTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
-          if (percentageConsumedTotalUsd > 90.0 || percentageConsumedTotalTokens > 90.0 || percentageConsumedInferenceUsd > 90.0 || percentageConsumedInferenceTokens > 90.0 || percentageConsumedImageUsd > 90.0 || percentageConsumedImageTokens > 90.0 || percentageConsumedAudioUsd > 90.0 || percentageConsumedAudioTokens > 90.0 || percentageConsumedVideoUsd > 90.0 || percentageConsumedVideoTokens > 90.0 || percentageConsumedEmbeddingUsd > 90.0 || percentageConsumedEmbeddingTokens > 90.0 || percentageConsumedModerationUsd > 90.0 || percentageConsumedModerationTokens > 90.0) {
+          val maxPercentage = actionOnExceed.alertOnAlmostExceedPercentage.toDouble
+          if (actionOnExceed.alertOnAlmostExceed && (percentageConsumedTotalUsd > maxPercentage || percentageConsumedTotalTokens > maxPercentage || percentageConsumedInferenceUsd > maxPercentage || percentageConsumedInferenceTokens > maxPercentage || percentageConsumedImageUsd > maxPercentage || percentageConsumedImageTokens > maxPercentage || percentageConsumedAudioUsd > maxPercentage || percentageConsumedAudioTokens > maxPercentage || percentageConsumedVideoUsd > maxPercentage || percentageConsumedVideoTokens > maxPercentage || percentageConsumedEmbeddingUsd > maxPercentage || percentageConsumedEmbeddingTokens > maxPercentage || percentageConsumedModerationUsd > maxPercentage || percentageConsumedModerationTokens > maxPercentage)) {
              AlertEvent.generic("AiBudgetAlmostExceeded", "otoroshi")(Json.obj(
               "budget" -> json,
               "consumption" -> metrics.json,
@@ -1021,8 +1028,26 @@ object AiBudget {
               moderation_tokens = None,
               moderation_usd = None,
             ),
-            scope = AiBudgetScope(true, true, true, true, true, Seq.empty, Seq.empty, Seq.empty, Seq.empty, Seq.empty, Seq.empty, AiBudgetScopeMode.All),
-            actionOnExceed = AiBudgetActionOnExceed(AiBudgetActionOnExceedMode.Block)
+            scope = AiBudgetScope(
+              extractFromApikeyMeta = true,
+              extractFromUserMeta = true,
+              extractFromUserAuthModuleMeta = true,
+              extractFromApikeyGroupMeta = true, 
+              extractFromProviderMeta = true, 
+              apikeys = Seq.empty, 
+              users = Seq.empty, 
+              groups = Seq.empty, 
+              providers = Seq.empty, 
+              models = Seq.empty, 
+              rules = Seq.empty, 
+              rulesMatchMode = AiBudgetScopeMode.All
+            ),
+            actionOnExceed = AiBudgetActionOnExceed(
+              AiBudgetActionOnExceedMode.Block,
+              alertOnExceed = true,
+              alertOnAlmostExceed = true,
+              alertOnAlmostExceedPercentage = 80
+            )
           ).json
         },
         canRead = true,
@@ -1074,14 +1099,16 @@ object AiBudgetsDataStore {
           } else {
             val soft = budgets.forall(_.actionOnExceed.mode == AiBudgetActionOnExceedMode.Soft)
             val budgetIds = budgets.map(_.id)
-            AlertEvent.generic("AiBudgetExceeded", "otoroshi")(Json.obj(
-              "budgets" -> budgetIds,
-              "apikey" -> apikey.map(_.lightJson).getOrElse(JsNull).as[JsValue],
-              "user" -> user.map(_.lightJson).getOrElse(JsNull).as[JsValue],
-              "model" -> user.map(_.json).getOrElse(JsNull).as[JsValue],
-              "provider" -> user.map(_.json).getOrElse(JsNull).as[JsValue],
-              "route" -> route.map(_.json).getOrElse(JsNull).as[JsValue],
-            )).toAnalytics()
+            if (budgets.exists(_.actionOnExceed.alertOnExceed)) {
+              AlertEvent.generic("AiBudgetExceeded", "otoroshi")(Json.obj(
+                "budgets" -> budgetIds,
+                "apikey" -> apikey.map(_.lightJson).getOrElse(JsNull).as[JsValue],
+                "user" -> user.map(_.lightJson).getOrElse(JsNull).as[JsValue],
+                "model" -> user.map(_.json).getOrElse(JsNull).as[JsValue],
+                "provider" -> user.map(_.json).getOrElse(JsNull).as[JsValue],
+                "route" -> route.map(_.json).getOrElse(JsNull).as[JsValue],
+              )).toAnalytics()
+            }
             if (soft) {
               inBudget
             } else {
@@ -1171,11 +1198,11 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
           .allBudgets()
           .filter(b => b.enabled && b.startAt.isBeforeNow && b.endAt.isAfterNow)
           .filter {
-            case budget if budget.scope.extractFromProviderMeta && providerRef.contains(budget.id) => true
-            case budget if budget.scope.extractFromApikeyMeta && apikeyRef.contains(budget.id) => true
-            case budget if budget.scope.extractFromUserMeta && userRef.contains(budget.id) => true
-            case budget if budget.scope.extractFromUserAuthModuleMeta && authModuleRef.contains(budget.id) => true
-            case budget if budget.scope.extractFromApikeyGroupMeta && groupsRef.contains(budget.id) => true
+            case budget if budget.scope.extractFromProviderMeta && (providerRef.contains(budget.id) || providerRef.contains(budget.slugName)) => true
+            case budget if budget.scope.extractFromApikeyMeta && (apikeyRef.contains(budget.id) || apikeyRef.contains(budget.slugName)) => true
+            case budget if budget.scope.extractFromUserMeta && (userRef.contains(budget.id) || userRef.contains(budget.slugName)) => true
+            case budget if budget.scope.extractFromUserAuthModuleMeta && (authModuleRef.contains(budget.id) || authModuleRef.contains(budget.slugName)) => true
+            case budget if budget.scope.extractFromApikeyGroupMeta && (groupsRef.contains(budget.id) || groupsRef.contains(budget.slugName)) => true
             case budget if budget.matches(ctx, apikey, user, provider, model) => true
             case _ => false
           }
