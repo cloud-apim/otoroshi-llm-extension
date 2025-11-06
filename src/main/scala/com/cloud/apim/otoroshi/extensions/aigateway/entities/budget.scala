@@ -493,7 +493,7 @@ object AiBudgetActionOnExceed {
   }
 }
 
-case class AiBudgetMetrics(
+case class AiBudgetConsumptions(
   totalUsd: BigDecimal,
   totalTokens: Long,
   inferenceUsd: BigDecimal,
@@ -510,20 +510,50 @@ case class AiBudgetMetrics(
   moderationTokens: Long,
 ) {
   def json: JsValue = Json.obj(
-    "total_usd" -> totalUsd,
-    "total_tokens" -> totalTokens,
-    "inference_usd" -> inferenceUsd,
-    "inference_tokens" -> inferenceTokens,
-    "image_usd" -> imageUsd,
-    "image_tokens" -> imageTokens,
-    "audio_usd" -> audioUsd,
-    "audio_tokens" -> audioTokens,
-    "video_usd" -> videoUsd,
-    "video_tokens" -> videoTokens,
-    "embedding_usd" -> embeddingUsd,
-    "embedding_tokens" -> embeddingTokens,
-    "moderation_usd" -> moderationUsd,
-    "moderation_tokens" -> moderationTokens,
+    "consumed_total_usd" -> totalUsd,
+    "consumed_total_tokens" -> totalTokens,
+    "consumed_inference_usd" -> inferenceUsd,
+    "consumed_inference_tokens" -> inferenceTokens,
+    "consumed_image_usd" -> imageUsd,
+    "consumed_image_tokens" -> imageTokens,
+    "consumed_audio_usd" -> audioUsd,
+    "consumed_audio_tokens" -> audioTokens,
+    "consumed_video_usd" -> videoUsd,
+    "consumed_video_tokens" -> videoTokens,
+    "consumed_embedding_usd" -> embeddingUsd,
+    "consumed_embedding_tokens" -> embeddingTokens,
+    "consumed_moderation_usd" -> moderationUsd,
+    "consumed_moderation_tokens" -> moderationTokens,
+  )
+  def jsonWithRemaining(budget: AiBudget): JsValue = json.asObject ++ Json.obj(
+    "remaining_total_usd" -> JsNumber(budget.limits.total_usd.map(v => v - totalUsd).getOrElse(BigDecimal(0))),
+    "remaining_total_tokens" -> JsNumber(BigDecimal(budget.limits.total_tokens.map(_ - totalTokens).getOrElse(0L))),
+    "remaining_inference_usd" -> JsNumber(budget.limits.inference_usd.map(_ - inferenceUsd).getOrElse(BigDecimal(0))),
+    "remaining_inference_tokens" -> JsNumber(BigDecimal(budget.limits.inference_tokens.map(_ - inferenceTokens).getOrElse(0L))),
+    "remaining_image_usd" -> JsNumber(budget.limits.image_usd.map(_ - imageUsd).getOrElse(BigDecimal(0))),
+    "remaining_image_tokens" -> JsNumber(BigDecimal(budget.limits.image_tokens.map(_ - imageTokens).getOrElse(0L))),
+    "remaining_audio_usd" -> JsNumber(budget.limits.audio_usd.map(_ - audioUsd).getOrElse(BigDecimal(0))),
+    "remaining_audio_tokens" -> JsNumber(BigDecimal(budget.limits.audio_tokens.map(_ - audioTokens).getOrElse(0L))),
+    "remaining_video_usd" -> JsNumber(budget.limits.video_usd.map(_ - videoUsd).getOrElse(BigDecimal(0))),
+    "remaining_video_tokens" -> JsNumber(BigDecimal(budget.limits.video_tokens.map(_ - videoTokens).getOrElse(0L))),
+    "remaining_embedding_usd" -> JsNumber(budget.limits.embedding_usd.map(_ - embeddingUsd).getOrElse(BigDecimal(0))),
+    "remaining_embedding_tokens" -> JsNumber(BigDecimal(budget.limits.embedding_tokens.map(_ - embeddingTokens).getOrElse(0L))),
+    "remaining_moderation_usd" -> JsNumber(budget.limits.moderation_usd.map(_ - moderationUsd).getOrElse(BigDecimal(0))),
+    "remaining_moderation_tokens" -> JsNumber(BigDecimal(budget.limits.moderation_tokens.map(_ - moderationTokens).getOrElse(0L))),
+    "allowed_total_usd" -> budget.limits.total_usd,
+    "allowed_total_tokens" -> budget.limits.total_tokens,
+    "allowed_inference_usd" -> budget.limits.inference_usd,
+    "allowed_inference_tokens" -> budget.limits.inference_tokens,
+    "allowed_image_usd" -> budget.limits.image_usd,
+    "allowed_image_tokens" -> budget.limits.image_tokens,
+    "allowed_audio_usd" -> budget.limits.audio_usd,
+    "allowed_audio_tokens" -> budget.limits.audio_tokens,
+    "allowed_video_usd" -> budget.limits.video_usd,
+    "allowed_video_tokens" -> budget.limits.video_tokens,
+    "allowed_embedding_usd" -> budget.limits.embedding_usd,
+    "allowed_embedding_tokens" -> budget.limits.embedding_tokens,
+    "allowed_moderation_usd" -> budget.limits.moderation_usd,
+    "allowed_moderation_tokens" -> budget.limits.moderation_tokens,
   )
 }
 
@@ -804,7 +834,7 @@ case class AiBudget(
     }
   }
 
-  def getConsumptions()(implicit ec: ExecutionContext, env: Env): Future[AiBudgetMetrics] = {
+  def getConsumptions()(implicit ec: ExecutionContext, env: Env): Future[AiBudgetConsumptions] = {
     env.datastores.rawDataStore.mget(Seq(
       totalUsdKey,
       totalTokensKey,
@@ -822,7 +852,7 @@ case class AiBudget(
       moderationTokensKey
     )).map {
       case list =>
-        AiBudgetMetrics(
+        AiBudgetConsumptions(
           totalUsd = list(0).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
           totalTokens = list(1).map(_.utf8String.toLong).getOrElse(0L),
           inferenceUsd = list(2).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
@@ -871,64 +901,69 @@ case class AiBudget(
     }
   }
 
-  def isNotWithinBudget()(implicit ec: ExecutionContext, env: Env): Future[Boolean] = isWithinBudget().map(r => !r)
+  def isNotWithinBudget(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Boolean] = isNotWithinBudgetWithConsumption(attrs).map(r => r._1)
 
-  def isWithinBudget()(implicit ec: ExecutionContext, env: Env): Future[Boolean] = {
+  def isWithinBudget(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Boolean] = isWithinBudgetWithConsumption(attrs).map(r => r._1)
+
+  def isNotWithinBudgetWithConsumption(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[(Boolean, Option[AiBudgetConsumptions])] = isWithinBudgetWithConsumption(attrs).map(r => (!r._1, r._2))
+
+  def isWithinBudgetWithConsumption(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[(Boolean, Option[AiBudgetConsumptions])] = {
     val cycleValue = cycle.getOrElse(-1)
     if (cycleValue >= (renewals + 1)) {
-      false.vfuture
+      (false, None).vfuture
     } else if (limits.total_tokens.isEmpty && limits.total_usd.isEmpty && limits.inference_tokens.isEmpty && limits.inference_usd.isEmpty && limits.image_tokens.isEmpty && limits.image_usd.isEmpty && limits.audio_tokens.isEmpty && limits.audio_usd.isEmpty && limits.video_tokens.isEmpty && limits.video_usd.isEmpty && limits.embedding_tokens.isEmpty && limits.embedding_usd.isEmpty) {
-      true.vfuture
+      (true, None).vfuture
     } else {
-      getConsumptions().map { metrics =>
-        if (limits.total_usd.isDefined && metrics.totalUsd >= limits.total_usd.get) {
-          false
-        } else if (limits.total_tokens.isDefined && metrics.totalTokens >= limits.total_tokens.get) {
-          false
-        } else if (limits.inference_usd.isDefined && metrics.inferenceUsd >= limits.inference_usd.get) {
-          false
-        } else if (limits.inference_tokens.isDefined && metrics.inferenceTokens >= limits.inference_tokens.get) {
-          false
-        } else if (limits.image_usd.isDefined && metrics.imageUsd >= limits.image_usd.get) {
-          false
-        } else if (limits.image_tokens.isDefined && metrics.imageTokens >= limits.image_tokens.get) {
-          false
-        } else if (limits.audio_usd.isDefined && metrics.audioUsd >= limits.audio_usd.get) {
-          false
-        } else if (limits.audio_tokens.isDefined && metrics.audioTokens >= limits.audio_tokens.get) {
-          false
-        } else if (limits.video_usd.isDefined && metrics.videoUsd >= limits.video_usd.get) {
-          false
-        } else if (limits.video_tokens.isDefined && metrics.videoTokens >= limits.video_tokens.get) {
-          false
-        } else if (limits.embedding_usd.isDefined && metrics.embeddingUsd >= limits.embedding_usd.get) {
-          false
-        } else if (limits.embedding_tokens.isDefined && metrics.embeddingTokens >= limits.embedding_tokens.get) {
-          false
-        } else if (limits.moderation_usd.isDefined && metrics.moderationUsd >= limits.moderation_usd.get) {
-          false
-        } else if (limits.moderation_tokens.isDefined && metrics.moderationTokens >= limits.moderation_tokens.get) {
-          false
+      getConsumptions().map { consumptions =>
+        attrs.put(ChatClientWithAuding.BudgetConsumptionKey -> (consumptions, this))
+        if (limits.total_usd.isDefined && consumptions.totalUsd >= limits.total_usd.get) {
+          (false, consumptions.some)
+        } else if (limits.total_tokens.isDefined && consumptions.totalTokens >= limits.total_tokens.get) {
+          (false, consumptions.some)
+        } else if (limits.inference_usd.isDefined && consumptions.inferenceUsd >= limits.inference_usd.get) {
+          (false, consumptions.some)
+        } else if (limits.inference_tokens.isDefined && consumptions.inferenceTokens >= limits.inference_tokens.get) {
+          (false, consumptions.some)
+        } else if (limits.image_usd.isDefined && consumptions.imageUsd >= limits.image_usd.get) {
+          (false, consumptions.some)
+        } else if (limits.image_tokens.isDefined && consumptions.imageTokens >= limits.image_tokens.get) {
+          (false, consumptions.some)
+        } else if (limits.audio_usd.isDefined && consumptions.audioUsd >= limits.audio_usd.get) {
+          (false, consumptions.some)
+        } else if (limits.audio_tokens.isDefined && consumptions.audioTokens >= limits.audio_tokens.get) {
+          (false, consumptions.some)
+        } else if (limits.video_usd.isDefined && consumptions.videoUsd >= limits.video_usd.get) {
+          (false, consumptions.some)
+        } else if (limits.video_tokens.isDefined && consumptions.videoTokens >= limits.video_tokens.get) {
+          (false, consumptions.some)
+        } else if (limits.embedding_usd.isDefined && consumptions.embeddingUsd >= limits.embedding_usd.get) {
+          (false, consumptions.some)
+        } else if (limits.embedding_tokens.isDefined && consumptions.embeddingTokens >= limits.embedding_tokens.get) {
+          (false, consumptions.some)
+        } else if (limits.moderation_usd.isDefined && consumptions.moderationUsd >= limits.moderation_usd.get) {
+          (false, consumptions.some)
+        } else if (limits.moderation_tokens.isDefined && consumptions.moderationTokens >= limits.moderation_tokens.get) {
+          (false, consumptions.some)
         } else {
-          val percentageConsumedTotalUsd: Double = limits.total_usd.map(tusd => metrics.totalUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedTotalTokens: Double = limits.total_tokens.map(ttokens => metrics.totalTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedInferenceUsd: Double = limits.inference_usd.map(tusd => metrics.inferenceUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedInferenceTokens: Double = limits.inference_tokens.map(ttokens => metrics.inferenceTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedImageUsd: Double = limits.image_usd.map(tusd => metrics.imageUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedImageTokens: Double = limits.image_tokens.map(ttokens => metrics.imageTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedAudioUsd: Double = limits.audio_usd.map(tusd => metrics.audioUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedAudioTokens: Double = limits.audio_tokens.map(ttokens => metrics.audioTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedVideoUsd: Double = limits.video_usd.map(tusd => metrics.videoUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedVideoTokens: Double = limits.video_tokens.map(ttokens => metrics.videoTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedEmbeddingUsd: Double = limits.embedding_usd.map(tusd => metrics.embeddingUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedEmbeddingTokens: Double = limits.embedding_tokens.map(ttokens => metrics.embeddingTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedModerationUsd: Double = limits.moderation_usd.map(tusd => metrics.moderationUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
-          val percentageConsumedModerationTokens: Double = limits.moderation_tokens.map(ttokens => metrics.moderationTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedTotalUsd: Double = limits.total_usd.map(tusd => consumptions.totalUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedTotalTokens: Double = limits.total_tokens.map(ttokens => consumptions.totalTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedInferenceUsd: Double = limits.inference_usd.map(tusd => consumptions.inferenceUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedInferenceTokens: Double = limits.inference_tokens.map(ttokens => consumptions.inferenceTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedImageUsd: Double = limits.image_usd.map(tusd => consumptions.imageUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedImageTokens: Double = limits.image_tokens.map(ttokens => consumptions.imageTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedAudioUsd: Double = limits.audio_usd.map(tusd => consumptions.audioUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedAudioTokens: Double = limits.audio_tokens.map(ttokens => consumptions.audioTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedVideoUsd: Double = limits.video_usd.map(tusd => consumptions.videoUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedVideoTokens: Double = limits.video_tokens.map(ttokens => consumptions.videoTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedEmbeddingUsd: Double = limits.embedding_usd.map(tusd => consumptions.embeddingUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedEmbeddingTokens: Double = limits.embedding_tokens.map(ttokens => consumptions.embeddingTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedModerationUsd: Double = limits.moderation_usd.map(tusd => consumptions.moderationUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedModerationTokens: Double = limits.moderation_tokens.map(ttokens => consumptions.moderationTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
           val maxPercentage = actionOnExceed.alertOnAlmostExceedPercentage.toDouble
           if (actionOnExceed.alertOnAlmostExceed && (percentageConsumedTotalUsd > maxPercentage || percentageConsumedTotalTokens > maxPercentage || percentageConsumedInferenceUsd > maxPercentage || percentageConsumedInferenceTokens > maxPercentage || percentageConsumedImageUsd > maxPercentage || percentageConsumedImageTokens > maxPercentage || percentageConsumedAudioUsd > maxPercentage || percentageConsumedAudioTokens > maxPercentage || percentageConsumedVideoUsd > maxPercentage || percentageConsumedVideoTokens > maxPercentage || percentageConsumedEmbeddingUsd > maxPercentage || percentageConsumedEmbeddingTokens > maxPercentage || percentageConsumedModerationUsd > maxPercentage || percentageConsumedModerationTokens > maxPercentage)) {
              AlertEvent.generic("AiBudgetAlmostExceeded", "otoroshi")(Json.obj(
               "budget" -> json,
-              "consumption" -> metrics.json,
+              "consumption" -> consumptions.json,
               "percentages" -> Json.obj(
                 "total_usd" -> percentageConsumedTotalUsd,
                 "total_tokens" -> percentageConsumedTotalTokens,
@@ -947,7 +982,7 @@ case class AiBudget(
               )
             )).toAnalytics()
           }
-          true
+          (true, consumptions.some)
         }
       }
     }
@@ -1109,7 +1144,7 @@ object AiBudgetsDataStore {
         //"attrs" -> attrs.json
       )
       ext.datastores.budgetsDataStore.findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { budgets =>
-        budgets.filterAsync(_.isNotWithinBudget()).flatMap { budgets =>
+        budgets.filterAsync(_.isNotWithinBudget(attrs)).flatMap { budgets =>
           if (budgets.isEmpty) {
             inBudget
           } else {
@@ -1179,7 +1214,7 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
         )
         findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { budgets =>
           budgets.foreachAsync { budget =>
-            budget.isWithinBudget().map { withinBudget =>
+            budget.isWithinBudget(attrs).map { withinBudget =>
               if (withinBudget) {
                 usageKind.updateUsage(budget, cost, tokens, attrs)
               }

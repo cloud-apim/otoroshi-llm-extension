@@ -3,6 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsOutput, ImpactsOutput}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions}
 import otoroshi.env.Env
 import otoroshi.gateway.Errors.messages
 import otoroshi.security.IdGenerator
@@ -566,7 +567,14 @@ case class ChatResponseCache(status: ChatResponseCacheStatus, key: String, ttl: 
   )
 }
 
-case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage: ChatResponseMetadataUsage, cache: Option[ChatResponseCache], impacts: Option[ImpactsOutput] = None, costs: Option[CostsOutput] = None) {
+case class ChatResponseMetadata(
+  rateLimit: ChatResponseMetadataRateLimit,
+  usage: ChatResponseMetadataUsage,
+  cache: Option[ChatResponseCache],
+  impacts: Option[ImpactsOutput] = None,
+  costs: Option[CostsOutput] = None,
+  budget: Option[(AiBudgetConsumptions, AiBudget)] = None,
+) {
   def cacheHeaders: Map[String, String] = cache match {
     case None => Map.empty
     case Some(cache) => cache.toHeaders()
@@ -580,6 +588,8 @@ case class ChatResponseMetadata(rateLimit: ChatResponseMetadataRateLimit, usage:
     case(obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
   }.applyOnWithOpt(costs) {
     case(obj, costs) => obj ++ Json.obj("costs" -> costs.json)
+  }.applyOnWithOpt(budget) {
+    case(obj, budget) => obj ++ Json.obj("budget" -> budget._1.jsonWithRemaining(budget._2))
   }
 }
 
@@ -588,7 +598,9 @@ object ChatResponseMetadata {
     ChatResponseMetadataRateLimit.empty,
     ChatResponseMetadataUsage.empty,
     None,
-    None
+    None,
+    None,
+    None,
   )
 }
 
@@ -653,7 +665,7 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
   )
 }
 
-case class ChatResponseChunk(id: String, created: Long, model: String, choices: Seq[ChatResponseChunkChoice], costs: Option[CostsOutput] = None, impacts: Option[ImpactsOutput] = None, usage: Option[ChatResponseMetadataUsage] = None) {
+case class ChatResponseChunk(id: String, created: Long, model: String, choices: Seq[ChatResponseChunkChoice], costs: Option[CostsOutput] = None, impacts: Option[ImpactsOutput] = None, budget: Option[(AiBudgetConsumptions, AiBudget)] = None, usage: Option[ChatResponseMetadataUsage] = None) {
   def json(env: Env): JsValue = Json.obj(
     "id" -> id,
     "created" -> created,
@@ -679,6 +691,8 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
     case (o, costs) => o ++ Json.obj("costs" -> costs.json)
   }.applyOnWithOpt(impacts) {
     case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(budget) {
+    case(obj, budget) => obj ++ Json.obj("budget" -> budget._1.jsonWithRemaining(budget._2))
   }
   def openaiCompletionJson(env: Env): JsValue = Json.obj(
     "id" -> id,
@@ -693,6 +707,8 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
     case (o, costs) => o ++ Json.obj("costs" -> costs.json)
   }.applyOnWithOpt(impacts) {
     case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(budget) {
+    case(obj, budget) => obj ++ Json.obj("budget" -> budget._1.jsonWithRemaining(budget._2))
   }
   def eventSource(env: Env): ByteString = s"data: ${json(env).stringify}\n\n".byteString
   def openaiEventSource(env: Env): ByteString = s"data: ${openaiJson(env).stringify}\n\n".byteString
