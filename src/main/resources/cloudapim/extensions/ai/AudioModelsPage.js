@@ -34,6 +34,14 @@ class AudioModelsPage extends Component {
         ], i => i.label)
       }
     },
+    'models.include': {
+      type: 'array',
+      props: { label: 'Include models', placeholder: 'model name', suffix: 'regex' },
+    },
+    'models.exclude': {
+      type: 'array',
+      props: { label: 'Exclude models', placeholder: 'model name', suffix: 'regex' },
+    },
     mode: {
       'type': 'select',
       props: {
@@ -143,7 +151,9 @@ class AudioModelsPage extends Component {
         '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider']
     }
     return [
-      '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config']
+      '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config', '>>>Models restriction settings',
+        'models.include',
+        'models.exclude',]
   };
 
   componentDidMount() {

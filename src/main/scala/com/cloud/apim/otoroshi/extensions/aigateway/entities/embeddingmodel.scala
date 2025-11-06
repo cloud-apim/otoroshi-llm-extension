@@ -26,6 +26,7 @@ case class EmbeddingModel(
   metadata: Map[String, String],
   provider: String,
   config: JsObject,
+  models: ModelSettings = ModelSettings.empty,
 ) extends EntityLocationSupport {
   override def internalId: String               = id
   override def json: JsValue                    = EmbeddingModel.format.writes(this)
@@ -120,6 +121,7 @@ object EmbeddingModel {
       "tags"             -> JsArray(o.tags.map(JsString.apply)),
       "provider"         -> o.provider,
       "config"           -> o.config,
+      "models"           -> o.models.json
     )
     override def reads(json: JsValue): JsResult[EmbeddingModel] = Try {
       EmbeddingModel(
@@ -131,6 +133,7 @@ object EmbeddingModel {
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         provider = (json \ "provider").as[String],
         config = (json \ "config").asOpt[JsObject].getOrElse(Json.obj()),
+        models = ModelSettings.format.reads((json \ "models").asOpt[JsObject].getOrElse(Json.obj())).getOrElse(ModelSettings.empty)
       )
     } match {
       case Failure(ex)    => JsError(ex.getMessage)

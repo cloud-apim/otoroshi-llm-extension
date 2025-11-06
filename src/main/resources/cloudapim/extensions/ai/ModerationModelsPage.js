@@ -22,6 +22,14 @@ class ModerationModelsPage extends Component {
             type: 'array',
             props: {label: 'Tags'},
         },
+        'models.include': {
+            type: 'array',
+            props: { label: 'Include models', placeholder: 'model name', suffix: 'regex' },
+        },
+        'models.exclude': {
+            type: 'array',
+            props: { label: 'Exclude models', placeholder: 'model name', suffix: 'regex' },
+        },
         provider: {
             'type': 'select',
             props: {
@@ -53,7 +61,9 @@ class ModerationModelsPage extends Component {
     ];
 
     formFlow = [
-        '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config'];
+        '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config', '>>>Models restriction settings',
+        'models.include',
+        'models.exclude',];
 
     componentDidMount() {
         this.props.setTitle(`Moderation model`);

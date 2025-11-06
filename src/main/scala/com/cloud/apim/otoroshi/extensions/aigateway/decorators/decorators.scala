@@ -47,6 +47,7 @@ trait DecoratorChatClient extends ChatClient {
 object EmbeddingModelClientDecorators {
 
   val possibleDecorators: Seq[Function[(EmbeddingModel, EmbeddingModelClient, Env), EmbeddingModelClient]] = Seq(
+    EmbeddingModelClientWithModels.applyIfPossible,
     EmbeddingModelClientWithAuditing.applyIfPossible,
   )
 
@@ -66,6 +67,7 @@ trait DecoratorEmbeddingModelClient extends EmbeddingModelClient {
 
 object AudioModelClientDecorators {
   val possibleDecorators: Seq[Function[(AudioModel, AudioModelClient, Env), AudioModelClient]] = Seq(
+    AudioModelClientWithModels.applyIfPossible,
     AudioModelClientWithAuditing.applyIfPossible,
   )
 
@@ -90,6 +92,7 @@ trait DecoratorAudioModelClient extends AudioModelClient {
 
 object ImageModelClientDecorators {
   val possibleDecorators: Seq[Function[(ImageModel, ImageModelClient, Env), ImageModelClient]] = Seq(
+    ImageModelClientWithModels.applyIfPossible,
     ImageModelClientWithAuditing.applyIfPossible,
   )
 
@@ -115,6 +118,7 @@ trait DecoratorModerationModelClient extends ModerationModelClient {
 
 object ModerationModelClientDecorators {
   val possibleDecorators: Seq[Function[(ModerationModel, ModerationModelClient, Env), ModerationModelClient]] = Seq(
+    ModerationModelClientWithModels.applyIfPossible,
     ModerationModelClientWithAuditing.applyIfPossible,
   )
 
@@ -133,6 +137,7 @@ trait DecoratorVideoModelClient extends VideoModelClient {
 
 object VideosGenModelClientDecorators {
   val possibleDecorators: Seq[Function[(VideoModel, VideoModelClient, Env), VideoModelClient]] = Seq(
+    VideoModelClientWithModels.applyIfPossible,
     VideoModelClientWithAuditing.applyIfPossible,
   )
 
