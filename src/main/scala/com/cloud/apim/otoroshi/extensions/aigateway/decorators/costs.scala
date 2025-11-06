@@ -123,7 +123,6 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
     models.get(s"${provider}-${modelName}") match {
       case None => Left("model not found")
       case Some(model) => {
-        // println(s"using cost model ${model.litellm_provider} - ${model.nameWithoutProvider}")
         Right(CostsOutput(
           inputCost = inputTokens * model.input_cost_per_token,
           outputCost = outputTokens * model.output_cost_per_token,
@@ -224,7 +223,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
                         finishReason = "stop".some,
                       )),
                       costs = costs.some,
-                      budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.budgetsEnabled || budgetInRequest),
+                      budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest),
                     ).some)
                 }
               }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right
@@ -238,6 +237,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
   }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val budgetInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_budget")).contains("true")
     getProvider() match {
       case None => chatClient.call(prompt, attrs, originalBody) // unsupported provider
       case Some(provider) => {
@@ -253,15 +253,15 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
               outputTokens = usage.generationTokens,
               reasoningTokens = usage.reasoningTokens
             ) match {
-              case Left(err) => Right(resp)
+              case Left(err) =>
+                Right(resp.copy(metadata = resp.metadata.copy(budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest))))
               case Right(costs) => {
                 attrs.put(ChatClientWithCostsTracking.key -> costs)
                 val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_costs")).contains("true")
-                val budgetInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_budget")).contains("true")
                 if (ext.costsTrackingSettings.embedCostsTrackingInResponses || enableInRequest) {
-                  Right(resp.copy(metadata = resp.metadata.copy(costs = costs.some, budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.budgetsEnabled || budgetInRequest))))
+                  Right(resp.copy(metadata = resp.metadata.copy(costs = costs.some, budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest))))
                 } else {
-                  Right(resp.copy(metadata = resp.metadata.copy(budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.budgetsEnabled || budgetInRequest))))
+                  Right(resp.copy(metadata = resp.metadata.copy(budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest))))
                 }
               }
             }
@@ -299,9 +299,9 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
                 val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_costs")).contains("true")
                 val budgetInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_budget")).contains("true")
                 if (ext.costsTrackingSettings.embedCostsTrackingInResponses || enableInRequest) {
-                  Right(resp.copy(metadata = resp.metadata.copy(costs = costs.some, budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.budgetsEnabled || budgetInRequest))))
+                  Right(resp.copy(metadata = resp.metadata.copy(costs = costs.some, budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest))))
                 } else {
-                  Right(resp.copy(metadata = resp.metadata.copy(budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.budgetsEnabled || budgetInRequest))))
+                  Right(resp.copy(metadata = resp.metadata.copy(budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest))))
                 }
               }
             }

@@ -307,6 +307,18 @@ class BudgetsPage extends Component {
         ],
       },
     },
+    'action_on_exceed.alert_on_exceed': {
+      type: 'bool',
+      props: {label: 'Alert on exceed' },
+    },
+    'action_on_exceed.alert_on_almost_exceed': {
+      type: 'bool',
+      props: {label: 'Alert on almost exceed' },
+    },
+    'action_on_exceed.alert_on_almost_exceed_percentage': {
+      type: 'number',
+      props: {label: 'Alert on almost exceed threshold', suffix: '%' },
+    },
   });
 
   columns = [
@@ -386,6 +398,9 @@ class BudgetsPage extends Component {
       'scope.rules',
       '>>>Action on exceed',
       'action_on_exceed.mode',
+      'action_on_exceed.alert_on_exceed',
+      'action_on_exceed.alert_on_almost_exceed',
+      'action_on_exceed.alert_on_almost_exceed_percentage',
     ]
   };
 

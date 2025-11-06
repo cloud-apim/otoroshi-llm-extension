@@ -190,6 +190,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     .build[String, Seq[String]]()
 
   lazy val budgetsEnabled = configuration.getOptional[Boolean]("budgets.enabled").getOrElse(true)
+  lazy val embedBudgetsInResponses = budgetsEnabled && configuration.getOptional[Boolean]("budgets.embed-budgets-in-responses").getOrElse(true)
 
   override def id: AdminExtensionId = AiExtension.id
 

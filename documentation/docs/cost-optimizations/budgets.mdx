@@ -1,0 +1,191 @@
+---
+sidebar_position: 2
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# 💰 Budgets Management
+
+Budgets management for LLMs with a gateway means monitoring and managing the costs of using different LLMs through an API gateway.
+
+Our Otoroshi LLM extension helps you optimize usage, control your budget, and improve cost efficiency across models. 
+
+### Configuration
+
+```hocon
+budgets {
+  enabled = true
+  enabled = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_BUDGETS_ENABLED}
+  embed-budgets-in-responses = false
+  embed-budgets-in-responses = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_BUDGETS_EMBED_BUGETS_IN_RESPONSES}
+}
+```
+
+Once it's enabled, you can create budgets from the UI or the admin. API and enforce budget limits to any consumer
+
+### Budgets
+
+a  budget is defined between a start date and an end date. 
+
+Limits are applied for a duration that is renewed between the start and end date. Limits can be expressed in USD or in tokens.
+
+![](/img/budgets-duration.png)
+
+A budget can defined limits that can be global or per usage (inference, image, audio, video, embedding, moderation)
+
+![](/img/budgets-limits.png)
+
+![](/img/budgets-consumptions.png)
+
+A budget is defined for a scope based on pretty much whatever you want (apikey, api group, user, provider, model, request, etc). You can reference a budget in entity metadata using `ai_budget_ref` (apikey, api group, user, provider, auth. module)
+
+![](/img/budgets-scope.png)
+
+A budget can block requests on exceeded limits or just emit alerts
+
+![](/img/budgets-action-on-exceed.png)
+
+### Admin API 
+
+in addition to the classic admin API endpoints for the `ai-gateway.extensions.cloud-apim.com/AiBudget` entity, you have
+
+* GET /api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption
+* POST /api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_reset
+
+the first one will return a response like:
+
+```json
+{
+  "consumed_total_usd": 0.00188655,
+  "consumed_total_tokens": 8036,
+  "consumed_inference_usd": 0.00188655,
+  "consumed_inference_tokens": 8036,
+  "consumed_image_usd": 0,
+  "consumed_image_tokens": 0,
+  "consumed_audio_usd": 0,
+  "consumed_audio_tokens": 0,
+  "consumed_video_usd": 0,
+  "consumed_video_tokens": 0,
+  "consumed_embedding_usd": 0,
+  "consumed_embedding_tokens": 0,
+  "consumed_moderation_usd": 0,
+  "consumed_moderation_tokens": 0,
+  "remaining_total_usd": 199.99811345,
+  "remaining_total_tokens": 9991964,
+  "remaining_inference_usd": 0,
+  "remaining_inference_tokens": 0,
+  "remaining_image_usd": 0,
+  "remaining_image_tokens": 0,
+  "remaining_audio_usd": 0,
+  "remaining_audio_tokens": 0,
+  "remaining_video_usd": 0,
+  "remaining_video_tokens": 0,
+  "remaining_embedding_usd": 0,
+  "remaining_embedding_tokens": 0,
+  "remaining_moderation_usd": 0,
+  "remaining_moderation_tokens": 0,
+  "allowed_total_usd": 200,
+  "allowed_total_tokens": 10000000,
+  "allowed_inference_usd": null,
+  "allowed_inference_tokens": null,
+  "allowed_image_usd": null,
+  "allowed_image_tokens": null,
+  "allowed_audio_usd": null,
+  "allowed_audio_tokens": null,
+  "allowed_video_usd": null,
+  "allowed_video_tokens": null,
+  "allowed_embedding_usd": null,
+  "allowed_embedding_tokens": null,
+  "allowed_moderation_usd": null,
+  "allowed_moderation_tokens": null
+}
+```
+
+### Embed in responses
+
+```sh
+curl --request POST \
+  --url 'http://proxy.oto.tools:8080/v1/chat/completions?embed_budget=true' \
+  --header 'content-type: application/json' \
+  --data '{
+  "model": "anthropic/claude-sonnet-4-5-20250929",
+  "stream": false,
+  "messages": [
+    {
+      "role": "user",
+      "content": "tell me a joke ?"
+    }
+  ]
+}'
+
+{
+  "id": "chatcmpl-9ODWHjtFVS5qzpU1nc79TprfRhZElq0e",
+  "object": "chat.completion",
+  "created": 1762441013,
+  "model": "claude-sonnet-4-5-20250929",
+  "system_fingerprint": "fp-tEQXbmpSPELEh3fYd5Rs9Jf4HIaI3E6s",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Why don't scientists trust atoms?\n\nBecause they make up everything! 😄"
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 12,
+    "completion_tokens": 20,
+    "total_tokens": 32,
+    "completion_tokens_details": {
+      "reasoning_tokens": -1
+    }
+  },
+  "budget": {
+    "consumed_total_usd": 0.00394755,
+    "consumed_total_tokens": 8231,
+    "consumed_inference_usd": 0.00394755,
+    "consumed_inference_tokens": 8231,
+    "consumed_image_usd": 0,
+    "consumed_image_tokens": 0,
+    "consumed_audio_usd": 0,
+    "consumed_audio_tokens": 0,
+    "consumed_video_usd": 0,
+    "consumed_video_tokens": 0,
+    "consumed_embedding_usd": 0,
+    "consumed_embedding_tokens": 0,
+    "consumed_moderation_usd": 0,
+    "consumed_moderation_tokens": 0,
+    "remaining_total_usd": 199.99605245,
+    "remaining_total_tokens": 9991769,
+    "remaining_inference_usd": 0,
+    "remaining_inference_tokens": 0,
+    "remaining_image_usd": 0,
+    "remaining_image_tokens": 0,
+    "remaining_audio_usd": 0,
+    "remaining_audio_tokens": 0,
+    "remaining_video_usd": 0,
+    "remaining_video_tokens": 0,
+    "remaining_embedding_usd": 0,
+    "remaining_embedding_tokens": 0,
+    "remaining_moderation_usd": 0,
+    "remaining_moderation_tokens": 0,
+    "allowed_total_usd": 200,
+    "allowed_total_tokens": 10000000,
+    "allowed_inference_usd": null,
+    "allowed_inference_tokens": null,
+    "allowed_image_usd": null,
+    "allowed_image_tokens": null,
+    "allowed_audio_usd": null,
+    "allowed_audio_tokens": null,
+    "allowed_video_usd": null,
+    "allowed_video_tokens": null,
+    "allowed_embedding_usd": null,
+    "allowed_embedding_tokens": null,
+    "allowed_moderation_usd": null,
+    "allowed_moderation_tokens": null
+  }
+}
+```

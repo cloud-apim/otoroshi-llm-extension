@@ -510,6 +510,8 @@ case class ChatResponse(
       case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
     }.applyOnWithOpt(metadata.costs) {
       case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+    }.applyOnWithOpt(metadata.budget) {
+      case (o, budget) => o ++ Json.obj("budget" -> budget._1.jsonWithRemaining(budget._2))
     }
   }
   def openaiCompletionJson(model: String, echo: Boolean, prompt: String, env: Env): JsValue = {
@@ -526,6 +528,8 @@ case class ChatResponse(
       case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
     }.applyOnWithOpt(metadata.costs) {
       case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+    }.applyOnWithOpt(metadata.budget) {
+      case (o, budget) => o ++ Json.obj("budget" -> budget._1.jsonWithRemaining(budget._2))
     }
   }
   def toSource(model: String): Source[ChatResponseChunk, _] = {
