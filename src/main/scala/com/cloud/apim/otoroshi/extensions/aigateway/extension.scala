@@ -536,7 +536,7 @@ class AiExtension(val env: Env) extends AdminExtension {
                       provider.getChatClient() match {
                         case None => Results.Ok(Json.obj("done" -> false, "error" -> "no client")).vfuture
                         case Some(client) => {
-                          client.listModels(req.getQueryString("raw").contains("true")) map {
+                          client.listModels(req.getQueryString("raw").contains("true"), TypedMap.empty) map {
                             case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> "error fetching models", "error_details" -> err))
                             case Right(models) => {
                               modelsCache.put(key, models)

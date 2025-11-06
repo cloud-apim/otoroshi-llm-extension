@@ -41,7 +41,7 @@ class JlamaChatClient(options: JlamaChatClientOptions, id: String) extends ChatC
   lazy val canExecuteJlama: Boolean = JlamaChatClient.canExecuteJlama
   lazy val errorMsg: String = JlamaChatClient.errorMsg
 
-  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     if (canExecuteJlama) {
       JlamaChatClient.models.keys.toList.rightf
     } else {

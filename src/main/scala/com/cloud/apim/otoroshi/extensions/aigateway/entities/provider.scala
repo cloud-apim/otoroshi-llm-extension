@@ -141,6 +141,13 @@ object ModelSettings {
       "exclude" -> o.exclude,
     )
   }
+  def fromEntity(ent: Option[Entity]): Option[ModelSettings] = {
+    ent.map { entity =>
+      val include = entity.theMetadata.get("ai_models_include").map(meta => meta.split(",").map(_.trim).toSeq).getOrElse(Seq.empty)
+      val exclude = entity.theMetadata.get("ai_models_exclude").map(meta => meta.split(",").map(_.trim).toSeq).getOrElse(Seq.empty)
+      ModelSettings(include, exclude)
+    }
+  }
 }
 
 case class AiProvider(
