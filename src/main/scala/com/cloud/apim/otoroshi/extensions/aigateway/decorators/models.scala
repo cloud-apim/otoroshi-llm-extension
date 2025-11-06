@@ -12,11 +12,11 @@ import scala.concurrent.{ExecutionContext, Future}
 
 object ChatClientWithModelConstraints {
   def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
-    if (tuple._1.models.isDefined) {
+    //if (tuple._1.models.isDefined) {
       new ChatClientWithModelConstraints(tuple._1, tuple._2)
-    } else {
-      tuple._2
-    }
+    //} else {
+    //  tuple._2
+    //}
   }
 }
 
@@ -26,9 +26,7 @@ class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClien
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
-      case Some(model) if originalProvider.models.matches(model) => chatClient.call(prompt, attrs, originalBody)
-      case Some(model) if apikeyModels.isDefined && apikeyModels.exists(_.matches(model)) => chatClient.call(prompt, attrs, originalBody)
-      case Some(model) if userModels.isDefined && userModels.exists(_.matches(model)) => chatClient.call(prompt, attrs, originalBody)
+      case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.call(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -37,9 +35,7 @@ class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClien
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
-      case Some(model) if originalProvider.models.matches(model) => chatClient.stream(prompt, attrs, originalBody)
-      case Some(model) if apikeyModels.isDefined && apikeyModels.exists(_.matches(model)) => chatClient.stream(prompt, attrs, originalBody)
-      case Some(model) if userModels.isDefined && userModels.exists(_.matches(model)) => chatClient.stream(prompt, attrs, originalBody)
+      case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.stream(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -48,9 +44,7 @@ class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClien
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
-      case Some(model) if originalProvider.models.matches(model) => chatClient.completion(prompt, attrs, originalBody)
-      case Some(model) if apikeyModels.isDefined && apikeyModels.exists(_.matches(model)) => chatClient.completion(prompt, attrs, originalBody)
-      case Some(model) if userModels.isDefined && userModels.exists(_.matches(model)) => chatClient.completion(prompt, attrs, originalBody)
+      case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.completion(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -59,9 +53,7 @@ class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClien
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
-      case Some(model) if originalProvider.models.matches(model) => chatClient.completionStream(prompt, attrs, originalBody)
-      case Some(model) if apikeyModels.isDefined && apikeyModels.exists(_.matches(model)) => chatClient.completionStream(prompt, attrs, originalBody)
-      case Some(model) if userModels.isDefined && userModels.exists(_.matches(model)) => chatClient.completionStream(prompt, attrs, originalBody)
+      case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.completionStream(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
