@@ -13,7 +13,7 @@ object LlmFunctions {
     val ext = env.adminExtensions.extension[AiExtension].get
     functionIds.map { fid =>
       val function = ext.states.toolFunction(fid).get
-      (fid, function.toolId)
+      (function.toolId, fid)
     }.toMap
   }
 
