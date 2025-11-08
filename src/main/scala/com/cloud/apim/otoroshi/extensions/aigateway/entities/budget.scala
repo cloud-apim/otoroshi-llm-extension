@@ -397,6 +397,7 @@ case class AiBudgetScope(
   groups: Seq[String],
   providers: Seq[String],
   models: Seq[String],
+  alwaysApplyRules: Boolean,
   rules: Seq[JsonPathValidator],
   rulesMatchMode: AiBudgetScopeMode,
 ) {
@@ -416,6 +417,7 @@ object AiBudgetScope {
       "groups" -> o.groups,
       "providers" -> o.providers,
       "models" -> o.models,
+      "always_apply_rules" -> o.alwaysApplyRules,
       "rules" -> o.rules.map(JsonPathValidator.format.writes),
       "rules_match_mode" -> o.rulesMatchMode.json
     )
@@ -431,6 +433,7 @@ object AiBudgetScope {
         groups = (json \ "groups").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         providers = (json \ "providers").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         models = (json \ "models").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
+        alwaysApplyRules = (json \ "always_apply_rules").asOpt[Boolean].getOrElse(false),
         rules = (json \ "rules").asOpt[Seq[JsObject]].getOrElse(Seq.empty[JsObject]).flatMap(obj => JsonPathValidator.format.reads(obj).asOpt),
         rulesMatchMode = json.select("rules_match_mode").asOptString.map(s => AiBudgetScopeMode.fromString(s)).getOrElse(AiBudgetScopeMode.All),
       )
@@ -870,7 +873,17 @@ case class AiBudget(
         )
     }
   }
-    
+
+  def matchesRules(ctx: JsValue)(implicit env: Env): Boolean = {
+    if (scope.rules.isEmpty) {
+      false
+    } else {
+      scope.rulesMatchMode match {
+        case AiBudgetScopeMode.All => scope.rules.forall(_.validate(ctx))
+        case AiBudgetScopeMode.Any => scope.rules.exists(_.validate(ctx))
+      }
+    }
+  }
 
   def matches(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String])(implicit env: Env): Boolean = {
     if (!enabled) {
@@ -890,14 +903,7 @@ case class AiBudget(
     } else if (scope.models.nonEmpty && model.nonEmpty && scope.models.exists(id => RegexPool.regex(id).matches(model.get))) {
       true
     } else {
-      if (scope.rules.isEmpty) {
-        false
-      } else {
-        scope.rulesMatchMode match {
-          case AiBudgetScopeMode.All => scope.rules.forall(_.validate(ctx))
-          case AiBudgetScopeMode.Any => scope.rules.exists(_.validate(ctx))
-        }
-      }
+      matchesRules(ctx)
     }
   }
 
@@ -1089,7 +1095,8 @@ object AiBudget {
               users = Seq.empty, 
               groups = Seq.empty, 
               providers = Seq.empty, 
-              models = Seq.empty, 
+              models = Seq.empty,
+              alwaysApplyRules = false,
               rules = Seq.empty, 
               rulesMatchMode = AiBudgetScopeMode.All
             ),
@@ -1248,6 +1255,10 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
         ext.states
           .allBudgets()
           .filter(b => b.enabled && b.startAt.isBeforeNow && b.endAt.isAfterNow)
+          .filter {
+            case budget if budget.scope.alwaysApplyRules => budget.matchesRules(ctx)
+            case _ => true
+          }
           .filter {
             case budget if budget.scope.extractFromProviderMeta && (providerRef.contains(budget.id) || providerRef.contains(budget.slugName)) => true
             case budget if budget.scope.extractFromApikeyMeta && (apikeyRef.contains(budget.id) || apikeyRef.contains(budget.slugName)) => true
