@@ -1131,7 +1131,7 @@ object AiBudgetsDataStore {
       val provider = attrs.get(ChatClientWithAuding.ProviderKey)
       val model = attrs.get(ChatClientWithAuding.ModelKey)
       val ctx = Json.obj(
-        "foo" -> "bar",
+        "match" -> "all",
         "snowflake" -> snowflake,
         "apikey" -> apikey.map(_.lightJson).getOrElse(JsNull).as[JsValue],
         "user" -> user.map(_.lightJson).getOrElse(JsNull).as[JsValue],
@@ -1200,7 +1200,7 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
         val provider = attrs.get(ChatClientWithAuding.ProviderKey)
         val model = attrs.get(ChatClientWithAuding.ModelKey)
         val ctx = Json.obj(
-          "foo" -> "bar",
+          "match" -> "all",
           "snowflake" -> snowflake,
           "apikey" -> apikey.map(_.lightJson).getOrElse(JsNull).as[JsValue],
           "user" -> user.map(_.lightJson).getOrElse(JsNull).as[JsValue],
