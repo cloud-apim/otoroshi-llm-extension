@@ -1256,7 +1256,10 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
           .allBudgets()
           .filter(b => b.enabled && b.startAt.isBeforeNow && b.endAt.isAfterNow)
           .filter {
-            case budget if budget.scope.alwaysApplyRules => budget.matchesRules(ctx)
+            case budget if budget.scope.alwaysApplyRules =>
+              val res = budget.matchesRules(ctx)
+              if (ext.logger.isDebugEnabled) ext.logger.debug(s"apply rules first: ${res}")
+              res
             case _ => true
           }
           .filter {

@@ -280,6 +280,10 @@ class BudgetsPage extends Component {
       type: 'array',
       props: {label: 'Models', 'suffix': 'regex'},
     },
+    'scope.always_apply_rules': {
+      type: 'bool',
+      props: {label: 'Always apply rules first'},
+    },
     'scope.rules': {
       type: 'array',
       props: {
@@ -394,6 +398,7 @@ class BudgetsPage extends Component {
       'scope.groups',
       'scope.providers',
       'scope.models',
+      'scope.always_apply_rules',
       'scope.rules_match_mode',
       'scope.rules',
       '>>>Action on exceed',
@@ -458,6 +463,7 @@ class BudgetsPage extends Component {
             "groups": [],
             "providers": [],
             "models": [],
+            "always_apply_rules": false,
             "rules" : [ ],
             "rules_match_mode" : "all"
           },
