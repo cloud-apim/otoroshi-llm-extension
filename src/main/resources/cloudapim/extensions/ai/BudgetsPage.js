@@ -282,7 +282,10 @@ class BudgetsPage extends Component {
     },
     'scope.always_apply_rules': {
       type: 'bool',
-      props: {label: 'Always apply rules first'},
+      props: {
+        label: 'Always apply rules first',
+        help: 'if not enabled, the budget will be applied if any predicate of the scope is true and will evaluate rules after everything else. But this flag let you always apply them and then try to apply all the other scope predicates'
+      },
     },
     'scope.rules': {
       type: 'array',
