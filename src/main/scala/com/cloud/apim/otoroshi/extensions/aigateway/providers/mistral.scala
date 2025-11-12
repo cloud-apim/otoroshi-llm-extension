@@ -70,7 +70,10 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, callCount: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, MistralAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, MistralAiApiResponse]] = {
+    if (currentCallCounter < maxCalls) {
+      return call(method, path, body)
+    }
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).map(_.map(_.toOpenAi)).flatMap {
@@ -86,7 +89,7 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, callCount + 1)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
                 }
             }
           }
@@ -131,7 +134,10 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
       })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, callCount: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+    if (currentCallCounter < maxCalls) {
+      return stream(method, path, body)
+    }
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
       stream(method, path, body).flatMap {
@@ -175,7 +181,7 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, callCount + 1)
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
                 }
               Source.future(a).flatMapConcat {
                 case Left(err) => Source.failed(new Throwable(err.stringify))
@@ -210,6 +216,7 @@ object MistralAiChatClientOptions {
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
       mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
+      maxFunctionCalls = json.select("max_function_calls").asOpt[Int].getOrElse(10),
     )
   }
 }
@@ -228,6 +235,7 @@ case class MistralAiChatClientOptions(
   allowConfigOverride: Boolean = true,
   mcpIncludeFunctions: Seq[String] = Seq.empty,
   mcpExcludeFunctions: Seq[String] = Seq.empty,
+  maxFunctionCalls: Int = 10,
 ) extends ChatOptions {
 
   lazy val wasmToolsNoInline: Seq[String] = wasmTools.filterNot(_.startsWith("__inline_"))
@@ -246,13 +254,14 @@ case class MistralAiChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
     "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
+    "max_function_calls" -> maxFunctionCalls,
   ).applyOnWithOpt(tool_choice) {
     case (obj, tc) => obj ++ Json.obj("tool_choice" -> tc)
   }.applyOnWithOpt(tools) {
     case (obj, tc) => obj ++ Json.obj("tools" -> tc)
   }
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
 class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions, id: String) extends ChatClient {

@@ -187,11 +187,10 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
     })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxFunctionCalls: Int, functionCalls: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
     // TODO: accumulate consumptions ???
-    println(s"callWithToolSupport: ${functionCalls}")
-    if (functionCalls > maxFunctionCalls) {
-      return Json.obj("error" -> "too much looping").leftf
+    if (currentCallCounter < maxCalls) {
+      return call(method, path, body)
     }
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
@@ -207,7 +206,7 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxFunctionCalls, functionCalls + 1)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
                 }
             }
           }
@@ -256,7 +255,10 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
       })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxFunctionCalls: Int, functionCalls: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+    if (currentCallCounter < maxCalls) {
+      return stream(method, path, body)
+    }
     val tools_arr = body.get.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
     val tools = tools_arr.collect {
       case tool if tool.select("type").asOptString.contains("function") => tool.select("function").asObject
@@ -337,7 +339,7 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
                     }
                   }
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxFunctionCalls, functionCalls + 1)
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
                 }
               Source.future(a).flatMapConcat {
                 case Left(err) => Source.failed(new Throwable(err.stringify))
@@ -376,6 +378,7 @@ object OpenAiChatClientOptions {
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
       mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
+      maxFunctionCalls = json.select("max_function_calls").asOpt[Int].getOrElse(10),
     )
   }
 }
@@ -403,6 +406,7 @@ case class OpenAiChatClientOptions(
   allowConfigOverride: Boolean = true,
   mcpIncludeFunctions: Seq[String] = Seq.empty,
   mcpExcludeFunctions: Seq[String] = Seq.empty,
+  maxFunctionCalls: Int = 10,
 ) extends ChatOptions {
 
   lazy val wasmToolsNoInline: Seq[String] = wasmTools.filterNot(_.startsWith("__inline_"))
@@ -434,9 +438,10 @@ case class OpenAiChatClientOptions(
     "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
+    "max_function_calls" -> maxFunctionCalls,
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
 class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String, modelsPath: String = "/models", completion: Boolean = true, accumulateStreamConsumptions: Boolean = false) extends ChatClient {

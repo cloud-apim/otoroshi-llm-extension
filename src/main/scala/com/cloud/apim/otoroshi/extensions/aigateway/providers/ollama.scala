@@ -140,7 +140,10 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxFunctionCalls: Int, functionCalls: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
+    if (currentCallCounter < maxCalls) {
+      return call(method, path, body)
+    }
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
@@ -156,7 +159,7 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxFunctionCalls, functionCalls + 1)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
                 }
             }
           }
@@ -206,6 +209,7 @@ object OllamaAiChatClientOptions {
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
       mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
+      maxFunctionCalls = json.select("max_function_calls").asOpt[Int].getOrElse(10),
     )
   }
 }
@@ -230,6 +234,7 @@ case class OllamaAiChatClientOptions(
    allowConfigOverride: Boolean = true,
    mcpIncludeFunctions: Seq[String] = Seq.empty,
    mcpExcludeFunctions: Seq[String] = Seq.empty,
+   maxFunctionCalls: Int = 10,
 ) extends ChatOptions {
 
   lazy val wasmToolsNoInline: Seq[String] = wasmTools.filterNot(_.startsWith("__inline_"))
@@ -258,9 +263,10 @@ case class OllamaAiChatClientOptions(
     "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
+    "max_function_calls" -> maxFunctionCalls,
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
 class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, id: String) extends ChatClient {
@@ -295,7 +301,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         "stream" -> false,
         "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
         "options" -> mergedOptionsWithoutModel,
-      ) ++ tools), options.mcpConnectors, attrs, nameToFunction)
+      ) ++ tools), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
     } else {
       api.call("POST", "/api/chat", Some(Json.obj(
         "model" -> finalModel,

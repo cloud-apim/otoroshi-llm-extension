@@ -162,7 +162,10 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxFunctionCalls: Int, functionCalls: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
+      if (currentCallCounter < maxCalls) {
+      return call(method, path, body)
+    }
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val fmap: Map[String, String] = body.flatMap(_.select("fmap").asOpt[Map[String, String]]).getOrElse(Map.empty)
@@ -179,7 +182,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxFunctionCalls, functionCalls + 1)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
                 }
             }
           }
@@ -193,7 +196,10 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
     }
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxFunctionCalls: Int, functionCalls: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = {
+    if (currentCallCounter < maxCalls) {
+      return stream(method, path, body)
+    }
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val fmap: Map[String, String] = body.flatMap(_.select("fmap").asOpt[Map[String, String]]).getOrElse(Map.empty)
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
@@ -243,7 +249,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxFunctionCalls, functionCalls + 1)
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
                 }
               Source.future(a).flatMapConcat {
                 case Left(err) => Source.failed(new Throwable(err.stringify))
@@ -279,6 +285,7 @@ object CohereAiChatClientOptions {
       mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
+      maxFunctionCalls = json.select("max_function_calls").asOpt[Int].getOrElse(10),
     )
   }
 }
@@ -300,6 +307,7 @@ case class CohereAiChatClientOptions(
   mcpConnectors: Seq[String] = Seq.empty,
   mcpIncludeFunctions: Seq[String] = Seq.empty,
   mcpExcludeFunctions: Seq[String] = Seq.empty,
+  maxFunctionCalls: Int = 10,
 ) extends ChatOptions {
 
   lazy val wasmToolsNoInline: Seq[String] = wasmTools.filterNot(_.startsWith("__inline_"))
@@ -321,6 +329,7 @@ case class CohereAiChatClientOptions(
     "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
     "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
+    "max_function_calls" -> maxFunctionCalls,
   )
   .applyOnWithOpt(k) {
     case (obj, k) => obj ++ Json.obj("k" -> k)
@@ -329,7 +338,7 @@ case class CohereAiChatClientOptions(
     case (obj, p) => obj ++ Json.obj("p" -> p)
   }
 
-  def jsonForCall: JsObject = optionsCleanup(json - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
 class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, id: String) extends ChatClient {
