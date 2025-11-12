@@ -169,7 +169,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
       }
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String])(implicit ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
@@ -184,7 +184,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
                 }
             }
           }
@@ -197,7 +197,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
     }
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
       raw_stream(method, path, body).flatMap {
@@ -258,7 +258,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction)
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
                 }
               Source.future(a).flatMapConcat {
                 case Left(err) => Source.failed(new Throwable(err.stringify))
@@ -318,6 +318,7 @@ case class AnthropicChatClientOptions(
   mcpConnectors: Seq[String] = Seq.empty,
   mcpIncludeFunctions: Seq[String] = Seq.empty,
   mcpExcludeFunctions: Seq[String] = Seq.empty,
+  
 ) extends ChatOptions {
 
   lazy val wasmToolsNoInline: Seq[String] = wasmTools.filterNot(_.startsWith("__inline_"))
@@ -382,10 +383,11 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
     val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
     val startTime = System.currentTimeMillis()
-    val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
+    val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsAnthropicWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.callWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> messages, "system" -> systemMessages)), options.mcpConnectors, attrs, nameToFunction)
+      api.callWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> messages, "system" -> systemMessages)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
     } else {
       api.call("POST", "/v1/messages", Some(mergedOptions ++ Json.obj("messages" -> messages, "system" -> systemMessages)))
     }
@@ -444,10 +446,11 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
     val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
     val startTime = System.currentTimeMillis()
-    val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
+    val hasToolsInRequest = body.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsAnthropic(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.streamWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> messages, "system" -> systemMessages)), options.mcpConnectors, attrs, nameToFunction)
+      api.streamWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> messages, "system" -> systemMessages)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
     } else {
       api.stream("POST", "/v1/messages", Some(mergedOptions ++ Json.obj("messages" -> messages, "system" -> systemMessages)))
     }

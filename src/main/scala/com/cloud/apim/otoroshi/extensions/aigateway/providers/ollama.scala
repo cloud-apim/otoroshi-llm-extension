@@ -140,7 +140,7 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String])(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxFunctionCalls: Int, functionCalls: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
@@ -156,7 +156,7 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxFunctionCalls, functionCalls + 1)
                 }
             }
           }
@@ -168,8 +168,8 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
     }
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OllamaAiChatResponseChunk, _], WSResponse)]] = {
-    callWithToolSupport(method, path, body, mcpConnectors, attrs, nameToFunction).map {case Left(err) => err.left
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxFunctionCalls: Int, functionCalls: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OllamaAiChatResponseChunk, _], WSResponse)]] = {
+    callWithToolSupport(method, path, body, mcpConnectors, attrs, nameToFunction, maxFunctionCalls, functionCalls).map {case Left(err) => err.left
     case Right(resp) =>
       val source = resp.message.content.get.chunks(5).map { str =>
         OllamaAiChatResponseChunk(resp.body.asObject.deepMerge(Json.obj(
@@ -286,7 +286,8 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     val finalModel: String = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val mergedOptionsWithoutModel = mergedOptions - "model"
     val startTime = System.currentTimeMillis()
-    val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
+    val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
       api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(

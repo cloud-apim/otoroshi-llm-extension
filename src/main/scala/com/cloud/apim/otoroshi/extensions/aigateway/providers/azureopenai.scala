@@ -172,7 +172,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String])(implicit ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxFunctionCalls: Int, maxFunctionCallDepth: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).flatMap {
@@ -188,7 +188,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxFunctionCalls, maxFunctionCallDepth)
                 }
             }
           }
@@ -238,7 +238,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
       })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxFunctionCalls: Int, maxFunctionCallDepth: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
       stream(method, path, body).flatMap {
@@ -282,7 +282,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction)
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxFunctionCalls, maxFunctionCallDepth)
                 }
               Source.future(a)
                 .flatMapConcat {
@@ -402,10 +402,11 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
-    val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
+    val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction)
+      api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
     } else {
       api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
     }
@@ -463,10 +464,11 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
-    val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
+    val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction)
+      api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
     } else {
       api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
     }

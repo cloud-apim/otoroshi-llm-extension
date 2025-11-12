@@ -81,7 +81,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String])(implicit ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, callCount: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       call(method, path, body).map(_.map(_.toOpenAi)).flatMap {
@@ -97,7 +97,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, callCount + 1)
                 }
             }
           }
@@ -141,7 +141,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, callCount: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
       stream(method, path, body).flatMap {
@@ -185,7 +185,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction)
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, callCount + 1)
                 }
               Source.future(a).flatMapConcat {
                 case Left(err) => Source.failed(new Throwable(err.stringify))
@@ -283,10 +283,11 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
-    val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
+    val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.callWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction)
+      api.callWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
     } else {
       api.call("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
     }
@@ -342,10 +343,11 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
-      val callF = if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
+    val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.streamWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction)
+      api.streamWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
     } else {
       api.stream("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
     }

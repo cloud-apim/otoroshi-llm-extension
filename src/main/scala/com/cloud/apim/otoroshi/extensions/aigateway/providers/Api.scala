@@ -17,12 +17,12 @@ trait ApiClient[Resp, Chunk] {
   def supportsCompletion: Boolean
 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]]
-  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String])(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
+  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
     call(method, path, body)
   }
 
   def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[Chunk, _], WSResponse)]]
-  def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[Chunk, _], WSResponse)]] = {
+  def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[Chunk, _], WSResponse)]] = {
     stream(method, path, body)
   }
 }
@@ -34,7 +34,7 @@ trait NoStreamingApiClient[Resp] {
   final def supportsStreaming: Boolean = false
 
   def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]]
-  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String])(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
+  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
     call(method, path, body)
   }
 }
