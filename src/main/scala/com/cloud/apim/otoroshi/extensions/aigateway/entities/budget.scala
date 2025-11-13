@@ -118,7 +118,7 @@ object AiBudgetClusterAgent {
           times = config.worker.retries,
           delay = config.retryDelay,
           factor = config.retryFactor,
-          ctx = "leader-save-workflow-session"
+          ctx = "leader-pushing-budgets-delta"
         ) { tryCount =>
           if (Cluster.logger.isDebugEnabled)
             Cluster.logger.debug(s"Pushing ai budgets deltas to leaders")

@@ -1,42 +1,50 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.http.scaladsl.util.FastFuture
 import akka.stream.Materializer
+import akka.stream.scaladsl.Source
 import akka.util.ByteString
+import otoroshi.cluster.Cluster
 import otoroshi.env.Env
+import otoroshi.gateway.Retry
+import otoroshi.models.ApiKey
+import otoroshi.next.extensions._
 import otoroshi.next.plugins.api._
-import otoroshi.utils.http.RequestImplicits.EnhancedRequestHeader
+import otoroshi.utils.http.Implicits._
+import otoroshi.utils.http.RequestImplicits._
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
+import play.api.libs.ws.WSAuthScheme
 import play.api.mvc._
 
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.Base64
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
-import scala.concurrent.duration.DurationInt
-import scala.concurrent.{ExecutionContext, Future}
+import scala.concurrent._
+import scala.concurrent.duration._
 import scala.util.Random
 
 case class PowConfig(
-                      difficulty: Int = 8,
-                      tokenTtlSeconds: Int = 300,
-                      challengeTtlSeconds: Int = 120,
-                      cookieName: String = "oto_llm__pow",
-                      cookieDomain: Option[String] = None,
-                      cookiePath: String = "/",
-                      cookieSameSite: String = "Lax",
-                      bindIp: Boolean = true,
-                      bindUa: Boolean = true,
-                      secret: String
-                    ) extends NgPluginConfig {
+  difficulty: Int = 8,
+  tokenTtlSeconds: Int = 300,
+  challengeTtlSeconds: Int = 120,
+  cookieName: String = "oto_llm_pow",
+  cookieDomain: Option[String] = None,
+  cookiePath: String = "/",
+  cookieSameSite: String = "Lax",
+  bindIp: Boolean = true,
+  bindUa: Boolean = true,
+  secret: Option[String] = None,
+) extends NgPluginConfig {
   override def json: JsValue = PowConfig.format.writes(this)
 }
 
 object PowConfig {
-  val default = PowConfig(secret = "veryveryverysecretysecret")
+  val default = PowConfig(secret = "veryveryverysecretysecret".some)
   val format: OFormat[PowConfig] = Json.format[PowConfig]
   val configFlow = Seq(
     "difficulty",
@@ -50,7 +58,61 @@ object PowConfig {
     "bind_ua",
     "secret",
   )
-  val configSchema = Some(Json.obj())
+  val configSchema = Some(Json.obj(
+    "difficulty" -> Json.obj(
+      "type" -> "number",
+      "label" -> "Difficulty",
+      "suffix" -> "bits",
+    ),
+    "token_ttl_seconds" -> Json.obj(
+      "type" -> "number",
+      "label" -> "Cookie TTL",
+      "suffix" -> "seconds",
+    ),
+    "challenge_ttl_seconds" -> Json.obj(
+      "type" -> "number",
+      "label" -> "Challenge TTL",
+      "suffix" -> "seconds",
+    ),
+    "cookie_name" -> Json.obj(
+      "type" -> "string",
+      "label" -> "Cookie name",
+    ),
+    "cookie_domain" -> Json.obj(
+      "type" -> "string",
+      "label" -> "Cookie domain",
+    ),
+    "cookie_path" -> Json.obj(
+      "type" -> "string",
+      "label" -> "Cookie path",
+    ),
+    "secret" -> Json.obj(
+      "type" -> "string",
+      "label" -> "Cookie signing secret",
+      "props" -> Json.obj(
+        "placeholder" -> "If none, using otoroshi secret"
+      )
+    ),
+    "bind_ip" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Include client IP",
+    ),
+    "bind_ua" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Include user-agent",
+    ),
+    "cookie_same_site" -> Json.obj(
+      "type" -> "select",
+      "label" -> "Cookie Same Site",
+      "props" -> Json.obj(
+        "options" -> Json.arr(
+          Json.obj("label" -> "LAX", "value" -> "lax"),
+          Json.obj("label" -> "Strict", "value"   -> "strict"),
+          Json.obj("label" -> "None", "value"   -> "none"),
+        )
+      )
+    ),
+  ))
 }
 
 object Pow {
@@ -103,12 +165,222 @@ object Pow {
   }
 }
 
+object ProofOfWorkPlugin {
+
+  private val counter = new AtomicInteger(0)
+
+  private def prefixKey(implicit env: Env) = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:pow_challenge_tokens:"
+
+  private def otoroshiUrl(env: Env): String = {
+    val config = env.clusterConfig
+    val count = counter.incrementAndGet() % (if (config.leader.urls.nonEmpty) config.leader.urls.size else 1)
+    config.leader.urls.zipWithIndex.find(t => t._2 == count).map(_._1).getOrElse(config.leader.urls.head)
+  }
+
+  // POST /api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/:key
+  def handlePowChallengeCreate(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]])(implicit env: Env): Future[Result] = {
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val mat = env.otoroshiMaterializer
+    implicit val ev = env
+    ctx.named("key") match {
+      case None => Results.BadRequest(Json.obj("error" -> "no key found")).vfuture
+      case Some(challengeId) => {
+        body match {
+          case None => Results.BadRequest(Json.obj("error" -> "no body found")).vfuture
+          case Some(body) => body.runFold(ByteString.empty)(_ ++ _).flatMap { body =>
+            val bodyJson = body.utf8String.parseJson
+            val challenge = bodyJson.select("challenge").asObject
+            val conf = PowConfig.format.reads(bodyJson.select("conf").asObject).get
+            setChallenge(challengeId, challenge, conf)(env, ec).map { _ =>
+              Results.NoContent
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // GET /api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/:key
+  def handlePowChallengeRead(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]])(implicit env: Env): Future[Result] = {
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val mat = env.otoroshiMaterializer
+    implicit val ev = env
+    ctx.named("key") match {
+      case None => Results.BadRequest(Json.obj("error" -> "no key found")).vfuture
+      case Some(challengeId) => {
+        getChallenge(challengeId, PowConfig.default)(env, ec).map {
+          case Some(challenge) => Results.Ok(challenge)
+          case None => Results.NotFound(Json.obj("error" -> "challenge not found"))
+        }
+      }
+    }
+  }
+
+  // DELETE /api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/:key
+  def handlePowChallengeDelete(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]])(implicit env: Env): Future[Result] = {
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val mat = env.otoroshiMaterializer
+    implicit val ev = env
+    ctx.named("key") match {
+      case None => Results.BadRequest(Json.obj("error" -> "no key found")).vfuture
+      case Some(challengeId) => {
+        deleteChallenge(challengeId)(env, ec).map { _ =>
+          Results.NoContent
+        }
+      }
+    }
+  }
+
+  def callLeaderChallengeRead(challengeId: String)(implicit env: Env, ec: ExecutionContext): Future[Option[JsObject]] = {
+    val config = env.clusterConfig
+    implicit val sc = env.otoroshiScheduler
+    Retry
+      .retry(
+        times = config.worker.retries,
+        delay = config.retryDelay,
+        factor = config.retryFactor,
+        ctx = "leader-read-challenge-token"
+      ) { tryCount =>
+        if (Cluster.logger.isDebugEnabled)
+          Cluster.logger.debug(s"Reading challenge $challengeId from Otoroshi leader cluster")
+        env.MtlsWs
+          .url(
+            otoroshiUrl(env) + s"/api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/${challengeId}",
+            config.mtlsConfig
+          )
+          .withHttpHeaders(
+            "Host"                                             -> config.leader.host,
+          )
+          .withAuth(config.leader.clientId, config.leader.clientSecret, WSAuthScheme.BASIC)
+          .withRequestTimeout(Duration(config.worker.timeout, TimeUnit.MILLISECONDS))
+          .withMaybeProxyServer(config.proxy)
+          .get()
+          .map { resp =>
+            if (resp.status == 200) {
+              Json.parse(resp.body).asOpt[JsObject]
+            } else {
+              None
+            }
+          }
+      }
+      .recover { case e =>
+        if (Cluster.logger.isDebugEnabled)
+          Cluster.logger.debug(
+            s"[${env.clusterConfig.mode.name}] Error while reading challenge $challengeId from Otoroshi leader cluster"
+          )
+        None
+      }
+  }
+
+  def callLeaderChallengeDelete(challengeId: String)(implicit env: Env, ec: ExecutionContext): Future[Unit] = {
+    val config = env.clusterConfig
+    implicit val sc = env.otoroshiScheduler
+    Retry
+      .retry(
+        times = config.worker.retries,
+        delay = config.retryDelay,
+        factor = config.retryFactor,
+        ctx = "leader-delete-challenge-token"
+      ) { tryCount =>
+        if (Cluster.logger.isDebugEnabled)
+          Cluster.logger.debug(s"Deleting challenge $challengeId from Otoroshi leader cluster")
+        env.MtlsWs
+          .url(
+            otoroshiUrl(env) + s"/api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/${challengeId}",
+            config.mtlsConfig
+          )
+          .withHttpHeaders(
+            "Host"                                             -> config.leader.host,
+          )
+          .withAuth(config.leader.clientId, config.leader.clientSecret, WSAuthScheme.BASIC)
+          .withRequestTimeout(Duration(config.worker.timeout, TimeUnit.MILLISECONDS))
+          .withMaybeProxyServer(config.proxy)
+          .delete()
+          .map { resp =>
+            ()
+          }
+      }
+      .recover { case e =>
+        if (Cluster.logger.isDebugEnabled)
+          Cluster.logger.debug(
+            s"[${env.clusterConfig.mode.name}] Error while deleting challenge $challengeId from Otoroshi leader cluster"
+          )
+        None
+      }
+  }
+
+  def callLeaderChallengeWrite(challengeId: String, challenge: JsObject, conf: PowConfig)(implicit env: Env, ec: ExecutionContext): Future[Unit] = {
+    val config = env.clusterConfig
+    implicit val sc = env.otoroshiScheduler
+    Retry
+      .retry(
+        times = config.worker.retries,
+        delay = config.retryDelay,
+        factor = config.retryFactor,
+        ctx = "leader-push-challeng-token"
+      ) { tryCount =>
+        if (Cluster.logger.isDebugEnabled)
+          Cluster.logger.debug(s"Pushing challenge $challengeId to Otoroshi leader cluster")
+        env.MtlsWs
+          .url(
+            otoroshiUrl(env) + s"/api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/${challengeId}",
+            config.mtlsConfig
+          )
+          .withHttpHeaders(
+            "Host"                                             -> config.leader.host,
+          )
+          .withAuth(config.leader.clientId, config.leader.clientSecret, WSAuthScheme.BASIC)
+          .withRequestTimeout(Duration(config.worker.timeout, TimeUnit.MILLISECONDS))
+          .withMaybeProxyServer(config.proxy)
+          .post(Json.obj("challenge" -> challenge, "conf" -> conf.json))
+          .map { resp =>
+            ()
+          }
+      }
+      .recover { case e =>
+        if (Cluster.logger.isDebugEnabled)
+          Cluster.logger.debug(
+            s"[${env.clusterConfig.mode.name}] Error while pushing challenge $challengeId to Otoroshi leader cluster"
+          )
+        None
+      }
+  }
+
+  def getChallenge(challengeId: String, conf: PowConfig)(implicit env: Env, ec: ExecutionContext): Future[Option[JsObject]] = {
+    val key = s"$prefixKey$challengeId"
+    env.datastores.rawDataStore.get(key) flatMap {
+      case None if env.clusterConfig.mode.isWorker => ProofOfWorkPlugin.callLeaderChallengeRead(challengeId).map { r =>
+        r.foreach { challenge =>
+          env.datastores.rawDataStore.set(key, challenge.stringify.byteString, Some(conf.challengeTtlSeconds.seconds.toMillis))
+        }
+        r
+      }
+      case None => None.vfuture
+      case Some(bytestring) => bytestring.utf8String.parseJson.asObject.some.vfuture
+    }
+  }
+
+  def setChallenge(challengeId: String, challenge: JsObject, conf: PowConfig)(implicit env: Env, ec: ExecutionContext): Future[Unit] = {
+    val key = s"$prefixKey$challengeId"
+    env.datastores.rawDataStore.set(key, challenge.stringify.byteString, Some(conf.challengeTtlSeconds.seconds.toMillis)).flatMap {
+      case _ if env.clusterConfig.mode.isWorker => ProofOfWorkPlugin.callLeaderChallengeWrite(challengeId, challenge, conf)
+      case _ => ().vfuture
+    }
+  }
+
+  def deleteChallenge(challengeId: String)(implicit env: Env, ec: ExecutionContext): Future[Unit] = {
+    val key = s"$prefixKey$challengeId"
+    env.datastores.rawDataStore.del(Seq(key)).flatMap {
+      case _ if env.clusterConfig.mode.isWorker => ProofOfWorkPlugin.callLeaderChallengeDelete(challengeId)
+      case _ => ().vfuture
+    }
+  }
+}
+
 class ProofOfWorkPlugin extends NgRequestTransformer {
 
-  private def ChallengePrefix(implicit env: Env) = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:pow_challenge_tokens:"
-
   override def name: String = "Cloud APIM - LLM Bots blocker"
-  override def description: Option[String] = "Can block request coming from LLM Bots".some
+  override def description: Option[String] = "Can block request coming from LLM Bots using a JS proof of work".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
@@ -125,30 +397,26 @@ class ProofOfWorkPlugin extends NgRequestTransformer {
 
   override def transformRequest(ctx: NgTransformerRequestContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     val config = ctx.cachedConfig(internalName)(PowConfig.format).getOrElse(PowConfig.default)
-    val path = ctx.request.path
-    if (path == "/_pow") {
-       powPage(ctx.request.getQueryString("state").get).leftf
-    } else if (path == "/_pow/challenge") {
-      powChallenge(ctx.request.getQueryString("state").get, config).map(r => r.left)
-    } else if (path == "/_pow/verify") {
-      ctx.otoroshiRequest.body.runFold(ByteString.empty)(_ ++ _).flatMap { raw =>
-        powVerify(raw.utf8String.parseJson, config, ctx.request).map(r => r.left)
-      }
-    } else {
-      val ip = ctx.request.theIpAddress.some
-      val ua = ctx.request.headers.get("User-Agent")
-      ctx.request.cookies.get(config.cookieName) match {
-        case Some(c) if Pow.verifyToken(c.value, config.secret, if (config.bindIp) ip else None, if (config.bindUa) ua else None) =>
-          ctx.otoroshiRequest.rightf
-        case _ =>
-          val state = java.net.URLEncoder.encode(ctx.request.uri, "UTF-8")
-          val redirect = Results.Redirect(s"/_pow?state=$state")
-          redirect.leftf
+    val ip = ctx.request.theIpAddress.some
+    val ua = ctx.request.headers.get("User-Agent")
+    ctx.request.headers.get("Oto-LLm-Pow").filter(_ => ctx.request.method.toLowerCase == "post") match {
+      case Some(header) => powVerify(header.parseJson, config, ctx.request).map(r => r.left)
+      case None => {
+        ctx.request.cookies.get(config.cookieName) match {
+          case Some(c) if Pow.verifyToken(c.value, config.secret.getOrElse(env.otoroshiSecret), if (config.bindIp) ip else None, if (config.bindUa) ua else None) =>
+            ctx.otoroshiRequest.rightf
+          case _ => {
+            val state = java.net.URLEncoder.encode(ctx.request.uri, "UTF-8")
+            powChallenge(state, config).map { challenge =>
+              powPage(state, challenge).left
+            }
+          }
+        }
       }
     }
   }
 
-  def powPage(state: String)(implicit env: Env): Result = {
+  private def powPage(state: String, challenge: JsObject)(implicit env: Env): Result = {
     val html =
       s"""<!doctype html>
 <meta charset="utf-8">
@@ -168,9 +436,8 @@ class ProofOfWorkPlugin extends NgRequestTransformer {
 <script>
 (async function(){
   const state = ${JsString(state).toString()};
-  const cRes = await fetch('/_pow/challenge?state=' + encodeURIComponent(state), { credentials: 'same-origin' });
-  if (!cRes.ok) return location.href = state;
-  const { challenge, difficulty, alg, expiresIn, state: st } = await cRes.json();
+  const cRes = ${challenge.stringify};
+  const { challenge, difficulty, alg, expiresIn, state: st } = cRes;
   const workerCode = `
     self.onmessage = (e) => {
       const { challenge, difficulty } = e.data;
@@ -217,13 +484,14 @@ class ProofOfWorkPlugin extends NgRequestTransformer {
       return;
     }
     const payload = JSON.stringify({ challenge, nonce: String(ev.data.nonce), hash: ev.data.hash, state });
-    const vRes = await fetch('/_pow/verify', {
+    fetch(window.location.pathname, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'Oto-LLm-Pow': payload },
       credentials: 'same-origin',
-      body: payload
+      body: ''
+    }).then(() => {
+      window.location.reload();
     });
-    location.href = state;
   };
 
   worker.postMessage({ challenge, difficulty });
@@ -233,50 +501,44 @@ class ProofOfWorkPlugin extends NgRequestTransformer {
     Results.Ok(html).as("text/html")
   }
 
-  def powChallenge(state: String, conf: PowConfig)(implicit env: Env, ec: ExecutionContext): Future[Result] = {
+  private def powChallenge(state: String, conf: PowConfig)(implicit env: Env, ec: ExecutionContext): Future[JsObject] = {
     val challenge = Random.alphanumeric.take(16).mkString
-    val key       = s"$ChallengePrefix$challenge"
     val payload   = Json.obj(
       "state"      -> state,
       "issuedAt"   -> Instant.now().getEpochSecond,
       "difficulty" -> conf.difficulty
     )
-    env.datastores.rawDataStore.set(key, payload.stringify.byteString, Some(conf.challengeTtlSeconds.seconds.toMillis))
-      .map { _ =>
-        Results.Ok(Json.obj(
-          "challenge" -> challenge,
-          "difficulty"-> conf.difficulty,
-          "alg"       -> "sha256-leading-zero-bits",
-          "expiresIn" -> conf.challengeTtlSeconds,
-          "state"     -> state
-        ))
-      }
+    ProofOfWorkPlugin.setChallenge(challenge, payload, conf).map { _ =>
+      Json.obj(
+        "challenge" -> challenge,
+        "difficulty"-> conf.difficulty,
+        "alg"       -> "sha256-leading-zero-bits",
+        "expiresIn" -> conf.challengeTtlSeconds,
+        "state"     -> state
+      )
+    }
   }
 
-  def powVerify(body: JsValue, conf: PowConfig, req: RequestHeader)(implicit env: Env, ec: ExecutionContext): Future[Result] = {
+  private def powVerify(body: JsValue, conf: PowConfig, req: RequestHeader)(implicit env: Env, ec: ExecutionContext): Future[Result] = {
     val challenge = (body \ "challenge").as[String]
     val nonce     = (body \ "nonce").as[String]
     val hash      = (body \ "hash").as[String]
-    val key       = s"$ChallengePrefix$challenge"
-
-    env.datastores.rawDataStore.get(key).flatMap {
-      case None => FastFuture.successful(Results.Forbidden("invalid or expired challenge"))
-      case Some(js) =>
-        val stored = Json.parse(js.utf8String)
+    ProofOfWorkPlugin.getChallenge(challenge, conf).flatMap {
+      case None => Results.Forbidden("invalid or expired challenge").vfuture
+      case Some(stored) =>
         val diff   = (stored \ "difficulty").as[Int]
         val expected = Pow.sha256Hex(s"$challenge:$nonce")
         val ok = (expected == hash) && (Pow.leadingZeroBits(hash) >= diff)
         if (!ok) {
-          FastFuture.successful(Results.Forbidden("invalid pow"))
+          Results.Forbidden("invalid pow").vfuture
         } else {
-          env.datastores.rawDataStore.del(Seq(key)).flatMap { _ =>
+          ProofOfWorkPlugin.deleteChallenge(challenge).flatMap { _ =>
             val now = Instant.now().getEpochSecond
             val exp = now + conf.tokenTtlSeconds
             val ip  = if (conf.bindIp) Some(req.theIpAddress) else None
             val ua  = if (conf.bindUa) req.headers.get("User-Agent") else None
             val tok = Pow.PowToken(exp = exp, ip = ip, ua = ua)
-            val cookieValue = Pow.signToken(tok, conf.secret)
-
+            val cookieValue = Pow.signToken(tok, conf.secret.getOrElse(env.otoroshiSecret))
             val sameSite: Option[Cookie.SameSite] = conf.cookieSameSite.toLowerCase match {
               case "lax"   => Some(Cookie.SameSite.Lax)
               case "strict"=> Some(Cookie.SameSite.Strict)
@@ -293,7 +555,7 @@ class ProofOfWorkPlugin extends NgRequestTransformer {
               httpOnly = true,
               sameSite = sameSite
             )
-            FastFuture.successful(Results.NoContent.withCookies(cookie))
+            Results.NoContent.withCookies(cookie).vfuture
           }
         }
     }

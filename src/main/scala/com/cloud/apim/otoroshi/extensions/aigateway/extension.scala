@@ -14,7 +14,7 @@ import otoroshi.next.extensions.{AdminExtensionAdminApiRoute, _}
 import otoroshi.utils.TypedMap
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiLlmProxy
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiLlmProxy, ProofOfWorkPlugin}
 import play.api.libs.json._
 import play.api.mvc.{RequestHeader, Result, Results}
 import play.api.{Configuration, Logger}
@@ -583,7 +583,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleClusterDeltaReceive(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+  def handleBudgetClusterDeltaReceive(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val mat = env.otoroshiMaterializer
     implicit val ev = env
@@ -656,7 +656,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleReset(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+  def handleBugdetReset(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val mat = env.otoroshiMaterializer
     implicit val ev = env
@@ -696,12 +696,24 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
+  def handlePowChallengeCreate(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+    ProofOfWorkPlugin.handlePowChallengeCreate(ctx, req, apikey, body)(env)
+  }
+
+  def handlePowChallengeRead(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+    ProofOfWorkPlugin.handlePowChallengeRead(ctx, req, apikey, body)(env)
+  }
+
+  def handlePowChallengeDelete(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+    ProofOfWorkPlugin.handlePowChallengeDelete(ctx, req, apikey, body)(env)
+  }
+
   override def adminApiRoutes(): Seq[AdminExtensionAdminApiRoute] = Seq(
     AdminExtensionAdminApiRoute(
       method = "PUT",
       path = "/api/extensions/cloud-apim/extensions/ai-extension/cluster/budgets/deltas",
       wantsBody = true,
-      handle = handleClusterDeltaReceive,
+      handle = handleBudgetClusterDeltaReceive,
     ),
     AdminExtensionAdminApiRoute(
       method = "GET",
@@ -713,7 +725,25 @@ class AiExtension(val env: Env) extends AdminExtension {
       method = "POST",
       path = "/api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_reset",
       wantsBody = false,
-      handle = handleReset,
+      handle = handleBugdetReset,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "POST",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/:key",
+      wantsBody = true,
+      handle = handlePowChallengeCreate,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "GET",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/:key",
+      wantsBody = false,
+      handle = handlePowChallengeRead,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "DELETE",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/:key",
+      wantsBody = false,
+      handle = handlePowChallengeDelete,
     )
   )
 
