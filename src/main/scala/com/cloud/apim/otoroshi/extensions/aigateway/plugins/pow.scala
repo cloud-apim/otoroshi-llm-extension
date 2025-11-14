@@ -6,9 +6,10 @@ import akka.util.ByteString
 import otoroshi.cluster.Cluster
 import otoroshi.env.Env
 import otoroshi.gateway.Retry
-import otoroshi.models.ApiKey
+import otoroshi.models.{ApiKey, IpFiltering}
 import otoroshi.next.extensions._
 import otoroshi.next.plugins.api._
+import otoroshi.utils.RegexPool
 import otoroshi.utils.http.Implicits._
 import otoroshi.utils.http.RequestImplicits._
 import otoroshi.utils.syntax.implicits._
@@ -26,7 +27,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import scala.concurrent._
 import scala.concurrent.duration._
-import scala.util.Random
+import scala.util.{Failure, Random, Success, Try}
 
 case class PowConfig(
   difficulty: Int = 8,
@@ -43,15 +44,121 @@ case class PowConfig(
   blockedIps: Seq[String] = Seq.empty,
   allowedUserAgents: Seq[String] = Seq.empty,
   blockedUserAgents: Seq[String] = Seq.empty,
-  allowedHeaders: Seq[String] = Seq.empty,
-  blockedHeaders: Seq[String] = Seq.empty,
+  allowedHeaders: Map[String, String] = Map.empty,
+  blockedHeaders: Map[String, String] = Map.empty,
 ) extends NgPluginConfig {
+  
   override def json: JsValue = PowConfig.format.writes(this)
+
+  def isIpBypassed(ip: String): Boolean = {
+    if (allowedIps.isEmpty && blockedIps.isEmpty) {
+      false
+    } else if (allowedIps.nonEmpty && allowedIps.exists { regex =>
+      if (regex.contains("/")) {
+        IpFiltering.cidr(regex).contains(ip)
+      } else {
+        otoroshi.utils.RegexPool(regex).matches(ip)
+      }
+    }) {
+      true
+    } else if (blockedIps.nonEmpty && blockedIps.exists { regex =>
+      if (regex.contains("/")) {
+        IpFiltering.cidr(regex).contains(ip)
+      } else {
+        otoroshi.utils.RegexPool(regex).matches(ip)
+      }
+    }) {
+      false
+    } else {
+      false
+    }
+  }
+
+  def isUserAgentBypassed(ip: String): Boolean = {
+    if (allowedUserAgents.isEmpty && blockedUserAgents.isEmpty) {
+      false
+    } else if (allowedUserAgents.nonEmpty && allowedUserAgents.exists { regex =>
+      otoroshi.utils.RegexPool(regex).matches(ip)
+    }) {
+      true
+    } else if (blockedUserAgents.nonEmpty && blockedUserAgents.exists { regex =>
+      otoroshi.utils.RegexPool(regex).matches(ip)
+    }) {
+      false
+    } else {
+      false
+    }
+  }
+
+  def isHeaderBypassed(req: RequestHeader)(implicit env: Env): Boolean = {
+    if (allowedHeaders.isEmpty && blockedHeaders.isEmpty) {
+      false
+    } else if (allowedHeaders.nonEmpty && allowedHeaders.exists {
+      case (key, regex) => req.headers.get(key).exists(value => otoroshi.utils.RegexPool(regex).matches(value))
+    }) {
+      true
+    } else if (blockedHeaders.nonEmpty && blockedHeaders.exists {
+      case (key, regex) => req.headers.get(key).exists(value => otoroshi.utils.RegexPool(regex).matches(value))
+    }) {
+      false
+    } else {
+      false
+    }
+  }
+
+  def isBypassed(req: RequestHeader)(implicit env: Env): Boolean = {
+    isIpBypassed(req.theIpAddress) && isUserAgentBypassed(req.theUserAgent) && isHeaderBypassed(req)
+  }
 }
 
 object PowConfig {
   val default = PowConfig(secret = "veryveryverysecretysecret".some)
-  val format: OFormat[PowConfig] = Json.format[PowConfig]
+  val format: Format[PowConfig] = new Format[PowConfig] {
+
+    override def reads(json: JsValue): JsResult[PowConfig] = Try {
+        PowConfig(
+          difficulty = json.select("difficulty").asOptInt.getOrElse(8),
+          tokenTtlSeconds = json.select("token_ttl_seconds").asOptInt.getOrElse(300),
+          challengeTtlSeconds = json.select("challenge_ttl_seconds").asOptInt.getOrElse(120),
+          cookieName = json.select("cookie_name").asOptString.getOrElse("oto_llm_pow"),
+          cookieDomain = json.select("cookie_domain").asOptString,
+          cookiePath = json.select("cookie_path").asOptString.getOrElse("/"),
+          cookieSameSite = json.select("cookie_same_site").asOptString.getOrElse("Lax"),
+          bindIp = json.select("bind_ip").asOptBoolean.getOrElse(true),
+          bindUa = json.select("bind_ua").asOptBoolean.getOrElse(true),
+          secret = json.select("secret").asOptString,
+          allowedIps = json.select("allowed_ips").asOpt[Seq[String]].getOrElse(Seq.empty),
+          blockedIps = json.select("blocked_ips").asOpt[Seq[String]].getOrElse(Seq.empty),
+          allowedUserAgents = json.select("allowed_user_agents").asOpt[Seq[String]].getOrElse(Seq.empty),
+          blockedUserAgents = json.select("blocked_user_agents").asOpt[Seq[String]].getOrElse(Seq.empty),
+          allowedHeaders = json.select("allowed_headers").asOpt[Map[String, String]].getOrElse(Map.empty),
+          blockedHeaders = json.select("blocked_headers").asOpt[Map[String, String]].getOrElse(Map.empty),
+        )
+    } match {
+      case Success(value) => JsSuccess(value)
+      case Failure(exception) => JsError(exception.getMessage)
+    }
+    
+
+    override def writes(o: PowConfig): JsValue = Json.obj(
+      "difficulty" -> o.difficulty,
+      "token_ttl_seconds" -> o.tokenTtlSeconds,
+      "challenge_ttl_seconds" -> o.challengeTtlSeconds,
+      "cookie_name" -> o.cookieName,
+      "cookie_domain" -> o.cookieDomain,
+      "cookie_path" -> o.cookiePath,
+      "cookie_same_site" -> o.cookieSameSite,
+      "bind_ip" -> o.bindIp,
+      "bind_ua" -> o.bindUa,
+      "secret" -> o.secret,
+      "allowed_ips" -> o.allowedIps,
+      "blocked_ips" -> o.blockedIps,
+      "allowed_user_agents" -> o.allowedUserAgents,
+      "blocked_user_agents" -> o.blockedUserAgents,
+      "allowed_headers" -> o.allowedHeaders,
+      "blocked_headers" -> o.blockedHeaders,
+    )
+  }
   val configFlow = Seq(
     "difficulty",
     "token_ttl_seconds",
@@ -63,6 +170,12 @@ object PowConfig {
     "bind_ip",
     "bind_ua",
     "secret",
+    "allowed_ips",
+    "blocked_ips",
+    "allowed_user_agents",
+    "blocked_user_agents",
+    "allowed_headers",
+    "blocked_headers",
   )
   val configSchema = Some(Json.obj(
     "difficulty" -> Json.obj(
@@ -106,6 +219,30 @@ object PowConfig {
     "bind_ua" -> Json.obj(
       "type" -> "bool",
       "label" -> "Include user-agent",
+    ),
+    "allowed_ips" -> Json.obj(
+      "type" -> "array",
+      "label" -> "Allowed IPs",
+    ),
+    "blocked_ips" -> Json.obj(
+      "type" -> "array",
+      "label" -> "Blocked IPs",
+    ),
+    "allowed_user_agents" -> Json.obj(
+      "type" -> "array",
+      "label" -> "Allowed User Agents",
+    ),
+    "blocked_user_agents" -> Json.obj(
+      "type" -> "array",
+      "label" -> "Blocked User Agents",
+    ),
+    "allowed_headers" -> Json.obj(
+      "type" -> "object",
+      "label" -> "Allowed Headers",
+    ),
+    "blocked_headers" -> Json.obj(
+      "type" -> "object",
+      "label" -> "Blocked Headers",
     ),
     "cookie_same_site" -> Json.obj(
       "type" -> "select",
@@ -403,18 +540,22 @@ class ProofOfWorkPlugin extends NgRequestTransformer {
 
   override def transformRequest(ctx: NgTransformerRequestContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     val config = ctx.cachedConfig(internalName)(PowConfig.format).getOrElse(PowConfig.default)
-    val ip = ctx.request.theIpAddress.some
-    val ua = ctx.request.headers.get("User-Agent")
-    ctx.request.headers.get("Oto-LLm-Pow").filter(_ => ctx.request.method.toLowerCase == "post") match {
-      case Some(header) => powVerify(header.parseJson, config, ctx.request).map(r => r.left)
-      case None => {
-        ctx.request.cookies.get(config.cookieName) match {
-          case Some(c) if Pow.verifyToken(c.value, config.secret.getOrElse(env.otoroshiSecret), if (config.bindIp) ip else None, if (config.bindUa) ua else None) =>
-            ctx.otoroshiRequest.rightf
-          case _ => {
-            val state = java.net.URLEncoder.encode(ctx.request.uri, "UTF-8")
-            powChallenge(state, config).map { challenge =>
-              powPage(state, challenge).left
+    if (config.isBypassed(ctx.request)) {
+      ctx.otoroshiRequest.rightf
+    } else {
+      val ip = ctx.request.theIpAddress.some
+      val ua = ctx.request.headers.get("User-Agent")
+      ctx.request.headers.get("Oto-LLm-Pow").filter(_ => ctx.request.method.toLowerCase == "post") match {
+        case Some(header) => powVerify(header.parseJson, config, ctx.request).map(r => r.left)
+        case None => {
+          ctx.request.cookies.get(config.cookieName) match {
+            case Some(c) if Pow.verifyToken(c.value, config.secret.getOrElse(env.otoroshiSecret), if (config.bindIp) ip else None, if (config.bindUa) ua else None) =>
+              ctx.otoroshiRequest.rightf
+            case _ => {
+              val state = java.net.URLEncoder.encode(ctx.request.uri, "UTF-8")
+              powChallenge(state, config).map { challenge =>
+                powPage(state, challenge).left
+              }
             }
           }
         }
