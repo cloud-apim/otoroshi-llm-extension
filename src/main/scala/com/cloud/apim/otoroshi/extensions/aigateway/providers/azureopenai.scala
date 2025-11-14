@@ -20,10 +20,10 @@ import scala.concurrent.{ExecutionContext, Future}
 // https://learn.microsoft.com/fr-fr/azure/ai-foundry/model-inference/how-to/use-chat-completions?context=%2Fazure%2Fai-foundry%2Fcontext%2Fcontext&pivots=programming-language-rest
 
 case class AzureOpenAiChatResponseChunkUsage(raw: JsValue) {
-  lazy val completion_tokens: Long = raw.select("completion_tokens").asLong
-  lazy val prompt_tokens: Long = raw.select("prompt_tokens").asLong
-  lazy val total_tokens: Long = raw.select("total_tokens").asLong
-  lazy val reasoning_tokens: Long = raw.select("reasoning_tokens").asLong
+  lazy val completion_tokens: Option[Long] = raw.select("completion_tokens").asOptLong
+  lazy val prompt_tokens: Option[Long] = raw.select("prompt_tokens").asOptLong
+  lazy val total_tokens: Option[Long] = raw.select("total_tokens").asOptLong
+  lazy val reasoning_tokens: Option[Long] = raw.select("reasoning_tokens").asOptLong
 }
 
 case class AzureOpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw: JsValue) {
@@ -494,9 +494,9 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
                   tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
                 ),
                 ChatResponseMetadataUsage(
-                  promptTokens = chunk.usage.map(_.prompt_tokens).getOrElse(-1L),
-                  generationTokens = chunk.usage.map(_.completion_tokens).getOrElse(-1L),
-                  reasoningTokens = chunk.usage.map(_.reasoning_tokens).getOrElse(-1L),
+                  promptTokens = chunk.usage.flatMap(_.prompt_tokens).getOrElse(-1L),
+                  generationTokens = chunk.usage.flatMap(_.completion_tokens).getOrElse(-1L),
+                  reasoningTokens = chunk.usage.flatMap(_.reasoning_tokens).getOrElse(-1L),
                 ),
                 None
               )
