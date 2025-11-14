@@ -17,10 +17,10 @@ import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
 
 case class OpenAiChatResponseChunkUsage(raw: JsValue) {
-  lazy val completion_tokens: Long = raw.select("completion_tokens").asLong
-  lazy val prompt_tokens: Long = raw.select("prompt_tokens").asLong
-  lazy val total_tokens: Long = raw.select("total_tokens").asLong
-  lazy val reasoningTokens: Long = raw.at("completion_tokens_details.reasoning_tokens").asOptLong.getOrElse(0L)
+  lazy val completion_tokens: Option[Long] = raw.select("completion_tokens").asOptLong
+  lazy val prompt_tokens: Option[Long] = raw.select("prompt_tokens").asOptLong
+  lazy val total_tokens: Option[Long] = raw.select("total_tokens").asOptLong
+  lazy val reasoningTokens: Option[Long] = raw.at("completion_tokens_details.reasoning_tokens").asOptLong
 }
 
 case class OpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw: JsValue) {
@@ -473,9 +473,9 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
         source
           .applyOnIf(accumulateStreamConsumptions)(
             _.map { chunk =>
-              promptTokensCounter.addAndGet(chunk.usage.map(_.prompt_tokens).getOrElse(-1L))
-              generationTokensCounter.addAndGet(chunk.usage.map(_.completion_tokens).getOrElse(-1L))
-              reasoningTokensCounter.addAndGet(chunk.usage.map(_.reasoningTokens).getOrElse(-1L))
+              promptTokensCounter.addAndGet(chunk.usage.flatMap(_.prompt_tokens).getOrElse(0L))
+              generationTokensCounter.addAndGet(chunk.usage.flatMap(_.completion_tokens).getOrElse(0L))
+              reasoningTokensCounter.addAndGet(chunk.usage.flatMap(_.reasoningTokens).getOrElse(0L))
               if (chunk.choices.exists(_.finish_reason.contains("stop"))) {
                 val usage = ChatResponseMetadata(
                   ChatResponseMetadataRateLimit(
@@ -527,9 +527,9 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
                     tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
                   ),
                   ChatResponseMetadataUsage(
-                    promptTokens = chunk.usage.map(_.prompt_tokens).getOrElse(-1L),
-                    generationTokens = chunk.usage.map(_.completion_tokens).getOrElse(-1L),
-                    reasoningTokens = chunk.usage.map(_.reasoningTokens).getOrElse(-1L),
+                    promptTokens = chunk.usage.flatMap(_.prompt_tokens).getOrElse(-1L),
+                    generationTokens = chunk.usage.flatMap(_.completion_tokens).getOrElse(-1L),
+                    reasoningTokens = chunk.usage.flatMap(_.reasoningTokens).getOrElse(-1L),
                   ),
                   None
                 )

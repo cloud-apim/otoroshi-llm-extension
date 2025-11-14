@@ -374,9 +374,9 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
                   tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
                 ),
                 ChatResponseMetadataUsage(
-                  promptTokens = chunk.usage.map(_.prompt_tokens).getOrElse(-1L),
-                  generationTokens = chunk.usage.map(_.completion_tokens).getOrElse(-1L),
-                  reasoningTokens = chunk.usage.map(_.reasoningTokens).getOrElse(-1L),
+                  promptTokens = chunk.usage.flatMap(_.prompt_tokens).getOrElse(-1L),
+                  generationTokens = chunk.usage.flatMap(_.completion_tokens).getOrElse(-1L),
+                  reasoningTokens = chunk.usage.flatMap(_.reasoningTokens).getOrElse(-1L),
                 ),
                 None
               )

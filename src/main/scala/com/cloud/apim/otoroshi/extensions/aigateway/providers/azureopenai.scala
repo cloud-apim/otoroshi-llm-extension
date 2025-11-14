@@ -23,7 +23,7 @@ case class AzureOpenAiChatResponseChunkUsage(raw: JsValue) {
   lazy val completion_tokens: Option[Long] = raw.select("completion_tokens").asOptLong
   lazy val prompt_tokens: Option[Long] = raw.select("prompt_tokens").asOptLong
   lazy val total_tokens: Option[Long] = raw.select("total_tokens").asOptLong
-  lazy val reasoning_tokens: Option[Long] = raw.select("reasoning_tokens").asOptLong
+  lazy val reasoning_tokens: Option[Long] = raw.at("completion_tokens_details.reasoning_tokens").asOptLong
 }
 
 case class AzureOpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw: JsValue) {
@@ -120,6 +120,9 @@ object AzureAiFoundry {
 
 object AzureOpenAiApi {
   // POST https://{your-resource-name}.openai.azure.com/openai/deployments/{deployment-id}/completions?api-version={api-version}
+  def urlMock(resourceName: String, deploymentId: String, version: String, path: String): String = {
+    s"http://localhost:3876/openai/deployments/${deploymentId}${path}?api-version=${version}"
+  }
   def urlPreV1(resourceName: String, deploymentId: String, version: String, path: String): String = {
     s"https://${resourceName}.openai.azure.com/openai/deployments/${deploymentId}${path}?api-version=${version}"
   }
@@ -127,7 +130,9 @@ object AzureOpenAiApi {
     s"https://${resourceName}.openai.azure.com/openai/${version}${path}"
   }
   def url(resourceName: String, deploymentId: String, version: String, path: String): String = {
-    if (version == "v1") {
+    if (version == "mock") {
+      urlMock(resourceName, deploymentId, version, path)
+    } else if (version == "v1") {
       urlPostV1(resourceName, deploymentId, version, path)
     } else {
       urlPreV1(resourceName, deploymentId, version, path)

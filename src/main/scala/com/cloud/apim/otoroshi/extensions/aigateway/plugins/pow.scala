@@ -39,6 +39,12 @@ case class PowConfig(
   bindIp: Boolean = true,
   bindUa: Boolean = true,
   secret: Option[String] = None,
+  allowedIps: Seq[String] = Seq.empty,
+  blockedIps: Seq[String] = Seq.empty,
+  allowedUserAgents: Seq[String] = Seq.empty,
+  blockedUserAgents: Seq[String] = Seq.empty,
+  allowedHeaders: Seq[String] = Seq.empty,
+  blockedHeaders: Seq[String] = Seq.empty,
 ) extends NgPluginConfig {
   override def json: JsValue = PowConfig.format.writes(this)
 }

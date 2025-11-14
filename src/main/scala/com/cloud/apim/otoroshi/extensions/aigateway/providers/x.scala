@@ -298,9 +298,9 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
                   tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
                 ),
                 ChatResponseMetadataUsage(
-                  promptTokens = last.usage.map(_.prompt_tokens).getOrElse(-1L),
-                  generationTokens = last.usage.map(_.completion_tokens).getOrElse(-1L),
-                  reasoningTokens = last.usage.map(_.reasoningTokens).getOrElse(-1l)
+                  promptTokens = last.usage.flatMap(_.prompt_tokens).getOrElse(-1L),
+                  generationTokens = last.usage.flatMap(_.completion_tokens).getOrElse(-1L),
+                  reasoningTokens = last.usage.flatMap(_.reasoningTokens).getOrElse(-1L)
                 ),
                 None
               )
