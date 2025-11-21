@@ -14,6 +14,7 @@ import play.api.mvc.Results
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
+import scala.util.control.NonFatal
 
 case class MarkdownAcceptConfig(
   cachingEnabled: Boolean = true,
@@ -38,11 +39,14 @@ object MarkdownAcceptConfig {
     )
 
     override def reads(json: JsValue): JsResult[MarkdownAcceptConfig] = Try {
-      MarkdownAcceptConfig(
+      val config = MarkdownAcceptConfig(
         cachingEnabled = (json \ "cachingEnabled").asOpt[Boolean].getOrElse(true),
         maxCacheSize = (json \ "maxCacheSize").asOpt[Int].getOrElse(500),
         cacheTtlMinutes = (json \ "cacheTtlMinutes").asOpt[Int].getOrElse(30)
       )
+      require(config.maxCacheSize > 0, "maxCacheSize must be positive")
+      require(config.cacheTtlMinutes > 0, "cacheTtlMinutes must be positive")
+      config
     } match {
       case Failure(e) => JsError(e.getMessage)
       case Success(c) => JsSuccess(c)
@@ -98,7 +102,7 @@ class MarkdownAcceptPlugin extends NgBackendCall {
   override def core: Boolean = false
   override def name: String = "Cloud APIM - LLMs.txt Accept Markdown"
   override def description: Option[String] =
-    "Support for llms.txt standard - redirects requests with Accept: text/markdown header to .md, .html.md, or /index.html.md variants".some
+    "Support for llms.txt standard - proxies requests with Accept: text/markdown header to .md, .html.md, or /index.html.md variants".some
   override def defaultConfigObject: Option[NgPluginConfig] = MarkdownAcceptConfig.default.some
   override def noJsForm: Boolean = true
 
@@ -124,11 +128,19 @@ class MarkdownAcceptPlugin extends NgBackendCall {
     val config = ctx.cachedConfig(internalName)(MarkdownAcceptConfig.format).getOrElse(MarkdownAcceptConfig.default)
     val acceptHeader = ctx.request.headers.get("Accept")
 
-    if (!acceptHeader.exists(_.contains("text/markdown"))) {
+    // Parse Accept header to check for text/markdown media type
+    val acceptsMarkdown = acceptHeader.exists { header =>
+      header.split(',').exists { mediaType =>
+        mediaType.trim.split(';').head.trim == "text/markdown"
+      }
+    }
+
+    if (!acceptsMarkdown) {
       delegates()
     } else {
       val originalPath = ctx.request.path
-      val cacheKey = s"${ctx.route.id}:$originalPath"
+      // Use URL-safe separator to avoid collision (route IDs don't contain ||| )
+      val cacheKey = s"${ctx.route.id}|||$originalPath"
 
       if (config.cachingEnabled) {
         val cache = MarkdownAcceptPlugin.getOrCreateCache(config)
@@ -152,7 +164,12 @@ class MarkdownAcceptPlugin extends NgBackendCall {
   }
 
   private def generatePathVariants(path: String): Seq[String] = {
-    if (path.endsWith("/")) {
+    if (path.isEmpty || path == "/") {
+      Seq(
+        "/index.md",
+        "/index.html.md"
+      )
+    } else if (path.endsWith("/")) {
       // Path ends with /, try variations
       Seq(
         s"${path}index.md",
@@ -168,6 +185,19 @@ class MarkdownAcceptPlugin extends NgBackendCall {
         s"$path/index.html.md"
       )
     }
+  }
+
+  private def buildVariantRequest(
+    ctx: NgbBackendCallContext,
+    variantPath: String
+  )(implicit env: Env): play.api.libs.ws.WSRequest = {
+    val url = s"${ctx.backend.baseUrl}$variantPath"
+    val headers = ctx.request.headers.toSeq
+
+    env.Ws.url(url)
+      .withHttpHeaders(headers: _*)
+      .withMethod(ctx.request.method)
+      .withRequestTimeout(ctx.route.backend.client.callTimeout.millis)
   }
 
   private def createStreamedResponse(
@@ -190,16 +220,18 @@ class MarkdownAcceptPlugin extends NgBackendCall {
     ctx: NgbBackendCallContext,
     variantPath: String
   )(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val url = s"${ctx.backend.baseUrl}$variantPath"
-    val headers = ctx.request.headers.toSeq
-
-    env.Ws.url(url)
-      .withHttpHeaders(headers: _*)
-      .withMethod(ctx.request.method)
-      .withRequestTimeout(ctx.route.backend.client.callTimeout.millis)
+    buildVariantRequest(ctx, variantPath)
       .stream()
       .map { response =>
         Right(createStreamedResponse(response.status, response))
+      }
+      .recover {
+        case NonFatal(e) =>
+          env.logger.warn(s"[Cloud APIM - LLMs.txt Accept Markdown] Failed to fetch variant $variantPath: ${e.getMessage}")
+          Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadGateway(Json.obj(
+            "error" -> "failed to fetch markdown variant",
+            "variant" -> variantPath
+          ))))
       }
   }
 
@@ -210,38 +242,33 @@ class MarkdownAcceptPlugin extends NgBackendCall {
     cacheInfoOpt: Option[(Cache[String, Option[String]], String)]
   )(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
 
-    val cacheKey = cacheInfoOpt.map(_._2).getOrElse("")
-
     // Check if we have a recent server error cached
-    if (MarkdownAcceptPlugin.errorCache.getIfPresent(cacheKey).isDefined) {
-      env.logger.debug(s"[Cloud APIM - LLMs.txt Accept Markdown] Server error cached for $cacheKey, using delegates")
+    // Use cache key from cacheInfoOpt or build it for error cache lookup
+    val errorCacheKey = cacheInfoOpt.map(_._2).getOrElse(s"${ctx.route.id}|||${ctx.request.path}")
+    if (MarkdownAcceptPlugin.errorCache.getIfPresent(errorCacheKey).isDefined) {
+      env.logger.debug(s"[Cloud APIM - LLMs.txt Accept Markdown] Server error cached for $errorCacheKey, using delegates")
       return delegates()
     }
 
     // Try each variant in parallel
     def tryVariant(variant: String): Future[Option[(String, play.api.libs.ws.WSResponse)]] = {
-      val url = s"${ctx.backend.baseUrl}$variant"
-      val headers = ctx.request.headers.toSeq
-
-      env.Ws.url(url)
-        .withHttpHeaders(headers: _*)
-        .withMethod(ctx.request.method)
-        .withRequestTimeout(ctx.route.backend.client.callTimeout.millis)
+      buildVariantRequest(ctx, variant)
         .stream()
-        .map { response =>
+        .flatMap { response =>
           response.status match {
-            case 200 => Some((variant, response))
+            case 200 =>
+              // Success: return response (body will be streamed to client)
+              Future.successful(Some((variant, response)))
             case 404 =>
-              // Note: We don't await the stream consumption here for performance reasons.
-              // The stream will be consumed in the background and resources will be released.
-              // This is acceptable as 404 responses are typically small and fast to consume.
-              response.bodyAsSource.runWith(Sink.ignore)
-              None
-            case _ => Some((variant, response))
+              // Not found: drain body as we won't use this response
+              response.bodyAsSource.runWith(Sink.ignore).map(_ => None)
+            case _ =>
+              // Other status codes: return response (body will be streamed to client)
+              Future.successful(Some((variant, response)))
           }
         }
         .recover {
-          case e: Exception =>
+          case NonFatal(e) =>
             env.logger.debug(s"[Cloud APIM - LLMs.txt Accept Markdown] Failed to fetch $variant: ${e.getMessage}")
             None
         }
@@ -250,11 +277,20 @@ class MarkdownAcceptPlugin extends NgBackendCall {
     // Launch all variants in parallel and wait for all to complete
     val futureResults = variants.map(tryVariant)
 
-    // Use Future.sequence to wait for all results, then pick the first successful one in order
-    // This ensures we respect the priority order defined in the variants list
+    // Wait for all variants to complete, then pick the first successful one based on priority order
+    // Note: All requests complete before selection to avoid thundering herd on cache miss
     Future.sequence(futureResults).flatMap { results =>
-      results.collectFirst { case Some(result) => result } match {
+      // Extract all successful responses
+      val successfulResults = results.flatten
+
+      successfulResults.headOption match {
         case Some((variant, response)) =>
+          // Drain all other responses to avoid resource leak
+          val otherResponses = successfulResults.tail.map(_._2)
+          otherResponses.foreach { resp =>
+            resp.bodyAsSource.runWith(Sink.ignore)
+          }
+
           cacheInfoOpt.foreach { case (cache, cacheKey) =>
             if (response.status == 200) {
               cache.put(cacheKey, Some(variant))
