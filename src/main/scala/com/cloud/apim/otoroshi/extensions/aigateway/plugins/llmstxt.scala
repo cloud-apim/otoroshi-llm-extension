@@ -115,7 +115,7 @@ class MarkdownAcceptPlugin extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("[Cloud APIM - LLMs.txt Accept Markdown] plugin is now available!")
+      ext.logger.info("The 'LLMs.txt Accept Markdown' plugin is available!")
     }
     ().vfuture
   }
