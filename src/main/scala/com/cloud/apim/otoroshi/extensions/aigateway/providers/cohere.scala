@@ -163,7 +163,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
   }
 
   override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
-      if (currentCallCounter < maxCalls) {
+      if (currentCallCounter >= maxCalls) {
       return call(method, path, body)
     }
     // TODO: accumulate consumptions ???
@@ -197,7 +197,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
   }
 
   override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = {
-    if (currentCallCounter < maxCalls) {
+    if (currentCallCounter >= maxCalls) {
       return stream(method, path, body)
     }
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {

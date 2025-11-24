@@ -178,7 +178,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
   }
 
   override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {
-    if (currentCallCounter < maxCalls) {
+    if (currentCallCounter >= maxCalls) {
       return call(method, path, body)
     }
     // TODO: accumulate consumptions ???
@@ -247,7 +247,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
   }
 
   override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = {
-    if (currentCallCounter < maxCalls) {
+    if (currentCallCounter >= maxCalls) {
       return stream(method, path, body)
     }
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {

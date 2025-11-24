@@ -170,7 +170,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
   }
 
   override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {
-    if (currentCallCounter < maxCalls) {
+    if (currentCallCounter >= maxCalls) {
       return call(method, path, body)
     }
     // TODO: accumulate consumptions ???
@@ -201,7 +201,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
   }
 
   override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
-    if (currentCallCounter < maxCalls) {
+    if (currentCallCounter >= maxCalls) {
       return stream(method, path, body)
     }
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {

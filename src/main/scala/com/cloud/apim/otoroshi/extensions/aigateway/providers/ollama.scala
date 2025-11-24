@@ -141,7 +141,7 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
   }
 
   override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
-    if (currentCallCounter < maxCalls) {
+    if (currentCallCounter >= maxCalls) {
       return call(method, path, body)
     }
     // TODO: accumulate consumptions ???

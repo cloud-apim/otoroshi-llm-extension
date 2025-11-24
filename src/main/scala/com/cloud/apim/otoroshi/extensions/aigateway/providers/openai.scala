@@ -183,13 +183,14 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
 
   override def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
     rawCall(method, path, body).map(r => ProviderHelpers.wrapResponse(providerName, r, env) { resp =>
+      println(s"usage: ${resp.json.select("usage").asOpt[JsObject].map(_.prettify).getOrElse("--")}")
       OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
     })
   }
 
   override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
     // TODO: accumulate consumptions ???
-    if (currentCallCounter < maxCalls) {
+    if (currentCallCounter >= maxCalls) {
       return call(method, path, body)
     }
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
@@ -256,7 +257,7 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
   }
 
   override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
-    if (currentCallCounter < maxCalls) {
+    if (currentCallCounter >= maxCalls) {
       return stream(method, path, body)
     }
     val tools_arr = body.get.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
@@ -596,7 +597,8 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     callF.map {
       case Left(err) => err.left
       case Right(resp) =>
-      val usage = ChatResponseMetadata(
+        println(s"usage emitted: ${resp.body.select("usage").asOpt[JsObject].map(_.prettify).getOrElse("--")}")
+        val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
           requestsRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
