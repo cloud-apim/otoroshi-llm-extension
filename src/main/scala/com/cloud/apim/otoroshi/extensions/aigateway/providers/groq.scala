@@ -74,20 +74,21 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       .execute()
   }
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
+  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
     rawCall(method, path, body)
       .map(r => ProviderHelpers.wrapResponse("Groq", r, env) { resp =>
+        acc.updateOpenai(resp.json.select("usage").asOpt[JsObject])
         GroqApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
     if (currentCallCounter >= maxCalls) {
-      return call(method, path, body)
+      return call(method, path, body, acc)
     }
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
-      call(method, path, body).map(_.map(_.toOpenAi)).flatMap {
+      call(method, path, body, acc).map(_.map(_.toOpenAi)).flatMap {
         case Left(err) => err.leftf
         case Right(resp) if resp.finishBecauseOfToolCalls => {
           body match {
@@ -100,7 +101,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
             }
           }
@@ -108,11 +109,11 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
         case Right(resp) => resp.toGroq.rightf
       }
     } else {
-      call(method, path, body)
+      call(method, path, body, acc)
     }
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logStream("Groq", method, url, body)(env)
     env.Ws
@@ -140,17 +141,22 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
           .filter(_.nonEmpty)
           .takeWhile(_ != "[DONE]")
           .map(str => Json.parse(str))
-          .map(json => OpenAiChatResponseChunk(json)), resp)
+          .map(json => OpenAiChatResponseChunk(json))
+          .map { c =>
+            acc.updateOpenaiChunk(c.usage)
+            c
+          }
+        , resp)
       })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
     if (currentCallCounter >= maxCalls) {
-      return stream(method, path, body)
+      return stream(method, path, body, acc)
     }
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
-      stream(method, path, body).flatMap {
+      stream(method, path, body, acc).flatMap {
         case Left(err) => err.leftf
         case Right(res) => {
           var isToolCall = false
@@ -191,7 +197,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
               Source.future(a).flatMapConcat {
                 case Left(err) => Source.failed(new Throwable(err.stringify))
@@ -205,7 +211,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
         }
       }
     } else {
-      stream(method, path, body)
+      stream(method, path, body, acc)
     }
   }
 }
@@ -293,12 +299,13 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val acc = new UsageAccumulator()
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.callWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
+      api.callWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.call("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
+      api.call("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)), acc)
     }
     callF.map {
       case Left(err) => err.left
@@ -310,11 +317,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
           tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
           tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
         ),
-        ChatResponseMetadataUsage(
-          promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
-          generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
-          reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
-        ),
+        acc.usage(),
         None
       )
       val duration: Long = System.currentTimeMillis() - startTime //resp.body.select("total_time").asOpt[Long].getOrElse(0L)
@@ -352,13 +355,14 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
+    val acc = new UsageAccumulator()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.streamWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
+      api.streamWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.stream("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)))
+      api.stream("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)), acc)
     }
     callF.map {
       case Left(err) => err.left
@@ -373,11 +377,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
                   tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
                   tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
                 ),
-                ChatResponseMetadataUsage(
-                  promptTokens = chunk.usage.flatMap(_.prompt_tokens).getOrElse(-1L),
-                  generationTokens = chunk.usage.flatMap(_.completion_tokens).getOrElse(-1L),
-                  reasoningTokens = chunk.usage.flatMap(_.reasoningTokens).getOrElse(-1L),
-                ),
+                acc.usage(),
                 None
               )
               val duration: Long = System.currentTimeMillis() - startTime //resp.header("total_time").map(_.toLong).getOrElse(0L)

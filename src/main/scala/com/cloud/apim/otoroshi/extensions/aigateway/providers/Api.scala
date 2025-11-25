@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 import akka.stream.scaladsl.Source
+import com.cloud.apim.otoroshi.extensions.aigateway.ChatResponseMetadataUsage
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -8,6 +9,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsValue, Json}
 import play.api.libs.ws.WSResponse
 
+import java.util.concurrent.atomic.AtomicLong
 import scala.concurrent.{ExecutionContext, Future}
 
 trait ApiClient[Resp, Chunk] {
@@ -16,14 +18,14 @@ trait ApiClient[Resp, Chunk] {
   def supportsStreaming: Boolean
   def supportsCompletion: Boolean
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]]
-  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
-    call(method, path, body)
+  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]]
+  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
+    call(method, path, body, acc)
   }
 
-  def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[Chunk, _], WSResponse)]]
-  def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[Chunk, _], WSResponse)]] = {
-    stream(method, path, body)
+  def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[Chunk, _], WSResponse)]]
+  def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[Chunk, _], WSResponse)]] = {
+    stream(method, path, body, acc)
   }
 }
 
@@ -33,9 +35,9 @@ trait NoStreamingApiClient[Resp] {
   def supportsCompletion: Boolean
   final def supportsStreaming: Boolean = false
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]]
-  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
-    call(method, path, body)
+  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]]
+  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
+    call(method, path, body, acc)
   }
 }
 
@@ -102,5 +104,89 @@ object ProviderHelpers {
       logBadResponse(from, resp)
       responseBody(resp).left
     }
+  }
+}
+
+class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: Long = 0L, initialReasoningTokens: Long = 0L) {
+  private val promptTokensCounter: AtomicLong = new AtomicLong(initialPromptTokens)
+  private val generationTokensCounter: AtomicLong = new AtomicLong(initialGenerationTokens)
+  private val reasoningTokensCounter: AtomicLong = new AtomicLong(initialReasoningTokens)
+
+  def update(promptTokens: Long, generationTokens: Long, reasoningTokens: Long): Unit = {
+    promptTokensCounter.addAndGet(promptTokens)
+    generationTokensCounter.addAndGet(generationTokens)
+    reasoningTokensCounter.addAndGet(reasoningTokens)
+  }
+
+  def updateOpenai(usageOpt: Option[JsValue]): Unit = {
+    usageOpt.foreach { usage =>
+      promptTokensCounter.addAndGet(usage.select("prompt_tokens").asOpt[Long].getOrElse(0L))
+      generationTokensCounter.addAndGet(usage.select("completion_tokens").asOpt[Long].getOrElse(0L))
+      reasoningTokensCounter.addAndGet(usage.at("completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(0L))
+    }
+  }
+
+  def updateOllama(usageOpt: Option[JsValue]): Unit = {
+    usageOpt.foreach { usage =>
+      promptTokensCounter.addAndGet(usage.select("prompt_eval_count").asOpt[Long].getOrElse(0L))
+      generationTokensCounter.addAndGet(usage.select("eval_count").asOpt[Long].getOrElse(0L))
+      reasoningTokensCounter.addAndGet(usage.select("reasoning_count").asOpt[Long].getOrElse(0L))
+    }
+  }
+
+  def updateCohere(usageOpt: Option[JsValue]): Unit = {
+    usageOpt.foreach { usage =>
+      promptTokensCounter.addAndGet(usage.select("tokens").select("input_tokens").asOpt[Long].getOrElse(0L))
+      generationTokensCounter.addAndGet(usage.select("tokens").select("output_tokens").asOpt[Long].getOrElse(0L))
+      generationTokensCounter.addAndGet(usage.select("tokens.reasoning_tokens").asOpt[Long].getOrElse(0L))
+    }
+  }
+
+  def updateCohereChunk(usageOpt: Option[CohereChatResponseChunkUsage]): Unit = {
+    usageOpt.foreach { usage =>
+      promptTokensCounter.addAndGet(usage.input_tokens)
+      generationTokensCounter.addAndGet(usage.output_tokens)
+      reasoningTokensCounter.addAndGet(usage.reasoningTokens)
+    }
+  }
+
+  def updateOpenaiChunk(usageOpt: Option[OpenAiChatResponseChunkUsage]): Unit = {
+    usageOpt.foreach { usage =>
+      promptTokensCounter.addAndGet(usage.prompt_tokens.getOrElse(0L))
+      generationTokensCounter.addAndGet(usage.completion_tokens.getOrElse(0L))
+      reasoningTokensCounter.addAndGet(usage.reasoningTokens.getOrElse(0L))
+    }
+  }
+
+  def updateAzureOpenaiChunk(usageOpt: Option[AzureOpenAiChatResponseChunkUsage]): Unit = {
+    usageOpt.foreach { usage =>
+      promptTokensCounter.addAndGet(usage.prompt_tokens.getOrElse(0L))
+      generationTokensCounter.addAndGet(usage.completion_tokens.getOrElse(0L))
+      reasoningTokensCounter.addAndGet(usage.reasoning_tokens.getOrElse(0L))
+    }
+  }
+
+  def updateAnthropic(usageOpt: Option[JsValue]): Unit = {
+    usageOpt.foreach { usage =>
+      promptTokensCounter.addAndGet(usage.select("input_tokens").asOpt[Long].getOrElse(0L))
+      generationTokensCounter.addAndGet(usage.select("output_tokens").asOpt[Long].getOrElse(0L))
+      reasoningTokensCounter.addAndGet(usage.select("reasoning_tokens").asOpt[Long].getOrElse(0L))
+    }
+  }
+
+  def updateAnthropicChunk(usageOpt: Option[AnthropicChatResponseChunkUsage]): Unit = {
+    usageOpt.foreach { usage =>
+      promptTokensCounter.addAndGet(usage.input_tokens)
+      generationTokensCounter.addAndGet(usage.output_tokens)
+      reasoningTokensCounter.addAndGet(usage.reasoningTokens)
+    }
+  }
+
+  def usage(): ChatResponseMetadataUsage = {
+    ChatResponseMetadataUsage(
+      promptTokens = promptTokensCounter.get(),
+      generationTokens = generationTokensCounter.get(),
+      reasoningTokens = reasoningTokensCounter.get(),
+    )
   }
 }

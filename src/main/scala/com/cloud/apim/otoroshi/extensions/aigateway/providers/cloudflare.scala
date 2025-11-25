@@ -27,7 +27,7 @@ class CloudflareApi(val accountId: String, val modelName: String, token: String,
   override def supportsTools: Boolean = false
   override def supportsCompletion: Boolean = false
 
-  override def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, CloudflareApiResponse]] = {
+  override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, CloudflareApiResponse]] = {
     val url = s"${CloudflareApi.url(accountId, modelName)}"
     ProviderHelpers.logCall("Cloudflare", method, url, body)(env)
     env.Ws
@@ -44,6 +44,7 @@ class CloudflareApi(val accountId: String, val modelName: String, token: String,
       .withRequestTimeout(timeout)
       .execute()
       .map(r => ProviderHelpers.wrapResponse("Cloudflare", r, env) { resp =>
+        acc.updateOpenai(resp.json.select("usage").asOpt[JsObject])
         CloudflareApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
       })
   }
@@ -104,7 +105,8 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val startTime = System.currentTimeMillis()
-    api.call("POST", "", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
+    val acc = new UsageAccumulator()
+    api.call("POST", "", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)), acc).map {
       case Left(err) => err.left
       case Right(resp) =>
         val usage = ChatResponseMetadata(
@@ -114,11 +116,7 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
             tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-tokens-limit").map(_.toLong).getOrElse(-1L),
             tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-tokens-remaining").map(_.toLong).getOrElse(-1L),
           ),
-          ChatResponseMetadataUsage(
-            promptTokens = resp.body.select("usage").select("input_tokens").asOpt[Long].getOrElse(-1L),
-            generationTokens = resp.body.select("usage").select("output_tokens").asOpt[Long].getOrElse(-1L),
-            reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
-          ),
+          acc.usage(),
           None
         )
         val duration: Long = System.currentTimeMillis() - startTime //resp.headers.getIgnoreCase("Cloudflare-processing-ms").map(_.toLong).getOrElse(0L)

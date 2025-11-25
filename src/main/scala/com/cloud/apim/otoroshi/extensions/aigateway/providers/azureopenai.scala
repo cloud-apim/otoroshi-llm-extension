@@ -170,20 +170,21 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
       .execute()
   }
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {
+  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {
     rawCall(method, path, body)
       .map(r => ProviderHelpers.wrapResponse("AzureOpenai", r, env) { resp =>
+        acc.updateOpenai(resp.json.select("usage").asOpt[JsObject])
         AzureOpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {
     if (currentCallCounter >= maxCalls) {
-      return call(method, path, body)
+      return call(method, path, body, acc)
     }
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
-      call(method, path, body).flatMap {
+      call(method, path, body, acc).flatMap {
         case Left(err) => err.leftf
         case Right(resp) if resp.finishBecauseOfToolCalls => {
           body match {
@@ -196,7 +197,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter, acc)
                 }
             }
           }
@@ -204,11 +205,11 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
         case Right(resp) => resp.rightf
       }
     } else {
-      call(method, path, body)
+      call(method, path, body, acc)
     }
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = {
     val url = s"${AzureOpenAiApi.url(resourceName, deploymentId, version, path)}"
     ProviderHelpers.logStream("AzureOpenai", method, url, body)(env)
     env.Ws
@@ -242,17 +243,22 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
           .filter(_.nonEmpty)
           .takeWhile(_ != "[DONE]")
           .map(str => Json.parse(str))
-          .map(json => AzureOpenAiChatResponseChunk(json)), resp)
+          .map(json => AzureOpenAiChatResponseChunk(json))
+          .map { c =>
+            acc.updateAzureOpenaiChunk(c.usage)
+            c
+          }
+        , resp)
       })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiChatResponseChunk, _], WSResponse)]] = {
     if (currentCallCounter >= maxCalls) {
-      return stream(method, path, body)
+      return stream(method, path, body, acc)
     }
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
-      stream(method, path, body).flatMap {
+      stream(method, path, body, acc).flatMap {
         case Left(err) => err.leftf
         case Right(res) => {
           var isToolCall = false
@@ -293,7 +299,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter)
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter, acc)
                 }
               Source.future(a)
                 .flatMapConcat {
@@ -308,7 +314,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
         }
       }
     } else {
-      stream(method, path, body)
+      stream(method, path, body, acc)
     }
   }
 }
@@ -416,12 +422,13 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val acc = new UsageAccumulator()
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
+      api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
+      api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), acc)
     }
     callF.map {
       case Left(err) => err.left
@@ -433,11 +440,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
           tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
           tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
         ),
-        ChatResponseMetadataUsage(
-          promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
-          generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
-          reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
-        ),
+        acc.usage(),
         None
       )
       val duration: Long = System.currentTimeMillis() - startTime //resp.headers.getIgnoreCase("AzureOpenAi-processing-ms").map(_.toLong).getOrElse(0L)
@@ -478,12 +481,13 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val acc = new UsageAccumulator()
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
+      api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
+      api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), acc)
     }
     callF.map {
       case Left(err) => err.left
@@ -498,11 +502,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
                   tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
                   tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
                 ),
-                ChatResponseMetadataUsage(
-                  promptTokens = chunk.usage.flatMap(_.prompt_tokens).getOrElse(-1L),
-                  generationTokens = chunk.usage.flatMap(_.completion_tokens).getOrElse(-1L),
-                  reasoningTokens = chunk.usage.flatMap(_.reasoning_tokens).getOrElse(-1L),
-                ),
+                acc.usage(),
                 None
               )
               val duration: Long = System.currentTimeMillis() - startTime //resp.header("AzureOpenAi-processing-ms").map(_.toLong).getOrElse(0L)
@@ -556,7 +556,8 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val startTime = System.currentTimeMillis()
-    val callF = api.call("POST", "/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)))
+    val acc = new UsageAccumulator()
+    val callF = api.call("POST", "/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)), acc)
     callF.map {
       case Left(err) => err.left
       case Right(resp) =>
@@ -567,11 +568,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
           tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
           tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
         ),
-        ChatResponseMetadataUsage(
-          promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
-          generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
-          reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
-        ),
+        acc.usage(),
         None
       )
       val duration: Long = System.currentTimeMillis() - startTime //resp.headers.getIgnoreCase("AzureOpenAi-processing-ms").map(_.toLong).getOrElse(0L)

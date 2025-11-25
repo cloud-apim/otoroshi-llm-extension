@@ -99,14 +99,15 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
       .execute()
   }
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
+  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
     rawCall(method, path, body)
       .map(r => ProviderHelpers.wrapResponse("Ollama", r, env) { resp =>
+        acc.updateOllama(resp.json.some)
         OllamaAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json, resp)
       })
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OllamaAiChatResponseChunk, _], WSResponse)]] = {
+  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OllamaAiChatResponseChunk, _], WSResponse)]] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logStream("Ollama", method, url, body)(env)
     env.Ws
@@ -135,18 +136,22 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
           .filter(_.nonEmpty)
           .map(str => Json.parse(str))
           .map(json => OllamaAiChatResponseChunk(json))
+          .map { c =>
+            acc.update(c.prompt_eval_count.getOrElse(0L), c.eval_count.getOrElse(0L), c.reasoning_count.getOrElse(0L))
+            c
+          }
           .takeWhile(!_.done, inclusive = true)
         , resp)
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {
     if (currentCallCounter >= maxCalls) {
-      return call(method, path, body)
+      return call(method, path, body, acc)
     }
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
-      call(method, path, body).flatMap {
+      call(method, path, body, acc ).flatMap {
         case Left(err) => err.leftf
         case Right(resp) if resp.finishBecauseOfToolCalls => {
           body match {
@@ -159,7 +164,7 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
             }
           }
@@ -167,12 +172,12 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
         case Right(resp) => resp.rightf
       }
     } else {
-      call(method, path, body)
+      call(method, path, body, acc)
     }
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxFunctionCalls: Int, functionCalls: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OllamaAiChatResponseChunk, _], WSResponse)]] = {
-    callWithToolSupport(method, path, body, mcpConnectors, attrs, nameToFunction, maxFunctionCalls, functionCalls).map {case Left(err) => err.left
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxFunctionCalls: Int, functionCalls: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OllamaAiChatResponseChunk, _], WSResponse)]] = {
+    callWithToolSupport(method, path, body, mcpConnectors, attrs, nameToFunction, maxFunctionCalls, functionCalls, acc).map {case Left(err) => err.left
     case Right(resp) =>
       val source = resp.message.content.get.chunks(5).map { str =>
         OllamaAiChatResponseChunk(resp.body.asObject.deepMerge(Json.obj(
@@ -292,6 +297,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     val finalModel: String = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val mergedOptionsWithoutModel = mergedOptions - "model"
     val startTime = System.currentTimeMillis()
+    val acc = new UsageAccumulator()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
@@ -301,14 +307,14 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         "stream" -> false,
         "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
         "options" -> mergedOptionsWithoutModel,
-      ) ++ tools), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
+      ) ++ tools), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
       api.call("POST", "/api/chat", Some(Json.obj(
         "model" -> finalModel,
         "stream" -> false,
         "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
         "options" -> mergedOptionsWithoutModel
-      )))
+      )), acc)
     }
     callF.map {
       case Left(err) => err.left
@@ -320,11 +326,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
           tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
           tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
         ),
-        ChatResponseMetadataUsage(
-          promptTokens = resp.body.select("prompt_eval_count").asOpt[Long].getOrElse(-1L),
-          generationTokens = resp.body.select("eval_count").asOpt[Long].getOrElse(-1L),
-          reasoningTokens = resp.body.select("reasoning_counter").asOpt[Long].getOrElse(0L),
-        ),
+        acc.usage(),
         None
       )
       val duration: Long = System.currentTimeMillis() - startTime //resp.body.select("total_duration").asOpt[Long].map(_ / 100000).getOrElse(-1L)
@@ -359,6 +361,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     val hasOtoTools = api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)
     val hasBodyTools = originalBody.select("tools").asOpt[JsArray].isDefined
     val startTime = System.currentTimeMillis()
+    val acc = new UsageAccumulator()
     if (hasOtoTools || hasBodyTools) {
       val a = new OpenAiApi(api.baseUrl + "/v1", api.token.getOrElse("token"), api.timeout, providerName = "Ollama", env = env)
       val opts = OpenAiChatClientOptions.fromJson(options.json) // TODO: transform options here
@@ -374,7 +377,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
         "stream" -> true,
         "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
         "options" -> mergedOptionsWithoutModel
-      ))).map {
+      )), acc).map {
         case Left(err) => err.left
         case Right((source, resp)) =>
           source
@@ -387,11 +390,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
                     tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
                     tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
                   ),
-                  ChatResponseMetadataUsage(
-                    promptTokens = chunk.prompt_eval_count.getOrElse(-1L),
-                    generationTokens = chunk.eval_count.getOrElse(-1L),
-                    reasoningTokens = chunk.reasoning_count.getOrElse(-1L),
-                  ),
+                  acc.usage(),
                   None
                 )
                 val duration: Long = System.currentTimeMillis() - startTime
@@ -446,9 +445,10 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
     val finalModel: String = mergedOptions.select("model").asOptString.getOrElse(options.model)
     val headMessage = prompt.messages.head
     val images = headMessage.images
+    val acc = new UsageAccumulator()
     val callF = api.call("POST", "/v1/completions", Some(mergedOptions ++ Json.obj(
       "prompt" -> headMessage.content
-    ).applyOnIf(images.value.nonEmpty)(_ ++ Json.obj("images" -> images))))
+    ).applyOnIf(images.value.nonEmpty)(_ ++ Json.obj("images" -> images))), acc)
     callF.map {
       case Left(err) => err.left
       case Right(resp) =>
@@ -459,11 +459,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
           tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
           tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
         ),
-        ChatResponseMetadataUsage(
-          promptTokens = resp.body.select("prompt_eval_count").asOpt[Long].getOrElse(-1L),
-          generationTokens = resp.body.select("eval_count").asOpt[Long].getOrElse(-1L),
-          reasoningTokens = resp.body.select("reasoning_count").asOpt[Long].getOrElse(0L),
-        ),
+        acc.usage(),
         None
       )
       val duration: Long = resp.body.select("total_duration").asOpt[Long].map(_ / 100000).getOrElse(-1L)

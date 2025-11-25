@@ -112,14 +112,15 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
       .execute()
   }
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
+  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
     rawCall(method, path, body)
       .map(r => ProviderHelpers.wrapResponse("Cohere", r, env) { resp =>
+        acc.updateCohere(resp.json.select("usage").asOpt[JsObject])
         CohereAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
       })
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = {
+  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logStream(providerName, method, url, body)(env)
     val messageStartRef = new AtomicReference[JsValue]()
@@ -158,18 +159,22 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
           .filterNot(_.select("type").asOptString.contains("tool-plan-delta"))
           .takeWhile(!_.select("type").asOptString.contains("message-end"), inclusive = true)
           .map(json => CohereAiApiResponseChunk(json, Option(messageStartRef.get()), Option(messageEndRef.get())))
+          .map { c =>
+            acc.updateCohereChunk(c.usage)
+            c
+          }
           , resp)
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
       if (currentCallCounter >= maxCalls) {
-      return call(method, path, body)
+      return call(method, path, body, acc)
     }
     // TODO: accumulate consumptions ???
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val fmap: Map[String, String] = body.flatMap(_.select("fmap").asOpt[Map[String, String]]).getOrElse(Map.empty)
-      call(method, path, body.map(_.asObject - "fmap")).flatMap {
+      call(method, path, body.map(_.asObject - "fmap"), acc).flatMap {
         case Left(err) => err.leftf
         case Right(resp) if resp.finishBecauseOfToolCalls => {
           body match {
@@ -182,7 +187,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
             }
           }
@@ -192,18 +197,18 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
           resp.rightf
       }
     } else {
-      call(method, path, body)
+      call(method, path, body, acc)
     }
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = {
     if (currentCallCounter >= maxCalls) {
-      return stream(method, path, body)
+      return stream(method, path, body, acc)
     }
     if (body.flatMap(_.select("tools").asOpt[JsArray]).exists(_.value.nonEmpty)) {
       val fmap: Map[String, String] = body.flatMap(_.select("fmap").asOpt[Map[String, String]]).getOrElse(Map.empty)
       val messages = body.get.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
-      stream(method, path, body.map(_.asObject - "fmap")).flatMap {
+      stream(method, path, body.map(_.asObject - "fmap"), acc).flatMap {
         case Left(err) => err.leftf
         case Right(res) => {
           var index: Int = 0
@@ -249,7 +254,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1)
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
               Source.future(a).flatMapConcat {
                 case Left(err) => Source.failed(new Throwable(err.stringify))
@@ -263,7 +268,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
         }
       }
     } else {
-      stream(method, path, body)
+      stream(method, path, body, acc)
     }
   }
 }
@@ -368,12 +373,13 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val acc = new UsageAccumulator()
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val (tools, map) = LlmFunctions.toolsCohereWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.callWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
+      api.callWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.call("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))))
+      api.call("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), acc)
     }
     callF.map {
       case Left(err) => err.left
@@ -385,11 +391,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
           tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
           tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
         ),
-        ChatResponseMetadataUsage(
-          promptTokens = resp.body.select("usage").select("tokens").select("input_tokens").asOpt[Long].getOrElse(-1L),
-          generationTokens = resp.body.select("usage").select("tokens").select("output_tokens").asOpt[Long].getOrElse(-1L),
-          reasoningTokens = resp.body.at("usage.tokens.reasoning_tokens").asOpt[Long].getOrElse(-1L),
-        ),
+        acc.usage(),
         None
       )
       val duration: Long = System.currentTimeMillis() - startTime //resp.headers.getIgnoreCase("CohereAi-processing-ms").map(_.toLong).getOrElse(0L)
@@ -430,12 +432,13 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val hasToolsInRequest = body.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val acc = new UsageAccumulator()
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
       val (tools, map) = LlmFunctions.toolsCohere(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.streamWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0)
+      api.streamWithToolSupport("POST", "/v2/chat", Some(mergedOptions ++ tools ++ Json.obj("fmap" -> map) ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.stream("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))))
+      api.stream("POST", "/v2/chat", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Anthropic))), acc)
     }
     callF.map {
       case Left(err) => err.left
@@ -449,11 +452,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
                   tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
                   tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
                 ),
-                ChatResponseMetadataUsage(
-                  promptTokens = chunk.usage.map(_.input_tokens).getOrElse(-1L),
-                  generationTokens = chunk.usage.map(_.output_tokens).getOrElse(-1L),
-                  reasoningTokens = chunk.usage.map(_.reasoningTokens).getOrElse(-1L),
-                ),
+                acc.usage(),
                 None
               )
               val duration: Long = System.currentTimeMillis() - startTime //resp.header("cohere-processing-ms").map(_.toLong).getOrElse(0L)
