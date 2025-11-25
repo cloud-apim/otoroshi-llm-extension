@@ -591,8 +591,6 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     callF.map {
       case Left(err) => err.left
       case Right(resp) =>
-        val tokensUsage = acc.usage()
-        println(s"usage emitted: ${tokensUsage.json.prettify}")
         val usage = ChatResponseMetadata(
           ChatResponseMetadataRateLimit(
             requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
@@ -600,7 +598,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
             tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
             tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
           ),
-          tokensUsage,
+          acc.usage(),
           None
         )
         val duration: Long = resp.headers.getIgnoreCase("openai-processing-ms").map(_.toLong).getOrElse(0L)
