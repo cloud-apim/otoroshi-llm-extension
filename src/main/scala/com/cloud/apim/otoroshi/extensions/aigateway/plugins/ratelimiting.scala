@@ -183,9 +183,11 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
           "X-Llm-Ratelimit-Remaining-Tokens" -> remaining_max,
           "X-Llm-Ratelimit-Consumed-Tokens" -> consumed_str,
         )
+
       }
       env.clusterAgent.incrementCustomThrottling(expr, group, increment, windowMillis)
-      NgCustomThrottling.updateQuotas(expr, group, increment, windowMillis)
+      val max = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLong
+      NgCustomThrottling.updateQuotas(expr, group, increment, max, windowMillis).map(_ => ())
     }.getOrElse(().vfuture)
   }
 
@@ -209,7 +211,8 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
         )
       }
       env.clusterAgent.incrementCustomThrottling(expr, group, increment, windowMillis)
-      NgCustomThrottling.updateQuotas(expr, group, increment, windowMillis)
+      val max = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLong
+      NgCustomThrottling.updateQuotas(expr, group, increment, max, windowMillis).map(_ => ())
     }.getOrElse(().vfuture)
   }
 
