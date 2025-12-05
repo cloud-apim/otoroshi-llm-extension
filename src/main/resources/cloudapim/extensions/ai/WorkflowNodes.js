@@ -190,7 +190,7 @@ const workflowNodes = [
         "flow": ["id", "before", "after", "config"]
       }
     },
-    flow: ["provider", "name", "instructions", "input", "tools", "memory", "guardrails"],
+    flow: ["provider", "name", "instructions", "input", "tools", "mcp_connectors", "memory", "guardrails"],
     height: (data) => `${110 + 20 * data?.sourceHandles?.length}px`,
     nodeToJson: ({
                    edges,
@@ -230,7 +230,7 @@ const workflowNodes = [
             alreadySeen = alreadySeen.concat([seen]).flat();
 
             const isSubFlowEmpty = pathNode.kind === 'workflow' && pathNode.steps.length === 0;
-            const hasNode = pathNode.kind === 'workflow' && pathNode.steps.length > 1;
+            const hasNode = pathNode.kind === 'workflow' && (pathNode.steps.length > 1 || pathNode.steps[0]?.kind === 'extensions.com.cloud-apim.llm-extension.ai_agent_mcp_tools');
 
             return {
               ...acc,
@@ -342,12 +342,12 @@ const workflowNodes = [
   {
     kind: 'extensions.com.cloud-apim.llm-extension.ai_agent_mcp_tools',
     name: 'extensions.com.cloud-apim.llm-extension.ai_agent_mcp_tools',
-    display_name: 'Agent MCP Tools',
+    display_name: 'MCP Tools',
     icon: 'fas fa-wrench',
     description: 'This node let you select an MCP connector for your agent',
     flow: ["mcp_ref"],
     form_schema: {
-      "mcp_ref": {
+      mcp_ref: {
         "type": "select",
         "label": "MCP Connectors",
         "props": {
