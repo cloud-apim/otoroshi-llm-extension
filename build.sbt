@@ -6,7 +6,7 @@ ThisBuild / version          := "1.0.0-dev"
 ThisBuild / organization     := "com.cloud-apim"
 ThisBuild / organizationName := "Cloud-APIM"
 
-lazy val langchain4jVersion = "1.0.0-alpha1" //"0.34.0"
+lazy val langchain4jVersion = "1.9.1" //"0.34.0"
 lazy val jacksonVersion = "2.15.3"
 lazy val jlamaVersion = "0.8.4"
 lazy val jackson = Seq(
@@ -47,15 +47,15 @@ lazy val root = (project in file("."))
       "com.fasterxml.jackson.module" % "jackson-module-parameter-names" % jacksonVersion,
       "com.fasterxml.jackson.module" % "jackson-module-scala_2.12" % jacksonVersion,
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-      "dev.langchain4j" % "langchain4j" % langchain4jVersion excludeAll(all: _*),
-      "dev.langchain4j" % "langchain4j-mcp" % langchain4jVersion excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j" % "1.9.1" excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j-mcp" % "1.9.1-beta17" excludeAll(all: _*),
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       // for rapid dev purposes, the following 2 are marked as provided. needs to be not "provided" for release ////////
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       // "dev.langchain4j" % "langchain4j-embeddings" % langchain4jVersion % "provided" excludeAll(all: _*),
       // "dev.langchain4j" % "langchain4j-embeddings-all-minilm-l6-v2" % langchain4jVersion % "provided" excludeAll(all: _*),
-      "dev.langchain4j" % "langchain4j-embeddings" % langchain4jVersion excludeAll(all: _*),
-      "dev.langchain4j" % "langchain4j-embeddings-all-minilm-l6-v2" % langchain4jVersion excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j-embeddings" % "1.9.1-beta17" excludeAll(all: _*),
+      "dev.langchain4j" % "langchain4j-embeddings-all-minilm-l6-v2" % "1.9.1-beta17" excludeAll(all: _*),
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       "com.github.tjake" % "jlama-core" % jlamaVersion excludeAll(all: _*),
       "com.github.tjake" % "jlama-native" % jlamaVersion excludeAll(all: _*),

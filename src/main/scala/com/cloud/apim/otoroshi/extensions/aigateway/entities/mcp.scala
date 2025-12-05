@@ -2,19 +2,13 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorTransportKind.Stdio
-import com.fasterxml.jackson.core.JsonProcessingException
-import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.google.gson.Gson
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
 import dev.langchain4j.mcp.client.DefaultMcpClient
-import dev.langchain4j.mcp.client.protocol.{McpCallToolRequest, McpInitializeRequest, McpListToolsRequest}
-import dev.langchain4j.mcp.client.transport.http.HttpMcpTransport
+import dev.langchain4j.mcp.client.transport.http.{HttpMcpTransport, StreamableHttpMcpTransport}
 import dev.langchain4j.mcp.client.transport.stdio.StdioMcpTransport
-import dev.langchain4j.mcp.client.transport.{McpOperationHandler, McpTransport}
+import dev.langchain4j.mcp.client.transport.websocket.WebSocketMcpTransport
 import dev.langchain4j.model.chat.request.json._
-import okhttp3._
-import okio.ByteString
-import org.slf4j.LoggerFactory
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
 import otoroshi.env.Env
 import otoroshi.models.{EntityLocation, EntityLocationSupport}
@@ -24,12 +18,10 @@ import otoroshi.storage.{BasicStore, RedisLike, RedisLikeStore}
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiExtension, AiGatewayExtensionDatastores, AiGatewayExtensionState}
 import play.api.libs.json._
-import play.api.mvc.RequestHeader
 
-import java.io.IOException
 import java.util.UUID
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicInteger, AtomicReference}
-import java.util.concurrent.{CompletableFuture, ConcurrentLinkedQueue}
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.{Duration, DurationLong, FiniteDuration}
 import scala.concurrent.{Await, ExecutionContext, Future, Promise}
@@ -150,15 +142,21 @@ case class McpConnector(
   }
 
   private def clientPool(): ConcurrentLinkedQueue[DefaultMcpClient] = synchronized {
+    val transportSha = transport.json.stringify.sha256
     McpConnector.connectorsCache.get(id) match {
-      case Some((cli, _, hash, _)) if hash == json.stringify.sha256 => cli
-      case e => {
+      case Some((cli, _, hash, _)) if hash == transportSha => cli
+      case e => try {
+        println(s"expected: ${transportSha} found ${e}")
         val cli = buildClient()
         val pool = new ConcurrentLinkedQueue[DefaultMcpClient]()
         pool.add(cli)
-        McpConnector.connectorsCache.put(id, (pool, new AtomicInteger(1), json.stringify.sha256, System.currentTimeMillis()))
+        McpConnector.connectorsCache.put(id, (pool, new AtomicInteger(1), transportSha, System.currentTimeMillis()))
         e.foreach(_._1.asScala.foreach(_.close()))
         pool
+      } catch {
+        case e: Throwable =>
+          e.printStackTrace()
+          new ConcurrentLinkedQueue[DefaultMcpClient]()
       }
     }
   }
@@ -179,6 +177,7 @@ case class McpConnector(
         val opts = transport.sseOptions
         new HttpMcpTransport.Builder()
           .sseUrl(opts.url)
+          .customHeaders(opts.headers.asJava)
           .logRequests(opts.log)
           .logResponses(opts.log)
           .timeout(java.time.Duration.ofMillis(opts.timeout.toMillis))
@@ -186,12 +185,19 @@ case class McpConnector(
       }
       case McpConnectorTransportKind.Websocket => {
         val opts = transport.sseOptions
-        new WebsocketHttpTransport(opts.url, opts.log, opts.log, java.time.Duration.ofMillis(opts.timeout.toMillis))
+        new WebSocketMcpTransport.Builder()
+          .url(opts.url)
+          .logRequests(opts.log)
+          .logResponses(opts.log)
+          .timeout(java.time.Duration.ofMillis(opts.timeout.toMillis))
+          .build()
+        // new WebsocketHttpTransport(opts.url, opts.log, opts.log, java.time.Duration.ofMillis(opts.timeout.toMillis))
       }
       case McpConnectorTransportKind.Http => {
         val opts = transport.sseOptions
-        new HttpMcpTransport.Builder()
-          .sseUrl(opts.url)
+        new StreamableHttpMcpTransport.Builder()
+          .url(opts.url)
+          .customHeaders(opts.headers.asJava)
           .logRequests(opts.log)
           .logResponses(opts.log)
           .timeout(java.time.Duration.ofMillis(opts.timeout.toMillis))
@@ -201,7 +207,8 @@ case class McpConnector(
     new DefaultMcpClient.Builder()
       .transport(trsprt)
       .clientName(name)
-      .clientVersion(metadata.get("version").getOrElse("0.0.0"))
+      .clientVersion(metadata.getOrElse("version", "1.0"))
+      .protocolVersion(metadata.getOrElse("protocol_version", "2025-06-18"))
       .toolExecutionTimeout(java.time.Duration.ofMillis(Duration.apply(metadata.get("timeout").getOrElse("180s")).toMillis))
       .build()
   }
@@ -226,7 +233,13 @@ case class McpConnector(
   def call(name: String, args: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
     if (matches(name)) {
       val request = ToolExecutionRequest.builder().id(UUID.randomUUID().toString()).name(name).arguments(args).build()
-      withClient(_.executeTool(request))
+      withClient(_.executeTool(request)).map { res =>
+        if (res.isError) {
+          s"an error occurred while executing request: ${res.resultText()}"
+        } else {
+          res.resultText()
+        }
+      }
     } else {
       s"you cannot call tool named: '${name}'".future
     }
@@ -727,6 +740,7 @@ object McpSupport {
   }
 }
 
+/*
 object WebsocketHttpTransport {
   val logger = LoggerFactory.getLogger(classOf[WebsocketHttpTransport])
   val OBJECT_MAPPER = new ObjectMapper()
@@ -929,3 +943,4 @@ class OtoroshiHttpTransport(httpUrl: String, logRequests: Boolean, logResponses:
     client.dispatcher.executorService.shutdown()
   }
 }
+*/
