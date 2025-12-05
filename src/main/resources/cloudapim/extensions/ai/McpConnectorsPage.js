@@ -11,6 +11,10 @@ class McpConnectorsPage extends Component {
       type: 'string',
       props: { label: 'Name', placeholder: 'My Awesome Context' },
     },
+    enabled: {
+      type: 'bool',
+      props: { label: 'Enabled' },
+    },
     description: {
       type: 'string',
       props: { label: 'Description', placeholder: 'Description of the Context' },
@@ -73,10 +77,15 @@ class McpConnectorsPage extends Component {
       filterId: 'description',
       content: (item) => item.description,
     },
+    {
+      title: 'Enabled',
+      filterId: 'enabled',
+      content: (item) => item.enabled ? React.createElement('span', { className: "badge bg-success" }, 'yes') : React.createElement('span', { className: "badge bg-danger" }, 'no'),
+    },
   ];
 
   formFlow = [
-    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options', 'strict', '---', 'include_functions', 'exclude_functions'];
+    '_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options', 'strict', '---', 'include_functions', 'exclude_functions'];
 
   componentDidMount() {
     this.props.setTitle(`MCP Connectors`);
@@ -92,6 +101,7 @@ class McpConnectorsPage extends Component {
         defaultTitle: "All MCP Connectors",
         defaultValue: () => ({
           id: 'mcp-connector_' + uuid(),
+          enabled: true,
           name: 'MCP Connector',
           description: 'An new MCP Connector',
           tags: [],

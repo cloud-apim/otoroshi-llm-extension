@@ -106,6 +106,7 @@ case class McpConnectorPoolSettings(size: Int = 1) {
 case class McpConnector(
   location: EntityLocation = EntityLocation.default,
   id: String,
+  enabled: Boolean,
   name: String,
   description: String = "",
   tags: Seq[String] = Seq.empty,
@@ -138,7 +139,14 @@ case class McpConnector(
   }
 
   def restartIfNeeded(): Unit = {
-    clientPool()
+    if (enabled) {
+      clientPool()
+    } else {
+      McpConnector.connectorsCache.get(id).foreach { cli =>
+        cli._1.asScala.map(_.close())
+        McpConnector.connectorsCache.remove(id)
+      }
+    }
   }
 
   private def clientPool(): ConcurrentLinkedQueue[DefaultMcpClient] = synchronized {
@@ -245,51 +253,55 @@ case class McpConnector(
   }
 
   private def withClient[T](f: DefaultMcpClient => T)(implicit ec: ExecutionContext, env: Env): Future[T] = {
-    //f(McpConnector.connectorsCache.get(id).get._1.peek()).vfuture
-    val promise = Promise.apply[T]()
-    McpConnector.connectorsCache.get(id) match {
-      case None => {
-        clientPool()
-        withClient(f).andThen {
-          case Failure(e) => promise.tryFailure(e)
-          case Success(e) => promise.trySuccess(e)
+    if (!enabled) {
+      Future.failed(new RuntimeException("Mcp client is not enabled"))
+    } else {
+      //f(McpConnector.connectorsCache.get(id).get._1.peek()).vfuture
+      val promise = Promise.apply[T]()
+      McpConnector.connectorsCache.get(id) match {
+        case None => {
+          clientPool()
+          withClient(f).andThen {
+            case Failure(e) => promise.tryFailure(e)
+            case Success(e) => promise.trySuccess(e)
+          }
         }
-      }
-      case Some((queue, counter, _, _)) => {
-        val item = queue.poll()
-        if (item == null) {
-          if (counter.get() < pool.size) {
-            counter.incrementAndGet()
-            val cli = buildClient()
+        case Some((queue, counter, _, _)) => {
+          val item = queue.poll()
+          if (item == null) {
+            if (counter.get() < pool.size) {
+              counter.incrementAndGet()
+              val cli = buildClient()
+              try {
+                val r = f(cli)
+                promise.trySuccess(r)
+              } catch {
+                case e: Throwable => promise.tryFailure(e)
+              } finally {
+                queue.add(cli)
+              }
+            } else {
+              env.otoroshiScheduler.scheduleOnce(100.millis) {
+                withClient(f).andThen {
+                  case Failure(e) => promise.tryFailure(e)
+                  case Success(e) => promise.trySuccess(e)
+                }
+              }
+            }
+          } else {
             try {
-              val r = f(cli)
+              val r = f(item)
               promise.trySuccess(r)
             } catch {
               case e: Throwable => promise.tryFailure(e)
             } finally {
-              queue.add(cli)
+              queue.add(item)
             }
-          } else {
-            env.otoroshiScheduler.scheduleOnce(100.millis) {
-              withClient(f).andThen {
-                case Failure(e) => promise.tryFailure(e)
-                case Success(e) => promise.trySuccess(e)
-              }
-            }
-          }
-        } else {
-          try {
-            val r = f(item)
-            promise.trySuccess(r)
-          } catch {
-            case e: Throwable => promise.tryFailure(e)
-          } finally {
-            queue.add(item)
           }
         }
       }
+      promise.future
     }
-    promise.future
   }
 }
 
@@ -298,6 +310,7 @@ object McpConnector {
   val format = new Format[McpConnector] {
     override def writes(o: McpConnector): JsValue = o.location.jsonWithKey ++ Json.obj(
       "id" -> o.id,
+      "enabled" -> o.enabled,
       "name" -> o.name,
       "description" -> o.description,
       "metadata" -> o.metadata,
@@ -313,6 +326,7 @@ object McpConnector {
       McpConnector(
         location = otoroshi.models.EntityLocation.readFromKey(json),
         id = (json \ "id").as[String],
+        enabled = (json \ "enabled").asOpt[Boolean].getOrElse(true),
         name = (json \ "name").as[String],
         description = (json \ "description").as[String],
         metadata = (json \ "metadata").asOpt[Map[String, String]].getOrElse(Map.empty),
@@ -346,6 +360,7 @@ object McpConnector {
         tmpl = (v, p, ctx) => {
           McpConnector(
             id = IdGenerator.namedId("mcp-connector", env),
+            enabled = true,
             name = "MCP Connector",
             description = "A new MCP Connector",
             metadata = Map.empty,
