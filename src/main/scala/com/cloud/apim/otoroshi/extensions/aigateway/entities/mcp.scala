@@ -143,6 +143,7 @@ case class McpConnector(
       clientPool()
     } else {
       McpConnector.connectorsCache.get(id).foreach { cli =>
+        println(s"closing mcp connector: ${id}")
         cli._1.asScala.map(_.close())
         McpConnector.connectorsCache.remove(id)
       }
