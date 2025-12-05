@@ -303,7 +303,7 @@ class McpSseEndpoint extends NgBackendCall {
 
   def initialize(id: Long, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val response = Json.obj(
-      "protocolVersion" -> "2024-11-05",
+      "protocolVersion" -> "2025-06-18", //"2024-11-05",
       "capabilities" -> Json.obj("tools" -> Json.obj(), "logging" -> Json.obj()),
       "serverInfo" -> Json.obj("name" ->
         config.name.getOrElse("otoroshi-sse-endpoint").json,
@@ -577,7 +577,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
 
   def initialize(id: Long): JsValue = {
     val response = Json.obj(
-      "protocolVersion" -> "2024-11-05",
+      "protocolVersion" -> "2025-06-18",//"2024-11-05",
       "capabilities" -> Json.obj("tools" -> Json.obj(), "logging" -> Json.obj()),
       "serverInfo" -> Json.obj(
         "name" -> config.name.getOrElse("otoroshi-ws-endpoint").json,
@@ -774,7 +774,7 @@ class McpRespEndpoint extends NgBackendCall {
 
   def initialize(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val response = Json.obj(
-      "protocolVersion" -> "2024-11-05",
+      "protocolVersion" -> "2025-06-18", //"2024-11-05",
       "capabilities" -> Json.obj("tools" -> Json.obj(), "logging" -> Json.obj()),
       "serverInfo" -> Json.obj(
         "name" -> config.name.getOrElse("otoroshi-http-endpoint").json,
@@ -877,6 +877,7 @@ class McpRespEndpoint extends NgBackendCall {
         Try(bodyRaw.utf8String.parseJson) match {
           case Failure(e) => error(400,"error while parsing json-rpc payload")
           case Success(json) => {
+            println(s"mcp in >>> ${json.prettify}")
             val id = json.select("id").asOpt[Long].getOrElse(0L)
             json.select("method").asOpt[String] match {
               case Some("initialize") => initialize(id, config)
