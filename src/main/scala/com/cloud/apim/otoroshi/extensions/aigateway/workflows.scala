@@ -35,6 +35,7 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.agent", new AgentFunction())
     Node.registerNode("extensions.com.cloud-apim.llm-extension.router", json => new RouterNode(json))
     Node.registerNode("extensions.com.cloud-apim.llm-extension.ai_agent", json => new AiAgentNode(json))
+    Node.registerNode("extensions.com.cloud-apim.llm-extension.ai_agent_mcp_tools", json => new AiAgentMcpToolsNode(json))
     // text chunking ;)
   }
 }

@@ -65,6 +65,19 @@ const workflowNodes = [
           }
         }
       },
+      "mcp_connectors": {
+        "type": "select",
+        "array": true,
+        "label": "MCP Connectors",
+        "props": {
+          "description": "MCP Connector",
+          "optionsFrom": "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-connectors",
+          "optionsTransformer": {
+            "label": "name",
+            "value": "id"
+          }
+        }
+      },
       "memory": {
         "type": "select",
         "label": "Persistent memory",
@@ -250,7 +263,21 @@ const workflowNodes = [
 
       if (workflow.inline_tools) {
         for (let i = 0; i < workflow.inline_tools.length; i++) {
-          const tool = {
+          const tool = workflow.inline_tools[i].mcp_ref ? {
+            ...workflow.inline_tools[i],
+            kind: 'extensions.com.cloud-apim.llm-extension.ai_agent_mcp_tools',
+            customDisplayName: 'MCP Tools',
+            id: uuid(),
+            customNodeRenderer: (props) => React.createElement('div', { style: {
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  position: 'absolute',
+                  inset: '30px 24px 0px 24px',
+                }},
+              React.createElement('i', { className: 'fas fa-wrench fa-2xl' })
+            )
+          } : {
             ...workflow.inline_tools[i],
             kind: 'inline_tool',
             customDisplayName: workflow?.inline_tools[i]?.name || 'Tool',
@@ -311,6 +338,38 @@ const workflowNodes = [
 
       return { nodes, edges }
     }
+  },
+  {
+    kind: 'extensions.com.cloud-apim.llm-extension.ai_agent_mcp_tools',
+    name: 'extensions.com.cloud-apim.llm-extension.ai_agent_mcp_tools',
+    display_name: 'Agent MCP Tools',
+    icon: 'fas fa-wrench',
+    description: 'This node let you select an MCP connector for your agent',
+    flow: ["mcp_ref"],
+    form_schema: {
+      "mcp_ref": {
+        "type": "select",
+        "label": "MCP Connectors",
+        "props": {
+          "description": "MCP Connector",
+          "optionsFrom": "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-connectors",
+          "optionsTransformer": {
+            "label": "name",
+            "value": "id"
+          }
+        }
+      }
+    },
+    sources: [],
+    nodeRenderer: (props) => {
+      return props.data.content.customNodeRenderer ? props.data.content.customNodeRenderer(props) : (
+        React.createElement('div', { className: "node-text-renderer" },
+          props.data.content?.values?.map((value) => {
+            return React.createElement('span', { key: value.name }, value.name);
+          })
+        )
+      );
+    },
   },
   {
     kind: 'inline_tool',

@@ -70,6 +70,7 @@ case class AgentConfig(
   model: Option[String] = None,
   modelOptions: Option[JsObject] = None,
   tools: Seq[String] = Seq.empty,
+  mcpConnectors: Seq[String],
   inlineTools: Seq[InlineFunction] = Seq.empty,
   handoffs: Seq[Handoff] = Seq.empty,
   memory: Option[String] = None,
@@ -111,8 +112,13 @@ object AgentConfig {
       model = json.select("model").asOpt[String],
       modelOptions = json.select("model_options").asOpt[JsObject],
       tools = json.select("tools").asOpt[Seq[String]].getOrElse(Seq.empty),
+      mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty) ++ json.select("inline_tools").asOpt[Seq[JsObject]].map { seq =>
+        seq.filter(_.select("mcp_ref").isDefined).map { tool =>
+          tool.select("mcp_ref").asString
+        }
+      }.getOrElse(Seq.empty),
       inlineTools = json.select("inline_tools").asOpt[Seq[JsObject]].map { seq =>
-        seq.map { tool =>
+        seq.filterNot(_.select("mcp_ref").isDefined).map { tool =>
           val nodeJson = tool.select("node").as[JsObject]
           val node = node_from(nodeJson)
           InlineFunction(
@@ -246,6 +252,9 @@ class AgentRunner(env: Env) {
                 .applyOnIf(additionToolFunctions.nonEmpty && agent.handoffs.isEmpty) { obj =>
                   obj ++ Json.obj("tool_functions" -> additionToolFunctions)
                 }
+                .applyOnIf(agent.mcpConnectors.nonEmpty && agent.handoffs.isEmpty) { obj =>
+                  obj ++ Json.obj("mcp_connectors" -> agent.mcpConnectors)
+                }
               val hasHandoff = agent.handoffs.exists(_.enabled)
               val body = Json.obj()
                 .applyOnIf(hasHandoff) { obj =>
@@ -326,12 +335,14 @@ class AgentRunner(env: Env) {
       name = "Math Tutor",
       description = "Specialist agent for math questions",
       instructions = Seq("You provide help with math problems. Explain your reasoning at each step and include examples"),
+      mcpConnectors = Seq.empty,
     )
 
     val history_tutor_agent = AgentConfig(
       name = "History Tutor",
       description = "Specialist agent for historical questions",
       instructions = Seq("You provide assistance with historical queries. Explain important events and context clearly."),
+      mcpConnectors = Seq.empty,
     )
 
     val triage_agent = AgentConfig(
@@ -340,7 +351,8 @@ class AgentRunner(env: Env) {
       handoffs = Seq(
         math_tutor_agent.toHandoff(),
         history_tutor_agent.toHandoff(),
-      )
+      ),
+      mcpConnectors = Seq.empty,
     )
 
     run(triage_agent, AgentInput.from("who was the first president of the united states?"), AgentRunConfig(provider = "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691".some), wfr = None).map {
@@ -536,6 +548,45 @@ class RouterNode(val json: JsObject) extends Node {
   }
 }
 
+class AiAgentMcpToolsNode(val json: JsObject) extends Node {
+
+  override def documentationName: String                  = "extensions.com.cloud-apim.llm-extension.ai_agent_mcp_tools"
+  override def documentationDisplayName: String           = "MCP Tools"
+  override def documentationIcon: String                  = "fas fa-wrench"
+  override def documentationDescription: String           = "This node let you select an MCP connector for your agent"
+  override def documentationInputSchema: Option[JsObject] = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Json.arr("mcp_ref"),
+    "properties" -> Json.obj(
+      "mcp_ref" -> Json.obj("type" -> "string", "description" -> "Reference to an MCP connector")
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject] = Some(Json.obj(
+    "mcp_ref" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "MCP Connector",
+      "props" -> Json.obj(
+        "description" -> "MCP Connector",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-connectors",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
+    ),
+  ))
+  override def documentationExample: Option[JsObject] = Some(Json.obj(
+    "kind" -> "extensions.com.cloud-apim.llm-extension.ai_agent_mcp_tools",
+    "mcp_ref" -> "xxxxx",
+  ))
+
+  override def run(wfr: WorkflowRun, prefix: Seq[Int], from: Seq[Int])(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    JsNull.rightf
+  }
+
+  override def subNodes: Seq[NodeLike] = Seq.empty
+}
+
 class AiAgentNode(val json: JsObject) extends Node {
 
   def from(json: JsObject): Node = {
@@ -563,6 +614,7 @@ class AiAgentNode(val json: JsObject) extends Node {
       "instructions" -> Json.obj("type" -> "array", "description" -> "System instructions for the agent"),
       "input" -> Json.obj("type" -> "string", "description" -> "The agent input"),
       "tools" -> Json.obj("type" -> "array", "description" -> "List of tool function ids"),
+      "mcp_connectors" -> Json.obj("type" -> "array", "description" -> "List of mcp connectors ids"),
       "inline_tools" -> Json.obj("type" -> "array", "description" -> "List of inline tool function"),
       "memory" -> Json.obj(),
       "guardrails" -> Json.obj(),
@@ -622,6 +674,19 @@ class AiAgentNode(val json: JsObject) extends Node {
       "props" -> Json.obj(
         "description" -> "Tools",
         "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/tool-functions",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
+    ),
+    "mcp_connectors" -> Json.obj(
+      "type"  -> "select",
+      "array" -> true,
+      "label" -> "MCP Connectors",
+      "props" -> Json.obj(
+        "description" -> "MCP Connector",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-connectors",
         "optionsTransformer" -> Json.obj(
           "label" -> "name",
           "value" -> "id",

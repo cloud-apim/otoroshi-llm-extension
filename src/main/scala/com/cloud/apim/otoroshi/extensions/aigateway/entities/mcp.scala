@@ -146,7 +146,6 @@ case class McpConnector(
     McpConnector.connectorsCache.get(id) match {
       case Some((cli, _, hash, _)) if hash == transportSha => cli
       case e => try {
-        println(s"expected: ${transportSha} found ${e}")
         val cli = buildClient()
         val pool = new ConcurrentLinkedQueue[DefaultMcpClient]()
         pool.add(cli)
