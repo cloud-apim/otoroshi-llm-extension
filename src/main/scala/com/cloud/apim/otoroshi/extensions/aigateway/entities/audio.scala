@@ -65,6 +65,13 @@ case class AudioModel(
         val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
         new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
       }
+      case "cloud-temple" => {
+        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
+        val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
+        val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
+        val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
+        new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
+      }
       case "groq" => {
         val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val ttsopts = GroqAudioModelClientTtsOptions.fromJson(ttsOptions)

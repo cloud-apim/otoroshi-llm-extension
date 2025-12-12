@@ -56,6 +56,12 @@ case class ImageModel(
         val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
         new OpenAiImageModelClient(api, opts, editOpts, id).some
       }
+      case "cloud-temple" => {
+        val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
+        val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
+        val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
+        new OpenAiImageModelClient(api, opts, editOpts, id).some
+      }
       case "x-ai" => {
         val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val opts = XAiImageModelClientOptions.fromJson(genOptions)

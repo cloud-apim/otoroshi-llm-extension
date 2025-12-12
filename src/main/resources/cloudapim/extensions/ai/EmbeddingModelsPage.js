@@ -40,6 +40,7 @@ class EmbeddingModelsPage extends Component {
           { label: 'Ollama', value: "ollama" },
           { label: 'Mistral', value: "mistral" },
           { label: 'Scaleway', value: "scaleway" },
+          { label: 'Cloud Temple', value: "cloud-temple" },
           { label: 'Deepseek', value: "deepseek" },
           { label: 'X.AI', value: "x-ai" },
           { label: 'Gemini', value: "gemini" },

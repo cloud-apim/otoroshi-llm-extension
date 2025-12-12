@@ -845,12 +845,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      cohere: '${CohereAiApi.baseUrl}',
             |      ovh: '${OVHAiEndpointsApi.baseDomain}',
             |      ovhUnified: '${OVHAiEndpointsApi.unifiedUrl}',
+            |      cloudTemple: '${CloudTemple.baseUrl}',
             |      hugging: ''
             |    };
             |    const ClientOptions = {
             |      anthropic: ${AnthropicChatClientOptions().json.stringify},
             |      openai: ${OpenAiChatClientOptions().json.stringify},
             |      scaleway: ${OpenAiChatClientOptions().copy(model = "llama-3.1-8b-instruct").json.stringify},
+            |      cloudTemple: ${OpenAiChatClientOptions().copy(model = "gpt-oss:120b").json.stringify},
             |      deepseek: ${OpenAiChatClientOptions().copy(model = "deepseek-chat").json.stringify},
             |      xai: ${XAiChatClientOptions().json.stringify},
             |      mistral: ${MistralAiChatClientOptions().json.stringify},

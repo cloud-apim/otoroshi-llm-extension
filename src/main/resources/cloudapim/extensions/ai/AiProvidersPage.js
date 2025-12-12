@@ -546,6 +546,7 @@ class AiProvidersPage extends Component {
     { 'label': 'Groq', value: 'groq' },
     { 'label': 'X.ai', value: 'x-ai' },
     { 'label': 'Scaleway', value: 'scaleway' },
+    { 'label': 'Cloud Temple', value: 'cloud-temple' },
     { 'label': 'Deepseek', value: 'deepseek' },
     { 'label': 'OVH AI Endpoints', value: 'ovh-ai-endpoints' },
     // { 'label': 'OVH AI Endpoints (unified)', value: 'ovh-ai-endpoints-unified' },
@@ -1864,6 +1865,21 @@ class AiProvidersPage extends Component {
                   timeout: 180000,
                 },
                 options: ClientOptions.scaleway,
+              });
+            } else if (state.provider === 'cloud-temple') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'cloud-temple',
+                connection: {
+                  base_url: BaseUrls.cloudTemple,
+                  token: 'xxx',
+                  timeout: 180000,
+                },
+                options: ClientOptions.cloudTemple,
               });
             } else if (state.provider === 'x-ai') {
               update({

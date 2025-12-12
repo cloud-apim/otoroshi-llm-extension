@@ -69,6 +69,11 @@ case class EmbeddingModel(
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       }
+      case "cloud-temple" => {
+        val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Cloud Temple", env = env)
+        val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
+        new OpenAiEmbeddingModelClient(api, opts, id).some
+      }
       case "deepseek" => {
         val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Deepseek", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)

@@ -216,6 +216,11 @@ case class AiProvider(
           accumulateStreamConsumptions = connection.select("acc_stream_consumptions").asOptBoolean.getOrElse(false),
         ).some
       }
+      case "cloud-temple" => {
+        val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
+        val opts = OpenAiChatClientOptions.fromJson(options)
+        new OpenAiChatClient(api, opts, id, "cloud-temple", accumulateStreamConsumptions = true).some
+      }
       case "scaleway" => {
         val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Scaleway", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
