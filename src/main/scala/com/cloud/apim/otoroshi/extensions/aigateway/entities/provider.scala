@@ -112,6 +112,7 @@ object ContextSettings {
 case class ModelSettings(include: Seq[String] = Seq.empty, exclude: Seq[String] = Seq.empty) {
   def json: JsValue = ModelSettings.format.writes(this)
   def isDefined: Boolean = include.nonEmpty || exclude.nonEmpty
+  def isEmpty: Boolean = !isDefined
   def matches(model: String): Boolean = {
     if (!(include.isEmpty && exclude.isEmpty)) {
       val canpass    = if (include.isEmpty) true else include.exists(p => otoroshi.utils.RegexPool.regex(p).matches(model))

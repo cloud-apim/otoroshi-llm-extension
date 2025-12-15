@@ -28,6 +28,7 @@ class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClien
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
       case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.call(prompt, attrs, originalBody)
+      case _ if originalProvider.models.isEmpty => chatClient.call(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -37,6 +38,7 @@ class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClien
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
       case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.stream(prompt, attrs, originalBody)
+      case _ if originalProvider.models.isEmpty => chatClient.stream(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -46,6 +48,7 @@ class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClien
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
       case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.completion(prompt, attrs, originalBody)
+      case _ if originalProvider.models.isEmpty => chatClient.completion(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -55,6 +58,7 @@ class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClien
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
       case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.completionStream(prompt, attrs, originalBody)
+      case _ if originalProvider.models.isEmpty => chatClient.completionStream(prompt, attrs, originalBody)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -90,6 +94,7 @@ class EmbeddingModelClientWithModels(originalModel: EmbeddingModel, val embeddin
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
       case Some(model) if originalModel.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => embeddingModelClient.embed(opts, rawBody, attrs)
+      case _ if originalModel.models.isEmpty => embeddingModelClient.embed(opts, rawBody, attrs)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -108,6 +113,7 @@ class AudioModelClientWithModels(originalModel: AudioModel, val audioModelClient
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
       case Some(model) if originalModel.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => audioModelClient.speechToText(opts, rawBody, attrs)
+      case _ if originalModel.models.isEmpty => audioModelClient.speechToText(opts, rawBody, attrs)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -117,6 +123,7 @@ class AudioModelClientWithModels(originalModel: AudioModel, val audioModelClient
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
       case Some(model) if originalModel.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => audioModelClient.textToSpeech(opts, rawBody, attrs)
+      case _ if originalModel.models.isEmpty => audioModelClient.textToSpeech(opts, rawBody, attrs)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -126,6 +133,7 @@ class AudioModelClientWithModels(originalModel: AudioModel, val audioModelClient
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
       case Some(model) if originalModel.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => audioModelClient.translate(opts, rawBody, attrs)
+      case _ if originalModel.models.isEmpty => audioModelClient.translate(opts, rawBody, attrs)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -144,6 +152,7 @@ class ImageModelClientWithModels(originalModel: ImageModel, val imageModelClient
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
       case Some(model) if originalModel.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => imageModelClient.edit(opts, rawBody, attrs)
+      case _ if originalModel.models.isEmpty => imageModelClient.edit(opts, rawBody, attrs)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -153,6 +162,7 @@ class ImageModelClientWithModels(originalModel: ImageModel, val imageModelClient
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
       case Some(model) if originalModel.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => imageModelClient.generate(opts, rawBody, attrs)
+      case _ if originalModel.models.isEmpty => imageModelClient.generate(opts, rawBody, attrs)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -170,6 +180,7 @@ class ModerationModelClientWithModels(originalModel: ModerationModel, val modera
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
       case Some(model) if originalModel.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => moderationModelClient.moderate(opts, rawBody, attrs)
+      case _ if originalModel.models.isEmpty => moderationModelClient.moderate(opts, rawBody, attrs)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
@@ -187,6 +198,7 @@ class VideoModelClientWithModels(originalModel: VideoModel, val videoModelClient
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
       case Some(model) if originalModel.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => videoModelClient.generate(opts, rawBody, attrs)
+      case _ if originalModel.models.isEmpty => videoModelClient.generate(opts, rawBody, attrs)
       case _ => Json.obj("error" -> "you can't use this model").leftf
     }
   }
