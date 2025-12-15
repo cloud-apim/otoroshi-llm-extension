@@ -35,6 +35,7 @@ class ImageModelsPage extends Component {
       props: {
         label: 'Provider', possibleValues: _.sortBy([
           {label: 'OpenAI', value: "openai"},
+          {label: 'Gemini', value: "gemini"},
           {label: 'Grok (X-AI)', value: "x-ai"},
           {label: 'Azure OpenAI', value: "azure-openai"},
           {label: 'Luma', value: "luma"},
@@ -128,6 +129,32 @@ class ImageModelsPage extends Component {
                     generation: {
                       enabled: true,
                       model: 'gpt-image-1',
+                      size: "auto",
+                      n: 1,
+                    },
+                    edition: {
+                      enabled: false
+                    }
+                  }
+                },
+              });
+            } else if (state.provider === 'gemini') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'gemini',
+                config: {
+                  connection: {
+                    token: 'xxxxxx',
+                    timeout: 180000
+                  },
+                  options: {
+                    generation: {
+                      enabled: true,
+                      model: 'imagen-3.0-generate-002',
                       size: "auto",
                       n: 1,
                     },

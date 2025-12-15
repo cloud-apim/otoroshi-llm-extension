@@ -1028,33 +1028,22 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
         val headers = resp.headers.mapValues(_.last)
         Right(ImagesGenResponse(
           created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
-          images = resp.json.select("data").as[Seq[JsObject]].map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String])),
-          metadata = finalModel.toLowerCase match {
-            case "gpt-image-1" => ImagesGenResponseMetadata(
-              rateLimit = ChatResponseMetadataRateLimit(
-                requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
-                requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
-                tokensLimit = headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
-                tokensRemaining = headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
-              ), impacts = None, costs = None,
-              usage = ImagesGenResponseMetadataUsage(
-                totalTokens = resp.json.at("usage.total_tokens").asOpt[Long].getOrElse(-1L),
-                tokenInput = resp.json.at("usage.input_tokens").asOpt[Long].getOrElse(-1L),
-                tokenOutput = resp.json.at("usage.output_tokens").asOpt[Long].getOrElse(-1L),
-                tokenText = resp.json.at("usage.input_tokens_details.text_tokens").asOpt[Long].getOrElse(-1L),
-                tokenImage = resp.json.at("usage.input_tokens_details.image_tokens").asOpt[Long].getOrElse(-1L),
-              )
+          images = resp.json.select("data").asOpt[Seq[JsObject]].map(_.map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String]))).getOrElse(Seq.empty),
+          metadata = ImagesGenResponseMetadata(
+            rateLimit = ChatResponseMetadataRateLimit(
+              requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+              requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+              tokensLimit = headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+              tokensRemaining = headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+            ), impacts = None, costs = None,
+            usage = ImagesGenResponseMetadataUsage(
+              totalTokens = resp.json.at("usage.total_tokens").asOpt[Long].getOrElse(-1L),
+              tokenInput = resp.json.at("usage.input_tokens").asOpt[Long].getOrElse(-1L),
+              tokenOutput = resp.json.at("usage.output_tokens").asOpt[Long].getOrElse(-1L),
+              tokenText = resp.json.at("usage.input_tokens_details.text_tokens").asOpt[Long].getOrElse(-1L),
+              tokenImage = resp.json.at("usage.input_tokens_details.image_tokens").asOpt[Long].getOrElse(-1L),
             )
-            case _ => ImagesGenResponseMetadata(
-              rateLimit = ChatResponseMetadataRateLimit(
-                requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
-                requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
-                tokensLimit = headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
-                tokensRemaining = headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
-              ), impacts = None, costs = None,
-              usage = ImagesGenResponseMetadataUsage.empty
-            )
-          }
+          )
         ))
       } else {
         Left(Json.obj("status" -> resp.status, "body" -> resp.json))
