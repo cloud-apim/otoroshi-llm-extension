@@ -276,14 +276,14 @@ case class AiProvider(
         new CloudflareChatClient(api, opts, id).some
       }
       case "gemini" => {
-        val model = connection.select("model").asOpt[String].getOrElse("gemini-1.5-flash")
         //-------
+        //val model = connection.select("model").asOpt[String].getOrElse("gemini-1.5-flash")
         //val api = new GeminiApi(model, token, timeout.getOrElse(3.minutes), env = env)
         //val opts = GeminiChatClientOptions.fromJson(options)
         //new GeminiChatClient(api, opts, id).some
         //-------
         val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "gemini", env = env)
-        val opts = OpenAiChatClientOptions.fromJson(options).copy(model = model)
+        val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "gemini", "/models", completion = false, accumulateStreamConsumptions = true).some
       }
       case "huggingface" => {
