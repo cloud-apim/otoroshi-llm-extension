@@ -1,6 +1,5 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
@@ -600,6 +599,62 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
       Right(ChatResponse(messages, usage, resp.body))
     }
   }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                       AzureOpenAI Embedding                                         ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class AzureOpenAiEmbeddingModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("text-embedding-3-small")
+  lazy val api_version: String = raw.select("api_version").asOpt[String].getOrElse("2023-05-15")
+}
+
+object AzureOpenAiEmbeddingModelClientOptions {
+  def fromJson(raw: JsObject): AzureOpenAiEmbeddingModelClientOptions = AzureOpenAiEmbeddingModelClientOptions(raw)
+}
+
+class AzureOpenAiEmbeddingModelClient(val api: OpenAiApi, val options: AzureOpenAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
+
+  override def embed(
+                      opts: EmbeddingClientInputOptions,
+                      rawBody: JsObject,
+                      attrs: TypedMap
+                    )(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+
+    val deployment = opts.model.getOrElse(options.model)
+    val version    = options.api_version
+    val path       = s"/openai/deployments/$deployment/embeddings?api-version=$version"
+
+    val body = Json.obj(
+      "input" -> rawBody.value("input")
+    )
+
+    api.rawCall("POST", path, body.some).map { resp =>
+      if (resp.status == 200) {
+        Right(
+          EmbeddingResponse(
+            model = deployment,
+            embeddings = resp.json
+              .select("data")
+              .as[Seq[JsObject]]
+              .map(o => Embedding(o.select("embedding").as[Array[Float]])),
+            metadata = EmbeddingResponseMetadata(
+              resp.json
+                .select("usage")
+                .select("prompt_tokens")
+                .asOpt[Long]
+                .getOrElse(-1L)
+            )
+          )
+        )
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -56,8 +56,8 @@ case class EmbeddingModel(
       }
       case "azure-openai" => {
         val api = new OpenAiApi(baseUrl.getOrElse("https://<aoairesource>.openai.azure.com/openai/v1"), token, timeout.getOrElse(30.seconds), providerName = "Azure-OpenAI", env = env)
-        val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
-        new OpenAiEmbeddingModelClient(api, opts, id).some
+        val opts = AzureOpenAiEmbeddingModelClientOptions.fromJson(options)
+        new AzureOpenAiEmbeddingModelClient(api, opts, id).some
       }
       case "azure-ai-foundry" => {
         val api = new OpenAiApi(baseUrl.getOrElse(AzureAiFoundry.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "Azure AI Foundry", env = env)

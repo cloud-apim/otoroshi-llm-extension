@@ -54,6 +54,10 @@ class EmbeddingModelsPage extends Component {
       props: {
         label: 'Configuration'
       }
+    },
+    'config.options.api_version': {
+      type: 'string',
+      props: { label: 'Embeddings API version (Azure OpenAI)', placeholder: '2024-02-01' }
     }
   };
 
@@ -71,7 +75,7 @@ class EmbeddingModelsPage extends Component {
   ];
 
   formFlow = [
-    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config', '>>>Models restriction settings',
+    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config', 'config.options.api_version', '>>>Models restriction settings',
         'models.include',
         'models.exclude',
     ];
