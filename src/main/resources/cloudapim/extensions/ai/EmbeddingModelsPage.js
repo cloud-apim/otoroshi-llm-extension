@@ -167,7 +167,7 @@ class EmbeddingModelsPage extends Component {
                   },
                 }
               });
-            } else if (state.provider === 'azure-openai' && state?.config?.connection?.api_version !== 'v1') {
+            } else if (state.provider === 'azure-openai' && oldState?.config?.connection?.api_version === 'v1' && state?.config?.connection?.api_version !== 'v1') {
               update({
                 id: state.id,
                 name: state.name,
