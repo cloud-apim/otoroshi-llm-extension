@@ -712,11 +712,14 @@ class OpenAiEmbeddingModelClient(val api: OpenAiApi, val options: OpenAiEmbeddin
     val finalModel: String = opts.model.getOrElse(options.model)
     api.rawCall("POST", "/embeddings", (options.raw ++ Json.obj("input" -> opts.input, "model" -> finalModel)).some).map { resp =>
       if (resp.status == 200) {
+        val responseModel = resp.json.select("model").asOptString.getOrElse(finalModel)
         Right(EmbeddingResponse(
-          model = finalModel,
+          model = responseModel,
           embeddings = resp.json.select("data").as[Seq[JsObject]].map(o => Embedding(o.select("embedding").as[Array[Float]])),
           metadata = EmbeddingResponseMetadata(
-            resp.json.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L)
+            resp.json.select("usage").select("total_tokens").asOpt[Long].orElse(
+              resp.json.select("usage").select("prompt_tokens").asOpt[Long]
+            ).getOrElse(-1L)
           ),
         ))
       } else {
