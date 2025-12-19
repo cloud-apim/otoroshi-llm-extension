@@ -777,7 +777,7 @@ object EmbeddingClientInputOptions {
   val format = new Format[EmbeddingClientInputOptions] {
     override def reads(json: JsValue): JsResult[EmbeddingClientInputOptions] = Try {
       EmbeddingClientInputOptions(
-        input = json.select("input").asOpt[Seq[String]].getOrElse(Seq.empty),
+        input = json.select("input").asOpt[Seq[String]].orElse(json.select("input").asOptString.map(s => Seq(s))).getOrElse(Seq.empty),
         model = json.select("model").asOptString,
         dimensions = json.select("dimensions").asOptInt,
         encoding_format = json.select("encoding_format").asOptString,
