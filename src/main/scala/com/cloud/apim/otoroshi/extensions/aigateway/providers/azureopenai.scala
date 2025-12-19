@@ -603,6 +603,42 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                     Embeddings                                                 ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// this class exists just to ensure compatibility with preview version of Azure OpenAI API before v1
+class AzureOpenAiEmbeddingModelClient(val api: AzureOpenAiApi, val options: JsObject, id: String) extends EmbeddingModelClient {
+
+  override def embed(
+    opts: EmbeddingClientInputOptions,
+    rawBody: JsObject,
+    attrs: TypedMap
+  )(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    api.rawCall("POST", "/embeddings", (options ++ Json.obj("input" -> opts.input)).some).map { resp =>
+      if (resp.status == 200) {
+        val deployment = api.deploymentId
+        Right(
+          EmbeddingResponse(
+            model = deployment,
+            embeddings = resp.json
+              .select("data")
+              .as[Seq[JsObject]]
+              .map(o => Embedding(o.select("embedding").as[Array[Float]])),
+            metadata = EmbeddingResponseMetadata(
+              resp.json.select("usage").select("total_tokens").asOpt[Long].orElse(
+                resp.json.select("usage").select("prompt_tokens").asOpt[Long]
+              ).getOrElse(-1L)
+            )
+          )
+        )
+      } else {
+        Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////                                     Images Generation                                          ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 

@@ -846,6 +846,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      ovh: '${OVHAiEndpointsApi.baseDomain}',
             |      ovhUnified: '${OVHAiEndpointsApi.unifiedUrl}',
             |      cloudTemple: '${CloudTemple.baseUrl}',
+            |      gemini: '${GeminiApi.baseUrl}',
             |      hugging: ''
             |    };
             |    const ClientOptions = {
