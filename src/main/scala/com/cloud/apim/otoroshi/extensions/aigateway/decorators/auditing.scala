@@ -40,13 +40,17 @@ object ChatClientWithAuding {
 
 class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  def consumerRateLimit(attrs: TypedMap): JsValue = {
+  def consumerRateLimit(attrs: TypedMap, usageSlug: JsObject): JsValue = {
     attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).map { rlt =>
+      val prompt_tokens = usageSlug.select("usage").select("prompt_tokens").asOpt[Int].getOrElse(0)
+      val generation_tokens = usageSlug.select("usage").select("generation_tokens").asOpt[Int].getOrElse(0)
+      val reasoning_tokens = usageSlug.select("usage").select("reasoning_tokens").asOpt[Int].getOrElse(0)
+      val consumed = prompt_tokens + generation_tokens + reasoning_tokens
       Json.obj(
         "max_tokens" -> rlt.get("X-Llm-Ratelimit-Max-Tokens").map(_.toInt).getOrElse(-1).json,
         "window_millis" -> rlt.get("X-Llm-Ratelimit-Window-Millis").map(_.toInt).getOrElse(-1).json,
-        "consumed_tokens" -> rlt.get("X-Llm-Ratelimit-Consumed-Tokens").map(_.toInt).getOrElse(-1).json,
-        "remaining_tokens" -> rlt.get("X-Llm-Ratelimit-Remaining-Tokens").map(_.toInt).getOrElse(-1).json,
+        "consumed_tokens" -> (rlt.get("X-Llm-Ratelimit-Consumed-Tokens").map(_.toInt).getOrElse(-1) + consumed).json,
+        "remaining_tokens" -> (rlt.get("X-Llm-Ratelimit-Remaining-Tokens").map(_.toInt).getOrElse(-1) - consumed).json,
       )
     }.getOrElse(JsNull).asValue
   }
@@ -118,7 +122,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                   "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                   "budgets" -> budgetIds.json,
-                  "consumer_ratelimit" -> consumerRateLimit(attrs),
+                  "consumer_ratelimit" -> consumerRateLimit(attrs, usageSlug),
                   //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                 )
               }.toAnalytics()
@@ -222,7 +226,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                       "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                       "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                       "budgets" -> budgetIds.json,
-                      "consumer_ratelimit" -> consumerRateLimit(attrs),
+                      "consumer_ratelimit" -> consumerRateLimit(attrs, usageSlug),
                       //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                     )
                   }.toAnalytics()
@@ -300,7 +304,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                   "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                   "budgets" -> budgetIds.json,
-                  "consumer_ratelimit" -> consumerRateLimit(attrs),
+                  "consumer_ratelimit" -> consumerRateLimit(attrs, usageSlug),
                   "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                 //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                 )
@@ -383,7 +387,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                       "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                       "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                       "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                      "consumer_ratelimit" -> consumerRateLimit(attrs),
+                      "consumer_ratelimit" -> consumerRateLimit(attrs, usageSlug),
                       "budgets" -> budgetIds.json
                       //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                     )
