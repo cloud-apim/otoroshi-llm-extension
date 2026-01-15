@@ -1123,7 +1123,7 @@ object AiBudget {
 
 trait AiBudgetsDataStore extends BasicStore[AiBudget] {
   def findMatchingBudgets(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String]): Future[Seq[AiBudget]]
-  def updateUsage(totalCost: Option[BigDecimal], totalTokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Future[Seq[String]]
+  def updateUsage(totalCost: Option[BigDecimal], totalTokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Future[WithingBudgetConsumptions]
 }
 
 object AiBudgetsDataStore {
@@ -1181,6 +1181,17 @@ object AiBudgetsDataStore {
   }
 }
 
+case class WithingBudgetConsumption(budget: AiBudget, consumption: Option[AiBudgetConsumptions]) {
+  def json: JsValue = Json.obj(
+    "budget_id" -> budget.id,
+    "consumption" -> consumption.map(_.jsonWithRemaining(budget)).getOrElse(JsNull).asValue,
+  )
+}
+
+case class WithingBudgetConsumptions(budgets: Seq[WithingBudgetConsumption] = Seq.empty) {
+  def json: JsValue = JsArray(budgets.map(_.json))
+}
+
 class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env: Env)
   extends AiBudgetsDataStore
     with RedisLikeStore[AiBudget] {
@@ -1193,7 +1204,7 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
 
   override def extractId(value: AiBudget): String = value.id
 
-  def updateUsage(cost: Option[BigDecimal], tokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Future[Seq[String]] = {
+  def updateUsage(cost: Option[BigDecimal], tokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Future[WithingBudgetConsumptions] = {
     val ext = _env.adminExtensions.extension[AiExtension].get
     if (ext.budgetsEnabled) {
       if (ext.states.hasBudgets && ((cost.isDefined && cost.get.>(BigDecimal(0))) || (tokens.isDefined && tokens.get > 0L))) {
@@ -1220,21 +1231,21 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
           //"attrs" -> attrs.json
         )
         findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { budgets =>
-          budgets.foreachAsync { budget =>
-            budget.isWithinBudget(attrs).map { withinBudget =>
-              if (withinBudget) {
-                usageKind.updateUsage(budget, cost, tokens, attrs)
-              }
+          budgets.mapAsync { budget =>
+            budget.isWithinBudgetWithConsumption(attrs).map {
+              case (withinBudget, consumption) =>
+                if (withinBudget) {
+                  usageKind.updateUsage(budget, cost, tokens, attrs)
+                }
+                WithingBudgetConsumption(budget, consumption)
             }
-          }.map { _ =>
-            budgets.map(_.id)
-          }
+          }.map(budgets => WithingBudgetConsumptions(budgets))
         }
       } else {
-        Seq.empty.vfuture
+        WithingBudgetConsumptions().vfuture
       }
     } else {
-      Seq.empty.vfuture
+      WithingBudgetConsumptions().vfuture
     }
   }
 

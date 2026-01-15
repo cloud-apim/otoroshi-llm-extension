@@ -12,6 +12,7 @@ import otoroshi.models.Entity
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.LlmTokensRateLimitingValidatorConfig
 import play.api.libs.json.{JsArray, JsNull, JsObject, JsValue, Json}
 import play.api.libs.typedmap.TypedKey
 
@@ -38,6 +39,17 @@ object ChatClientWithAuding {
 }
 
 class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
+
+  def consumerRateLimit(attrs: TypedMap): JsValue = {
+    attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).map { rlt =>
+      Json.obj(
+        "max_tokens" -> rlt.get("X-Llm-Ratelimit-Max-Tokens").map(_.toInt).getOrElse(-1).json,
+        "window_millis" -> rlt.get("X-Llm-Ratelimit-Window-Millis").map(_.toInt).getOrElse(-1).json,
+        "consumed_tokens" -> rlt.get("X-Llm-Ratelimit-Consumed-Tokens").map(_.toInt).getOrElse(-1).json,
+        "remaining_tokens" -> rlt.get("X-Llm-Ratelimit-Remaining-Tokens").map(_.toInt).getOrElse(-1).json,
+      )
+    }.getOrElse(JsNull).asValue
+  }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
@@ -105,7 +117,8 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                   "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                   "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                  "budgets" -> budgetIds,
+                  "budgets" -> budgetIds.json,
+                  "consumer_ratelimit" -> consumerRateLimit(attrs),
                   //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                 )
               }.toAnalytics()
@@ -208,7 +221,8 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                       "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                       "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                       "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                      "budgets" -> budgetIds,
+                      "budgets" -> budgetIds.json,
+                      "consumer_ratelimit" -> consumerRateLimit(attrs),
                       //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                     )
                   }.toAnalytics()
@@ -285,7 +299,8 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   "output" -> value.json(env),
                   "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                   "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-                  "budgets" -> budgetIds,
+                  "budgets" -> budgetIds.json,
+                  "consumer_ratelimit" -> consumerRateLimit(attrs),
                   "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                 //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                 )
@@ -368,7 +383,8 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                       "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                       "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                       "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                      "budgets" -> budgetIds
+                      "consumer_ratelimit" -> consumerRateLimit(attrs),
+                      "budgets" -> budgetIds.json
                       //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                     )
                   }.toAnalytics()
@@ -535,7 +551,7 @@ class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embedd
                 "provider_details" -> originalModel.json,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                "budgets" -> budgetIds
+                "budgets" -> budgetIds.json
               )
             }.toAnalytics()
           }
@@ -633,7 +649,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
                 "provider_details" -> originalModel.json,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                "budgets" -> budgetIds
+                "budgets" -> budgetIds.json
               )
             }.toAnalytics()
           }
@@ -722,7 +738,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
                 "provider_details" -> originalModel.json,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                "budgets" -> budgetIds
+                "budgets" -> budgetIds.json
               )
             }.toAnalytics()
           }
@@ -823,7 +839,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
                 "provider_details" -> originalModel.json,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                "budgets" -> budgetIds
+                "budgets" -> budgetIds.json
               )
             }.toAnalytics()
           }
@@ -912,7 +928,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
                 "provider_details" -> originalModel.json,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                "budgets" -> budgetIds
+                "budgets" -> budgetIds.json
               )
             }.toAnalytics()
           }
@@ -1010,7 +1026,7 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
                 "provider_details" -> originalModel.json,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                "budgets" -> budgetIds
+                "budgets" -> budgetIds.json
               )
             }.toAnalytics()
           }
@@ -1108,7 +1124,7 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
                 "provider_details" -> originalModel.json,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                "budgets" -> budgetIds
+                "budgets" -> budgetIds.json
               )
             }.toAnalytics()
           }
