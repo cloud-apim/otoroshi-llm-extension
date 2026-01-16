@@ -278,7 +278,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
       ctx.attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
         case Some(obj @ JsObject(_)) => {
           val arr = obj.select("ai").asOpt[List[JsObject]].getOrElse(List.empty)
-          val head = arr.headOption.map(_.as[JsObject] ++ Json.obj("consumer_ratelimit" -> Json.obj(
+          val head = arr.headOption.map(_.as[JsObject] ++ Json.obj("consumer_rate_limit" -> Json.obj(
             "max_tokens" -> headers.get("X-Llm-Ratelimit-Max-Tokens").map(_.toInt).getOrElse(-1).json,
             "window_millis" -> headers.get("X-Llm-Ratelimit-Window-Millis").map(_.toInt).getOrElse(-1).json,
             "consumed_tokens" -> headers.get("X-Llm-Ratelimit-Consumed-Tokens").map(_.toInt).getOrElse(-1).json,
@@ -301,7 +301,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
       ctx.attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
         case Some(obj @ JsObject(_)) => {
           val arr = obj.select("ai").asOpt[List[JsObject]].getOrElse(List.empty)
-          val head = arr.headOption.map(_.as[JsObject] ++ Json.obj("consumer_ratelimit" -> Json.obj(
+          val head = arr.headOption.map(_.as[JsObject] ++ Json.obj("consumer_rate_limit" -> Json.obj(
             "max_tokens" -> headers.get("X-Llm-Ratelimit-Max-Tokens").map(_.toInt).getOrElse(-1).json,
             "window_millis" -> headers.get("X-Llm-Ratelimit-Window-Millis").map(_.toInt).getOrElse(-1).json,
             "consumed_tokens" -> headers.get("X-Llm-Ratelimit-Consumed-Tokens").map(_.toInt).getOrElse(-1).json,

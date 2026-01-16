@@ -122,7 +122,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                   "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                   "budgets" -> budgetIds.json,
-                  "consumer_ratelimit" -> consumerRateLimit(attrs, usageSlug),
+                  "consumer_rate_limit" -> consumerRateLimit(attrs, usageSlug),
                   //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                 )
               }.toAnalytics()
@@ -226,7 +226,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                       "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                       "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                       "budgets" -> budgetIds.json,
-                      "consumer_ratelimit" -> consumerRateLimit(attrs, usageSlug),
+                      "consumer_rate_limit" -> consumerRateLimit(attrs, usageSlug),
                       //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                     )
                   }.toAnalytics()
@@ -304,7 +304,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                   "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                   "budgets" -> budgetIds.json,
-                  "consumer_ratelimit" -> consumerRateLimit(attrs, usageSlug),
+                  "consumer_rate_limit" -> consumerRateLimit(attrs, usageSlug),
                   "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                 //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                 )
@@ -387,7 +387,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                       "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
                       "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                       "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                      "consumer_ratelimit" -> consumerRateLimit(attrs, usageSlug),
+                      "consumer_rate_limit" -> consumerRateLimit(attrs, usageSlug),
                       "budgets" -> budgetIds.json
                       //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
                     )
