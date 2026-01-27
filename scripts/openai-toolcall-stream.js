@@ -378,9 +378,18 @@ async function chat(userMessage) {
 
     messages.push(assistantMessage);
 
+    // Debug: show what we received
+    log.info(`Received finish_reason: "${result.finishReason}"`);
+    log.info(`Received tool_calls: ${result.toolCalls ? result.toolCalls.length : 0}`);
+    log.info(`Received content: ${result.content ? result.content.length + ' chars' : 'none'}`);
+
     // Check if the model wants to call tools
-    if (result.finishReason === 'tool_calls' && result.toolCalls) {
-      console.log(`\n${colors.bgYellow}${colors.bright} TOOL CALLS REQUESTED: ${result.toolCalls.length} ${colors.reset}\n`);
+    // Note: Some APIs return tool_calls even with finish_reason !== 'tool_calls'
+    // So we check for presence of tool_calls as the primary condition
+    const hasToolCalls = result.toolCalls && result.toolCalls.length > 0;
+
+    if (hasToolCalls) {
+      console.log(`\n${colors.bgYellow}${colors.bright} TOOL CALLS REQUESTED: ${result.toolCalls.length} (finish_reason: ${result.finishReason}) ${colors.reset}\n`);
 
       // Execute each tool call and add results to messages
       for (const toolCall of result.toolCalls) {
@@ -403,20 +412,24 @@ async function chat(userMessage) {
           content: toolResult
         });
       }
-    } else {
-      // No more tool calls, we have the final response
-      const totalTime = Date.now() - startTime;
 
-      banner(`ASSISTANT RESPONSE`, 'assistant');
-      console.log(`\n${result.content}\n`);
-
-      console.log(`\n${colors.bgGreen}${colors.white}${colors.bright} ✓ CONVERSATION COMPLETED SUCCESSFULLY ${colors.reset}`);
-      console.log(`${colors.green}├─ Total API calls: ${iteration}${colors.reset}`);
-      console.log(`${colors.green}├─ Total duration: ${totalTime}ms${colors.reset}`);
-      console.log(`${colors.green}└─ Final response length: ${(result.content || '').length} chars${colors.reset}\n`);
-
-      return result.content;
+      // Continue the loop to make the next API call with tool results
+      log.info(`Tool results added to messages. Making next API call...`);
+      continue;
     }
+
+    // No tool calls, we have the final response
+    const totalTime = Date.now() - startTime;
+
+    banner(`ASSISTANT RESPONSE`, 'assistant');
+    console.log(`\n${result.content}\n`);
+
+    console.log(`\n${colors.bgGreen}${colors.white}${colors.bright} ✓ CONVERSATION COMPLETED SUCCESSFULLY ${colors.reset}`);
+    console.log(`${colors.green}├─ Total API calls: ${iteration}${colors.reset}`);
+    console.log(`${colors.green}├─ Total duration: ${totalTime}ms${colors.reset}`);
+    console.log(`${colors.green}└─ Final response length: ${(result.content || '').length} chars${colors.reset}\n`);
+
+    return result.content;
   }
 
   banner(`Max iterations (${maxIterations}) reached without final response`, 'error');
