@@ -37,6 +37,7 @@ const log = {
   info: (msg) => console.log(`${colors.cyan}ℹ ${msg}${colors.reset}`),
   tool: (msg) => console.log(`${colors.magenta}🔧 ${msg}${colors.reset}`),
   api: (msg) => console.log(`${colors.blue}📡 ${msg}${colors.reset}`),
+  test: (pass, msg) => console.log(`${pass ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} ${msg}`),
 };
 
 function banner(title, type = 'info') {
@@ -103,7 +104,7 @@ const tools = [
   }
 ];
 
-// Tool implementations
+// Tool implementations - returns both the result string and extracted values for validation
 function executeToolCall(name, args) {
   log.tool(`Executing tool: ${colors.bright}${name}${colors.reset}`);
   log.info(`Arguments: ${JSON.stringify(args, null, 2)}`);
@@ -119,7 +120,14 @@ function executeToolCall(name, args) {
         wind_speed: Math.floor(Math.random() * 30) + 5
       };
       log.success(`Tool returned weather data`);
-      return JSON.stringify(weatherData);
+      return {
+        result: JSON.stringify(weatherData),
+        valuesToCheck: [
+          String(weatherData.temperature),
+          weatherData.condition,
+          String(weatherData.humidity)
+        ]
+      };
     }
     case 'get_current_time': {
       try {
@@ -129,21 +137,34 @@ function executeToolCall(name, args) {
           dateStyle: 'full',
           timeStyle: 'long'
         });
-        const result = {
+        const timeData = {
           timezone: args.timezone,
           datetime: formatter.format(now),
           timestamp: now.toISOString()
         };
         log.success(`Tool returned time data`);
-        return JSON.stringify(result);
+        const timeParts = timeData.datetime.split(' ');
+        return {
+          result: JSON.stringify(timeData),
+          valuesToCheck: [
+            timeParts[0], // Day name
+            args.timezone.split('/')[1] || args.timezone // City from timezone
+          ]
+        };
       } catch (e) {
         log.error(`Invalid timezone: ${args.timezone}`);
-        return JSON.stringify({ error: `Invalid timezone: ${args.timezone}` });
+        return {
+          result: JSON.stringify({ error: `Invalid timezone: ${args.timezone}` }),
+          valuesToCheck: []
+        };
       }
     }
     default:
       log.error(`Unknown tool: ${name}`);
-      return JSON.stringify({ error: `Unknown tool: ${name}` });
+      return {
+        result: JSON.stringify({ error: `Unknown tool: ${name}` }),
+        valuesToCheck: []
+      };
   }
 }
 
@@ -205,6 +226,9 @@ async function chat(userMessage) {
   const maxIterations = 10;
   const startTime = Date.now();
 
+  // Collect all tool results for validation
+  const allToolValues = [];
+
   while (iteration < maxIterations) {
     iteration++;
     console.log(`\n${colors.bgBlue}${colors.white}${colors.bright} API CALL #${iteration} ${colors.reset}\n`);
@@ -247,7 +271,8 @@ async function chat(userMessage) {
           functionArgs = {};
         }
 
-        const toolResult = executeToolCall(functionName, functionArgs);
+        const { result: toolResult, valuesToCheck } = executeToolCall(functionName, functionArgs);
+        allToolValues.push(...valuesToCheck);
         log.info(`Tool result: ${toolResult.substring(0, 200)}${toolResult.length > 200 ? '...' : ''}`);
 
         // Add tool result to messages
@@ -274,11 +299,50 @@ async function chat(userMessage) {
     console.log(`${colors.green}├─ Total duration: ${totalTime}ms${colors.reset}`);
     console.log(`${colors.green}└─ Final response length: ${(assistantMessage.content || '').length} chars${colors.reset}\n`);
 
-    return assistantMessage.content;
+    return {
+      response: assistantMessage.content,
+      toolValues: allToolValues
+    };
   }
 
   banner(`Max iterations (${maxIterations}) reached without final response`, 'error');
   throw new Error('Max iterations reached without getting a final response');
+}
+
+/**
+ * Validate that the response contains the expected tool values
+ */
+function validateResponse(response, toolValues, testName) {
+  console.log(`\n${colors.bgBlue}${colors.white}${colors.bright} VALIDATION: ${testName} ${colors.reset}\n`);
+
+  if (!response) {
+    log.test(false, `Response is empty or null`);
+    return false;
+  }
+
+  if (toolValues.length === 0) {
+    log.warning(`No tool values to validate`);
+    return true;
+  }
+
+  const responseLower = response.toLowerCase();
+  let allPassed = true;
+  let passCount = 0;
+
+  for (const value of toolValues) {
+    const valueLower = String(value).toLowerCase();
+    const found = responseLower.includes(valueLower);
+    log.test(found, `Response contains "${value}"`);
+    if (found) {
+      passCount++;
+    } else {
+      allPassed = false;
+    }
+  }
+
+  console.log(`\n${allPassed ? colors.green : colors.red}Validation: ${passCount}/${toolValues.length} values found in response${colors.reset}`);
+
+  return allPassed;
 }
 
 // Main execution
@@ -293,24 +357,38 @@ async function main() {
   let successCount = 0;
   let failCount = 0;
 
+  // Test 1: Weather and time query
   try {
-    // Test with a message that requires tool calls
-    await chat("What's the weather like in Paris, France and what time is it there?");
-    successCount++;
+    const { response, toolValues } = await chat("What's the weather like in Paris, France and what time is it there?");
+    const valid = validateResponse(response, toolValues, "Test 1: Weather + Time");
+    if (valid) {
+      successCount++;
+      log.success(`Test 1 PASSED`);
+    } else {
+      failCount++;
+      log.error(`Test 1 FAILED: Response missing tool values`);
+    }
   } catch (error) {
     failCount++;
-    log.error(`Test 1 failed: ${error.message}`);
+    log.error(`Test 1 FAILED: ${error.message}`);
   }
 
   console.log('\n');
 
+  // Test 2: Single tool call
   try {
-    // Another example with a single tool call
-    await chat("What's the current time in Tokyo?");
-    successCount++;
+    const { response, toolValues } = await chat("What's the current time in Tokyo?");
+    const valid = validateResponse(response, toolValues, "Test 2: Time only");
+    if (valid) {
+      successCount++;
+      log.success(`Test 2 PASSED`);
+    } else {
+      failCount++;
+      log.error(`Test 2 FAILED: Response missing tool values`);
+    }
   } catch (error) {
     failCount++;
-    log.error(`Test 2 failed: ${error.message}`);
+    log.error(`Test 2 FAILED: ${error.message}`);
   }
 
   // Final summary

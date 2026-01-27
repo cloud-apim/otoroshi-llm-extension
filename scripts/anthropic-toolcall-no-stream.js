@@ -37,6 +37,7 @@ const log = {
   info: (msg) => console.log(`${colors.cyan}ℹ ${msg}${colors.reset}`),
   tool: (msg) => console.log(`${colors.magenta}🔧 ${msg}${colors.reset}`),
   api: (msg) => console.log(`${colors.blue}📡 ${msg}${colors.reset}`),
+  test: (pass, msg) => console.log(`${pass ? colors.green + '✓ PASS' : colors.red + '✗ FAIL'}${colors.reset} ${msg}`),
 };
 
 function banner(title, type = 'info') {
@@ -97,7 +98,7 @@ const tools = [
   }
 ];
 
-// Tool implementations
+// Tool implementations - returns both the result string and extracted values for validation
 function executeToolCall(name, args) {
   log.tool(`Executing tool: ${colors.bright}${name}${colors.reset}`);
   log.info(`Arguments: ${JSON.stringify(args, null, 2)}`);
@@ -113,7 +114,14 @@ function executeToolCall(name, args) {
         wind_speed: Math.floor(Math.random() * 30) + 5
       };
       log.success(`Tool returned weather data`);
-      return JSON.stringify(weatherData);
+      return {
+        result: JSON.stringify(weatherData),
+        valuesToCheck: [
+          String(weatherData.temperature),
+          weatherData.condition,
+          String(weatherData.humidity)
+        ]
+      };
     }
     case 'get_current_time': {
       try {
@@ -123,21 +131,34 @@ function executeToolCall(name, args) {
           dateStyle: 'full',
           timeStyle: 'long'
         });
-        const result = {
+        const timeData = {
           timezone: args.timezone,
           datetime: formatter.format(now),
           timestamp: now.toISOString()
         };
         log.success(`Tool returned time data`);
-        return JSON.stringify(result);
+        const timeParts = timeData.datetime.split(' ');
+        return {
+          result: JSON.stringify(timeData),
+          valuesToCheck: [
+            timeParts[0], // Day name
+            args.timezone.split('/')[1] || args.timezone // City from timezone
+          ]
+        };
       } catch (e) {
         log.error(`Invalid timezone: ${args.timezone}`);
-        return JSON.stringify({ error: `Invalid timezone: ${args.timezone}` });
+        return {
+          result: JSON.stringify({ error: `Invalid timezone: ${args.timezone}` }),
+          valuesToCheck: []
+        };
       }
     }
     default:
       log.error(`Unknown tool: ${name}`);
-      return JSON.stringify({ error: `Unknown tool: ${name}` });
+      return {
+        result: JSON.stringify({ error: `Unknown tool: ${name}` }),
+        valuesToCheck: []
+      };
   }
 }
 
@@ -198,9 +219,23 @@ async function chat(userMessage) {
   const maxIterations = 10;
   const startTime = Date.now();
 
+  // Collect all tool results for validation
+  const allToolValues = [];
+
   while (iteration < maxIterations) {
     iteration++;
     console.log(`\n${colors.bgBlue}${colors.white}${colors.bright} API CALL #${iteration} ${colors.reset}\n`);
+
+    // Debug: show current message history
+    log.info(`Messages in history: ${messages.length}`);
+    messages.forEach((m, i) => {
+      const contentPreview = typeof m.content === 'string'
+        ? m.content.substring(0, 50)
+        : Array.isArray(m.content)
+          ? `[${m.content.length} blocks: ${m.content.map(b => b.type).join(', ')}]`
+          : JSON.stringify(m.content).substring(0, 50);
+      log.info(`  [${i}] ${m.role}: ${contentPreview}...`);
+    });
 
     let result;
     try {
@@ -212,18 +247,28 @@ async function chat(userMessage) {
 
     const response = result.data;
 
+    // Debug: show raw response structure
+    log.info(`Raw response keys: ${Object.keys(response).join(', ')}`);
+    log.info(`Received stop_reason: "${response.stop_reason}"`);
+
+    // Ensure content is an array
+    const content = Array.isArray(response.content) ? response.content : [];
+    log.info(`Content is array: ${Array.isArray(response.content)}, length: ${content.length}`);
+
+    if (content.length > 0) {
+      log.info(`Content blocks types: ${content.map(b => b.type).join(', ')}`);
+    }
+
+    const toolUseBlocks = content.filter(block => block.type === 'tool_use');
+    const textBlocks = content.filter(block => block.type === 'text');
+    log.info(`Received tool_use blocks: ${toolUseBlocks.length}`);
+    log.info(`Received text blocks: ${textBlocks.length}`);
+
     // Add assistant response to conversation history
     messages.push({
       role: 'assistant',
-      content: response.content
+      content: content
     });
-
-    // Debug: show what we received
-    log.info(`Received stop_reason: "${response.stop_reason}"`);
-    const toolUseBlocks = response.content.filter(block => block.type === 'tool_use');
-    const textBlocks = response.content.filter(block => block.type === 'text');
-    log.info(`Received tool_use blocks: ${toolUseBlocks.length}`);
-    log.info(`Received text blocks: ${textBlocks.length}`);
 
     // Check if the model wants to use tools
     const hasToolCalls = toolUseBlocks.length > 0;
@@ -234,7 +279,8 @@ async function chat(userMessage) {
       // Execute each tool and collect results
       const toolResults = [];
       for (const toolUse of toolUseBlocks) {
-        const toolResult = executeToolCall(toolUse.name, toolUse.input);
+        const { result: toolResult, valuesToCheck } = executeToolCall(toolUse.name, toolUse.input);
+        allToolValues.push(...valuesToCheck);
         log.info(`Tool result: ${toolResult.substring(0, 200)}${toolResult.length > 200 ? '...' : ''}`);
 
         toolResults.push({
@@ -267,11 +313,50 @@ async function chat(userMessage) {
     console.log(`${colors.green}├─ Total duration: ${totalTime}ms${colors.reset}`);
     console.log(`${colors.green}└─ Final response length: ${finalResponse.length} chars${colors.reset}\n`);
 
-    return finalResponse;
+    return {
+      response: finalResponse,
+      toolValues: allToolValues
+    };
   }
 
   banner(`Max iterations (${maxIterations}) reached without final response`, 'error');
   throw new Error('Max iterations reached without getting a final response');
+}
+
+/**
+ * Validate that the response contains the expected tool values
+ */
+function validateResponse(response, toolValues, testName) {
+  console.log(`\n${colors.bgBlue}${colors.white}${colors.bright} VALIDATION: ${testName} ${colors.reset}\n`);
+
+  if (!response) {
+    log.test(false, `Response is empty or null`);
+    return false;
+  }
+
+  if (toolValues.length === 0) {
+    log.warning(`No tool values to validate`);
+    return true;
+  }
+
+  const responseLower = response.toLowerCase();
+  let allPassed = true;
+  let passCount = 0;
+
+  for (const value of toolValues) {
+    const valueLower = String(value).toLowerCase();
+    const found = responseLower.includes(valueLower);
+    log.test(found, `Response contains "${value}"`);
+    if (found) {
+      passCount++;
+    } else {
+      allPassed = false;
+    }
+  }
+
+  console.log(`\n${allPassed ? colors.green : colors.red}Validation: ${passCount}/${toolValues.length} values found in response${colors.reset}`);
+
+  return allPassed;
 }
 
 // Main execution
@@ -286,24 +371,38 @@ async function main() {
   let successCount = 0;
   let failCount = 0;
 
-  //try {
-  //  // Test with a message that requires tool calls
-  //  await chat("What's the weather like in Paris, France and what time is it there?");
-  //  successCount++;
-  //} catch (error) {
-  //  failCount++;
-  //  log.error(`Test 1 failed: ${error.message}`);
-  //}
+  // Test 1: Weather and time query
+  try {
+    const { response, toolValues } = await chat("What's the weather like in Paris, France and what time is it there?");
+    const valid = validateResponse(response, toolValues, "Test 1: Weather + Time");
+    if (valid) {
+      successCount++;
+      log.success(`Test 1 PASSED`);
+    } else {
+      failCount++;
+      log.error(`Test 1 FAILED: Response missing tool values`);
+    }
+  } catch (error) {
+    failCount++;
+    log.error(`Test 1 FAILED: ${error.message}`);
+  }
 
   console.log('\n');
 
+  // Test 2: Single tool call
   try {
-    // Another example with a single tool call
-    await chat("What's the current time in Tokyo?");
-    successCount++;
+    const { response, toolValues } = await chat("What's the current time in Tokyo?");
+    const valid = validateResponse(response, toolValues, "Test 2: Time only");
+    if (valid) {
+      successCount++;
+      log.success(`Test 2 PASSED`);
+    } else {
+      failCount++;
+      log.error(`Test 2 FAILED: Response missing tool values`);
+    }
   } catch (error) {
     failCount++;
-    log.error(`Test 2 failed: ${error.message}`);
+    log.error(`Test 2 FAILED: ${error.message}`);
   }
 
   // Final summary
