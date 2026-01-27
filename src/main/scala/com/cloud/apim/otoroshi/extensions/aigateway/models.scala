@@ -94,7 +94,7 @@ object ChatMessageContent {
         }
         AudioContent(format, None, data.some)
       }
-      case _ => TextContent(json.select("text").asString)
+      case _ => TextContent(json.select("text").asOptString.getOrElse(""))
     }
   } catch {
     case t: Throwable =>
@@ -680,7 +680,7 @@ case class ChatResponseChunkChoiceDeltaToolCallFunction(nameOpt: Option[String],
   def hasName: Boolean = nameOpt.isDefined
   def name: String = nameOpt.get
   def json: JsValue = Json.obj(
-    "name" -> name,
+    "name" -> nameOpt.map(_.json).getOrElse(JsNull).asValue,
     "arguments" -> arguments,
   )
 }
