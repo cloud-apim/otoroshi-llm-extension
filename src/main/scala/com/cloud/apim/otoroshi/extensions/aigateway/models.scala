@@ -4,12 +4,14 @@ import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsOutput, ImpactsOutput}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions}
+import diffson.DiffOps
 import otoroshi.env.Env
 import otoroshi.gateway.Errors.messages
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AnthropicStreamResponseState
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
 import play.api.mvc.RequestHeader
@@ -51,6 +53,7 @@ sealed trait ChatMessageContent { self =>
 }
 object ChatMessageContent {
 
+  // fails on {"type":"tool_use","id":"call_T9ZK1A03AhQNoAw6toPo4mNz","name":"Glob","input":{"pattern":"README*","path":"/Users/mathieuancelin/projects/wines-api"}}
   def fromJson(json: JsObject): ChatMessageContent = try {
     val url = json.at("source.url").asOptString
     lazy val dataBase64 = json.at("source.data").asOptString.map(_.byteString.decodeBase64)
@@ -532,6 +535,33 @@ case class ChatResponse(
       case (o, budget) => o ++ Json.obj("budget" -> budget._1.jsonWithRemaining(budget._2))
     }
   }
+  def anthropicJson(model: String, env: Env): JsValue = {
+    val finalModel = raw.select("model").asOpt[String].getOrElse(model)
+    val content = generations.flatMap { gen =>
+      if (gen.message.has_tool_calls) {
+        gen.message.tool_calls.getOrElse(Seq.empty).map(_.asObject)
+      } else {
+        Seq(Json.obj("type" -> "text", "text" -> gen.message.content))
+      }
+    }
+    val stopReason = if (generations.exists(_.message.has_tool_calls)) "tool_use" else "end_turn"
+    Json.obj(
+      "id" -> s"msg_${IdGenerator.token(32)}",
+      "type" -> "message",
+      "role" -> "assistant",
+      "model" -> finalModel,
+      "content" -> JsArray(content),
+      "stop_reason" -> stopReason,
+      "stop_sequence" -> JsNull,
+      "usage" -> metadata.usage.anthropicJson,
+    ).applyOnWithOpt(metadata.impacts) {
+      case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+    }.applyOnWithOpt(metadata.costs) {
+      case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+    }.applyOnWithOpt(metadata.budget) {
+      case (o, budget) => o ++ Json.obj("budget" -> budget._1.jsonWithRemaining(budget._2))
+    }
+  }
   def toSource(model: String): Source[ChatResponseChunk, _] = {
     val id = s"chatgen-${IdGenerator.token(32)}"
     val finalModel = raw.select("model").asOpt[String].getOrElse(model)
@@ -640,12 +670,49 @@ case class ChatResponseMetadataUsage(promptTokens: Long, generationTokens: Long,
       "reasoning_tokens" -> reasoningTokens
     )
   )
+  def anthropicJson: JsValue = Json.obj(
+    "input_tokens" -> promptTokens,
+    "output_tokens" -> generationTokens,
+  )
 }
 
-case class ChatResponseChunkChoiceDelta(content: Option[String]) {
-  def json: JsValue = content match {
-    case None => Json.obj()
-    case Some(content) => Json.obj("content" -> content)
+case class ChatResponseChunkChoiceDeltaToolCallFunction(nameOpt: Option[String], arguments: String) {
+  def hasName: Boolean = nameOpt.isDefined
+  def name: String = nameOpt.get
+  def json: JsValue = Json.obj(
+    "name" -> name,
+    "arguments" -> arguments,
+  )
+}
+
+case class ChatResponseChunkChoiceDeltaToolCall(
+  index: Long,
+  id: Option[String],
+  typ: Option[String],
+  function: ChatResponseChunkChoiceDeltaToolCallFunction
+) {
+  def json: JsValue = Json.obj(
+    "index" -> index,
+    "id" -> id,
+    "type" -> typ,
+    "function" -> function.json,
+  )
+}
+
+case class ChatResponseChunkChoiceDelta(
+     content: Option[String],
+     role: String = "assistant",
+     refusal: Option[String] = None,
+     tool_calls: Seq[ChatResponseChunkChoiceDeltaToolCall] = Seq.empty, // TODO: fill it everywhere
+) {
+  def json: JsValue = Json.obj(
+    "role" -> role,
+  ).applyOnWithOpt(content) {
+    case (o, content) => o ++ Json.obj("content" -> content)
+  }.applyOnWithOpt(refusal) {
+    case (o, content) => o ++ Json.obj("refusal" -> refusal)
+  }.applyOnIf(tool_calls.nonEmpty) { o =>
+    o ++ Json.obj("tool_calls" -> JsArray(tool_calls.map(_.json)))
   }
 }
 
@@ -667,6 +734,58 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
     "logprobs" -> JsNull,
     "finish_reason" -> finishReason.map(_.json).getOrElse(JsNull).asValue
   )
+  def hasToolCall: Boolean = delta.tool_calls.nonEmpty
+  def anthropicContentBlockDeltaJson(env: Env, state: AnthropicStreamResponseState): Source[ByteString, _] = {
+    var list = Seq.empty[ByteString]
+    if (delta.tool_calls.nonEmpty) {
+      if (!state.textDone.get() && !state.toolCallsStarted.get()) {
+        state.textDone.set(true)
+        state.toolCallsStarted.set(true)
+        list = list :+ ByteString(s"""event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n""")
+      }
+      val tc = delta.tool_calls.head
+      val hasName = tc.function.hasName
+      if (hasName) {
+        //data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01T1x1fJ34qAmk2tNTrN7Up6","name":"get_weather","input":{}}}
+        val doc = Json.obj(
+          "type" -> "content_block_start",
+          "index" -> index,
+          "content_block" -> Json.obj(
+            "type" -> "tool_use",
+            "id" -> tc.id,
+            "name" -> tc.function.name,
+            "input" -> tc.function.arguments,
+          )
+        )
+        list = list :+ ByteString(s"event: content_block_start\ndata: ${doc.stringify}\n\n")
+      } else {
+        // data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"renheit\"}"}}
+        val doc = Json.obj(
+          "type" -> "content_block_delta",
+          "index" -> index,
+          "delta" -> Json.obj(
+            "type" -> "input_json_delta",
+            "partial_json" -> tc.function.arguments
+          )
+        )
+        list = list :+ ByteString(s"event: content_block_delta\ndata: ${doc.stringify}\n\n")
+      }
+    } else {
+      if (!state.textDone.get()) {
+        val text: String = delta.content.getOrElse("")
+        val doc = Json.obj(
+          "type" -> "content_block_delta",
+          "index" -> index,
+          "delta" -> Json.obj(
+            "type" -> "text_delta",
+            "text" -> text
+          )
+        )
+        list = list :+ ByteString(s"event: content_block_delta\ndata: ${doc.stringify}\n\n")
+      }
+    }
+    Source(list.toList)
+  }
 }
 
 case class ChatResponseChunk(id: String, created: Long, model: String, choices: Seq[ChatResponseChunkChoice], costs: Option[CostsOutput] = None, impacts: Option[ImpactsOutput] = None, budget: Option[(AiBudgetConsumptions, AiBudget)] = None, usage: Option[ChatResponseMetadataUsage] = None) {
@@ -717,6 +836,12 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
   def eventSource(env: Env): ByteString = s"data: ${json(env).stringify}\n\n".byteString
   def openaiEventSource(env: Env): ByteString = s"data: ${openaiJson(env).stringify}\n\n".byteString
   def openaiCompletionEventSource(env: Env): ByteString = s"data: ${openaiCompletionJson(env).stringify}\n\n".byteString
+  def anthropicContentBlockDeltaEventSource(env: Env, state: AnthropicStreamResponseState): Source[ByteString, _] = {
+    choices.headOption match {
+      case Some(choice) => choice.anthropicContentBlockDeltaJson(env, state)
+      case None => Source.empty
+    }
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1557,6 +1682,9 @@ object VideoModelClient {
 
 trait ChatClient {
 
+  def isAnthropic: Boolean = false
+  def isCohere: Boolean = false
+  def isOpenAi: Boolean = true
   def supportsStreaming: Boolean = false
   def supportsTools: Boolean = false
   def supportsCompletion: Boolean = false

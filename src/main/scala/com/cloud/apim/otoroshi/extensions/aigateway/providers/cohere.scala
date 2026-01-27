@@ -351,6 +351,9 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
   // TODO: supports tools: true
   // TODO: supports streaming: true
 
+  override def isAnthropic: Boolean = false
+  override def isOpenAi: Boolean = false
+  override def isCohere: Boolean = true
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = api.supportsCompletion

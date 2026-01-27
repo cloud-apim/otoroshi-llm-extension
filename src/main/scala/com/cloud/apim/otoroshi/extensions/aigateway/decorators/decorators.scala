@@ -36,6 +36,9 @@ object ChatClientDecorators {
 trait DecoratorChatClient extends ChatClient {
   def chatClient: ChatClient
   override def computeModel(payload: JsValue): Option[String] = chatClient.computeModel(payload)
+  override def isCohere: Boolean = chatClient.isCohere
+  override def isOpenAi: Boolean = chatClient.isOpenAi
+  override def isAnthropic: Boolean = chatClient.isAnthropic
   override def supportsStreaming: Boolean = chatClient.supportsStreaming
   override def supportsTools: Boolean = chatClient.supportsTools
   override def supportsCompletion: Boolean = chatClient.supportsCompletion

@@ -373,6 +373,9 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
   // supports tools: true
   // supports streaming: true
 
+  override def isAnthropic: Boolean = true
+  override def isOpenAi: Boolean = false
+  override def isCohere: Boolean = false
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = false

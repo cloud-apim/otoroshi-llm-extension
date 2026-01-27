@@ -82,6 +82,10 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
 
   override def computeModel(payload: JsValue): Option[String] = None
 
+  override def isCohere: Boolean = false
+  override def isOpenAi: Boolean = true
+  override def isAnthropic: Boolean = false
+
   def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: ChatClient => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val refs: Seq[LoadBalancingTarget] = provider.options.select("refs")
       .asOpt[Seq[String]].map { seq =>
