@@ -448,15 +448,15 @@ async function main() {
   let successCount = 0;
   let failCount = 0;
 
-  //try {
-  //  // Test with a message that requires tool calls
-  //  await chat("What's the weather like in Paris, France and what time is it there?");
-  //  successCount++;
-  //} catch (error) {
-  //  failCount++;
-  //  log.error(`Test 1 failed: ${error.message}`);
-  //}
-  //console.log('\n');
+  try {
+    // Test with a message that requires tool calls
+    await chat("What's the weather like in Paris, France and what time is it there?");
+    successCount++;
+  } catch (error) {
+    failCount++;
+    log.error(`Test 1 failed: ${error.message}`);
+  }
+  console.log('\n');
 
   try {
     // Another example with a single tool call
