@@ -110,7 +110,7 @@ class AnthropicCompatProxy extends NgBackendCall {
   }
 
   private def fixBody(_jsonBody: JsObject, client: ChatClient, reqId: Long): JsObject = {
-    if (client.isAnthropic) {
+    val a = if (client.isAnthropic) {
       _jsonBody - "system"
     } else if (client.isCohere) {
       _jsonBody - "system"
@@ -149,9 +149,64 @@ class AnthropicCompatProxy extends NgBackendCall {
         val effort = "medium"
         additionalProperties = additionalProperties ++ Json.obj("reasoning_effort" -> effort)
       }
-      additionalProperties = additionalProperties ++ Json.obj("model" -> "gpt-5.2")
-      withTools - "system" - "max_tokens" - "thinking" - "model" ++ additionalProperties
+      _jsonBody.select("messages").asOpt[Seq[JsObject]].foreach { messages =>
+        val newMessages: Seq[JsObject] = messages.flatMap { message =>
+          val role = message.select("role").asOptString
+          val content = message.select("content").asOpt[Seq[JsObject]]
+          val contentArray = content.getOrElse(Seq.empty)
+          if (role.contains("user") && content.isDefined) {
+            val allToolResult = contentArray.forall(o => o.select("type").asOptString.contains("tool_result"))
+            if (allToolResult) {
+              //message ++ Json.obj(
+              //  "content" -> "",
+              //  "tool_calls" ->
+              contentArray.map { tc =>
+                val content: String = tc.select("content").asOpt[JsObject].map(_.stringify).orElse(tc.select("content").asOptString).getOrElse("{}")
+                Json.obj(
+                  "tool_call_id" -> tc.select("tool_use_id").asString,
+                  "role" -> "tool",
+                  "content" -> content,
+                )
+              }
+              //)
+            } else {
+              Seq(message)
+            }
+          } else if (role.contains("assistant") && content.isDefined) {
+            val allToolUse = contentArray.forall(o => o.select("type").asOptString.contains("tool_use"))
+            if (allToolUse) {
+              Seq(Json.obj(
+                "role" -> "assistant",
+                "tool_calls" -> contentArray.map { tc =>
+                  val input: String = tc.select("input").asOpt[JsObject].map(_.stringify).orElse(tc.select("input").asOptString).getOrElse("{}")
+                  Json.obj(
+                    "id" -> tc.select("id").asString,
+                    "type" -> "function",
+                    "function" -> Json.obj(
+                      "name" -> tc.select("name").asString,
+                      "arguments" -> input
+                    )
+                  )
+                }
+              ))
+            } else {
+              Seq(message)
+            }
+          } else {
+            Seq(message)
+          }
+        }
+        additionalProperties = additionalProperties ++ Json.obj("messages" -> newMessages)
+      }
+      additionalProperties = additionalProperties// ++ Json.obj("model" -> "gpt-5.2")
+      withTools - "messages" - "system" - "max_tokens" - "thinking" ++ additionalProperties
     }
+    println("-------------------------------------------------------------------------------------")
+    println("\n\n")
+    println(a.prettify)
+    println("\n\n")
+    println("-------------------------------------------------------------------------------------")
+    a
   }
 
   def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
@@ -174,6 +229,7 @@ class AnthropicCompatProxy extends NgBackendCall {
       )))).vfuture
       case Some(client) => {
         val stream = ctx.request.queryParam("stream").contains("true") || ctx.request.header("x-stream").contains("true") || jsonBody.select("stream").asOpt[Boolean].contains(true)
+        val finalJsonBody = fixBody(jsonBody.asObject, client, reqId)
 
         // Extract system message from Anthropic format (top-level "system" field)
         val systemMessage: Option[JsObject] = jsonBody.select("system").asOpt[String].map { sys =>
@@ -184,7 +240,7 @@ class AnthropicCompatProxy extends NgBackendCall {
 
         val requestMessages = ctx.attrs.get(AiPluginsKeys.PromptTemplateKey) match {
           case None => {
-            val msgs = jsonBody.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+            val msgs = finalJsonBody.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
             systemMessage.map(s => s +: msgs).getOrElse(msgs)
           }
           case Some(template) => {
@@ -193,7 +249,7 @@ class AnthropicCompatProxy extends NgBackendCall {
                 "route" -> ctx.route.json,
                 "request" -> ctx.request.json
               )),
-              "body" -> jsonBody,
+              "body" -> finalJsonBody,
               "properties" -> Json.obj(),
             )
             AiLlmProxy.applyTemplate(template, context)
@@ -205,7 +261,6 @@ class AnthropicCompatProxy extends NgBackendCall {
           val messages = (preContextMessages ++ requestMessages ++ postContextMessages).map { obj =>
             InputChatMessage.fromJson(obj)
           }
-          val finalJsonBody = fixBody(jsonBody.asObject, client, reqId)
           if (stream) {
             val messageId = s"msg_${IdGenerator.token(32)}"
             val model = client.computeModel(finalJsonBody).getOrElse("none")

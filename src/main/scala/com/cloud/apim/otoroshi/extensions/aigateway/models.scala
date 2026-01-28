@@ -539,7 +539,19 @@ case class ChatResponse(
     val finalModel = raw.select("model").asOpt[String].getOrElse(model)
     val content = generations.flatMap { gen =>
       if (gen.message.has_tool_calls) {
-        gen.message.tool_calls.getOrElse(Seq.empty).map(_.asObject)
+        gen.message.tool_calls.getOrElse(Seq.empty).map(_.asObject).map { o =>
+          val input: JsValue = o.select("input")
+            .asOpt[JsObject]
+            .orElse(o.select("function").select("arguments").asOptString.map(_.json))
+            .getOrElse(Json.obj())
+          val name: String = o.select("name").asOptString.orElse(o.select("function").select("name").asOptString).getOrElse("")
+          Json.obj(
+            "type" -> "tool_use",
+            "id" -> o.select("id").asString,
+            "name" -> name,
+            "input" -> input,
+          )
+        }
       } else {
         Seq(Json.obj("type" -> "text", "text" -> gen.message.content))
       }

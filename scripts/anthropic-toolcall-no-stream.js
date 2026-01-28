@@ -169,6 +169,8 @@ async function callAnthropic(messages, system) {
 
   let response;
   try {
+    log.info(JSON.stringify(messages, null, 2));
+
     response = await fetch(`${ANTHROPIC_BASE_URL}/v1/messages`, {
       method: 'POST',
       headers: {
