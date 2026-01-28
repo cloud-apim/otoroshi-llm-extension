@@ -542,6 +542,7 @@ class AiProvidersPage extends Component {
     { 'label': 'Azure OpenAI', value: 'azure-openai' },
     { 'label': 'Mistral', value: 'mistral' },
     { 'label': 'Ollama', value: 'ollama' },
+    { 'label': 'Ollama (OpenAI compatible)', value: 'ollama-openai' },
     { 'label': 'Anthropic', value: 'anthropic' },
     { 'label': 'Groq', value: 'groq' },
     { 'label': 'X.ai', value: 'x-ai' },

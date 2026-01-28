@@ -582,10 +582,10 @@ case class ChatResponse(
         gen.message.content.chunks(5)
       }
       .map { chunk =>
-        ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(chunk.some), None)))
+        ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(chunk.some, None), None)))
       }
       .concat(Source.single(
-        ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(None), Some("stop"))))
+        ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(None, None), Some("stop"))))
       ))
   }
 }
@@ -713,6 +713,7 @@ case class ChatResponseChunkChoiceDeltaToolCall(
 
 case class ChatResponseChunkChoiceDelta(
      content: Option[String],
+     reasoning: Option[String] = None,
      role: String = "assistant",
      refusal: Option[String] = None,
      tool_calls: Seq[ChatResponseChunkChoiceDeltaToolCall] = Seq.empty, // TODO: fill it everywhere

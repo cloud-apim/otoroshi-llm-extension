@@ -18,11 +18,26 @@ import scala.concurrent.duration._
 case class OllamaAiApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
   lazy val name: String = raw.select("name").asString
   lazy val arguments: JsObject = raw.select("arguments").asObject
+  def asChatResponseChunkChoiceDeltaToolCallFunction: ChatResponseChunkChoiceDeltaToolCallFunction = {
+    ChatResponseChunkChoiceDeltaToolCallFunction(
+      nameOpt = raw.select("name").asOptString,
+      arguments = raw.select("arguments").asOpt[JsObject].map(_.stringify).orElse(raw.select("arguments").asOptString).getOrElse("{}"),
+    )
+  }
 }
 
 case class OllamaAiApiResponseChoiceMessageToolCall(raw: JsObject) {
   lazy val id: String = raw.select("id").asString
   lazy val function: OllamaAiApiResponseChoiceMessageToolCallFunction = OllamaAiApiResponseChoiceMessageToolCallFunction(raw.select("function").asObject)
+
+  def asChatResponseChunkChoiceDeltaToolCall: ChatResponseChunkChoiceDeltaToolCall = {
+    ChatResponseChunkChoiceDeltaToolCall(
+      index = 0L,
+      id = raw.select("id").asOptString,
+      typ = None,
+      function = function.asChatResponseChunkChoiceDeltaToolCallFunction,
+    )
+  }
 }
 
 case class OllamaAiApiResponseMessage(raw: JsValue) {
@@ -47,9 +62,14 @@ case class OllamaAiApiResponse(status: Int, headers: Map[String, String], body: 
 case class OllamaAiChatResponseChunkMessage(raw: JsValue) {
   lazy val role: String = raw.select("role").asOpt[String].getOrElse("assistant")
   lazy val content: String = raw.select("content").asOpt[String].getOrElse("")
+  lazy val reasoning: Option[String] = raw.select("reasoning").asOptString
+  lazy val toolCalls: Seq[OllamaAiApiResponseChoiceMessageToolCall] = raw.select("tool_calls").asOpt[Seq[JsObject]].map(_.map(v => OllamaAiApiResponseChoiceMessageToolCall(v))).getOrElse(Seq.empty)
+  lazy val hasToolCalls: Boolean = toolCalls.nonEmpty
 }
 
 case class OllamaAiChatResponseChunk(raw: JsValue) {
+
+  println(s"chunk: ${raw.stringify}")
   lazy val model: String = raw.select("model").asString
   lazy val done: Boolean = raw.select("done").asOptBoolean.getOrElse(false)
   lazy val created_at: String = raw.select("created_at").asString
@@ -429,7 +449,10 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
                   choices = Seq(ChatResponseChunkChoice(
                     index = idx,
                     delta = ChatResponseChunkChoiceDelta(
-                      chunk.message.content.some
+                      content = chunk.message.content.some,
+                      reasoning = chunk.message.reasoning,
+                      role = chunk.message.role,
+                      tool_calls = chunk.message.toolCalls.map(tc => tc.asChatResponseChunkChoiceDeltaToolCall),
                     ),
                     finishReason = if (chunk.done) Some("stop") else None
                   ))

@@ -307,7 +307,7 @@ case class AiProvider(
         new OllamaAiChatClient(api, opts, id).some
       }
       case "ollama-openai" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrlOAI), token, timeout.getOrElse(3.minutes), providerName = "Ollama", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrlOAI), token, timeout.getOrElse(3.minutes), providerName = "Ollama (OAI compat)", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "ollama").some
       }

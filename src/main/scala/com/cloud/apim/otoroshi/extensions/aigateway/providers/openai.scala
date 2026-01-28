@@ -57,6 +57,7 @@ case class OpenAiChatResponseChunkChoiceDeltaToolCall(raw: JsValue) {
 
 case class OpenAiChatResponseChunkChoiceDelta(raw: JsValue) {
   lazy val content: Option[String] = raw.select("content").asOptString
+  lazy val reasoning: Option[String] = raw.select("reasoning").asOptString
   lazy val role: String = raw.select("role").asOptString.getOrElse("assistant")
   lazy val refusal: Option[String] = raw.select("refusal").asOptString
   lazy val tool_calls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = raw.select("tool_calls").asOpt[Seq[JsObject]].map(_.map(OpenAiChatResponseChunkChoiceDeltaToolCall.apply)).getOrElse(Seq.empty)
@@ -64,6 +65,7 @@ case class OpenAiChatResponseChunkChoiceDelta(raw: JsValue) {
   def asChatResponseChunkChoiceDelta: ChatResponseChunkChoiceDelta = {
     ChatResponseChunkChoiceDelta(
       content = content,
+      reasoning = reasoning,
       role = role,
       refusal = refusal,
       tool_calls = tool_calls.map(_.asChatResponseChunkChoiceDeltaToolCall),
@@ -591,6 +593,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
                   index = choice.index.map(_.toLong).getOrElse(0L),
                   delta = ChatResponseChunkChoiceDelta(
                     content = choice.delta.flatMap(_.content),
+                    reasoning = choice.delta.flatMap(_.reasoning),
                     role = choice.delta.map(_.role).getOrElse("assistant"),
                     refusal = choice.delta.flatMap(_.refusal),
                     tool_calls = choice.delta.map(_.tool_calls.map(tc => tc.asChatResponseChunkChoiceDeltaToolCall)).getOrElse(Seq.empty),

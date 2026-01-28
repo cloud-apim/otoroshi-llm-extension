@@ -178,12 +178,18 @@ class AnthropicCompatProxy extends NgBackendCall {
           val thinkingBudget = budget.get
           val effort = _jsonBody.select("max_tokens").asOptLong.map { maxBudget =>
             val ratio = thinkingBudget.toDouble / maxBudget.toDouble
+            //ratio match {
+            //  case r if r <= 0.10 => "minimal"
+            //  case r if r <= 0.25 => "low"
+            //  case r if r <= 0.50 => "medium"
+            //  case r if r <= 0.80 => "high"
+            //  case _              => "xhigh"
+            //}
             ratio match {
-              case r if r <= 0.10 => "minimal"
-              case r if r <= 0.25 => "low"
-              case r if r <= 0.50 => "medium"
-              case r if r <= 0.80 => "high"
-              case _              => "xhigh"
+              case r if r <= 0.25 => "minimal"
+              case r if r <= 0.50 => "low"
+              case r if r <= 0.75 => "medium"
+              case _ => "high"
             }
           }.getOrElse("medium")
           additionalProperties = additionalProperties ++ Json.obj("reasoning_effort" -> effort)
@@ -200,7 +206,7 @@ class AnthropicCompatProxy extends NgBackendCall {
               contentArray.map { tc =>
                 val typ = tc.select("type").asOptString
                 if (typ.contains("tool_result")) {
-                  val content: String = tc.select("content").asOpt[JsObject].map(_.stringify).orElse(tc.select("content").asOptString).getOrElse("{\"foo\":\"nar\"}")
+                  val content: String = tc.select("content").asOpt[JsObject].map(_.stringify).orElse(tc.select("content").asOptString).getOrElse("{}")
                   Json.obj(
                     "tool_call_id" -> tc.select("tool_use_id").asString,
                     "role" -> "tool",
@@ -219,7 +225,7 @@ class AnthropicCompatProxy extends NgBackendCall {
               Seq(Json.obj(
                 "role" -> "assistant",
                 "tool_calls" -> allToolUse.map { tc =>
-                  val input: String = tc.select("input").asOpt[JsObject].map(_.stringify).orElse(tc.select("input").asOptString).getOrElse("{\"bar\":\"goo\"}")
+                  val input: String = tc.select("input").asOpt[JsObject].map(_.stringify).orElse(tc.select("input").asOptString).getOrElse("{}")
                   Json.obj(
                     "id" -> tc.select("id").asString,
                     "type" -> "function",
