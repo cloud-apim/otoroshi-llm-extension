@@ -27,6 +27,12 @@ case class AnthropicStreamResponseState(
   toolCallsDone: AtomicBoolean = new AtomicBoolean(false),
 )
 
+/*
+export ANTHROPIC_AUTH_TOKEN=otoroshi
+export ANTHROPIC_API_KEY=""
+export ANTHROPIC_BASE_URL=http://anthropic.oto.tools:9999
+claude --model gpt-5.2
+ */
 class AnthropicCompatProxy extends NgBackendCall {
 
   override def name: String = "Cloud APIM - LLM Anthropic messages Proxy"
@@ -40,8 +46,13 @@ class AnthropicCompatProxy extends NgBackendCall {
   override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefsConfig.default)
 
   override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow
-  override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers")
+  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow ++ Seq("override_model")
+  override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers").map(o => o ++ Json.obj(
+    "override_model" -> Json.obj(
+      "type" -> "string",
+      "label" -> s"Override model",
+    )
+  ))
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
@@ -110,12 +121,11 @@ class AnthropicCompatProxy extends NgBackendCall {
   }
 
   private def fixBody(_jsonBody: JsObject, client: ChatClient, reqId: Long): JsObject = {
-    val a = if (client.isAnthropic) {
+    if (client.isAnthropic) {
       _jsonBody - "system"
     } else if (client.isCohere) {
       _jsonBody - "system"
     } else {
-      Files.writeString(new File(s"anthropic-${reqId}-raw-input.json").toPath, Json.prettyPrint(_jsonBody))
       val withTools = _jsonBody.select("tools").asOpt[Seq[JsObject]] match {
         case None => _jsonBody
         case Some(origTools) => {
@@ -140,14 +150,44 @@ class AnthropicCompatProxy extends NgBackendCall {
         }
       }
       var additionalProperties = Json.obj()
+      _jsonBody.select("output_config").asOpt[JsObject].foreach { output =>
+        val ftype = output.select("format").select("type").asOptString
+        if (ftype.contains("json_schema")) {
+          val schema = output.select("format").select("schema").asObject
+          additionalProperties = additionalProperties ++ Json.obj(
+            "response_format" -> Json.obj(
+              "type" -> "json_schema",
+              "json_schema" -> Json.obj(
+                "name" -> "output_schema",
+                "schema" -> schema
+              )
+            )
+          )
+        } else {
+          Files.writeString(new File(s"anthropic-${reqId}-output-config-request.json").toPath, _jsonBody.prettify)
+        }
+      }
       _jsonBody.select("max_tokens").asOpt[Long].foreach {
         case tokens if tokens > 1 =>  additionalProperties = additionalProperties ++ Json.obj("max_completion_tokens" -> tokens)
         case _ =>
       }
       _jsonBody.select("thinking").asOpt[JsObject].foreach { thinking =>
-        val efforts = Seq("minimal", "low", "medium", "high", "xhigh")
-        val effort = "medium"
-        additionalProperties = additionalProperties ++ Json.obj("reasoning_effort" -> effort)
+        val enabled = thinking.select("type").asOptString.contains("enabled")
+        val budget = thinking.select("budget_tokens").asOptLong
+        if (enabled && budget.isDefined) {
+          val thinkingBudget = budget.get
+          val effort = _jsonBody.select("max_tokens").asOptLong.map { maxBudget =>
+            val ratio = thinkingBudget.toDouble / maxBudget.toDouble
+            ratio match {
+              case r if r <= 0.10 => "minimal"
+              case r if r <= 0.25 => "low"
+              case r if r <= 0.50 => "medium"
+              case r if r <= 0.80 => "high"
+              case _              => "xhigh"
+            }
+          }.getOrElse("medium")
+          additionalProperties = additionalProperties ++ Json.obj("reasoning_effort" -> effort)
+        }
       }
       _jsonBody.select("messages").asOpt[Seq[JsObject]].foreach { messages =>
         val newMessages: Seq[JsObject] = messages.flatMap { message =>
@@ -155,30 +195,31 @@ class AnthropicCompatProxy extends NgBackendCall {
           val content = message.select("content").asOpt[Seq[JsObject]]
           val contentArray = content.getOrElse(Seq.empty)
           if (role.contains("user") && content.isDefined) {
-            val allToolResult = contentArray.forall(o => o.select("type").asOptString.contains("tool_result"))
+            val allToolResult = contentArray.exists(o => o.select("type").asOptString.contains("tool_result"))
             if (allToolResult) {
-              //message ++ Json.obj(
-              //  "content" -> "",
-              //  "tool_calls" ->
               contentArray.map { tc =>
-                val content: String = tc.select("content").asOpt[JsObject].map(_.stringify).orElse(tc.select("content").asOptString).getOrElse("{}")
-                Json.obj(
-                  "tool_call_id" -> tc.select("tool_use_id").asString,
-                  "role" -> "tool",
-                  "content" -> content,
-                )
+                val typ = tc.select("type").asOptString
+                if (typ.contains("tool_result")) {
+                  val content: String = tc.select("content").asOpt[JsObject].map(_.stringify).orElse(tc.select("content").asOptString).getOrElse("{\"foo\":\"nar\"}")
+                  Json.obj(
+                    "tool_call_id" -> tc.select("tool_use_id").asString,
+                    "role" -> "tool",
+                    "content" -> content,
+                  )
+                } else {
+                  tc
+                }
               }
-              //)
             } else {
               Seq(message)
             }
           } else if (role.contains("assistant") && content.isDefined) {
-            val allToolUse = contentArray.forall(o => o.select("type").asOptString.contains("tool_use"))
-            if (allToolUse) {
+            val allToolUse = contentArray.filter(o => o.select("type").asOptString.contains("tool_use"))
+            if (allToolUse.nonEmpty) {
               Seq(Json.obj(
                 "role" -> "assistant",
-                "tool_calls" -> contentArray.map { tc =>
-                  val input: String = tc.select("input").asOpt[JsObject].map(_.stringify).orElse(tc.select("input").asOptString).getOrElse("{}")
+                "tool_calls" -> allToolUse.map { tc =>
+                  val input: String = tc.select("input").asOpt[JsObject].map(_.stringify).orElse(tc.select("input").asOptString).getOrElse("{\"bar\":\"goo\"}")
                   Json.obj(
                     "id" -> tc.select("id").asString,
                     "type" -> "function",
@@ -198,20 +239,16 @@ class AnthropicCompatProxy extends NgBackendCall {
         }
         additionalProperties = additionalProperties ++ Json.obj("messages" -> newMessages)
       }
-      additionalProperties = additionalProperties// ++ Json.obj("model" -> "gpt-5.2")
-      withTools - "messages" - "system" - "max_tokens" - "thinking" ++ additionalProperties
+      withTools - "messages" - "system" - "max_tokens" - "thinking" - "output_config" ++ additionalProperties
     }
-    println("-------------------------------------------------------------------------------------")
-    println("\n\n")
-    println(a.prettify)
-    println("\n\n")
-    println("-------------------------------------------------------------------------------------")
-    a
   }
 
   def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val reqId = System.currentTimeMillis
     val jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config)
+      .applyOnWithOpt(ctx.config.select("override_model").asOptString.filter(_.trim.nonEmpty)) {
+        case (body, om) => body.asObject ++ Json.obj("model" -> om)
+      }
     val provider: Option[AiProvider] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
     }.orElse(
@@ -235,7 +272,13 @@ class AnthropicCompatProxy extends NgBackendCall {
         val systemMessage: Option[JsObject] = jsonBody.select("system").asOpt[String].map { sys =>
           Json.obj("role" -> "system", "content" -> sys)
         }.orElse(jsonBody.select("system").asOpt[Seq[JsObject]].map { sysBlocks =>
-          Json.obj("role" -> "system", "content" -> JsArray(sysBlocks))
+          val content = sysBlocks.filter { b =>
+            b.select("type").asOptString match {
+              case Some("text") => true
+              case _ => false
+            }
+          }.map(_.select("text").asString).mkString("\n\n")
+          Json.obj("role" -> "system", "content" -> content)
         })
 
         val requestMessages = ctx.attrs.get(AiPluginsKeys.PromptTemplateKey) match {
@@ -266,8 +309,6 @@ class AnthropicCompatProxy extends NgBackendCall {
             val model = client.computeModel(finalJsonBody).getOrElse("none")
             client.tryStream(ChatPrompt(messages), ctx.attrs, finalJsonBody).map {
               case Left(err) =>
-                println("error: " + err)
-                Files.writeString(new File(s"""anthropic-${reqId}-stream-error.json""").toPath, Json.prettyPrint(Json.obj("request" -> finalJsonBody, "response" -> err)).replaceAll("\\[ \\(", "[\n  {"))
                 Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj(
                   "type" -> "error",
                   "error" -> Json.obj(
@@ -276,7 +317,6 @@ class AnthropicCompatProxy extends NgBackendCall {
                   )
                 ))))
               case Right(source) => {
-                var chunks = Seq.empty[ByteString]
                 val state = AnthropicStreamResponseState()
                 val finalSource = Source.single(anthropicMessageStart(model, messageId))
                   .concat(Source.single(anthropicContentBlockStart(0)))
@@ -284,22 +324,12 @@ class AnthropicCompatProxy extends NgBackendCall {
                   .concat(Source.single(anthropicContentBlockStop(0)))
                   .concat(Source.single(anthropicMessageDelta(if (state.toolCallsStarted.get()) "tool_use" else "end_turn", 0)))
                   .concat(Source.single(anthropicMessageStop()))
-                  .map { bs =>
-                    chunks = chunks :+ bs
-                    bs
-                  }
-                  .alsoTo(Sink.onComplete {
-                    case _ => Files.writeString(
-                      new File(s"anthropic-${reqId}-stream-request.json").toPath,
-                      Json.prettyPrint(Json.obj("request" -> finalJsonBody)) + "\n\n" + chunks.map(_.utf8String.json).mkString("\n"))
-                  })
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
               }
             }
           } else {
             client.call(ChatPrompt(messages), ctx.attrs, finalJsonBody).map {
               case Left(err) =>
-                Files.writeString(new File(s"""anthropic-${reqId}-block-error.json""").toPath, Json.prettyPrint(Json.obj("request" -> finalJsonBody, "response" -> err)).replaceAll("\\[ \\(", "[\n  {"))
                 Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj(
                   "type" -> "error",
                   "error" -> Json.obj(
@@ -308,7 +338,6 @@ class AnthropicCompatProxy extends NgBackendCall {
                   )
                 ))))
               case Right(response) =>
-                Files.writeString(new File(s"""anthropic-${reqId}-block-request.json""").toPath, Json.prettyPrint(Json.obj("request" -> finalJsonBody, "response" -> response.json(env))).replaceAll("\\[ \\(", "[\n  {"))
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.anthropicJson(client.computeModel(jsonBody).getOrElse("none"), env))
                   .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
             }

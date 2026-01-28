@@ -753,12 +753,10 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
       if (!state.textDone.get() && !state.toolCallsStarted.get()) {
         state.textDone.set(true)
         state.toolCallsStarted.set(true)
-        list = list :+ ByteString(s"""event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n""")
       }
       val tc = delta.tool_calls.head
       val hasName = tc.function.hasName
       if (hasName) {
-        //data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_01T1x1fJ34qAmk2tNTrN7Up6","name":"get_weather","input":{}}}
         val doc = Json.obj(
           "type" -> "content_block_start",
           "index" -> index,
@@ -769,9 +767,8 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
             "input" -> tc.function.arguments,
           )
         )
-        list = list :+ ByteString(s"event: content_block_start\ndata: ${doc.stringify}\n\n")
+        list = list :+ ByteString(s"""event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\nevent: content_block_start\ndata: ${doc.stringify}\n\n""")
       } else {
-        // data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"renheit\"}"}}
         val doc = Json.obj(
           "type" -> "content_block_delta",
           "index" -> index,
@@ -784,6 +781,9 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
       }
     } else {
       if (!state.textDone.get()) {
+        if (!state.textStarted.get()) {
+          state.textStarted.set(true)
+        }
         val text: String = delta.content.getOrElse("")
         val doc = Json.obj(
           "type" -> "content_block_delta",
@@ -849,9 +849,8 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
   def openaiEventSource(env: Env): ByteString = s"data: ${openaiJson(env).stringify}\n\n".byteString
   def openaiCompletionEventSource(env: Env): ByteString = s"data: ${openaiCompletionJson(env).stringify}\n\n".byteString
   def anthropicContentBlockDeltaEventSource(env: Env, state: AnthropicStreamResponseState): Source[ByteString, _] = {
-    choices.headOption match {
-      case Some(choice) => choice.anthropicContentBlockDeltaJson(env, state)
-      case None => Source.empty
+    Source(choices.toList).flatMapConcat { choice =>
+      choice.anthropicContentBlockDeltaJson(env, state)
     }
   }
 }
