@@ -491,6 +491,11 @@ case class ChatGeneration(message: OutputChatMessage) {
     )
   }
 }
+
+object ChatResponse {
+  val empty = ChatResponse(Seq.empty, ChatResponseMetadata.empty, Json.obj())
+}
+
 case class ChatResponse(
   generations: Seq[ChatGeneration],
   metadata: ChatResponseMetadata,

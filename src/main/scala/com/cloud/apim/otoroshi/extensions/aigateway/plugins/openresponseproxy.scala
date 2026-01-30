@@ -5,7 +5,7 @@ import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, ChatResponse, ChatResponseMetadataUsage, InputChatMessage}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
@@ -15,7 +15,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.mvc.Results
 
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import scala.concurrent.{ExecutionContext, Future}
 
 class OpenResponseCompatProxy extends NgBackendCall {
@@ -195,7 +195,8 @@ class OpenResponseCompatProxy extends NgBackendCall {
           Json.obj(
             "type" -> "output_text",
             "text" -> gen.message.content,
-            "annotations" -> gen.message.annotationsOrEmpty
+            "annotations" -> gen.message.annotationsOrEmpty,
+            "logprobs" -> Json.arr()
           )
         )
       )
@@ -228,7 +229,8 @@ class OpenResponseCompatProxy extends NgBackendCall {
           Json.obj(
             "type" -> "output_text",
             "text" -> message.message.wholeTextContent,
-            "annotations" -> message.message.annotationsOrEmpty
+            "annotations" -> message.message.annotationsOrEmpty,
+            "logprobs" -> Json.arr()
           )
         )
       )
@@ -307,22 +309,6 @@ class OpenResponseCompatProxy extends NgBackendCall {
       "metadata" -> Json.obj(),
       "reasoning" -> reasoning,
       "text" -> text,
-
-      // - previous_response_id: Invalid input
-      // - instructions: Invalid input
-      // - output.0: Invalid input
-      // - error: Invalid input
-      // - tools: Invalid input: expected array, received undefined
-      // - tool_choice: Invalid input
-      // - truncation: Invalid option: expected one of "auto"|"disabled"
-      // - parallel_tool_calls: Invalid input: expected boolean, received undefined
-      // - text: Invalid input: expected object, received undefined
-      // - reasoning: Invalid input
-      // - usage: Invalid input
-      // - max_output_tokens: Invalid input
-      // - max_tool_calls: Invalid input
-      // - safety_identifier: Invalid input
-      // - prompt_cache_key: Invalid input
     )
   }
 
@@ -356,17 +342,15 @@ class OpenResponseCompatProxy extends NgBackendCall {
             val msgId = s"msg_${IdGenerator.token(32)}"
             val model = client.computeModel(openAiBody).getOrElse("none")
             val createdAt = System.currentTimeMillis() / 1000
+            val tools = openAiBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
 
-            def responseSnapshot(typ: String, seqNum: Int) = Json.obj(
-              "type" -> typ,
-              "id" -> respId,
-              "object" -> "response",
-              "created_at" -> createdAt,
-              "status" -> "in_progress",
-              "model" -> model,
-              "sequence_number" -> seqNum,
-              "output" -> Json.arr()
-            )
+            def eventWithResponse(typ: String, seqNum: Int): JsObject = {
+              Json.obj(
+                "type" -> typ,
+                "sequence_number" -> seqNum,
+                "response" -> buildResponseJson(ChatResponse.empty, model, jsonBody.asObject, tools, env)
+              )
+            }
 
             val msgItem = Json.obj(
               "type" -> "message",
@@ -381,8 +365,8 @@ class OpenResponseCompatProxy extends NgBackendCall {
               case Right(source) => {
                 val counter = new AtomicInteger(0)
                 val headerEvents = Source(List(
-                  sseEvent("response.created", responseSnapshot("response.created", counter.getAndIncrement())),
-                  sseEvent("response.in_progress", responseSnapshot("response.in_progress", counter.getAndIncrement())),
+                  sseEvent("response.created", eventWithResponse("response.created", counter.getAndIncrement())),
+                  sseEvent("response.in_progress", eventWithResponse("response.in_progress", counter.getAndIncrement())),
                   sseEvent("response.output_item.added", Json.obj(
                     "type" -> "response.output_item.added",
                     "output_index" -> 0,
@@ -395,13 +379,20 @@ class OpenResponseCompatProxy extends NgBackendCall {
                     "output_index" -> 0,
                     "content_index" -> 0,
                     "sequence_number" -> counter.getAndIncrement(),
-                    "part" -> Json.obj("type" -> "output_text", "text" -> "")
+                    "part" -> Json.obj("type" -> "output_text", "text" -> "", "annotations" -> Json.arr(), "logprobs" -> Json.arr()),
                   ))
                 ))
+
+                val ref = new AtomicReference[String]("")
+                val refUsage = new AtomicReference[ChatResponseMetadataUsage]()
 
                 val deltaEvents = source.zipWithIndex.map {
                   case (chunk, idx) =>
                     val text = chunk.choices.headOption.flatMap(_.delta.content).getOrElse("")
+                    ref.accumulateAndGet(text, (a, b) => a + b)
+                    chunk.usage.foreach { u =>
+                      refUsage.set(u)
+                    }
                     sseEvent("response.output_text.delta", Json.obj(
                       "type" -> "response.output_text.delta",
                       "item_id" -> msgId,
@@ -413,31 +404,77 @@ class OpenResponseCompatProxy extends NgBackendCall {
                     ))
                 }
 
-                val footerEvents = Source(List(
-                  sseEvent("response.output_text.done", Json.obj(
-                    "type" -> "response.output_text.done",
-                    "item_id" -> msgId,
-                    "output_index" -> 0,
-                    "content_index" -> 0,
-                    "sequence_number" -> counter.getAndIncrement(),
-                    "text" -> ""
-                  )),
-                  sseEvent("response.content_part.done", Json.obj(
-                    "type" -> "response.content_part.done",
-                    "item_id" -> msgId,
-                    "output_index" -> 0,
-                    "content_index" -> 0,
-                    "sequence_number" -> counter.getAndIncrement(),
-                    "part" -> Json.obj("type" -> "output_text", "text" -> "", "annotations" -> Json.arr())
-                  )),
-                  sseEvent("response.output_item.done", Json.obj(
-                    "type" -> "response.output_item.done",
-                    "output_index" -> 0,
-                    "sequence_number" -> counter.getAndIncrement(),
-                    "item" -> msgItem.deepMerge(Json.obj("status" -> "completed"))
-                  )),
-                  sseEvent("response.completed", responseSnapshot("response.completed", counter.getAndIncrement()).deepMerge(Json.obj("status" -> "completed")))
-                ))
+                val footerEvents = Source.single(())
+                  .flatMapConcat(_ => Source.lazySingle[ByteString] { () =>
+                    sseEvent("response.output_text.done", Json.obj(
+                      "type" -> "response.output_text.done",
+                      "item_id" -> msgId,
+                      "output_index" -> 0,
+                      "content_index" -> 0,
+                      "sequence_number" -> counter.getAndIncrement(),
+                      "text" -> ref.get(),
+                      "logprobs" -> Json.arr(),
+                    )) }
+                  )
+                  .concatLazy(
+                    Source.lazySingle[ByteString] { () =>
+                      sseEvent("response.content_part.done", Json.obj(
+                      "type" -> "response.content_part.done",
+                      "item_id" -> msgId,
+                      "output_index" -> 0,
+                      "content_index" -> 0,
+                      "sequence_number" -> counter.getAndIncrement(),
+                      "part" -> Json.obj("type" -> "output_text", "text" -> ref.get(), "annotations" -> Json.arr(), "logprobs" -> Json.arr()),
+                    )) }
+                  )
+                  .concatLazy(
+                    Source.lazySingle[ByteString] { () =>
+                      sseEvent("response.output_item.done", Json.obj(
+                        "type" -> "response.output_item.done",
+                        "output_index" -> 0,
+                        "sequence_number" -> counter.getAndIncrement(),
+                        "item" -> msgItem.deepMerge(Json.obj(
+                          "status" -> "completed",
+                          "content" -> Json.arr(
+                            Json.obj("type" -> "output_text", "text" -> ref.get(), "annotations" -> Json.arr(), "logprobs" -> Json.arr())
+                          ),
+                        ))
+                      ))
+                    }
+                  )
+                  .concatLazy(
+                    Source.lazySingle[ByteString] { () =>
+                      val usage = Option(refUsage.get()).getOrElse(ChatResponseMetadataUsage.empty)
+                      sseEvent("response.completed", eventWithResponse("response.completed", counter.getAndIncrement()).deepMerge(
+                        Json.obj(
+                          "status" -> "completed",
+                          "response" -> Json.obj(
+                            "output" -> Json.arr(Json.obj(
+                              "type" -> "message",
+                              "id" -> msgId,
+                              "status" -> "completed",
+                              "role" -> "assistant",
+                              "content" -> Json.arr(
+                                Json.obj("type" -> "output_text", "text" -> ref.get(), "annotations" -> Json.arr(), "logprobs" -> Json.arr())
+                              ),
+                            ))
+                          ),
+                          "usage" -> Json.obj(
+                            "input_tokens" -> usage.promptTokens,
+                            "output_tokens" -> usage.generationTokens,
+                            "total_tokens" -> usage.totalTokens,
+                            "input_tokens_details" -> Json.obj(
+                              "cached_tokens" -> 0
+                            ),
+                            "output_tokens_details" -> Json.obj(
+                              "reasoning_tokens" -> usage.reasoningTokens
+                            )
+                          ),
+                        )
+                      )
+                    )
+                  }
+                )
 
                 val finalSource = headerEvents.concat(deltaEvents).concat(footerEvents)
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
@@ -485,7 +522,6 @@ class OpenResponseCompatProxy extends NgBackendCall {
           call(jsonBody, config, ctx)
         } catch {
           case e: Throwable =>
-            e.printStackTrace()
             NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> e.getMessage))).leftf
         }
       }
