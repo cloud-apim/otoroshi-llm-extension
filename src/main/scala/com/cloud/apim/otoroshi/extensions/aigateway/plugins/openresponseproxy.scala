@@ -136,7 +136,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
     instructionMessages ++ inputMessages
   }
 
-  private def transformTools(jsonBody: JsValue): JsValue = {
+  private def transformInputTools(jsonBody: JsValue): JsValue = {
     jsonBody.select("tools").asOpt[Seq[JsObject]] match {
       case None => JsNull
       case Some(tools) =>
@@ -162,6 +162,23 @@ class OpenResponseCompatProxy extends NgBackendCall {
     }
   }
 
+  private def transformOutputTool(tools: Seq[JsObject]): Seq[JsObject] = {
+    tools.map { tool =>
+      val typ = tool.select("type").asOptString.getOrElse("function")
+      val name = tool.select("name").asString
+      val description = tool.select("description").asOptString
+      val parameters = tool.select("parameters").asObject
+      val strict = tool.select("strict").asOptBoolean
+      Json.obj(
+        "type" -> typ,
+        "name" -> name,
+        "description" -> description,
+        "parameters" -> parameters,
+        "strict" -> strict,
+      )
+    }
+  }
+
   private def buildOpenAiBody(jsonBody: JsValue, messages: Seq[JsObject]): JsObject = {
     var body = Json.obj("messages" -> messages)
     jsonBody.select("model").asOptString.foreach(m => body = body ++ Json.obj("model" -> m))
@@ -173,7 +190,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
     jsonBody.select("store").asOpt[JsValue].foreach(t => body = body ++ Json.obj("store" -> t))
     jsonBody.select("metadata").asOpt[JsValue].foreach(t => body = body ++ Json.obj("metadata" -> t))
     jsonBody.select("provider").asOptString.foreach(p => body = body ++ Json.obj("provider" -> p))
-    val tools = transformTools(jsonBody)
+    val tools = transformInputTools(jsonBody)
     if (tools != JsNull) {
       body = body ++ Json.obj("tools" -> tools)
     }
@@ -212,7 +229,9 @@ class OpenResponseCompatProxy extends NgBackendCall {
           "id" -> s"fc_${IdGenerator.token(24)}",
           "call_id" -> callId,
           "name" -> fnName,
-          "arguments" -> arguments
+          "arguments" -> arguments,
+          "status" -> "in_progress",
+          "created_by" -> model
         )
       }
     }
@@ -342,7 +361,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
             val msgId = s"msg_${IdGenerator.token(32)}"
             val model = client.computeModel(openAiBody).getOrElse("none")
             val createdAt = System.currentTimeMillis() / 1000
-            val tools = openAiBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+            val tools = transformOutputTool(jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty))
 
             def eventWithResponse(typ: String, seqNum: Int): JsObject = {
               Json.obj(
@@ -485,7 +504,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(response) =>
                 val model = client.computeModel(openAiBody).getOrElse("none")
-                val tools = openAiBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                val tools = transformOutputTool(jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty))
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(buildResponseJson(response, model, jsonBody.asObject, tools, env))
                   .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
             }
