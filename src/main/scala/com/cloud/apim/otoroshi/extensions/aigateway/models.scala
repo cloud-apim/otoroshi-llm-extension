@@ -429,6 +429,7 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
   lazy val hasReasoningDetails = reasoningDetails.isDefined
 
   lazy val annotations = raw.select("message").select("annotations").asOpt[Seq[JsObject]]
+  lazy val annotationsOrEmpty = annotations.getOrElse(Seq.empty[JsObject])
   lazy val audio = raw.select("message").select("audio").asOpt[JsObject]
   lazy val tool_calls = raw.select("message").select("tool_calls").asOpt[Seq[JsObject]]
   lazy val has_tool_calls = tool_calls.isDefined
