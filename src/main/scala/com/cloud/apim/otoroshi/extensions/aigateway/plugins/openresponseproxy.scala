@@ -55,9 +55,58 @@ class OpenResponseCompatProxy extends NgBackendCall {
               case "developer" => "system"
               case other => other
             }
-            val content = item.select("content").asOptString match {
+            val content: JsValue = item.select("content").asOptString match {
               case Some(text) => JsString(text).asValue
-              case None => item.select("content").asOpt[JsArray].getOrElse(JsArray()).asValue
+              case None => JsArray(item.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).flatMap { contentItem =>
+                contentItem.select("type").asOptString match {
+                  case Some("input_image") =>
+                    val image_url = contentItem.select("image_url").asOptString
+                    val detail = contentItem.select("detail").asOptString
+                    Json.obj(
+                      "type" -> "image_url",
+                      "image_url" -> Json.obj(
+                        "url" -> image_url,
+                        "details" -> detail,
+                      )
+                    ).some
+                  case Some("input_audio") =>
+                    val data = contentItem.select("data").asOptString
+                    val format = contentItem.select("format").asOptString
+                    Json.obj(
+                      "type" -> "input_audio",
+                      "input_audio" -> Json.obj(
+                        "data" -> data,
+                        "format" -> format,
+                      )
+                    ).some
+                  case Some("input_file") =>
+                    val filename = contentItem.select("filename").asOptString
+                    val file_data = contentItem.select("file_data").asOptString
+                    //val file_url = contentItem.select("file_url").asOptString
+                    Json.obj(
+                      "type" -> "file",
+                      "file" -> Json.obj(
+                        "filename" -> filename,
+                        "file_data" -> file_data,
+                        // "file_url" -> file_url
+                      )
+                    ).some
+                  case Some("input_video") =>
+                    val data = contentItem.select("data").asOptString
+                    val format = contentItem.select("format").asOptString
+                    Json.obj(
+                      "type" -> "input_video",
+                      "input_video" -> Json.obj(
+                        "data" -> data,
+                        "format" -> format,
+                      )
+                    ).some
+                  case Some("input_text") =>
+                    val text = contentItem.select("text").asOptString.getOrElse("")
+                    Json.obj("type" -> "text", "text" -> text).some
+                  case _ => None
+                }
+              })
             }
             Seq(Json.obj("role" -> role, "content" -> content))
           case "function_call_output" =>
