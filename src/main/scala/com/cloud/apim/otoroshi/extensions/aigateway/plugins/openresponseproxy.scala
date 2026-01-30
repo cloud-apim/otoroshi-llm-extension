@@ -15,6 +15,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.mvc.Results
 
+import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.{ExecutionContext, Future}
 
 class OpenResponseCompatProxy extends NgBackendCall {
@@ -356,12 +357,14 @@ class OpenResponseCompatProxy extends NgBackendCall {
             val model = client.computeModel(openAiBody).getOrElse("none")
             val createdAt = System.currentTimeMillis() / 1000
 
-            val responseSnapshot = Json.obj(
+            def responseSnapshot(typ: String, seqNum: Int) = Json.obj(
+              "type" -> typ,
               "id" -> respId,
               "object" -> "response",
               "created_at" -> createdAt,
               "status" -> "in_progress",
               "model" -> model,
+              "sequence_number" -> seqNum,
               "output" -> Json.arr()
             )
 
@@ -376,12 +379,14 @@ class OpenResponseCompatProxy extends NgBackendCall {
             client.tryStream(ChatPrompt(messages), ctx.attrs, openAiBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(source) => {
+                val counter = new AtomicInteger(0)
                 val headerEvents = Source(List(
-                  sseEvent("response.created", responseSnapshot),
-                  sseEvent("response.in_progress", responseSnapshot),
+                  sseEvent("response.created", responseSnapshot("response.created", counter.getAndIncrement())),
+                  sseEvent("response.in_progress", responseSnapshot("response.in_progress", counter.getAndIncrement())),
                   sseEvent("response.output_item.added", Json.obj(
                     "type" -> "response.output_item.added",
                     "output_index" -> 0,
+                    "sequence_number" -> counter.getAndIncrement(),
                     "item" -> msgItem
                   )),
                   sseEvent("response.content_part.added", Json.obj(
@@ -389,19 +394,23 @@ class OpenResponseCompatProxy extends NgBackendCall {
                     "item_id" -> msgId,
                     "output_index" -> 0,
                     "content_index" -> 0,
+                    "sequence_number" -> counter.getAndIncrement(),
                     "part" -> Json.obj("type" -> "output_text", "text" -> "")
                   ))
                 ))
 
-                val deltaEvents = source.map { chunk =>
-                  val text = chunk.choices.headOption.flatMap(_.delta.content).getOrElse("")
-                  sseEvent("response.output_text.delta", Json.obj(
-                    "type" -> "response.output_text.delta",
-                    "item_id" -> msgId,
-                    "output_index" -> 0,
-                    "content_index" -> 0,
-                    "delta" -> text
-                  ))
+                val deltaEvents = source.zipWithIndex.map {
+                  case (chunk, idx) =>
+                    val text = chunk.choices.headOption.flatMap(_.delta.content).getOrElse("")
+                    sseEvent("response.output_text.delta", Json.obj(
+                      "type" -> "response.output_text.delta",
+                      "item_id" -> msgId,
+                      "output_index" -> 0,
+                      "content_index" -> 0,
+                      "logprobs" -> Json.arr(),
+                      "sequence_number" -> counter.getAndIncrement(),
+                      "delta" -> text
+                    ))
                 }
 
                 val footerEvents = Source(List(
@@ -410,6 +419,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
                     "item_id" -> msgId,
                     "output_index" -> 0,
                     "content_index" -> 0,
+                    "sequence_number" -> counter.getAndIncrement(),
                     "text" -> ""
                   )),
                   sseEvent("response.content_part.done", Json.obj(
@@ -417,14 +427,16 @@ class OpenResponseCompatProxy extends NgBackendCall {
                     "item_id" -> msgId,
                     "output_index" -> 0,
                     "content_index" -> 0,
-                    "part" -> Json.obj("type" -> "output_text", "text" -> "")
+                    "sequence_number" -> counter.getAndIncrement(),
+                    "part" -> Json.obj("type" -> "output_text", "text" -> "", "annotations" -> Json.arr())
                   )),
                   sseEvent("response.output_item.done", Json.obj(
                     "type" -> "response.output_item.done",
                     "output_index" -> 0,
+                    "sequence_number" -> counter.getAndIncrement(),
                     "item" -> msgItem.deepMerge(Json.obj("status" -> "completed"))
                   )),
-                  sseEvent("response.completed", responseSnapshot.deepMerge(Json.obj("status" -> "completed")))
+                  sseEvent("response.completed", responseSnapshot("response.completed", counter.getAndIncrement()).deepMerge(Json.obj("status" -> "completed")))
                 ))
 
                 val finalSource = headerEvents.concat(deltaEvents).concat(footerEvents)
