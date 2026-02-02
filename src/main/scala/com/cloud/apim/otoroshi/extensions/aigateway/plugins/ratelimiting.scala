@@ -80,7 +80,15 @@ object LlmTokensRateLimitingValidatorConfig {
   ))
 }
 
+object StringImpls {
+  implicit class StringExt(val s: String) extends AnyVal {
+    def toLongOrElse(default: Long): Long = if (s.isEmpty) default else Try(s.toLong).getOrElse(default)
+  }
+}
+
 class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTransformer {
+
+  import StringImpls._
 
   override def steps: Seq[NgStep]                = Seq(NgStep.ValidateAccess, NgStep.TransformResponse)
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -168,13 +176,13 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
   private def updateQuotas(ctx: NgTransformerResponseContext, qconf: LlmTokensRateLimitingValidatorConfig)(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
     val group = computeExprAfter(qconf.groupExpr, ctx, env)
     val expr  = computeExprAfter(defaultExpr, ctx, env)
-    val windowMillis = computeExprAfter(qconf.windowMillis, ctx, env).trim.toLong
+    val windowMillis = computeExprAfter(qconf.windowMillis, ctx, env).trim.toLongOrElse(10000)
     ctx.attrs.get(ChatClient.ApiUsageKey).map { usage =>
       val increment = usage.usage.promptTokens + usage.usage.generationTokens + usage.usage.reasoningTokens
       //println(s"incrementing '${env.storageRoot}:plugins:custom-throttling:${group}:second:$expr' of ${increment} in ${windowMillis} ms")
       ctx.attrs.update(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey) { map =>
-        val max = map.flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLong
-        val past_consumed = map.flatMap(_.get("X-Llm-Ratelimit-Consumed-Tokens")).getOrElse("0").toLong
+        val max = map.flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLongOrElse(0L)
+        val past_consumed = map.flatMap(_.get("X-Llm-Ratelimit-Consumed-Tokens")).getOrElse("0").toLongOrElse(0L)
         val consumed = (past_consumed + increment)
         val remaining = max - consumed
         val remaining_max =  Math.max(remaining, 0).toString
@@ -186,7 +194,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
 
       }
       env.clusterAgent.incrementCustomThrottling(expr, group, increment, windowMillis)
-      val max = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLong
+      val max = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLongOrElse(0L)
       NgCustomThrottling.updateQuotas(expr, group, increment, max, windowMillis).map(_ => ())
     }.getOrElse(().vfuture)
   }
@@ -194,13 +202,13 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
   private def updateQuotas(ctx: NgTransformerErrorContext, qconf: LlmTokensRateLimitingValidatorConfig)(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
     val group = computeExprAfter(qconf.groupExpr, ctx, env)
     val expr  = computeExprAfter(defaultExpr, ctx, env)
-    val windowMillis = computeExprAfter(qconf.windowMillis, ctx, env).trim.toLong
+    val windowMillis = computeExprAfter(qconf.windowMillis, ctx, env).trim.toLongOrElse(10000L)
     ctx.attrs.get(ChatClient.ApiUsageKey).map { usage =>
       val increment = usage.usage.promptTokens + usage.usage.generationTokens + usage.usage.reasoningTokens
       //println(s"incrementing '${env.storageRoot}:plugins:custom-throttling:${group}:second:$expr' of ${increment} in ${windowMillis} ms")
       ctx.attrs.update(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey) { map =>
-        val max = map.flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLong
-        val past_consumed = map.flatMap(_.get("X-Llm-Ratelimit-Consumed-Tokens")).getOrElse("0").toLong
+        val max = map.flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLongOrElse(0L)
+        val past_consumed = map.flatMap(_.get("X-Llm-Ratelimit-Consumed-Tokens")).getOrElse("0").toLongOrElse(0L)
         val consumed = (past_consumed + increment)
         val remaining = max - consumed
         val remaining_max =  Math.max(remaining, 0).toString
@@ -211,7 +219,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
         )
       }
       env.clusterAgent.incrementCustomThrottling(expr, group, increment, windowMillis)
-      val max = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLong
+      val max = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLongOrElse(0L)
       NgCustomThrottling.updateQuotas(expr, group, increment, max, windowMillis).map(_ => ())
     }.getOrElse(().vfuture)
   }
@@ -226,7 +234,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     env.datastores.rawDataStore
       .get(key)
       .map { opt =>
-        val current = opt.map(_.utf8String.toLong).getOrElse(0L)
+        val current = opt.map(_.utf8String.toLongOrElse(0L)).getOrElse(0L)
         ctx.attrs.update(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey) { map =>
           val max = value.toString
           val remaining = value - current
