@@ -82,8 +82,13 @@ case class AudioModel(
       case "elevenlabs" => {
         val api = new ElevenLabsApi(baseUrl.getOrElse(ElevenLabsApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val ttsopts = ElevenLabsAudioModelClientTtsOptions.fromJson(ttsOptions)
-        val sttopts = ElevenLabsAudioModelClientSttOptions.fromJson(ttsOptions)
+        val sttopts = ElevenLabsAudioModelClientSttOptions.fromJson(sttOptions)
         new ElevenLabsAudioModelClient(api, ttsopts, sttopts, id).some
+      }
+      case "mistral" => {
+        val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val sttopts = MistralAiAudioModelClientSttOptions.fromJson(sttOptions)
+        new MistralAIAudioModelClient(api, sttopts, id).some
       }
       case _ => None
     }

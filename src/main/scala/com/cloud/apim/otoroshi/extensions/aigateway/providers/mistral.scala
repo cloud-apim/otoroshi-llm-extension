@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import akka.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
@@ -57,6 +58,25 @@ class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeou
           .addHttpHeaders("Content-Type" -> "application/json")
           .withBody(body)
       }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .execute()
+  }
+
+  def rawCallForm(method: String, path: String, body: Multipart)(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${baseUrl}${path}"
+    val uri = Uri(url)
+    ProviderHelpers.logCall("Mistral", method, url, None)(env)
+    val entity = body.toEntity()
+    env.Ws
+      .url(url)
+      .withHttpHeaders(
+        "Authorization" -> s"Bearer ${token}",
+        "Accept" -> "application/json",
+        "Host" -> uri.authority.host.toString(),
+        "Content-Type" -> entity.contentType.toString()
+      )
+      .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
@@ -543,6 +563,87 @@ class MistralAiModerationModelClient(val api: MistralAiApi, val options: Mistral
         ))
       } else {
         Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                             Audio generation and transcription                                 ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class MistralAiAudioModelClientSttOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
+  lazy val model: Option[String] = raw.select("model").asOptString
+  lazy val diarize: Option[Boolean] = raw.select("diarize").asOptBoolean
+  lazy val language: Option[String] = raw.select("language").asOptString
+  lazy val temperature: Option[Double] = raw.select("temperature").asOpt[Double]
+}
+
+object MistralAiAudioModelClientSttOptions {
+  def fromJson(raw: JsObject): MistralAiAudioModelClientSttOptions = MistralAiAudioModelClientSttOptions(raw)
+}
+
+class MistralAIAudioModelClient(val api: MistralAiApi, val sttOptions: MistralAiAudioModelClientSttOptions, id: String) extends AudioModelClient {
+
+  override def supportsTts: Boolean = false
+  override def supportsStt: Boolean = sttOptions.enabled
+  override def supportsTranslation: Boolean = false
+
+  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = {
+    Right(
+      List(
+        AudioGenModel("voxtral-mini-latest", "voxtral-mini-latest"),
+        AudioGenModel("voxtral-mini-2507", "voxtral-mini-2507"),
+      )
+    ).vfuture
+  }
+
+  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+    List.empty.rightf
+  }
+
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    val model = opts.model.orElse(sttOptions.model)
+    val language = opts.language.orElse(sttOptions.language)
+    val diarize = rawBody.select("diarize").asOptBoolean.orElse(sttOptions.diarize)
+    val temperature = opts.responseFormat.orElse(sttOptions.temperature)
+    val parts = List(
+      Multipart.FormData.BodyPart(
+        "file",
+        HttpEntity(ContentType.parse(opts.fileContentType).toOption.get, opts.fileLength, opts.file),
+        Map("filename" -> opts.fileName.getOrElse("audio.mp3"))
+      )
+    ).applyOnWithOpt(model) {
+        case (list, model) => list :+ Multipart.FormData.BodyPart(
+          "model",
+          HttpEntity(model.byteString),
+        )
+      }.applyOnWithOpt(language) {
+        case (list, language) => list :+ Multipart.FormData.BodyPart(
+          "language",
+          HttpEntity(language.byteString),
+        )
+      }
+      .applyOnWithOpt(diarize) {
+        case (list, diarize) => list :+ Multipart.FormData.BodyPart(
+          "diarize",
+          HttpEntity(diarize.toString.byteString),
+        )
+      }
+      .applyOnWithOpt(temperature) {
+        case (list, temperature) => list :+ Multipart.FormData.BodyPart(
+          "temperature",
+          HttpEntity(temperature.toString.byteString),
+        )
+      }
+    val form = Multipart.FormData(parts: _*)
+    api.rawCallForm("POST", "/v1/audio/transcriptions", form).map { response =>
+      if (response.status == 200) {
+        val body = response.json
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
+      } else {
+        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
     }
   }
