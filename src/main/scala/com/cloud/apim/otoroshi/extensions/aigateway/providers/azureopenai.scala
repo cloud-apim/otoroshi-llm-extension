@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 
+import akka.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
 import akka.stream.scaladsl.{Framing, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway._
@@ -165,6 +166,28 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
           .addHttpHeaders("Content-Type" -> "application/json")
           .withBody(body)
       }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .execute()
+  }
+
+  def rawCallForm(method: String, path: String, body: Multipart)(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${AzureOpenAiApi.url(resourceName, deploymentId, version, path)}"
+    ProviderHelpers.logCall("AzureOpenai", method, url, None)(env)
+    val entity = body.toEntity()
+    env.Ws
+      .url(url)
+      .withHttpHeaders(
+        "Accept" -> "application/json",
+        "Content-Type" -> entity.contentType.toString()
+      )
+      .applyOnWithOpt(apikey) {
+        case (builder, apikey) => builder.addHttpHeaders("api-key" -> apikey)
+      }
+      .applyOnWithOpt(bearer) {
+        case (builder, bearer) => builder.addHttpHeaders("Authorization" -> s"Bearer ${bearer}")
+      }
+      .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
       .execute()
@@ -633,6 +656,155 @@ class AzureOpenAiEmbeddingModelClient(val api: AzureOpenAiApi, val options: JsOb
         )
       } else {
         Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+      }
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                             Audio generation and transcription                                 ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+class AzureOpenAIAudioModelClient(val api: AzureOpenAiApi, val ttsOptions: OpenAIAudioModelClientTtsOptions, val sttOptions: OpenAIAudioModelClientSttOptions, val translationOptions: OpenAIAudioModelClientTranslationOptions, id: String) extends AudioModelClient {
+
+  override def supportsTts: Boolean = ttsOptions.enabled
+  override def supportsStt: Boolean = sttOptions.enabled
+  override def supportsTranslation: Boolean = translationOptions.enabled
+
+  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = {
+    Right(
+      List(
+        AudioGenModel("tts", "tts"),
+        AudioGenModel("tts-hd", "tts-hd"),
+        AudioGenModel("gpt-4o-mini-tts", "gpt-4o-mini-tts")
+      )
+    ).vfuture
+  }
+
+  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+    List.empty.rightf
+  }
+
+  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    val model = opts.model.orElse(translationOptions.model)
+    val prompt = opts.prompt.orElse(translationOptions.prompt)
+    val responseFormat = opts.responseFormat.orElse(translationOptions.responseFormat)
+    val temperature = opts.responseFormat.orElse(translationOptions.temperature)
+    val parts = List(
+      Multipart.FormData.BodyPart(
+        "file",
+        HttpEntity(ContentType.parse(opts.fileContentType).toOption.get, opts.fileLength, opts.file),
+        Map("filename" -> opts.fileName.getOrElse("audio.mp3"))
+      )
+    ).applyOnWithOpt(model) {
+        case (list, model) => list :+ Multipart.FormData.BodyPart(
+          "model",
+          HttpEntity(model.byteString),
+        )
+      }
+      .applyOnWithOpt(responseFormat) {
+        case (list, responseFormat) => list :+ Multipart.FormData.BodyPart(
+          "response_format",
+          HttpEntity(responseFormat.byteString),
+        )
+      }
+      .applyOnWithOpt(prompt) {
+        case (list, prompt) => list :+ Multipart.FormData.BodyPart(
+          "prompt",
+          HttpEntity(prompt.byteString),
+        )
+      }
+      .applyOnWithOpt(temperature) {
+        case (list, temperature) => list :+ Multipart.FormData.BodyPart(
+          "temperature",
+          HttpEntity(temperature.toString.byteString),
+        )
+      }
+    val form = Multipart.FormData(parts: _*)
+    api.rawCallForm("POST", "/audio/translations", form).map { response =>
+      if (response.status == 200) {
+        val body = response.json
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
+      } else {
+        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
+      }
+    }
+  }
+
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+    val instructionsOpt: Option[String] = opts.instructions.orElse(ttsOptions.instructions)
+    val responseFormatOpt: Option[String] = opts.responseFormat.orElse(ttsOptions.responseFormat)
+    val speedOpt: Option[Double] = opts.speed.orElse(ttsOptions.speed)
+
+    val body = Json.obj(
+      "input" -> opts.input,
+      "model" -> opts.model.getOrElse(ttsOptions.model).json,
+      "voice" -> opts.voice.getOrElse(ttsOptions.voice).json,
+    ).applyOnWithOpt(instructionsOpt) {
+      case (obj, instructions) => obj ++ Json.obj("instructions" -> instructions)
+    }.applyOnWithOpt(responseFormatOpt) {
+      case (obj, responseFormat) => obj ++ Json.obj("response_format" -> responseFormat)
+    }.applyOnWithOpt(speedOpt) {
+      case (obj, speed) => obj ++ Json.obj("speed" -> speed)
+    }
+
+    api.rawCall("POST", "/audio/speech", body.some).map { response =>
+      if (response.status == 200) {
+        val contentType = response.contentType
+        (response.bodyAsSource, contentType).right
+      } else {
+        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
+      }
+    }
+  }
+
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    val model = opts.model.orElse(sttOptions.model)
+    val language = opts.language.orElse(sttOptions.language)
+    val prompt = opts.prompt.orElse(sttOptions.prompt)
+    val responseFormat = opts.responseFormat.orElse(sttOptions.responseFormat)
+    val temperature = opts.responseFormat.orElse(sttOptions.temperature)
+    val parts = List(
+      Multipart.FormData.BodyPart(
+        "file",
+        HttpEntity(ContentType.parse(opts.fileContentType).toOption.get, opts.fileLength, opts.file),
+        Map("filename" -> opts.fileName.getOrElse("audio.mp3"))
+      )
+    ).applyOnWithOpt(model) {
+        case (list, model) => list :+ Multipart.FormData.BodyPart(
+          "model",
+          HttpEntity(model.byteString),
+        )
+      }.applyOnWithOpt(language) {
+        case (list, language) => list :+ Multipart.FormData.BodyPart(
+          "language",
+          HttpEntity(language.byteString),
+        )
+      }
+      .applyOnWithOpt(responseFormat) {
+        case (list, responseFormat) => list :+ Multipart.FormData.BodyPart(
+          "response_format",
+          HttpEntity(responseFormat.byteString),
+        )
+      }
+      .applyOnWithOpt(prompt) {
+        case (list, prompt) => list :+ Multipart.FormData.BodyPart(
+          "prompt",
+          HttpEntity(prompt.byteString),
+        )
+      }
+      .applyOnWithOpt(temperature) {
+        case (list, temperature) => list :+ Multipart.FormData.BodyPart(
+          "temperature",
+          HttpEntity(temperature.toString.byteString),
+        )
+      }
+    val form = Multipart.FormData(parts: _*)
+    api.rawCallForm("POST", "/audio/transcriptions", form).map { response =>
+      if (response.status == 200) {
+        val body = response.json
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
+      } else {
+        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
     }
   }
