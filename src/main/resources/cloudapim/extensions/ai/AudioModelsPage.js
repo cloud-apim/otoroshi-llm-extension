@@ -29,8 +29,11 @@ class AudioModelsPage extends Component {
       props: {
         label: 'Provider', possibleValues: _.sortBy([
           {label: 'OpenAI', value: "openai"},
+          {label: 'Azure OpenAI', value: "azure-openai"},
+          {label: 'Mistral', value: "mistral"},
           {label: 'Groq', value: "groq"},
-          {label: 'ElevenLabs', value: "elevenlabs"}
+          {label: 'ElevenLabs', value: "elevenlabs"},
+          {label: 'Cloud Temple', value: "cloud-temple"},
         ], i => i.label)
       }
     },
@@ -51,7 +54,7 @@ class AudioModelsPage extends Component {
         ], i => i.label)
       }
     },
-    voice: (state?.provider === 'openai' ? {
+    voice: ((state?.provider === 'openai' || state?.provider === 'azure-openai') ? {
       'type': 'select',
       props: {
         label: 'Voice', possibleValues: _.sortBy([
@@ -186,14 +189,14 @@ class AudioModelsPage extends Component {
 
             this.fetchVoices(state, false);
 
-            if (state.provider === 'openai') {
+            if (state.provider === 'openai' || state.provider === 'azure-openai' || state.provider === 'cloud-temple') {
               update({
                 id: state.id,
                 name: state.name,
                 description: state.description,
                 tags: state.tags,
                 metadata: state.metadata,
-                provider: 'openai',
+                provider: state.provider,
                 config: {
                   connection: {
                     token: 'xxxxx',
@@ -272,7 +275,32 @@ class AudioModelsPage extends Component {
                   }
                 }
               });
+            } else if (state.provider === 'mistral') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'mistral',
+                config: {
+                  connection: {
+                    token: 'xxxxx',
+                    timeout: 180000,
+                  },
+                  options: {
+                    stt: {
+                      enabled: true,
+                      model: 'voxtral-mini-latest',
+                      diarize: false,
+                      temperature: 0.0,
+                      language: 'english',
+                    }
+                  }
+                }
+              });
             }
+
           }
         },
         itemName: "Audio model",
