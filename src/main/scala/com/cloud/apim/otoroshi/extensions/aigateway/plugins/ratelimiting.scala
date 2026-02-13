@@ -292,7 +292,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
             "consumed_tokens" -> headers.get("X-Llm-Ratelimit-Consumed-Tokens").map(_.toInt).getOrElse(-1).json,
             "remaining_tokens" -> headers.get("X-Llm-Ratelimit-Remaining-Tokens").map(_.toInt).getOrElse(-1).json,
           )))
-          Json.obj("ai" -> JsArray(head.toSeq ++ arr.tail))
+          Json.obj("ai" -> JsArray(head.toSeq ++ arr.drop(1)))
         }
         case _ => Json.obj()
       }
@@ -315,7 +315,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
             "consumed_tokens" -> headers.get("X-Llm-Ratelimit-Consumed-Tokens").map(_.toInt).getOrElse(-1).json,
             "remaining_tokens" -> headers.get("X-Llm-Ratelimit-Remaining-Tokens").map(_.toInt).getOrElse(-1).json,
           )))
-          Json.obj("ai" -> JsArray(head.toSeq ++ arr.tail))
+          Json.obj("ai" -> JsArray(head.toSeq ++ arr.drop(1)))
         }
         case _ => Json.obj()
       }
