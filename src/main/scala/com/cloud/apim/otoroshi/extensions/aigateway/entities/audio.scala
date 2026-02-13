@@ -65,6 +65,23 @@ case class AudioModel(
         val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
         new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
       }
+      case "azure-openai" => {
+        val resourceName = connection.select("resource_name").as[String]
+        val deploymentId = connection.select("deployment_id").as[String]
+        val version = connection.select("api_version").asOpt[String].getOrElse("v1")
+        val apikey = connection.select("api_key").asOpt[String]
+        val bearer = Some(token).filterNot(_ == "xxx")
+        val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
+        val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
+        val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
+        if (version == "v1") {
+          val api = new OpenAiApi(baseUrl.getOrElse("https://<aoairesource>.openai.azure.com/openai/v1"), token, timeout.getOrElse(30.seconds), providerName = "Azure-OpenAI", env = env)
+          new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
+        } else {
+          val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env)
+          new AzureOpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
+        }
+      }
       case "cloud-temple" => {
         val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
         val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
