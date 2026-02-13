@@ -310,7 +310,7 @@ class OpenAICompatSpeechToText extends NgBackendCall {
               case Some(provider) => {
                 provider.getAudioModelClient() match {
                   case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
-                  case Some(client) if !client.supportsTts => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support text to speech"))).leftf
+                  case Some(client) if !client.supportsStt => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support speech to text"))).leftf
                   case Some(client) => {
                     val _options = AudioModelClientSpeechToTextInputOptions.format.reads(jsonBody).get
                     val options = _options.copy(
@@ -406,7 +406,7 @@ class OpenAICompatTranslation extends NgBackendCall {
               case Some(provider) => {
                 provider.getAudioModelClient() match {
                   case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
-                  case Some(client) if !client.supportsTts => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support text to speech"))).leftf
+                  case Some(client) if !client.supportsTranslation => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support translation"))).leftf
                   case Some(client) => {
                     val _options = AudioModelClientTranslationInputOptions.format.reads(jsonBody).get
                     val options = _options.copy(
