@@ -245,7 +245,7 @@ class AnthropicCompatProxy extends NgBackendCall {
         }
         additionalProperties = additionalProperties ++ Json.obj("messages" -> newMessages)
       }
-      withTools - "messages" - "system" - "max_tokens" - "thinking" - "output_config" ++ additionalProperties
+      withTools - "messages" - "system" - "max_tokens" - "thinking" - "output_config" - "context_management" ++ additionalProperties
     }
   }
 
