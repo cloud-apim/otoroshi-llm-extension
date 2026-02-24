@@ -631,12 +631,12 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
             attrs.update(AudioModelClient.ApiUsageKey -> resp.metadata)
             attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
               case Some(obj@JsObject(_)) => {
-                val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                val arr = obj.select("ai-audio").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
                 val newArr = arr ++ Seq(slug)
-                obj ++ Json.obj("ai-embedding" -> newArr)
+                obj ++ Json.obj("ai-audio" -> newArr)
               }
               case Some(other) => other
-              case None => Json.obj("ai-embedding" -> Seq(slug))
+              case None => Json.obj("ai-audio" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
               Json.obj(
@@ -720,12 +720,12 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
             attrs.update(AudioModelClient.ApiUsageKey -> resp.metadata)
             attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
               case Some(obj@JsObject(_)) => {
-                val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                val arr = obj.select("ai-audio").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
                 val newArr = arr ++ Seq(slug)
-                obj ++ Json.obj("ai-embedding" -> newArr)
+                obj ++ Json.obj("ai-audio" -> newArr)
               }
               case Some(other) => other
-              case None => Json.obj("ai-embedding" -> Seq(slug))
+              case None => Json.obj("ai-audio" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
               Json.obj(
@@ -821,12 +821,12 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
             attrs.update(ImageModelClient.ApiUsageKey -> resp.metadata)
             attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
               case Some(obj@JsObject(_)) => {
-                val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                val arr = obj.select("ai-image").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
                 val newArr = arr ++ Seq(slug)
-                obj ++ Json.obj("ai-embedding" -> newArr)
+                obj ++ Json.obj("ai-image" -> newArr)
               }
               case Some(other) => other
-              case None => Json.obj("ai-embedding" -> Seq(slug))
+              case None => Json.obj("ai-image" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
               Json.obj(
@@ -910,12 +910,12 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
             attrs.update(ImageModelClient.ApiUsageKey -> resp.metadata)
             attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
               case Some(obj@JsObject(_)) => {
-                val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                val arr = obj.select("ai-image").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
                 val newArr = arr ++ Seq(slug)
-                obj ++ Json.obj("ai-embedding" -> newArr)
+                obj ++ Json.obj("ai-image" -> newArr)
               }
               case Some(other) => other
-              case None => Json.obj("ai-embedding" -> Seq(slug))
+              case None => Json.obj("ai-image" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
               Json.obj(
@@ -1008,12 +1008,12 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
             attrs.update(ModerationModelClient.ApiUsageKey -> resp.metadata)
             attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
               case Some(obj@JsObject(_)) => {
-                val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                val arr = obj.select("ai-moderation").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
                 val newArr = arr ++ Seq(slug)
-                obj ++ Json.obj("ai-embedding" -> newArr)
+                obj ++ Json.obj("ai-moderation" -> newArr)
               }
               case Some(other) => other
-              case None => Json.obj("ai-embedding" -> Seq(slug))
+              case None => Json.obj("ai-moderation" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
               Json.obj(
@@ -1106,12 +1106,12 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
             attrs.update(VideoModelClient.ApiUsageKey -> resp.metadata)
             attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
               case Some(obj@JsObject(_)) => {
-                val arr = obj.select("ai-embedding").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                val arr = obj.select("ai-video").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
                 val newArr = arr ++ Seq(slug)
-                obj ++ Json.obj("ai-embedding" -> newArr)
+                obj ++ Json.obj("ai-video" -> newArr)
               }
               case Some(other) => other
-              case None => Json.obj("ai-embedding" -> Seq(slug))
+              case None => Json.obj("ai-video" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
               Json.obj(
