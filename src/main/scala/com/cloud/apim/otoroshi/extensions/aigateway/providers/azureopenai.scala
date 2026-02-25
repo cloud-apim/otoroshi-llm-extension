@@ -32,7 +32,7 @@ case class AzureOpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw: JsValue)
   lazy val nameOpt: Option[String] = raw.select("name").asOptString
   lazy val hasName: Boolean = nameOpt.isDefined
   lazy val arguments: String = raw.select("arguments").asString
-  
+
   def asChatResponseChunkChoiceDeltaToolCallFunction: ChatResponseChunkChoiceDeltaToolCallFunction = {
     ChatResponseChunkChoiceDeltaToolCallFunction(
       nameOpt = nameOpt,
