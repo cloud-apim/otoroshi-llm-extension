@@ -781,7 +781,7 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
           "index" -> index,
           "delta" -> Json.obj(
             "type" -> "input_json_delta",
-            "partial_json" -> inputJson
+            "partial_json" -> inputJson.stringify
           )
         )
         list = list :+ ByteString(s"event: content_block_delta\ndata: ${docDelta.stringify}\n\n")
@@ -791,7 +791,7 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
           "index" -> index,
           "delta" -> Json.obj(
             "type" -> "input_json_delta",
-            "partial_json" -> inputJson
+            "partial_json" -> inputJson.stringify
           )
         )
         list = list :+ ByteString(s"event: content_block_delta\ndata: ${doc.stringify}\n\n")
