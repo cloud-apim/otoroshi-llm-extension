@@ -19,6 +19,7 @@ import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Try
 
 case class AnthropicStreamResponseState(
   textStarted: AtomicBoolean = new AtomicBoolean(false),
@@ -121,6 +122,10 @@ class AnthropicCompatProxy extends NgBackendCall {
   }
 
   private def fixBody(_jsonBody: JsObject, client: ChatClient, reqId: Long): JsObject = {
+    //val tools = _jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+    //val system = _jsonBody.select("system").asOpt[JsObject].orElse(_jsonBody.select("system").asOpt[JsString]).isDefined
+    //val debugBody = _jsonBody ++ Json.obj("tools" -> Json.obj("registered" -> tools.size), "system" -> system)
+    //println(s"receiving JSON body: ${debugBody.prettify}")
     if (client.isAnthropic) {
       _jsonBody - "system"
     } else if (client.isCohere) {
@@ -133,7 +138,7 @@ class AnthropicCompatProxy extends NgBackendCall {
             val name = origTool.select("name").asString
             val description = origTool.select("description").asOptString.getOrElse("")
             val strict = origTool.select("strict").asOptBoolean.getOrElse(false)
-            val input_schema = origTool.select("input_schema").asObject
+            val input_schema = origTool.select("input_schema").asObject - "$schema"
             Json.obj(
               "type" -> "function",
               "function" -> Json.obj(
@@ -330,6 +335,10 @@ class AnthropicCompatProxy extends NgBackendCall {
                   .concat(Source.single(anthropicContentBlockStop(0)))
                   .concat(Source.single(anthropicMessageDelta(if (state.toolCallsStarted.get()) "tool_use" else "end_turn", 0)))
                   .concat(Source.single(anthropicMessageStop()))
+                  //.map { bs =>
+                  //  println(s"out: ${bs.utf8String}")
+                  //  bs
+                  //}
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
               }
             }

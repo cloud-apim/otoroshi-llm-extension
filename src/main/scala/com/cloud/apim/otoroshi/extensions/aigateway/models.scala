@@ -763,6 +763,7 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
       }
       val tc = delta.tool_calls.head
       val hasName = tc.function.hasName
+      val inputJson: JsValue = Try(Json.parse(tc.function.arguments)).getOrElse(tc.function.arguments.json)
       if (hasName) {
         val doc = Json.obj(
           "type" -> "content_block_start",
@@ -771,7 +772,7 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
             "type" -> "tool_use",
             "id" -> tc.id,
             "name" -> tc.function.name,
-            "input" -> tc.function.arguments,
+            "input" -> inputJson,
           )
         )
         list = list :+ ByteString(s"""event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\nevent: content_block_start\ndata: ${doc.stringify}\n\n""")
@@ -781,7 +782,7 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
           "index" -> index,
           "delta" -> Json.obj(
             "type" -> "input_json_delta",
-            "partial_json" -> tc.function.arguments
+            "partial_json" -> inputJson
           )
         )
         list = list :+ ByteString(s"event: content_block_delta\ndata: ${doc.stringify}\n\n")

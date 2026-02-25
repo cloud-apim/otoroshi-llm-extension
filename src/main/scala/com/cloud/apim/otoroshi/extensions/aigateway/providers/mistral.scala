@@ -429,7 +429,8 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
                 case Some(other) => other
                 case None => Json.obj("ai" -> Seq(slug))
               }
-              true
+              val hasToolCalls = chunk.choices.exists(_.finish_reason.contains("tool_calls"))
+              !hasToolCalls
             } else {
               false
             }
@@ -443,7 +444,11 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
                 ChatResponseChunkChoice(
                   index = choice.index.map(_.toLong).getOrElse(0L),
                   delta = ChatResponseChunkChoiceDelta(
-                    choice.delta.flatMap(_.content)
+                    content = choice.delta.flatMap(_.content),
+                    reasoning = choice.delta.flatMap(_.reasoning),
+                    role = choice.delta.map(_.role).getOrElse("assistant"),
+                    refusal = choice.delta.flatMap(_.refusal),
+                    tool_calls = choice.delta.map(_.tool_calls.map(tc => tc.asChatResponseChunkChoiceDeltaToolCall)).getOrElse(Seq.empty),
                   ),
                   finishReason = choice.finish_reason
                 )
