@@ -14,3 +14,4 @@ node_modules
 /logs
 /jlama-models
 CLAUDE.md
+/debug_logs
