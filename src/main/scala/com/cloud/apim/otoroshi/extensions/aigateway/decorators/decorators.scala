@@ -24,6 +24,7 @@ object ChatClientDecorators {
     ChatClientWithAuditing.applyIfPossible,
     ChatClientWithContext.applyIfPossible,
     ChatClientWithStreamUsage.applyIfPossible,
+    ChatClientWithRequestResponseLogging.applyIfPossible, // must be last: outermost decorator, first to be invoked
   )
 
   def apply(provider: AiProvider, client: ChatClient, env: Env): ChatClient = {
