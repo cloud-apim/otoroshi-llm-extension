@@ -415,11 +415,24 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
                 ChatResponseChunkChoice(
                   index = choice.index.map(_.toLong).getOrElse(0L),
                   delta = ChatResponseChunkChoiceDelta(
-                    choice.delta.flatMap(_.content)
+                    content = choice.delta.flatMap(_.content),
+                    reasoning = choice.delta.flatMap(_.reasoning),
+                    role = choice.delta.map(_.role).getOrElse("assistant"),
+                    refusal = choice.delta.flatMap(_.refusal),
+                    tool_calls = choice.delta.map(_.tool_calls.map(tc => tc.asChatResponseChunkChoiceDeltaToolCall)).getOrElse(Seq.empty),
                   ),
                   finishReason = choice.finish_reason
                 )
               }
+              // choices = chunk.choices.map { choice =>
+              //   ChatResponseChunkChoice(
+              //     index = choice.index.map(_.toLong).getOrElse(0L),
+              //     delta = ChatResponseChunkChoiceDelta(
+              //       choice.delta.flatMap(_.content)
+              //     ),
+              //     finishReason = choice.finish_reason
+              //   )
+              // }
             )
           }.right
     }

@@ -32,19 +32,38 @@ case class AzureOpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw: JsValue)
   lazy val nameOpt: Option[String] = raw.select("name").asOptString
   lazy val hasName: Boolean = nameOpt.isDefined
   lazy val arguments: String = raw.select("arguments").asString
+  
+  def asChatResponseChunkChoiceDeltaToolCallFunction: ChatResponseChunkChoiceDeltaToolCallFunction = {
+    ChatResponseChunkChoiceDeltaToolCallFunction(
+      nameOpt = nameOpt,
+      arguments = arguments,
+    )
+  }
 }
 
 case class AzureOpenAiChatResponseChunkChoiceDeltaToolCall(raw: JsValue) {
   lazy val index: Long = raw.select("index").asInt
   lazy val id: String = raw.select("id").asString
+  lazy val idOpt: Option[String] = raw.select("id").asOptString
   lazy val typ: String = raw.select("type").asString
+  lazy val typOpt: Option[String] = raw.select("type").asOptString
   lazy val function: AzureOpenAiChatResponseChunkChoiceDeltaToolCallFunction = AzureOpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw.select("function").asObject)
+
+  def asChatResponseChunkChoiceDeltaToolCall: ChatResponseChunkChoiceDeltaToolCall = {
+    ChatResponseChunkChoiceDeltaToolCall(
+      index = index,
+      id = idOpt,
+      typ = typOpt,
+      function = function.asChatResponseChunkChoiceDeltaToolCallFunction,
+    )
+  }
 }
 
 case class AzureOpenAiChatResponseChunkChoiceDelta(raw: JsValue) {
   lazy val content: Option[String] = raw.select("content").asOptString
   lazy val role: String = raw.select("role").asString
   lazy val refusal: Option[String] = raw.select("refusal").asOptString
+  lazy val reasoning: Option[String] = raw.select("reasoning").asOptString
   lazy val tool_calls: Seq[AzureOpenAiChatResponseChunkChoiceDeltaToolCall] = raw.select("tool_calls").asOpt[Seq[JsObject]].map(_.map(AzureOpenAiChatResponseChunkChoiceDeltaToolCall.apply)).getOrElse(Seq.empty)
 }
 
@@ -565,11 +584,24 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
                 ChatResponseChunkChoice(
                   index = choice.index.map(_.toLong).getOrElse(0L),
                   delta = ChatResponseChunkChoiceDelta(
-                    choice.delta.flatMap(_.content)
+                    content = choice.delta.flatMap(_.content),
+                    reasoning = choice.delta.flatMap(_.reasoning),
+                    role = choice.delta.map(_.role).getOrElse("assistant"),
+                    refusal = choice.delta.flatMap(_.refusal),
+                    tool_calls = choice.delta.map(_.tool_calls.map(tc => tc.asChatResponseChunkChoiceDeltaToolCall)).getOrElse(Seq.empty),
                   ),
                   finishReason = choice.finish_reason
                 )
               }
+              // choices = chunk.choices.map { choice =>
+              //   ChatResponseChunkChoice(
+              //     index = choice.index.map(_.toLong).getOrElse(0L),
+              //     delta = ChatResponseChunkChoiceDelta(
+              //       choice.delta.flatMap(_.content)
+              //     ),
+              //     finishReason = choice.finish_reason
+              //   )
+              // }
             )
           }.right
     }
