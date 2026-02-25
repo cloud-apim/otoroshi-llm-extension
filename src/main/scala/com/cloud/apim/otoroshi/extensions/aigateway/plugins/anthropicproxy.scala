@@ -3,20 +3,26 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 import akka.stream.Materializer
 import akka.stream.scaladsl.{Sink, Source}
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ChatClientWithRequestResponseLogging
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, InputChatMessage}
+import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.security.IdGenerator
+import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.mvc.Results
 
 import java.io.File
-import java.nio.file.Files
+import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Paths, StandardOpenOption}
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Try
@@ -254,6 +260,23 @@ class AnthropicCompatProxy extends NgBackendCall {
     }
   }
 
+  // private val dateFormatter      = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+  // private def logDir: String =
+  //   sys.env.get(ChatClientWithRequestResponseLogging.dirEnvVar)
+  //     .orElse(sys.props.get(ChatClientWithRequestResponseLogging.dirEnvVar))
+  //     .getOrElse("/tmp/llm-logs")
+  // private def sanitize(s: String): String = s.replaceAll("[^a-zA-Z0-9_-]", "_")
+  // private def resolveLogFile(originalProvider: AiProvider, attrs: TypedMap): java.nio.file.Path = {
+  //   val date         = LocalDateTime.now().format(dateFormatter)
+  //   val providerId   = sanitize(originalProvider.id)
+  //   val providerName = sanitize(originalProvider.name)
+  //   val llmName      = sanitize(originalProvider.provider)
+  //   val dir          = Paths.get(logDir)
+  //   val reqId        = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).getOrElse(ULID.random().toString)
+  //   if (!Files.exists(dir)) Files.createDirectories(dir)
+  //   dir.resolve(s"${providerId}_${providerName}_${llmName}_${date}_${reqId}.json")
+  // }
+
   def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val reqId = System.currentTimeMillis
     val jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config)
@@ -329,6 +352,7 @@ class AnthropicCompatProxy extends NgBackendCall {
                 ))))
               case Right(source) => {
                 val state = AnthropicStreamResponseState()
+                //var parts = List.empty[ByteString]
                 val finalSource = Source.single(anthropicMessageStart(model, messageId))
                   .concat(Source.single(anthropicContentBlockStart(0)))
                   .concat(source.flatMapConcat(_.anthropicContentBlockDeltaEventSource(env, state)))
@@ -336,9 +360,24 @@ class AnthropicCompatProxy extends NgBackendCall {
                   .concat(Source.single(anthropicMessageDelta(if (state.toolCallsStarted.get()) "tool_use" else "end_turn", 0)))
                   .concat(Source.single(anthropicMessageStop()))
                   //.map { bs =>
-                  //  println(s"out: ${bs.utf8String}")
+                  //  parts = parts :+ bs
                   //  bs
                   //}
+                  //.alsoTo(Sink.onComplete {
+                  //  case _ => {
+                  //    try {
+                  //      val line = jsonBody.prettify + "\n\n\n" + parts.map(_.utf8String).mkString("\n")
+                  //      Files.write(
+                  //        resolveLogFile(provider.get, ctx.attrs),
+                  //        line.getBytes(StandardCharsets.UTF_8),
+                  //        StandardOpenOption.CREATE,
+                  //        StandardOpenOption.APPEND,
+                  //      )
+                  //    } catch {
+                  //      case _: Exception => // silently ignore write errors to avoid impacting the request
+                  //    }
+                  //  }
+                  //})
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
               }
             }
