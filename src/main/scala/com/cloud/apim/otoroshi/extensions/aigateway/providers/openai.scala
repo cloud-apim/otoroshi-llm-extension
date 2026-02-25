@@ -49,7 +49,7 @@ case class OpenAiChatResponseChunkChoiceDeltaToolCall(raw: JsValue) {
     ChatResponseChunkChoiceDeltaToolCall(
       index = index,
       id = idOpt,
-      typ = typOpt,
+      typ = typOpt,//.orElse("function".some),
       function = function.asChatResponseChunkChoiceDeltaToolCallFunction,
     )
   }
