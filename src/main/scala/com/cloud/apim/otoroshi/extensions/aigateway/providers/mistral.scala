@@ -296,6 +296,19 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
   override def supportsCompletion: Boolean = true
   override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
 
+  override def transformInputBody(inputBody: JsObject): JsObject = {
+    val model = inputBody.select("model").asOptString.orElse(computeModel(inputBody)).getOrElse("--")
+    val maxCompletionTokens = inputBody.select("max_completion_tokens").asOptLong
+    val reasoningEffort = inputBody.select("reasoning_effort").asOptString.filter(_ => model.contains("magistral")) // right now the only reasoning models of mistral are magistral ones
+    (inputBody - "max_completion_tokens" - "reasoning_effort")
+      .applyOnWithOpt(maxCompletionTokens) {
+        case (obj, mct) => obj ++ Json.obj("max_tokens" -> mct)
+      }
+      .applyOnWithOpt(reasoningEffort) {
+        case (obj, _) => obj ++ Json.obj("prompt_mode" -> "reasoning")
+      }
+  }
+
   override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/v1/models", None).map { resp =>
       if (resp.status == 200) {
@@ -308,7 +321,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
@@ -366,7 +379,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
@@ -442,7 +455,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
 
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider" - "prompt"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()

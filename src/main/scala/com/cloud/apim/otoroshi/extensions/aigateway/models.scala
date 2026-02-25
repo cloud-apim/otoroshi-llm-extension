@@ -1709,6 +1709,8 @@ trait ChatClient {
 
   def computeModel(payload: JsValue): Option[String]
 
+  def transformInputBody(inputBody: JsObject): JsObject = inputBody
+
   def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
 
   def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]]
