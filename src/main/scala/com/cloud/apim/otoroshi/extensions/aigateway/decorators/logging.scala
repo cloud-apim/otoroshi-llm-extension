@@ -25,7 +25,7 @@ object ChatClientWithRequestResponseLogging {
     val enabled = sys.env.get(enabledEnvVar)
       .orElse(sys.props.get(enabledEnvVar))
       .exists(v => v == "true" || v == "1")
-    if (enabled) {
+    if (false && enabled) {
       new ChatClientWithRequestResponseLogging(tuple._1, tuple._2)
     } else {
       tuple._2
