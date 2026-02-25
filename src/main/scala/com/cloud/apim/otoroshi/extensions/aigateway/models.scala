@@ -772,10 +772,19 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
             "type" -> "tool_use",
             "id" -> tc.id,
             "name" -> tc.function.name,
-            "input" -> inputJson,
+            "input" -> "", //inputJson,
           )
         )
         list = list :+ ByteString(s"""event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\nevent: content_block_start\ndata: ${doc.stringify}\n\n""")
+        val docDelta = Json.obj(
+          "type" -> "content_block_delta",
+          "index" -> index,
+          "delta" -> Json.obj(
+            "type" -> "input_json_delta",
+            "partial_json" -> inputJson
+          )
+        )
+        list = list :+ ByteString(s"event: content_block_delta\ndata: ${docDelta.stringify}\n\n")
       } else {
         val doc = Json.obj(
           "type" -> "content_block_delta",
