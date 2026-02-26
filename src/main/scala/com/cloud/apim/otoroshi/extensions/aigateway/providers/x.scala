@@ -276,9 +276,21 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = true
 
+  override def transformOpenAIInputBodyToProviderInputBody(inputBody: JsObject): JsObject = {
+    val model = inputBody.select("model").asOptString.orElse(computeModel(inputBody)).getOrElse("--")
+    val reasoningEffort = inputBody.select("reasoningEffort").asOptString.orElse(inputBody.select("reasoning_effort").asOptString)
+    (inputBody - "reasoningEffort" - "reasoning_effort")
+      //.applyOnWithOpt(reasoningEffort) {
+      //  case (obj, r) if model.startsWith("grok-4") && model.contains("reasoning") && !model.contains("non-reasoning") =>
+      //    val reasoning_effort = if (r.contains("high")) "high" else "low"
+      //    obj ++ Json.obj("reasoning_effort" -> reasoning_effort)
+      //  case (obj, _) => obj
+      //}
+  }
+
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
@@ -365,7 +377,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val hasToolsInRequest = body.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
@@ -432,7 +444,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
 
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
