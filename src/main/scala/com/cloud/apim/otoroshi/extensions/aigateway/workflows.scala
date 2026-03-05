@@ -981,7 +981,7 @@ class CallMcpFunctionFunction extends WorkflowFunction {
     )
   ))
 
-  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val function = args.select("function").asString
     val arguments = args.select("arguments").asOpt[JsObject].map(_.stringify)
@@ -994,7 +994,7 @@ class CallMcpFunctionFunction extends WorkflowFunction {
     extension.states.mcpConnector(provider) match {
       case None => WorkflowError(s"llm provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(connector) => {
-        connector.call(function, arguments).map { res =>
+        connector.call(function, arguments, wfr.attrs).map { res =>
           res.json.right
         }
       }

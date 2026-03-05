@@ -15,6 +15,7 @@ import otoroshi.models.{EntityLocation, EntityLocationSupport}
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
 import otoroshi.storage.{BasicStore, RedisLike, RedisLikeStore}
+import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiExtension, AiGatewayExtensionDatastores, AiGatewayExtensionState}
 import play.api.libs.json._
@@ -140,7 +141,7 @@ case class McpConnector(
 
   def restartIfNeeded(): Unit = {
     if (enabled) {
-      clientPool()
+      // clientPool(attrs)
     } else {
       McpConnector.connectorsCache.get(id).foreach { cli =>
         println(s"closing mcp connector: ${id}")
@@ -150,12 +151,12 @@ case class McpConnector(
     }
   }
 
-  private def clientPool(): ConcurrentLinkedQueue[DefaultMcpClient] = synchronized {
+  private def clientPool(attrs: TypedMap): ConcurrentLinkedQueue[DefaultMcpClient] = synchronized {
     val transportSha = transport.json.stringify.sha256
     McpConnector.connectorsCache.get(id) match {
       case Some((cli, _, hash, _)) if hash == transportSha => cli
       case e => try {
-        val cli = buildClient()
+        val cli = buildClient(attrs)
         val pool = new ConcurrentLinkedQueue[DefaultMcpClient]()
         pool.add(cli)
         McpConnector.connectorsCache.put(id, (pool, new AtomicInteger(1), transportSha, System.currentTimeMillis()))
@@ -171,7 +172,10 @@ case class McpConnector(
 
   override def json: JsValue = McpConnector.format.writes(this)
 
-  private def buildClient(): DefaultMcpClient = {
+  private def buildClient(attrs: TypedMap): DefaultMcpClient = {
+    // val inputToken: String = attrs.get(otoroshi.plugins.Keys.MatchedRawInputTokenKey).getOrElse("--") // TODO: use MatchedRawInputTokenKey
+    val inputToken: String = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.headers.get("Authorization")).map(_.replaceFirst("Bearer ", "")).getOrElse("--")
+    val headers: Map[String, String] = transport.sseOptions.headers.mapValues(_.applyOnWithPredicate(_.contains("{input_token}"))(_.replace("{input_token}", inputToken)))
     val trsprt = transport.kind match {
       case McpConnectorTransportKind.Stdio => {
         val opts = transport.stdioOptions
@@ -185,7 +189,7 @@ case class McpConnector(
         val opts = transport.sseOptions
         new HttpMcpTransport.Builder()
           .sseUrl(opts.url)
-          .customHeaders(opts.headers.asJava)
+          .customHeaders(headers.asJava)
           .logRequests(opts.log)
           .logResponses(opts.log)
           .timeout(java.time.Duration.ofMillis(opts.timeout.toMillis))
@@ -195,7 +199,7 @@ case class McpConnector(
         val opts = transport.sseOptions
         new WebSocketMcpTransport.Builder()
           .url(opts.url)
-          .headersSupplier(() => opts.headers.asJava)
+          .headersSupplier(() => headers.asJava)
           .logRequests(opts.log)
           .logResponses(opts.log)
           .timeout(java.time.Duration.ofMillis(opts.timeout.toMillis))
@@ -206,7 +210,7 @@ case class McpConnector(
         val opts = transport.sseOptions
         new StreamableHttpMcpTransport.Builder()
           .url(opts.url)
-          .customHeaders(opts.headers.asJava)
+          .customHeaders(headers.asJava)
           .logRequests(opts.log)
           .logResponses(opts.log)
           .timeout(java.time.Duration.ofMillis(opts.timeout.toMillis))
@@ -238,18 +242,18 @@ case class McpConnector(
   def matchesResource(resource: McpResource): Boolean = true
   def matchesResourceTemplate(resourceTemplate: McpResourceTemplate): Boolean = true
   def matchesPrompt(prompt: McpPrompt): Boolean = true
-  def listResources()(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResource]] = withClient(_.listResources().asScala.filter(matchesResource))
-  def listResourceTemplates()(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResourceTemplate]] = withClient(_.listResourceTemplates().asScala.filter(matchesResourceTemplate))
-  def listPrompts()(implicit ec: ExecutionContext, env: Env): Future[Seq[McpPrompt]] = withClient(_.listPrompts().asScala.filter(matchesPrompt))
-  def listTools()(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = withClient(_.listTools().asScala.filter(matchesTool))
-  def readResource(uri: String)(implicit ec: ExecutionContext, env: Env): Future[Option[McpReadResourceResult]] = withClient(_.readResource(uri)).map(Some(_)).recover { case _ => None }
-  def getPrompt(name: String, arguments: Map[String, Object])(implicit ec: ExecutionContext, env: Env): Future[Option[McpGetPromptResult]] = withClient(_.getPrompt(name, arguments.asJava)).map(Some(_)).recover { case _ => None }
-  def listToolsBlocking()(implicit ec: ExecutionContext, env: Env): Seq[ToolSpecification] = Await.result(listTools(), 10.seconds)
+  def listResources(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResource]] = withClient(attrs)(_.listResources().asScala.filter(matchesResource))
+  def listResourceTemplates(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResourceTemplate]] = withClient(attrs)(_.listResourceTemplates().asScala.filter(matchesResourceTemplate))
+  def listPrompts(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpPrompt]] = withClient(attrs)(_.listPrompts().asScala.filter(matchesPrompt))
+  def listTools(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = withClient(attrs)(_.listTools().asScala.filter(matchesTool))
+  def readResource(uri: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Option[McpReadResourceResult]] = withClient(attrs)(_.readResource(uri)).map(Some(_)).recover { case _ => None }
+  def getPrompt(name: String, arguments: Map[String, Object], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Option[McpGetPromptResult]] = withClient(attrs)(_.getPrompt(name, arguments.asJava)).map(Some(_)).recover { case _ => None }
+  def listToolsBlocking(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Seq[ToolSpecification] = Await.result(listTools(attrs), 10.seconds)
 
-  def call(name: String, args: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+  def call(name: String, args: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
     if (matches(name)) {
       val request = ToolExecutionRequest.builder().id(UUID.randomUUID().toString()).name(name).arguments(args).build()
-      withClient(_.executeTool(request)).map { res =>
+      withClient(attrs)(_.executeTool(request)).map { res =>
         if (res.isError) {
           s"an error occurred while executing request: ${res.resultText()}"
         } else {
@@ -261,7 +265,7 @@ case class McpConnector(
     }
   }
 
-  private def withClient[T](f: DefaultMcpClient => T)(implicit ec: ExecutionContext, env: Env): Future[T] = {
+  private def withClient[T](attrs: TypedMap)(f: DefaultMcpClient => T)(implicit ec: ExecutionContext, env: Env): Future[T] = {
     if (!enabled) {
       Future.failed(new RuntimeException("Mcp client is not enabled"))
     } else {
@@ -269,8 +273,8 @@ case class McpConnector(
       val promise = Promise.apply[T]()
       McpConnector.connectorsCache.get(id) match {
         case None => {
-          clientPool()
-          withClient(f).andThen {
+          clientPool(attrs)
+          withClient(attrs)(f).andThen {
             case Failure(e) => promise.tryFailure(e)
             case Success(e) => promise.trySuccess(e)
           }
@@ -280,7 +284,7 @@ case class McpConnector(
           if (item == null) {
             if (counter.get() < pool.size) {
               counter.incrementAndGet()
-              val cli = buildClient()
+              val cli = buildClient(attrs)
               try {
                 val r = f(cli)
                 promise.trySuccess(r)
@@ -291,7 +295,7 @@ case class McpConnector(
               }
             } else {
               env.otoroshiScheduler.scheduleOnce(100.millis) {
-                withClient(f).andThen {
+                withClient(attrs)(f).andThen {
                   case Failure(e) => promise.tryFailure(e)
                   case Success(e) => promise.trySuccess(e)
                 }
@@ -552,11 +556,11 @@ object McpSupport {
     }
   }
 
-  def tools(connectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String])(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
+  def tools(connectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String], attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     connectors.zipWithIndex.flatMap(tuple => ext.states.mcpConnector(tuple._1).map(v => (v, tuple._2))).flatMap {
       case (connector, idx) =>
-        connector.copy(includeFunctions = connector.includeFunctions ++ includeFunctions, excludeFunctions = connector.excludeFunctions ++ excludeFunctions).listToolsBlocking().map { function =>
+        connector.copy(includeFunctions = connector.includeFunctions ++ includeFunctions, excludeFunctions = connector.excludeFunctions ++ excludeFunctions).listToolsBlocking(attrs).map { function =>
           val additionalProperties: scala.Boolean = Option(function.parameters().additionalProperties()).map(_.booleanValue()).getOrElse(false)
           val required: Seq[String] = Option(function.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
           val properties: JsObject = JsObject(Option(function.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
@@ -585,12 +589,12 @@ object McpSupport {
     }
   }
 
-  def toolsCohere(connectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String])(implicit env: Env, ec: ExecutionContext): (Seq[JsObject], Map[String, String]) = {
+  def toolsCohere(connectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String], attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): (Seq[JsObject], Map[String, String]) = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val map = new TrieMap[String, String]()
     (connectors.zipWithIndex.flatMap(tuple => ext.states.mcpConnector(tuple._1).map(v => (v, tuple._2))).flatMap {
       case (connector, idx) =>
-        connector.copy(includeFunctions = connector.includeFunctions ++ includeFunctions, excludeFunctions = connector.excludeFunctions ++ excludeFunctions).listToolsBlocking().map { function =>
+        connector.copy(includeFunctions = connector.includeFunctions ++ includeFunctions, excludeFunctions = connector.excludeFunctions ++ excludeFunctions).listToolsBlocking(attrs).map { function =>
           val additionalProperties: scala.Boolean = Option(function.parameters().additionalProperties()).map(_.booleanValue()).getOrElse(false)
           val required: Seq[String] = Option(function.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
           val properties: JsObject = JsObject(Option(function.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
@@ -621,11 +625,11 @@ object McpSupport {
     }, map.toMap)
   }
 
-  def toolsAnthropic(connectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String])(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
+  def toolsAnthropic(connectors: Seq[String], includeFunctions: Seq[String], excludeFunctions: Seq[String], attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     connectors.zipWithIndex.flatMap(tuple => ext.states.mcpConnector(tuple._1).map(v => (v, tuple._2))).flatMap {
       case (connector, idx) =>
-        connector.copy(includeFunctions = connector.includeFunctions ++ includeFunctions, excludeFunctions = connector.excludeFunctions ++ excludeFunctions).listToolsBlocking().map { function =>
+        connector.copy(includeFunctions = connector.includeFunctions ++ includeFunctions, excludeFunctions = connector.excludeFunctions ++ excludeFunctions).listToolsBlocking(attrs).map { function =>
           val additionalProperties: scala.Boolean = Option(function.parameters().additionalProperties()).map(_.booleanValue()).getOrElse(false)
           val required: Seq[String] = Option(function.parameters().required()).map(_.asScala.toSeq).getOrElse(Seq.empty)
           val properties: JsObject = JsObject(Option(function.parameters().properties()).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues { el =>
@@ -649,8 +653,8 @@ object McpSupport {
     }
   }
 
-  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    callTool(functions, connectors) { (resp, tc) =>
+  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callTool(functions, connectors, attrs) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
         "role" -> "tool",
         "content" -> resp,
@@ -663,8 +667,8 @@ object McpSupport {
     }
   }
 
-  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String, fmap: Map[String, String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    callToolCohere(functions, connectors, fmap) { (resp, tc) =>
+  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String, fmap: Map[String, String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callToolCohere(functions, connectors, fmap, attrs) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
         "role" -> "tool",
         "content" -> resp,
@@ -677,7 +681,7 @@ object McpSupport {
     }
   }
 
-  private def callToolCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], fmap: Map[String, String])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  private def callToolCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], fmap: Map[String, String], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { _toolCall =>
         val fn = _toolCall.raw.select("function").asObject
@@ -692,7 +696,7 @@ object McpSupport {
           case None => (s"undefined mcp connector ${connectorId}", toolCall).some.vfuture
           case Some(function) => {
             println(s"calling mcp function '${functionName}' with args: '${toolCall.function.arguments}'")
-            function.call(functionName, toolCall.function.arguments).map { r =>
+            function.call(functionName, toolCall.function.arguments, attrs).map { r =>
               (r, _toolCall).some
             }
           }
@@ -707,8 +711,8 @@ object McpSupport {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
-  def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    callAnthropic(functions, connectors) { (resp, tc) =>
+  def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], connectors: Seq[String], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callAnthropic(functions, connectors, attrs) { (resp, tc) =>
       Source(List(
         Json.obj("role" -> "assistant", "content" -> Json.arr(Json.obj(
           "type" -> "tool_use",
@@ -724,7 +728,7 @@ object McpSupport {
     }
   }
 
-  private def callAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], connectors: Seq[String])(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  private def callAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], connectors: Seq[String], attrs: TypedMap)(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
         val args = toolCall.arguments
@@ -736,7 +740,7 @@ object McpSupport {
           case None => (s"undefined mcp connector ${connectorId}", toolCall).some.vfuture
           case Some(function) => {
             println(s"calling mcp function '${functionName}' with args: '${args}'")
-            function.call(functionName, args).map { r =>
+            function.call(functionName, args, attrs).map { r =>
               (r, toolCall).some
             }
           }
@@ -751,8 +755,8 @@ object McpSupport {
       .runWith(Sink.seq)(env.otoroshiMaterializer)
   }
 
-  def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
-    callTool(functions, connectors) { (resp, tc) =>
+  def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+    callTool(functions, connectors, attrs) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "content" -> "", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
         "role" -> "tool",
         "content" -> resp,
@@ -760,7 +764,7 @@ object McpSupport {
     }
   }
 
-  private def callTool(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String])(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  private def callTool(functions: Seq[GenericApiResponseChoiceMessageToolCall], connectors: Seq[String], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
         val cid = toolCall.function.connectorId
@@ -771,7 +775,7 @@ object McpSupport {
           case None => (s"undefined mcp connector ${connectorId}", toolCall).some.vfuture
           case Some(function) => {
             println(s"calling mcp function '${functionName}' with args: '${toolCall.function.arguments}'")
-            function.call(functionName, toolCall.function.arguments).map { r =>
+            function.call(functionName, toolCall.function.arguments, attrs).map { r =>
               (r, toolCall).some
             }
           }

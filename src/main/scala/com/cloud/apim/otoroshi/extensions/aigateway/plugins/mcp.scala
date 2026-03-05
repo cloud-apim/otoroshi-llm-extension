@@ -315,11 +315,11 @@ class McpSseEndpoint extends NgBackendCall {
     jsonRpcResponse(id, response)
   }
 
-  def getToolList(id: Long, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def getToolList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    val mcpFunctions: Seq[ToolSpecification] = mcpConnectors.flatMap(_.listToolsBlocking())
+    val mcpFunctions: Seq[ToolSpecification] = mcpConnectors.flatMap(_.listToolsBlocking(attrs))
     val thunks: Seq[JsValue] = functions.map { wf =>
       val required: JsArray = wf.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(wf.parameters.value.keySet.toSeq.map(_.json)))
       Json.obj(
@@ -359,7 +359,7 @@ class McpSseEndpoint extends NgBackendCall {
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val functionsMap = functions.map(f => (f.name, f)).toMap
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    val mcpFunctionsRawMap = mcpConnectors.flatMap(c => c.listToolsBlocking().map(f => (f.name(), (f, c)))).toMap
+    val mcpFunctionsRawMap = mcpConnectors.flatMap(c => c.listToolsBlocking(attrs).map(f => (f.name(), (f, c)))).toMap
     val mcpFunctionsMap: Map[String, McpConnector] = mcpFunctionsRawMap.mapValues(_._2)
     val mcpFunctions: Seq[ToolSpecification] = mcpFunctionsRawMap.values.map(_._1).toSeq
     val name = params.select("name").asString
@@ -371,7 +371,7 @@ class McpSseEndpoint extends NgBackendCall {
           error(400, s"unknown function ${name}")
         }
         case Some(function) => {
-          function.call(name, arguments.stringify).flatMap { res =>
+          function.call(name, arguments.stringify, attrs).flatMap { res =>
             val payload = Json.obj("content" -> Json.arr(Json.obj(
               "type" -> "text",
               "text" -> res
@@ -394,10 +394,10 @@ class McpSseEndpoint extends NgBackendCall {
     }
   }
 
-  def getResourcesList(id: Long, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def getResourcesList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    Future.sequence(mcpConnectors.map(_.listResources())).flatMap { mcpResources =>
+    Future.sequence(mcpConnectors.map(_.listResources(attrs))).flatMap { mcpResources =>
       val payload = Json.obj("resources" -> Json.arr(
         mcpResources.flatten.map { r =>
           Json.obj(
@@ -413,10 +413,10 @@ class McpSseEndpoint extends NgBackendCall {
     }
   }
 
-  def getPromptsList(id: Long, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def getPromptsList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    Future.sequence(mcpConnectors.map(_.listPrompts())).flatMap { mcpPrompts =>
+    Future.sequence(mcpConnectors.map(_.listPrompts(attrs))).flatMap { mcpPrompts =>
       val payload = Json.obj("prompts" -> Json.arr(
         mcpPrompts.flatten.map { p =>
           Json.obj(
@@ -437,10 +437,10 @@ class McpSseEndpoint extends NgBackendCall {
     }
   }
 
-  def getTemplatesList(id: Long, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def getTemplatesList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    Future.sequence(mcpConnectors.map(_.listResourceTemplates())).flatMap { mcpResources =>
+    Future.sequence(mcpConnectors.map(_.listResourceTemplates(attrs))).flatMap { mcpResources =>
       val payload = Json.obj("templates" -> Json.arr(
         mcpResources.flatten.map { r =>
           Json.obj(
@@ -456,17 +456,17 @@ class McpSseEndpoint extends NgBackendCall {
     }
   }
 
-  def readResource(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def readResource(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     json.select("params").select("uri").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter"))
       case Some(uri) =>
         val ext = env.adminExtensions.extension[AiExtension].get
         val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-        Future.sequence(mcpConnectors.map(c => c.listResources().map(resources => (c, resources)))).flatMap { connectorsWithResources =>
+        Future.sequence(mcpConnectors.map(c => c.listResources(attrs).map(resources => (c, resources)))).flatMap { connectorsWithResources =>
           val matchingConnectors = connectorsWithResources.collect {
             case (connector, resources) if resources.exists(_.uri() == uri) => connector
           }
-          Future.sequence(matchingConnectors.map(_.readResource(uri))).flatMap { results =>
+          Future.sequence(matchingConnectors.map(_.readResource(uri, attrs))).flatMap { results =>
             val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
             val payload = Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson)))
             session.send(id, payload)
@@ -476,7 +476,7 @@ class McpSseEndpoint extends NgBackendCall {
     }
   }
 
-  def getPromptHandler(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def getPromptHandler(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     json.select("params").select("name").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter"))
       case Some(name) =>
@@ -485,11 +485,11 @@ class McpSseEndpoint extends NgBackendCall {
         }.getOrElse(Map.empty)
         val ext = env.adminExtensions.extension[AiExtension].get
         val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-        Future.sequence(mcpConnectors.map(c => c.listPrompts().map(prompts => (c, prompts)))).flatMap { connectorsWithPrompts =>
+        Future.sequence(mcpConnectors.map(c => c.listPrompts(attrs).map(prompts => (c, prompts)))).flatMap { connectorsWithPrompts =>
           val matchingConnectors = connectorsWithPrompts.collect {
             case (connector, prompts) if prompts.exists(_.name() == name) => connector
           }
-          Future.sequence(matchingConnectors.map(_.getPrompt(name, arguments))).flatMap { results =>
+          Future.sequence(matchingConnectors.map(_.getPrompt(name, arguments, attrs))).flatMap { results =>
             val result = results.flatten.headOption
             val payload = Json.obj(
               "description" -> result.map(_.description()).getOrElse("").json,
@@ -580,12 +580,12 @@ class McpSseEndpoint extends NgBackendCall {
                         session.ready.set(true)
                         emptyResp(id)
                       }
-                      case Some("tools/list") if session.ready.get() => getToolList(id, session, config)
-                      case Some("resources/list") if session.ready.get() => getResourcesList(id, session, config)
-                      case Some("resources/read") if session.ready.get() => readResource(id, json, session, config)
-                      case Some("resources/templates/list") if session.ready.get() => getTemplatesList(id, session, config)
-                      case Some("prompts/list") if session.ready.get() => getPromptsList(id, session, config)
-                      case Some("prompts/get") if session.ready.get() => getPromptHandler(id, json, session, config)
+                      case Some("tools/list") if session.ready.get() => getToolList(id, session, config, ctx.attrs)
+                      case Some("resources/list") if session.ready.get() => getResourcesList(id, session, config, ctx.attrs)
+                      case Some("resources/read") if session.ready.get() => readResource(id, json, session, config, ctx.attrs)
+                      case Some("resources/templates/list") if session.ready.get() => getTemplatesList(id, session, config, ctx.attrs)
+                      case Some("prompts/list") if session.ready.get() => getPromptsList(id, session, config, ctx.attrs)
+                      case Some("prompts/get") if session.ready.get() => getPromptHandler(id, json, session, config, ctx.attrs)
                       case Some("tools/call") if session.ready.get() => toolsCall(id, session, json, config, ctx.attrs)
                       case _ => {
                         val method = json.select("method").asOpt[String].getOrElse("--")
@@ -688,11 +688,11 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     jsonRpcResponse(id, response)
   }
 
-  def getToolList(id: Long, config: McpProxyEndpointConfig): JsValue = {
+  def getToolList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap): JsValue = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    val mcpFunctionsRawMap = mcpConnectors.flatMap(c => c.listToolsBlocking()(env.otoroshiExecutionContext, env).map(f => (f.name(), (f, c)))).toMap
+    val mcpFunctionsRawMap = mcpConnectors.flatMap(c => c.listToolsBlocking(attrs)(env.otoroshiExecutionContext, env).map(f => (f.name(), (f, c)))).toMap
     val mcpFunctions: Seq[ToolSpecification] = mcpFunctionsRawMap.values.map(_._1).toSeq
     val thunks = functions.map { wf =>
       val required: JsArray = wf.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(wf.parameters.value.keySet.toSeq.map(_.json)))
@@ -725,7 +725,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     jsonRpcResponse(id, response)
   }
 
-  def toolsCall(id: Long, request: JsValue, config: McpProxyEndpointConfig): Future[JsValue] = {
+  def toolsCall(id: Long, request: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap): Future[JsValue] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val ev = env
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
@@ -733,7 +733,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val functionsMap = functions.map(f => (f.name, f)).toMap
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    val mcpFunctionsRawMap = mcpConnectors.flatMap(c => c.listToolsBlocking().map(f => (f.name(), (f, c)))).toMap
+    val mcpFunctionsRawMap = mcpConnectors.flatMap(c => c.listToolsBlocking(attrs).map(f => (f.name(), (f, c)))).toMap
     val mcpFunctionsMap: Map[String, McpConnector] = mcpFunctionsRawMap.mapValues(_._2)
     val name = params.select("name").asString
     val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
@@ -742,7 +742,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
       case None => mcpFunctionsMap.get(name) match {
         case None => jsonRpcError(id, 400, s"unknown function ${name}", Json.obj()).vfuture
         case Some(function) => {
-          function.call(name, arguments.stringify).flatMap { res =>
+          function.call(name, arguments.stringify, attrs).flatMap { res =>
             val payload = Json.obj("content" -> Json.arr(Json.obj(
               "type" -> "text",
               "text" -> res
@@ -763,10 +763,10 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     }
   }
 
-  def getResourcesList(id: Long): Future[JsValue] = {
+  def getResourcesList(id: Long, attrs: TypedMap): Future[JsValue] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    Future.sequence(mcpConnectors.map(_.listResources()(ec, env))).map { all =>
+    Future.sequence(mcpConnectors.map(_.listResources(attrs)(ec, env))).map { all =>
       jsonRpcResponse(id, Json.obj("resources" -> Json.arr(all.flatten.map { r =>
         Json.obj(
           "uri" -> r.uri(),
@@ -778,10 +778,10 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     }(ec)
   }
 
-  def getPromptsList(id: Long): Future[JsValue] = {
+  def getPromptsList(id: Long, attrs: TypedMap): Future[JsValue] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    Future.sequence(mcpConnectors.map(_.listPrompts()(ec, env))).map { all =>
+    Future.sequence(mcpConnectors.map(_.listPrompts(attrs)(ec, env))).map { all =>
       jsonRpcResponse(id, Json.obj("prompts" -> Json.arr(all.flatten.map { p =>
         Json.obj(
           "name" -> p.name(),
@@ -798,10 +798,10 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     }(ec)
   }
 
-  def getTemplatesList(id: Long): Future[JsValue] = {
+  def getTemplatesList(id: Long, attrs: TypedMap): Future[JsValue] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    Future.sequence(mcpConnectors.map(_.listResourceTemplates()(ec, env))).map { all =>
+    Future.sequence(mcpConnectors.map(_.listResourceTemplates(attrs)(ec, env))).map { all =>
       jsonRpcResponse(id, Json.obj("templates" -> Json.arr(all.flatten.map { r =>
         Json.obj(
           "uriTemplate" -> r.uriTemplate(),
@@ -813,17 +813,17 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     }(ec)
   }
 
-  def readResource(id: Long, json: JsValue): Future[JsValue] = {
+  def readResource(id: Long, json: JsValue, attrs: TypedMap): Future[JsValue] = {
     json.select("params").select("uri").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter")).vfuture
       case Some(uri) =>
         val ext = env.adminExtensions.extension[AiExtension].get
         val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-        Future.sequence(mcpConnectors.map(c => c.listResources()(ec, env).map(resources => (c, resources))(ec))).flatMap { connectorsWithResources =>
+        Future.sequence(mcpConnectors.map(c => c.listResources(attrs)(ec, env).map(resources => (c, resources))(ec))).flatMap { connectorsWithResources =>
           val matchingConnectors = connectorsWithResources.collect {
             case (connector, resources) if resources.exists(_.uri() == uri) => connector
           }
-          Future.sequence(matchingConnectors.map(_.readResource(uri)(ec, env))).map { results =>
+          Future.sequence(matchingConnectors.map(_.readResource(uri, attrs)(ec, env))).map { results =>
             val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
             jsonRpcResponse(id, Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson))))
           }(ec)
@@ -831,7 +831,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     }
   }
 
-  def getPromptHandler(id: Long, json: JsValue): Future[JsValue] = {
+  def getPromptHandler(id: Long, json: JsValue, attrs: TypedMap): Future[JsValue] = {
     json.select("params").select("name").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter")).vfuture
       case Some(name) =>
@@ -840,11 +840,11 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
         }.getOrElse(Map.empty)
         val ext = env.adminExtensions.extension[AiExtension].get
         val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-        Future.sequence(mcpConnectors.map(c => c.listPrompts()(ec, env).map(prompts => (c, prompts))(ec))).flatMap { connectorsWithPrompts =>
+        Future.sequence(mcpConnectors.map(c => c.listPrompts(attrs)(ec, env).map(prompts => (c, prompts))(ec))).flatMap { connectorsWithPrompts =>
           val matchingConnectors = connectorsWithPrompts.collect {
             case (connector, prompts) if prompts.exists(_.name() == name) => connector
           }
-          Future.sequence(matchingConnectors.map(_.getPrompt(name, arguments)(ec, env))).map { results =>
+          Future.sequence(matchingConnectors.map(_.getPrompt(name, arguments, attrs)(ec, env))).map { results =>
             val result = results.flatten.headOption
             jsonRpcResponse(id, Json.obj(
               "description" -> result.map(_.description()).getOrElse("").json,
@@ -889,13 +889,13 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
             ready.set(true)
             emptyResp(id).vfuture
           }
-          case Some("tools/list") if ready.get() => getToolList(id, config).vfuture
-          case Some("resources/list") if ready.get() => getResourcesList(id)
-          case Some("resources/read") if ready.get() => readResource(id, json)
-          case Some("resources/templates/list") if ready.get() => getTemplatesList(id)
-          case Some("prompts/list") if ready.get() => getPromptsList(id)
-          case Some("prompts/get") if ready.get() => getPromptHandler(id, json)
-          case Some("tools/call") if ready.get() => toolsCall(id, json, config)
+          case Some("tools/list") if ready.get() => getToolList(id, config, attrs).vfuture
+          case Some("resources/list") if ready.get() => getResourcesList(id, attrs)
+          case Some("resources/read") if ready.get() => readResource(id, json, attrs)
+          case Some("resources/templates/list") if ready.get() => getTemplatesList(id, attrs)
+          case Some("prompts/list") if ready.get() => getPromptsList(id, attrs)
+          case Some("prompts/get") if ready.get() => getPromptHandler(id, json, attrs)
+          case Some("tools/call") if ready.get() => toolsCall(id, json, config, attrs)
           case _ => {
             val method = json.select("method").asOpt[String].getOrElse("--")
             jsonRpcResponse(id, Json.obj("error" -> "method unsupported", "error_details" -> Json.obj("method" -> method, "ready" -> ready.get()))).vfuture
@@ -970,11 +970,11 @@ class McpRespEndpoint extends NgBackendCall {
     jsonRpcResponse(id, response)
   }
 
-  def getToolList(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def getToolList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    val mcpFunctionsRawMap = mcpConnectors.flatMap(c => c.listToolsBlocking().map(f => (f.name(), (f, c)))).toMap
+    val mcpFunctionsRawMap = mcpConnectors.flatMap(c => c.listToolsBlocking(attrs).map(f => (f.name(), (f, c)))).toMap
     val mcpFunctions: Seq[ToolSpecification] = mcpFunctionsRawMap.values.map(_._1).toSeq
     val thunks = functions.map { wf =>
       val required: JsArray = wf.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(wf.parameters.value.keySet.toSeq.map(_.json)))
@@ -1013,7 +1013,7 @@ class McpRespEndpoint extends NgBackendCall {
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val functionsMap = functions.map(f => (f.name, f)).toMap
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    val mcpFunctionsRawMap = mcpConnectors.flatMap(c => c.listToolsBlocking().map(f => (f.name(), (f, c)))).toMap
+    val mcpFunctionsRawMap = mcpConnectors.flatMap(c => c.listToolsBlocking(attrs).map(f => (f.name(), (f, c)))).toMap
     val mcpFunctionsMap: Map[String, McpConnector] = mcpFunctionsRawMap.mapValues(_._2)
     val mcpFunctions: Seq[ToolSpecification] = mcpFunctionsRawMap.values.map(_._1).toSeq
 
@@ -1023,7 +1023,7 @@ class McpRespEndpoint extends NgBackendCall {
       case None => mcpFunctionsMap.get(name) match {
         case None => error(400, s"unknown function ${name}")
         case Some(function) => {
-          function.call(name, arguments.stringify).flatMap { res =>
+          function.call(name, arguments.stringify, attrs).flatMap { res =>
             val payload = Json.obj("content" -> Json.arr(Json.obj(
               "type" -> "text",
               "text" -> res
@@ -1044,10 +1044,10 @@ class McpRespEndpoint extends NgBackendCall {
     }
   }
 
-  def getResourcesList(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def getResourcesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    Future.sequence(mcpConnectors.map(_.listResources())).flatMap { mcpResources =>
+    Future.sequence(mcpConnectors.map(_.listResources(attrs))).flatMap { mcpResources =>
       jsonRpcResponse(id, Json.obj("resources" -> Json.arr(
         mcpResources.flatten.map { r =>
           Json.obj(
@@ -1061,10 +1061,10 @@ class McpRespEndpoint extends NgBackendCall {
     }
   }
 
-  def getPromptsList(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def getPromptsList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    Future.sequence(mcpConnectors.map(_.listPrompts())).flatMap { mcpPrompts =>
+    Future.sequence(mcpConnectors.map(_.listPrompts(attrs))).flatMap { mcpPrompts =>
       jsonRpcResponse(id, Json.obj("prompts" -> Json.arr(
         mcpPrompts.flatten.map { p =>
           Json.obj(
@@ -1083,10 +1083,10 @@ class McpRespEndpoint extends NgBackendCall {
     }
   }
 
-  def getTemplatesList(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def getTemplatesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    Future.sequence(mcpConnectors.map(_.listResourceTemplates())).flatMap { mcpResources =>
+    Future.sequence(mcpConnectors.map(_.listResourceTemplates(attrs))).flatMap { mcpResources =>
       jsonRpcResponse(id, Json.obj("templates" -> Json.arr(
         mcpResources.flatten.map { r =>
           Json.obj(
@@ -1100,17 +1100,17 @@ class McpRespEndpoint extends NgBackendCall {
     }
   }
 
-  def readResource(id: Long, json: JsValue, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def readResource(id: Long, json: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     json.select("params").select("uri").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter"))
       case Some(uri) =>
         val ext = env.adminExtensions.extension[AiExtension].get
         val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-        Future.sequence(mcpConnectors.map(c => c.listResources().map(resources => (c, resources)))).flatMap { connectorsWithResources =>
+        Future.sequence(mcpConnectors.map(c => c.listResources(attrs).map(resources => (c, resources)))).flatMap { connectorsWithResources =>
           val matchingConnectors = connectorsWithResources.collect {
             case (connector, resources) if resources.exists(_.uri() == uri) => connector
           }
-          Future.sequence(matchingConnectors.map(_.readResource(uri))).flatMap { results =>
+          Future.sequence(matchingConnectors.map(_.readResource(uri, attrs))).flatMap { results =>
             val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
             jsonRpcResponse(id, Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson))))
           }
@@ -1118,7 +1118,7 @@ class McpRespEndpoint extends NgBackendCall {
     }
   }
 
-  def getPromptHandler(id: Long, json: JsValue, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def getPromptHandler(id: Long, json: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     json.select("params").select("name").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter"))
       case Some(name) =>
@@ -1127,11 +1127,11 @@ class McpRespEndpoint extends NgBackendCall {
         }.getOrElse(Map.empty)
         val ext = env.adminExtensions.extension[AiExtension].get
         val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-        Future.sequence(mcpConnectors.map(c => c.listPrompts().map(prompts => (c, prompts)))).flatMap { connectorsWithPrompts =>
+        Future.sequence(mcpConnectors.map(c => c.listPrompts(attrs).map(prompts => (c, prompts)))).flatMap { connectorsWithPrompts =>
           val matchingConnectors = connectorsWithPrompts.collect {
             case (connector, prompts) if prompts.exists(_.name() == name) => connector
           }
-          Future.sequence(matchingConnectors.map(_.getPrompt(name, arguments))).flatMap { results =>
+          Future.sequence(matchingConnectors.map(_.getPrompt(name, arguments, attrs))).flatMap { results =>
             val result = results.flatten.headOption
             jsonRpcResponse(id, Json.obj(
               "description" -> result.map(_.description()).getOrElse("").json,
@@ -1164,12 +1164,12 @@ class McpRespEndpoint extends NgBackendCall {
               case Some("cancelled") => emptyResp(id)
               case Some("notifications/cancelled") => emptyResp(id)
               case Some("notifications/initialized") => emptyResp(id)
-              case Some("tools/list") => getToolList(id, config)
-              case Some("resources/list") => getResourcesList(id, config)
-              case Some("resources/read") => readResource(id, json, config)
-              case Some("resources/templates/list") => getTemplatesList(id, config)
-              case Some("prompts/list") => getPromptsList(id, config)
-              case Some("prompts/get") => getPromptHandler(id, json, config)
+              case Some("tools/list") => getToolList(id, config, ctx.attrs)
+              case Some("resources/list") => getResourcesList(id, config, ctx.attrs)
+              case Some("resources/read") => readResource(id, json, config, ctx.attrs)
+              case Some("resources/templates/list") => getTemplatesList(id, config, ctx.attrs)
+              case Some("prompts/list") => getPromptsList(id, config, ctx.attrs)
+              case Some("prompts/get") => getPromptHandler(id, json, config, ctx.attrs)
               case Some("tools/call") => toolsCall(id, json, config, ctx.attrs)
               case _ => {
                 val method = json.select("method").asOpt[String].getOrElse("--")
