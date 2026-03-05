@@ -30,11 +30,12 @@ Otoroshi LLM Extension is set of [Otoroshi](https://github.com/MAIF/otoroshi) pl
 
 All supported providers are available [here](https://cloud-apim.github.io/otoroshi-llm-extension/docs/providers/providers-list)
 
-* Anthropic 
+* Anthropic
 * Azure OpenAI
 * Azure AI Foundry
 * Cloudflare
 * Cohere
+* Deepseek
 * Gemini
 * Groq
 * Huggingface 🇫🇷 🇪🇺
@@ -44,7 +45,8 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 * OVH AI Endpoints 🇫🇷 🇪🇺
 * Scaleway 🇫🇷 🇪🇺
 * X.ai
-* Deepseek
+
+And 37 additional OpenAI-compatible providers: Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Chutes, CometAPI, CompactifAI, DeepInfra, Empower, Featherless AI, Fireworks AI, Friendli AI, Galadriel, GMI, Helicone, Hyperbolic, Lambda AI, LlamaGate, Meta Llama API, Minimax, Morph, Nano GPT, Nebius AI Studio, Novita AI, Nscale, Nvidia NIM, OpenRouter, Perplexity, Poe, SambaNova, Sarvam, Synthetic, Together AI, Venice AI, Xiaomi Mimo, Z.AI
 
 ## Supported Moderation models
 
@@ -72,21 +74,26 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 
 ## Supported LLM Embeddings models
 
+* All MiniLM L6 V2 (embedded)
+* Azure OpenAI
+* Azure AI Foundry
+* Cloud Temple 🇫🇷 🇪🇺
+* Cohere
+* Deepseek
+* Gemini
+* Huggingface 🇫🇷 🇪🇺
+* Mistral 🇫🇷 🇪🇺
+  * mistral-embed
+* Nebius AI Studio
+* Ollama (Local Models)
 * OpenAI
   * text-embedding-3-small
   * text-embedding-3-large
   * text-embedding-ada-002
-
-* Anthropic 
-  * voyage-3-large
-  * voyage-3
-  * voyage-3-lite
-  * voyage-code-3
-  * voyage-finance-2
-  * voyage-law-2 
-
-* Mistral 🇫🇷 🇪🇺
-  * mistral-embed
+* OpenRouter
+* SambaNova
+* Scaleway 🇫🇷 🇪🇺
+* X.ai
 
 ## Supported Image generation models
 
