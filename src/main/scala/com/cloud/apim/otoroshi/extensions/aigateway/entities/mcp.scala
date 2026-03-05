@@ -4,7 +4,7 @@ import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorTransportKind.Stdio
 import com.google.gson.Gson
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
-import dev.langchain4j.mcp.client.{DefaultMcpClient, McpBlobResourceContents, McpPrompt, McpReadResourceResult, McpResource, McpResourceContents, McpResourceTemplate, McpTextResourceContents}
+import dev.langchain4j.mcp.client.{DefaultMcpClient, McpBlobResourceContents, McpGetPromptResult, McpImageContent, McpPrompt, McpPromptContent, McpReadResourceResult, McpResource, McpResourceContents, McpResourceTemplate, McpTextContent, McpTextResourceContents}
 import dev.langchain4j.mcp.client.transport.http.{HttpMcpTransport, StreamableHttpMcpTransport}
 import dev.langchain4j.mcp.client.transport.stdio.StdioMcpTransport
 import dev.langchain4j.mcp.client.transport.websocket.WebSocketMcpTransport
@@ -242,6 +242,7 @@ case class McpConnector(
   def listPrompts()(implicit ec: ExecutionContext, env: Env): Future[Seq[McpPrompt]] = withClient(_.listPrompts().asScala.filter(matchesPrompt))
   def listTools()(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = withClient(_.listTools().asScala.filter(matchesTool))
   def readResource(uri: String)(implicit ec: ExecutionContext, env: Env): Future[Option[McpReadResourceResult]] = withClient(_.readResource(uri)).map(Some(_)).recover { case _ => None }
+  def getPrompt(name: String, arguments: Map[String, Object])(implicit ec: ExecutionContext, env: Env): Future[Option[McpGetPromptResult]] = withClient(_.getPrompt(name, arguments.asJava)).map(Some(_)).recover { case _ => None }
   def listResourcesBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpResource] = Await.result(listResources(), 10.seconds)
   def listResourceTemplatesBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpResourceTemplate] = Await.result(listResourceTemplates(), 10.seconds)
   def listPromptsBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpPrompt] = Await.result(listPrompts(), 10.seconds)
@@ -495,6 +496,14 @@ object McpSupport {
         case None => McpConnector.connectorsCache.remove(key).foreach(_._1.asScala.foreach(_.close()))
         case Some(_) => ()
       }
+    }
+  }
+
+  def promptContentToJson(c: McpPromptContent): JsObject = {
+    c match {
+      case t: McpTextContent => Json.obj("type" -> "text", "text" -> t.text())
+      case i: McpImageContent => Json.obj("type" -> "image", "data" -> i.data(), "mimeType" -> i.mimeType())
+      case _ => Json.obj("type" -> c.getType())
     }
   }
 

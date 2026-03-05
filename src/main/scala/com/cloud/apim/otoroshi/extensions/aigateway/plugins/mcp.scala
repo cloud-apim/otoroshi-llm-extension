@@ -476,6 +476,37 @@ class McpSseEndpoint extends NgBackendCall {
     }
   }
 
+  def getPromptHandler(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    json.select("params").select("name").asOpt[String] match {
+      case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter"))
+      case Some(name) =>
+        val arguments: Map[String, Object] = json.select("params").select("arguments").asOpt[JsObject].map { obj =>
+          obj.value.mapValues(v => v.asOpt[String].getOrElse(v.stringify).asInstanceOf[Object]).toMap
+        }.getOrElse(Map.empty)
+        val ext = env.adminExtensions.extension[AiExtension].get
+        val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+        Future.sequence(mcpConnectors.map(c => c.listPrompts().map(prompts => (c, prompts)))).flatMap { connectorsWithPrompts =>
+          val matchingConnectors = connectorsWithPrompts.collect {
+            case (connector, prompts) if prompts.exists(_.name() == name) => connector
+          }
+          Future.sequence(matchingConnectors.map(_.getPrompt(name, arguments))).flatMap { results =>
+            val result = results.flatten.headOption
+            val payload = Json.obj(
+              "description" -> result.map(_.description()).getOrElse("").json,
+              "messages" -> Json.arr(result.map(_.messages().asScala).getOrElse(Seq.empty).map { m =>
+                Json.obj(
+                  "role" -> m.role().name().toLowerCase,
+                  "content" -> McpSupport.promptContentToJson(m.content()),
+                )
+              }),
+            )
+            session.send(id, payload)
+            jsonRpcResponse(id, payload)
+          }
+        }
+    }
+  }
+
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default)
     if (ctx.request.method.toLowerCase() == "get") {
@@ -554,7 +585,7 @@ class McpSseEndpoint extends NgBackendCall {
                       case Some("resources/read") if session.ready.get() => readResource(id, json, session, config)
                       case Some("resources/templates/list") if session.ready.get() => getTemplatesList(id, session, config)
                       case Some("prompts/list") if session.ready.get() => getPromptsList(id, session, config)
-                      case Some("prompts/get") if session.ready.get() => ???
+                      case Some("prompts/get") if session.ready.get() => getPromptHandler(id, json, session, config)
                       case Some("tools/call") if session.ready.get() => toolsCall(id, session, json, config, ctx.attrs)
                       case _ => {
                         val method = json.select("method").asOpt[String].getOrElse("--")
@@ -797,6 +828,35 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     }
   }
 
+  def getPromptHandler(id: Long, json: JsValue): Future[JsValue] = {
+    json.select("params").select("name").asOpt[String] match {
+      case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter")).vfuture
+      case Some(name) =>
+        val arguments: Map[String, Object] = json.select("params").select("arguments").asOpt[JsObject].map { obj =>
+          obj.value.mapValues(v => v.asOpt[String].getOrElse(v.stringify).asInstanceOf[Object]).toMap
+        }.getOrElse(Map.empty)
+        val ext = env.adminExtensions.extension[AiExtension].get
+        val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+        Future.sequence(mcpConnectors.map(c => c.listPrompts()(ec, env).map(prompts => (c, prompts))(ec))).flatMap { connectorsWithPrompts =>
+          val matchingConnectors = connectorsWithPrompts.collect {
+            case (connector, prompts) if prompts.exists(_.name() == name) => connector
+          }
+          Future.sequence(matchingConnectors.map(_.getPrompt(name, arguments)(ec, env))).map { results =>
+            val result = results.flatten.headOption
+            jsonRpcResponse(id, Json.obj(
+              "description" -> result.map(_.description()).getOrElse("").json,
+              "messages" -> Json.arr(result.map(_.messages().asScala).getOrElse(Seq.empty).map { m =>
+                Json.obj(
+                  "role" -> m.role().name().toLowerCase,
+                  "content" -> McpSupport.promptContentToJson(m.content()),
+                )
+              }),
+            ))
+          }(ec)
+        }(ec)
+    }
+  }
+
   def handle(data: String): Unit = {
     // println(s"handle ws raw message: ${data}")
     Try(data.parseJson) match {
@@ -831,7 +891,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
           case Some("resources/read") if ready.get() => readResource(id, json)
           case Some("resources/templates/list") if ready.get() => getTemplatesList(id).vfuture
           case Some("prompts/list") if ready.get() => getPromptsList(id).vfuture
-          case Some("prompts/get") if ready.get() => emptyResp(id).vfuture // TODO: support ?
+          case Some("prompts/get") if ready.get() => getPromptHandler(id, json)
           case Some("tools/call") if ready.get() => toolsCall(id, json, config)
           case _ => {
             val method = json.select("method").asOpt[String].getOrElse("--")
@@ -1055,6 +1115,35 @@ class McpRespEndpoint extends NgBackendCall {
     }
   }
 
+  def getPromptHandler(id: Long, json: JsValue, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    json.select("params").select("name").asOpt[String] match {
+      case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter"))
+      case Some(name) =>
+        val arguments: Map[String, Object] = json.select("params").select("arguments").asOpt[JsObject].map { obj =>
+          obj.value.mapValues(v => v.asOpt[String].getOrElse(v.stringify).asInstanceOf[Object]).toMap
+        }.getOrElse(Map.empty)
+        val ext = env.adminExtensions.extension[AiExtension].get
+        val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+        Future.sequence(mcpConnectors.map(c => c.listPrompts().map(prompts => (c, prompts)))).flatMap { connectorsWithPrompts =>
+          val matchingConnectors = connectorsWithPrompts.collect {
+            case (connector, prompts) if prompts.exists(_.name() == name) => connector
+          }
+          Future.sequence(matchingConnectors.map(_.getPrompt(name, arguments))).flatMap { results =>
+            val result = results.flatten.headOption
+            jsonRpcResponse(id, Json.obj(
+              "description" -> result.map(_.description()).getOrElse("").json,
+              "messages" -> Json.arr(result.map(_.messages().asScala).getOrElse(Seq.empty).map { m =>
+                Json.obj(
+                  "role" -> m.role().name().toLowerCase,
+                  "content" -> McpSupport.promptContentToJson(m.content()),
+                )
+              }),
+            ))
+          }
+        }
+    }
+  }
+
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default)
     if (ctx.request.hasBody && ctx.request.method.toLowerCase() == "post") {
@@ -1077,7 +1166,7 @@ class McpRespEndpoint extends NgBackendCall {
               case Some("resources/read") => readResource(id, json, config)
               case Some("resources/templates/list") => getTemplatesList(id, config)
               case Some("prompts/list") => getPromptsList(id, config)
-              case Some("prompts/get") => emptyResp(id)
+              case Some("prompts/get") => getPromptHandler(id, json, config)
               case Some("tools/call") => toolsCall(id, json, config, ctx.attrs)
               case _ => {
                 val method = json.select("method").asOpt[String].getOrElse("--")
