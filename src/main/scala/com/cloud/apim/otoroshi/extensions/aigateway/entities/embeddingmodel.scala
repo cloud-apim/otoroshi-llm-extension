@@ -120,6 +120,20 @@ case class EmbeddingModel(
         new CohereAiEmbeddingModelClient(api, opts, id).some
       }
       case "all-minilm-l6-v2" => new AllMiniLmL6V2EmbeddingModelClient(options, id).some
+      case p if OpenAiLikeProviders.find(p).exists(_.supportsEmbeddings) => {
+        OpenAiLikeProviders.find(p).map { provDef =>
+          val api = new OpenAiApi(
+            _baseUrl = baseUrl.getOrElse(provDef.baseUrl),
+            token = token,
+            timeout = timeout.getOrElse(3.minutes),
+            providerName = provDef.name,
+            env = env,
+            headers = provDef.headers,
+          )
+          val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
+          new OpenAiEmbeddingModelClient(api, opts, id)
+        }
+      }
       case _ => None
     }
     rawClient.map(c => EmbeddingModelClientDecorators(this, c, env))

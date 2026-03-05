@@ -173,7 +173,7 @@ class OpenAiApi(
 
   private def resolvedHeaders: Seq[(String, String)] = {
     val hdrs = if (headers.isEmpty) Map("Authorization" -> s"Bearer {api_key}") else headers
-    hdrs.map { case (k, v) => k -> v.replace("{api_key}", token) }.toSeq
+    hdrs.map { case (k, v) => k -> v.replace("{api_key}", token).replace("{token}", token) }.toSeq
   }
 
   private def applyParamMappings(body: Option[JsValue]): Option[JsValue] = {

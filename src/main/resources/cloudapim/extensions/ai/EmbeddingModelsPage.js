@@ -47,6 +47,7 @@ class EmbeddingModelsPage extends Component {
           { label: 'Cohere', value: "cohere" },
           { label: 'Huggingface', value: "huggingface" },
           { label: 'All MiniLM L6 V2 (embedded)', value: "all-minilm-l6-v2" },
+          ...OpenAiLikeProviders.filter(p => p.supports_embeddings).map(p => ({ label: p.name, value: p.id })),
       ], i => i.label) }
     },
     config: {
@@ -388,6 +389,31 @@ class EmbeddingModelsPage extends Component {
                 provider: 'all-minilm-l6-v2',
                 config: {},
               });
+            } else {
+              const openAiLikeDef = OpenAiLikeProviders.find(p => p.id === state.provider && p.supports_embeddings);
+              if (openAiLikeDef) {
+                const token = openAiLikeDef.api_key_env
+                  ? '${vault://env/' + openAiLikeDef.api_key_env + '}'
+                  : 'xxx';
+                update({
+                  id: state.id,
+                  name: state.name,
+                  description: state.description,
+                  tags: state.tags,
+                  metadata: state.metadata,
+                  provider: openAiLikeDef.id,
+                  config: {
+                    connection: {
+                      base_url: openAiLikeDef.base_url,
+                      token: token,
+                      timeout: 180000,
+                    },
+                    options: {
+                      model: 'your-embedding-model'
+                    },
+                  }
+                });
+              }
             }
           }
         }
