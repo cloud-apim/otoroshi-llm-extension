@@ -35,11 +35,21 @@ case class CostModel(name: String, raw: JsValue) {
   lazy val max_output_tokens = raw.select("max_output_tokens").asOptLong.getOrElse(0L)
   lazy val input_cost_per_token = raw.select("input_cost_per_token").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val output_cost_per_token = raw.select("output_cost_per_token").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val output_cost_per_reasoning_token = raw.select("output_cost_per_reasoning_token").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val input_cost_per_token_cache_hit = raw.select("input_cost_per_token_cache_hit").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val cache_read_input_token_cost = raw.select("cache_read_input_token_cost").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val cache_creation_input_token_cost = raw.select("cache_creation_input_token_cost").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val input_cost_per_token_batches = raw.select("input_cost_per_token_batches").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val output_cost_per_token_batches = raw.select("output_cost_per_token_batches").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val input_cost_per_audio_token = raw.select("input_cost_per_audio_token").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val output_cost_per_audio_token = raw.select("output_cost_per_audio_token").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val input_cost_per_image_token = raw.select("input_cost_per_image_token").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val input_cost_per_image = raw.select("input_cost_per_image").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val output_cost_per_image = raw.select("output_cost_per_image").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val input_cost_per_pixel = raw.select("input_cost_per_pixel").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val output_cost_per_pixel = raw.select("output_cost_per_pixel").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val input_cost_per_second = raw.select("input_cost_per_second").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val output_cost_per_second = raw.select("output_cost_per_second").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val litellm_provider = raw.select("litellm_provider").asOptString.orElse(raw.select("provider").asOptString).getOrElse("openai")
   lazy val nameWithoutProvider: String = {
     if (name.startsWith(s"${litellm_provider}/")) {
@@ -57,12 +67,17 @@ case class CostModel(name: String, raw: JsValue) {
   lazy val supports_audio_input = raw.select("supports_audio_input").asOptBoolean.getOrElse(false)
   lazy val supports_audio_output = raw.select("supports_audio_output").asOptBoolean.getOrElse(false)
   lazy val supports_prompt_caching = raw.select("supports_prompt_caching").asOptBoolean.getOrElse(false)
+  lazy val supports_reasoning = raw.select("supports_reasoning").asOptBoolean.getOrElse(false)
   lazy val supports_response_schema = raw.select("supports_response_schema").asOptBoolean.getOrElse(false)
   lazy val supports_system_messages = raw.select("supports_system_messages").asOptBoolean.getOrElse(false)
   lazy val supports_web_search = raw.select("supports_web_search").asOptBoolean.getOrElse(false)
+  lazy val supports_tool_choice = raw.select("supports_tool_choice").asOptBoolean.getOrElse(false)
+  lazy val supports_native_streaming = raw.select("supports_native_streaming").asOptBoolean.getOrElse(false)
   lazy val search_context_cost_per_query = raw.select("search_context_cost_per_query").asOpt[JsObject].map { obj =>
     SearchContextCostPerQuery(obj)
   }
+  lazy val effectiveReasoningTokenCost: BigDecimal =
+    if (output_cost_per_reasoning_token > 0) output_cost_per_reasoning_token else output_cost_per_token
 }
 
 case class CostsOutput(inputCost: BigDecimal, outputCost: BigDecimal, reasoningCost: BigDecimal) {
@@ -126,7 +141,7 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
         Right(CostsOutput(
           inputCost = inputTokens * model.input_cost_per_token,
           outputCost = outputTokens * model.output_cost_per_token,
-          reasoningCost = reasoningTokens * model.output_cost_per_token,
+          reasoningCost = reasoningTokens * model.effectiveReasoningTokenCost,
         ))
       }
     }
