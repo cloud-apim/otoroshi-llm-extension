@@ -15,14 +15,16 @@ case class OpenAiLikeProviderDef(
                                   paramMappings: Map[String, String] = Map.empty,
                                   headers: Map[String, String] = Map("Authorization" -> "Bearer {api_key}"),
                                   apiKeyEnv: Option[String] = None,
+                                  additionalBodyParams: JsObject = Json.obj(),
                                 ) {
   def json: JsObject = Json.obj(
-    "id"             -> id,
-    "name"           -> name,
-    "base_url"       -> baseUrl,
-    "param_mappings" -> JsObject(paramMappings.map { case (k, v) => k -> JsString(v) }),
-    "headers"        -> JsObject(headers.map { case (k, v) => k -> JsString(v) }),
-    "api_key_env"    -> apiKeyEnv.map(JsString.apply).getOrElse(JsNull).asValue,
+    "id"                    -> id,
+    "name"                  -> name,
+    "base_url"              -> baseUrl,
+    "param_mappings"        -> JsObject(paramMappings.map { case (k, v) => k -> JsString(v) }),
+    "headers"               -> JsObject(headers.map { case (k, v) => k -> JsString(v) }),
+    "api_key_env"           -> apiKeyEnv.map(JsString.apply).getOrElse(JsNull).asValue,
+    "additional_body_params" -> additionalBodyParams,
   )
 }
 
@@ -68,6 +70,7 @@ object OpenAiLikeProviders {
     OpenAiLikeProviderDef("sambanova",     "SambaNova",        "https://api.sambanova.ai/v1",           mct,                apiKeyEnv = Some("SAMBANOVA_API_KEY")),
     OpenAiLikeProviderDef("together-ai",   "Together AI",      "https://api.together.xyz/v1",                               apiKeyEnv = Some("TOGETHERAI_API_KEY")),
     OpenAiLikeProviderDef("zai",           "Z.AI",             "https://api.z.ai/api/paas/v4",                              apiKeyEnv = Some("ZAI_API_KEY")),
+    OpenAiLikeProviderDef("openrouter",    "OpenRouter",       "https://openrouter.ai/api/v1",                              apiKeyEnv = Some("OPENROUTER_API_KEY"), additionalBodyParams = Json.obj("usage" -> Json.obj("include" -> true))),
   )
   val allIds: Set[String] = all.map(_.id).toSet
   def json: JsArray = JsArray(all.map(_.json))

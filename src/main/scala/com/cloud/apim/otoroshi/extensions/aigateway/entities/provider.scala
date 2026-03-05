@@ -198,6 +198,7 @@ case class AiProvider(
         val supportsCompletion = connection.select("supports_completion").asOptBoolean.getOrElse(true)
         val paramMappings = connection.select("param_mappings").asOpt[Map[String, String]].getOrElse(Map.empty)
         val customHeaders = connection.select("headers").asOpt[Map[String, String]].getOrElse(Map("Authorization" -> "Bearer {api_key}"))
+        val additionalBodyParams = connection.select("additional_body_params").asOpt[JsObject].getOrElse(Json.obj())
         val api = new OpenAiApi(
           _baseUrl = baseUrl.getOrElse(OpenAiApi.baseUrl),
           token = token,
@@ -209,6 +210,7 @@ case class AiProvider(
           supportsCompletion = supportsCompletion,
           param_mappings = paramMappings,
           headers = customHeaders,
+          additional_body_params = additionalBodyParams,
         )
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(
@@ -345,6 +347,7 @@ case class AiProvider(
             env = env,
             param_mappings = provDef.paramMappings,
             headers = provDef.headers,
+            additional_body_params = provDef.additionalBodyParams,
           )
           val opts = OpenAiChatClientOptions.fromJson(options)
           new OpenAiChatClient(api, opts, id, p, accumulateStreamConsumptions = true)

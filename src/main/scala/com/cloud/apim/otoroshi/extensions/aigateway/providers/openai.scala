@@ -58,6 +58,8 @@ case class OpenAiChatResponseChunkChoiceDeltaToolCall(raw: JsValue) {
 case class OpenAiChatResponseChunkChoiceDelta(raw: JsValue) {
   lazy val content: Option[String] = raw.select("content").asOptString
   lazy val reasoning: Option[String] = raw.select("reasoning").asOptString
+    .orElse(raw.select("reasoning_details").asOptString.map(_.trim))
+    .orElse(raw.select("reasoning_content").asOptString.map(_.trim))
   lazy val role: String = raw.select("role").asOptString.getOrElse("assistant")
   lazy val refusal: Option[String] = raw.select("refusal").asOptString
   lazy val tool_calls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = raw.select("tool_calls").asOpt[Seq[JsObject]].map(_.map(OpenAiChatResponseChunkChoiceDeltaToolCall.apply)).getOrElse(Seq.empty)
@@ -157,7 +159,8 @@ class OpenAiApi(
   val supportsStreaming: Boolean = true,
   val supportsCompletion: Boolean = true,
   param_mappings: Map[String, String] = Map.empty,
-  headers: Map[String, String] = Map("Authorization" -> "Bearer {api_key}")
+  headers: Map[String, String] = Map("Authorization" -> "Bearer {api_key}"),
+  additional_body_params: JsObject = Json.obj()
 ) extends ApiClient[OpenAiApiResponse, OpenAiChatResponseChunk] {
 
   lazy val baseUrl: String = {
@@ -174,14 +177,16 @@ class OpenAiApi(
   }
 
   private def applyParamMappings(body: Option[JsValue]): Option[JsValue] = {
-    if (param_mappings.isEmpty) body
-    else body.map { b =>
-      param_mappings.foldLeft(b.asObject) { case (obj, (from, to)) =>
+    body.map { b =>
+      val withMappings = if (param_mappings.isEmpty) b.asObject
+      else param_mappings.foldLeft(b.asObject) { case (obj, (from, to)) =>
         obj.value.get(from) match {
           case Some(value) => (obj - from) + (to -> value)
           case None => obj
         }
       }
+      if (additional_body_params.value.isEmpty) withMappings
+      else withMappings ++ additional_body_params
     }
   }
 
