@@ -866,8 +866,21 @@ class McpRespEndpoint extends NgBackendCall {
     jsonRpcResponse(id, Json.obj("prompts" -> Json.arr()))
   }
 
-  def getTemplatesList(id: Long)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    jsonRpcResponse(id, Json.obj("templates" -> Json.arr()))
+  def getTemplatesList(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    Future.sequence(mcpConnectors.map(_.listResourceTemplates())).flatMap { mcpResources =>
+      jsonRpcResponse(id, Json.obj("templates" -> Json.arr(
+        mcpResources.flatten.map { r =>
+          Json.obj(
+            "uriTemplate" -> r.uriTemplate(),
+            "name" -> r.name(),
+            "description" -> r.description(),
+            "mimeType" -> r.mimeType(),
+          )
+        }
+      )))
+    }
   }
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
@@ -877,7 +890,7 @@ class McpRespEndpoint extends NgBackendCall {
         Try(bodyRaw.utf8String.parseJson) match {
           case Failure(e) => error(400,"error while parsing json-rpc payload")
           case Success(json) => {
-            println(s"mcp in >>> ${json.prettify}")
+            // println(s"mcp in >>> ${json.prettify}")
             val id = json.select("id").asOpt[Long].getOrElse(0L)
             json.select("method").asOpt[String] match {
               case Some("initialize") => initialize(id, config)
@@ -890,7 +903,7 @@ class McpRespEndpoint extends NgBackendCall {
               case Some("tools/list") => getToolList(id, config)
               case Some("resources/list") => getResourcesList(id)
               case Some("resources/read") => emptyResp(id)
-              case Some("resources/templates/list") => getTemplatesList(id)
+              case Some("resources/templates/list") => getTemplatesList(id, config)
               case Some("prompts/list") => getPromptsList(id)
               case Some("prompts/get") => emptyResp(id)
               case Some("tools/call") => toolsCall(id, json, config, ctx.attrs)

@@ -4,7 +4,7 @@ import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorTransportKind.Stdio
 import com.google.gson.Gson
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
-import dev.langchain4j.mcp.client.DefaultMcpClient
+import dev.langchain4j.mcp.client.{DefaultMcpClient, McpPrompt, McpResource, McpResourceTemplate}
 import dev.langchain4j.mcp.client.transport.http.{HttpMcpTransport, StreamableHttpMcpTransport}
 import dev.langchain4j.mcp.client.transport.stdio.StdioMcpTransport
 import dev.langchain4j.mcp.client.transport.websocket.WebSocketMcpTransport
@@ -234,8 +234,16 @@ case class McpConnector(
     }
   }
 
+  def matchesResource(resource: McpResource): Boolean = true
+  def matchesResourceTemplate(resourceTemplate: McpResourceTemplate): Boolean = true
+  def matchesPrompt(prompt: McpPrompt): Boolean = true
+  def listResources()(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResource]] = withClient(_.listResources().asScala.filter(matchesResource))
+  def listResourceTemplates()(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResourceTemplate]] = withClient(_.listResourceTemplates().asScala.filter(matchesResourceTemplate))
+  def listPrompts()(implicit ec: ExecutionContext, env: Env): Future[Seq[McpPrompt]] = withClient(_.listPrompts().asScala.filter(matchesPrompt))
   def listTools()(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = withClient(_.listTools().asScala.filter(matchesTool))
-
+  def listResourcesBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpResource] = Await.result(listResources(), 10.seconds)
+  def listResourceTemplatesBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpResourceTemplate] = Await.result(listResourceTemplates(), 10.seconds)
+  def listPromptsBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpPrompt] = Await.result(listPrompts(), 10.seconds)
   def listToolsBlocking()(implicit ec: ExecutionContext, env: Env): Seq[ToolSpecification] = Await.result(listTools(), 10.seconds)
 
   def call(name: String, args: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
