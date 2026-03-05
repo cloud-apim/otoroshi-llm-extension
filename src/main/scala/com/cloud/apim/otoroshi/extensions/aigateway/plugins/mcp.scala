@@ -393,19 +393,66 @@ class McpSseEndpoint extends NgBackendCall {
     }
   }
 
-  def getResourcesList(id: Long, session: SseSession)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    session.send(id, Json.obj("resources" -> Json.arr()))
-    jsonRpcResponse(id, Json.obj("resources" -> Json.arr()))
+  def getResourcesList(id: Long, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    Future.sequence(mcpConnectors.map(_.listResources())).flatMap { mcpResources =>
+      val payload = Json.obj("resources" -> Json.arr(
+        mcpResources.flatten.map { r =>
+          Json.obj(
+            "uri" -> r.uri(),
+            "name" -> r.name(),
+            "description" -> r.description(),
+            "mimeType" -> r.mimeType(),
+          )
+        }
+      ))
+      session.send(id, payload)
+      jsonRpcResponse(id, payload)
+    }
   }
 
-  def getPromptsList(id: Long, session: SseSession)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    session.send(id, Json.obj("prompts" -> Json.arr()))
-    jsonRpcResponse(id, Json.obj("prompts" -> Json.arr()))
+  def getPromptsList(id: Long, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    Future.sequence(mcpConnectors.map(_.listPrompts())).flatMap { mcpPrompts =>
+      val payload = Json.obj("prompts" -> Json.arr(
+        mcpPrompts.flatten.map { p =>
+          Json.obj(
+            "name" -> p.name(),
+            "description" -> p.description(),
+            "arguments" -> Json.arr(Option(p.arguments()).map(_.asScala).getOrElse(Seq.empty).map { a =>
+              Json.obj(
+                "name" -> a.name(),
+                "description" -> a.description(),
+                "required" -> a.required(),
+              )
+            }),
+          )
+        }
+      ))
+      session.send(id, payload)
+      jsonRpcResponse(id, payload)
+    }
   }
 
-  def getTemplatesList(id: Long, session: SseSession)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    session.send(id, Json.obj("templates" -> Json.arr()))
-    jsonRpcResponse(id, Json.obj("templates" -> Json.arr()))
+  def getTemplatesList(id: Long, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    Future.sequence(mcpConnectors.map(_.listResourceTemplates())).flatMap { mcpResources =>
+      val payload = Json.obj("templates" -> Json.arr(
+        mcpResources.flatten.map { r =>
+          Json.obj(
+            "uriTemplate" -> r.uriTemplate(),
+            "name" -> r.name(),
+            "description" -> r.description(),
+            "mimeType" -> r.mimeType(),
+          )
+        }
+      ))
+      session.send(id, payload)
+      jsonRpcResponse(id, payload)
+    }
   }
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
@@ -482,10 +529,10 @@ class McpSseEndpoint extends NgBackendCall {
                         emptyResp(id)
                       }
                       case Some("tools/list") if session.ready.get() => getToolList(id, session, config)
-                      case Some("resources/list") if session.ready.get() => getResourcesList(id, session)
+                      case Some("resources/list") if session.ready.get() => getResourcesList(id, session, config)
                       case Some("resources/read") if session.ready.get() => ???
-                      case Some("resources/templates/list") if session.ready.get() => getTemplatesList(id, session)
-                      case Some("prompts/list") if session.ready.get() => getPromptsList(id, session)
+                      case Some("resources/templates/list") if session.ready.get() => getTemplatesList(id, session, config)
+                      case Some("prompts/list") if session.ready.get() => getPromptsList(id, session, config)
                       case Some("prompts/get") if session.ready.get() => ???
                       case Some("tools/call") if session.ready.get() => toolsCall(id, session, json, config, ctx.attrs)
                       case _ => {
@@ -663,15 +710,50 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
   }
 
   def getResourcesList(id: Long): JsValue = {
-    jsonRpcResponse(id, Json.obj("resources" -> Json.arr()))
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    val resources = mcpConnectors.flatMap(_.listResourcesBlocking()(env.otoroshiExecutionContext, env))
+    jsonRpcResponse(id, Json.obj("resources" -> Json.arr(resources.map { r =>
+      Json.obj(
+        "uri" -> r.uri(),
+        "name" -> r.name(),
+        "description" -> r.description(),
+        "mimeType" -> r.mimeType(),
+      )
+    })))
   }
 
   def getPromptsList(id: Long): JsValue = {
-    jsonRpcResponse(id, Json.obj("prompts" -> Json.arr()))
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    val prompts = mcpConnectors.flatMap(_.listPromptsBlocking()(env.otoroshiExecutionContext, env))
+    jsonRpcResponse(id, Json.obj("prompts" -> Json.arr(prompts.map { p =>
+      Json.obj(
+        "name" -> p.name(),
+        "description" -> p.description(),
+        "arguments" -> Json.arr(Option(p.arguments()).map(_.asScala).getOrElse(Seq.empty).map { a =>
+          Json.obj(
+            "name" -> a.name(),
+            "description" -> a.description(),
+            "required" -> a.required(),
+          )
+        }),
+      )
+    })))
   }
 
   def getTemplatesList(id: Long): JsValue = {
-    jsonRpcResponse(id, Json.obj("templates" -> Json.arr()))
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    val templates = mcpConnectors.flatMap(_.listResourceTemplatesBlocking()(env.otoroshiExecutionContext, env))
+    jsonRpcResponse(id, Json.obj("templates" -> Json.arr(templates.map { r =>
+      Json.obj(
+        "uriTemplate" -> r.uriTemplate(),
+        "name" -> r.name(),
+        "description" -> r.description(),
+        "mimeType" -> r.mimeType(),
+      )
+    })))
   }
 
   def handle(data: String): Unit = {
@@ -858,12 +940,43 @@ class McpRespEndpoint extends NgBackendCall {
     }
   }
 
-  def getResourcesList(id: Long)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    jsonRpcResponse(id, Json.obj("resources" -> Json.arr()))
+  def getResourcesList(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    Future.sequence(mcpConnectors.map(_.listResources())).flatMap { mcpResources =>
+      jsonRpcResponse(id, Json.obj("resources" -> Json.arr(
+        mcpResources.flatten.map { r =>
+          Json.obj(
+            "uri" -> r.uri(),
+            "name" -> r.name(),
+            "description" -> r.description(),
+            "mimeType" -> r.mimeType(),
+          )
+        }
+      )))
+    }
   }
 
-  def getPromptsList(id: Long)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    jsonRpcResponse(id, Json.obj("prompts" -> Json.arr()))
+  def getPromptsList(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+    Future.sequence(mcpConnectors.map(_.listPrompts())).flatMap { mcpPrompts =>
+      jsonRpcResponse(id, Json.obj("prompts" -> Json.arr(
+        mcpPrompts.flatten.map { p =>
+          Json.obj(
+            "name" -> p.name(),
+            "description" -> p.description(),
+            "arguments" -> Json.arr(Option(p.arguments()).map(_.asScala).getOrElse(Seq.empty).map { a =>
+              Json.obj(
+                "name" -> a.name(),
+                "description" -> a.description(),
+                "required" -> a.required(),
+              )
+            }),
+          )
+        }
+      )))
+    }
   }
 
   def getTemplatesList(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
@@ -901,10 +1014,10 @@ class McpRespEndpoint extends NgBackendCall {
               case Some("notifications/cancelled") => emptyResp(id)
               case Some("notifications/initialized") => emptyResp(id)
               case Some("tools/list") => getToolList(id, config)
-              case Some("resources/list") => getResourcesList(id)
+              case Some("resources/list") => getResourcesList(id, config)
               case Some("resources/read") => emptyResp(id)
               case Some("resources/templates/list") => getTemplatesList(id, config)
-              case Some("prompts/list") => getPromptsList(id)
+              case Some("prompts/list") => getPromptsList(id, config)
               case Some("prompts/get") => emptyResp(id)
               case Some("tools/call") => toolsCall(id, json, config, ctx.attrs)
               case _ => {
