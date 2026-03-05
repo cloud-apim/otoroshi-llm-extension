@@ -6,6 +6,7 @@ import akka.stream.{Materializer, OverflowStrategy}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, McpConnector, McpSupport}
 import dev.langchain4j.agent.tool.ToolSpecification
+import dev.langchain4j.mcp.client.{McpBlobResourceContents, McpResourceContents, McpTextResourceContents}
 import dev.langchain4j.model.chat.request.json.JsonSchemaElement
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
@@ -455,6 +456,21 @@ class McpSseEndpoint extends NgBackendCall {
     }
   }
 
+  def readResource(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    json.select("params").select("uri").asOpt[String] match {
+      case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter"))
+      case Some(uri) =>
+        val ext = env.adminExtensions.extension[AiExtension].get
+        val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+        Future.sequence(mcpConnectors.map(_.readResource(uri))).flatMap { results =>
+          val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
+          val payload = Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson)))
+          session.send(id, payload)
+          jsonRpcResponse(id, payload)
+        }
+    }
+  }
+
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default)
     if (ctx.request.method.toLowerCase() == "get") {
@@ -530,7 +546,7 @@ class McpSseEndpoint extends NgBackendCall {
                       }
                       case Some("tools/list") if session.ready.get() => getToolList(id, session, config)
                       case Some("resources/list") if session.ready.get() => getResourcesList(id, session, config)
-                      case Some("resources/read") if session.ready.get() => ???
+                      case Some("resources/read") if session.ready.get() => readResource(id, json, session, config)
                       case Some("resources/templates/list") if session.ready.get() => getTemplatesList(id, session, config)
                       case Some("prompts/list") if session.ready.get() => getPromptsList(id, session, config)
                       case Some("prompts/get") if session.ready.get() => ???
@@ -587,6 +603,8 @@ object McpActor {
 }
 
 class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: TypedMap) extends Actor {
+
+  implicit val ec = env.otoroshiExecutionContext
 
   val ready = new AtomicBoolean(false)
   val canceledRequests = new TrieMap[Long, Unit]()
@@ -756,6 +774,19 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     })))
   }
 
+  def readResource(id: Long, json: JsValue): Future[JsValue] = {
+    json.select("params").select("uri").asOpt[String] match {
+      case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter")).vfuture
+      case Some(uri) =>
+        val ext = env.adminExtensions.extension[AiExtension].get
+        val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+        Future.sequence(mcpConnectors.map(_.readResource(uri)(env.otoroshiExecutionContext, env))).map { results =>
+          val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
+          jsonRpcResponse(id, Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson))))
+        }(env.otoroshiExecutionContext)
+    }
+  }
+
   def handle(data: String): Unit = {
     // println(s"handle ws raw message: ${data}")
     Try(data.parseJson) match {
@@ -787,7 +818,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
           }
           case Some("tools/list") if ready.get() => getToolList(id, config).vfuture
           case Some("resources/list") if ready.get() => getResourcesList(id).vfuture
-          case Some("resources/read") if ready.get() => emptyResp(id).vfuture // TODO: support ?
+          case Some("resources/read") if ready.get() => readResource(id, json)
           case Some("resources/templates/list") if ready.get() => getTemplatesList(id).vfuture
           case Some("prompts/list") if ready.get() => getPromptsList(id).vfuture
           case Some("prompts/get") if ready.get() => emptyResp(id).vfuture // TODO: support ?
@@ -996,6 +1027,19 @@ class McpRespEndpoint extends NgBackendCall {
     }
   }
 
+  def readResource(id: Long, json: JsValue, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    json.select("params").select("uri").asOpt[String] match {
+      case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter"))
+      case Some(uri) =>
+        val ext = env.adminExtensions.extension[AiExtension].get
+        val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
+        Future.sequence(mcpConnectors.map(_.readResource(uri))).flatMap { results =>
+          val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
+          jsonRpcResponse(id, Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson))))
+        }
+    }
+  }
+
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default)
     if (ctx.request.hasBody && ctx.request.method.toLowerCase() == "post") {
@@ -1015,7 +1059,7 @@ class McpRespEndpoint extends NgBackendCall {
               case Some("notifications/initialized") => emptyResp(id)
               case Some("tools/list") => getToolList(id, config)
               case Some("resources/list") => getResourcesList(id, config)
-              case Some("resources/read") => emptyResp(id)
+              case Some("resources/read") => readResource(id, json, config)
               case Some("resources/templates/list") => getTemplatesList(id, config)
               case Some("prompts/list") => getPromptsList(id, config)
               case Some("prompts/get") => emptyResp(id)

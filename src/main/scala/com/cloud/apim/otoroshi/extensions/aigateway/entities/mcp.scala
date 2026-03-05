@@ -4,7 +4,7 @@ import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorTransportKind.Stdio
 import com.google.gson.Gson
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
-import dev.langchain4j.mcp.client.{DefaultMcpClient, McpPrompt, McpResource, McpResourceTemplate}
+import dev.langchain4j.mcp.client.{DefaultMcpClient, McpBlobResourceContents, McpPrompt, McpReadResourceResult, McpResource, McpResourceContents, McpResourceTemplate, McpTextResourceContents}
 import dev.langchain4j.mcp.client.transport.http.{HttpMcpTransport, StreamableHttpMcpTransport}
 import dev.langchain4j.mcp.client.transport.stdio.StdioMcpTransport
 import dev.langchain4j.mcp.client.transport.websocket.WebSocketMcpTransport
@@ -241,10 +241,12 @@ case class McpConnector(
   def listResourceTemplates()(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResourceTemplate]] = withClient(_.listResourceTemplates().asScala.filter(matchesResourceTemplate))
   def listPrompts()(implicit ec: ExecutionContext, env: Env): Future[Seq[McpPrompt]] = withClient(_.listPrompts().asScala.filter(matchesPrompt))
   def listTools()(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = withClient(_.listTools().asScala.filter(matchesTool))
+  def readResource(uri: String)(implicit ec: ExecutionContext, env: Env): Future[Option[McpReadResourceResult]] = withClient(_.readResource(uri)).map(Some(_)).recover { case _ => None }
   def listResourcesBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpResource] = Await.result(listResources(), 10.seconds)
   def listResourceTemplatesBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpResourceTemplate] = Await.result(listResourceTemplates(), 10.seconds)
   def listPromptsBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpPrompt] = Await.result(listPrompts(), 10.seconds)
   def listToolsBlocking()(implicit ec: ExecutionContext, env: Env): Seq[ToolSpecification] = Await.result(listTools(), 10.seconds)
+  def readResourceBlocking(uri: String)(implicit ec: ExecutionContext, env: Env): Option[McpReadResourceResult] = Await.result(readResource(uri), 10.seconds)
 
   def call(name: String, args: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
     if (matches(name)) {
@@ -493,6 +495,22 @@ object McpSupport {
         case None => McpConnector.connectorsCache.remove(key).foreach(_._1.asScala.foreach(_.close()))
         case Some(_) => ()
       }
+    }
+  }
+
+  def resourceContentsToJson(c: McpResourceContents): JsObject = {
+    c match {
+      case t: McpTextResourceContents => Json.obj(
+        "uri" -> t.uri(),
+        "mimeType" -> t.mimeType(),
+        "text" -> t.text(),
+      )
+      case b: McpBlobResourceContents => Json.obj(
+        "uri" -> b.uri(),
+        "mimeType" -> b.mimeType(),
+        "blob" -> b.blob(),
+      )
+      case _ => Json.obj()
     }
   }
 
