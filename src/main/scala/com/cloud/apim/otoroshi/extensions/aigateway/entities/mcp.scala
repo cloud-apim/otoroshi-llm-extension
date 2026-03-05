@@ -243,9 +243,6 @@ case class McpConnector(
   def listTools()(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = withClient(_.listTools().asScala.filter(matchesTool))
   def readResource(uri: String)(implicit ec: ExecutionContext, env: Env): Future[Option[McpReadResourceResult]] = withClient(_.readResource(uri)).map(Some(_)).recover { case _ => None }
   def getPrompt(name: String, arguments: Map[String, Object])(implicit ec: ExecutionContext, env: Env): Future[Option[McpGetPromptResult]] = withClient(_.getPrompt(name, arguments.asJava)).map(Some(_)).recover { case _ => None }
-  def listResourcesBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpResource] = Await.result(listResources(), 10.seconds)
-  def listResourceTemplatesBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpResourceTemplate] = Await.result(listResourceTemplates(), 10.seconds)
-  def listPromptsBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpPrompt] = Await.result(listPrompts(), 10.seconds)
   def listToolsBlocking()(implicit ec: ExecutionContext, env: Env): Seq[ToolSpecification] = Await.result(listTools(), 10.seconds)
 
   def call(name: String, args: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {

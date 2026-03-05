@@ -763,51 +763,54 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     }
   }
 
-  def getResourcesList(id: Long): JsValue = {
+  def getResourcesList(id: Long): Future[JsValue] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    val resources = mcpConnectors.flatMap(_.listResourcesBlocking()(env.otoroshiExecutionContext, env))
-    jsonRpcResponse(id, Json.obj("resources" -> Json.arr(resources.map { r =>
-      Json.obj(
-        "uri" -> r.uri(),
-        "name" -> r.name(),
-        "description" -> r.description(),
-        "mimeType" -> r.mimeType(),
-      )
-    })))
+    Future.sequence(mcpConnectors.map(_.listResources()(ec, env))).map { all =>
+      jsonRpcResponse(id, Json.obj("resources" -> Json.arr(all.flatten.map { r =>
+        Json.obj(
+          "uri" -> r.uri(),
+          "name" -> r.name(),
+          "description" -> r.description(),
+          "mimeType" -> r.mimeType(),
+        )
+      })))
+    }(ec)
   }
 
-  def getPromptsList(id: Long): JsValue = {
+  def getPromptsList(id: Long): Future[JsValue] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    val prompts = mcpConnectors.flatMap(_.listPromptsBlocking()(env.otoroshiExecutionContext, env))
-    jsonRpcResponse(id, Json.obj("prompts" -> Json.arr(prompts.map { p =>
-      Json.obj(
-        "name" -> p.name(),
-        "description" -> p.description(),
-        "arguments" -> Json.arr(Option(p.arguments()).map(_.asScala).getOrElse(Seq.empty).map { a =>
-          Json.obj(
-            "name" -> a.name(),
-            "description" -> a.description(),
-            "required" -> a.required(),
-          )
-        }),
-      )
-    })))
+    Future.sequence(mcpConnectors.map(_.listPrompts()(ec, env))).map { all =>
+      jsonRpcResponse(id, Json.obj("prompts" -> Json.arr(all.flatten.map { p =>
+        Json.obj(
+          "name" -> p.name(),
+          "description" -> p.description(),
+          "arguments" -> Json.arr(Option(p.arguments()).map(_.asScala).getOrElse(Seq.empty).map { a =>
+            Json.obj(
+              "name" -> a.name(),
+              "description" -> a.description(),
+              "required" -> a.required(),
+            )
+          }),
+        )
+      })))
+    }(ec)
   }
 
-  def getTemplatesList(id: Long): JsValue = {
+  def getTemplatesList(id: Long): Future[JsValue] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-    val templates = mcpConnectors.flatMap(_.listResourceTemplatesBlocking()(env.otoroshiExecutionContext, env))
-    jsonRpcResponse(id, Json.obj("templates" -> Json.arr(templates.map { r =>
-      Json.obj(
-        "uriTemplate" -> r.uriTemplate(),
-        "name" -> r.name(),
-        "description" -> r.description(),
-        "mimeType" -> r.mimeType(),
-      )
-    })))
+    Future.sequence(mcpConnectors.map(_.listResourceTemplates()(ec, env))).map { all =>
+      jsonRpcResponse(id, Json.obj("templates" -> Json.arr(all.flatten.map { r =>
+        Json.obj(
+          "uriTemplate" -> r.uriTemplate(),
+          "name" -> r.name(),
+          "description" -> r.description(),
+          "mimeType" -> r.mimeType(),
+        )
+      })))
+    }(ec)
   }
 
   def readResource(id: Long, json: JsValue): Future[JsValue] = {
@@ -887,10 +890,10 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
             emptyResp(id).vfuture
           }
           case Some("tools/list") if ready.get() => getToolList(id, config).vfuture
-          case Some("resources/list") if ready.get() => getResourcesList(id).vfuture
+          case Some("resources/list") if ready.get() => getResourcesList(id)
           case Some("resources/read") if ready.get() => readResource(id, json)
-          case Some("resources/templates/list") if ready.get() => getTemplatesList(id).vfuture
-          case Some("prompts/list") if ready.get() => getPromptsList(id).vfuture
+          case Some("resources/templates/list") if ready.get() => getTemplatesList(id)
+          case Some("prompts/list") if ready.get() => getPromptsList(id)
           case Some("prompts/get") if ready.get() => getPromptHandler(id, json)
           case Some("tools/call") if ready.get() => toolsCall(id, json, config)
           case _ => {
