@@ -462,11 +462,16 @@ class McpSseEndpoint extends NgBackendCall {
       case Some(uri) =>
         val ext = env.adminExtensions.extension[AiExtension].get
         val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-        Future.sequence(mcpConnectors.map(_.readResource(uri))).flatMap { results =>
-          val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
-          val payload = Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson)))
-          session.send(id, payload)
-          jsonRpcResponse(id, payload)
+        Future.sequence(mcpConnectors.map(c => c.listResources().map(resources => (c, resources)))).flatMap { connectorsWithResources =>
+          val matchingConnectors = connectorsWithResources.collect {
+            case (connector, resources) if resources.exists(_.uri() == uri) => connector
+          }
+          Future.sequence(matchingConnectors.map(_.readResource(uri))).flatMap { results =>
+            val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
+            val payload = Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson)))
+            session.send(id, payload)
+            jsonRpcResponse(id, payload)
+          }
         }
     }
   }
@@ -780,10 +785,15 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
       case Some(uri) =>
         val ext = env.adminExtensions.extension[AiExtension].get
         val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-        Future.sequence(mcpConnectors.map(_.readResource(uri)(env.otoroshiExecutionContext, env))).map { results =>
-          val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
-          jsonRpcResponse(id, Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson))))
-        }(env.otoroshiExecutionContext)
+        Future.sequence(mcpConnectors.map(c => c.listResources()(ec, env).map(resources => (c, resources))(ec))).flatMap { connectorsWithResources =>
+          val matchingConnectors = connectorsWithResources.collect {
+            case (connector, resources) if resources.exists(_.uri() == uri) => connector
+          }
+          Future.sequence(matchingConnectors.map(_.readResource(uri)(ec, env))).map { results =>
+            val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
+            jsonRpcResponse(id, Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson))))
+          }(ec)
+        }(ec)
     }
   }
 
@@ -1033,9 +1043,14 @@ class McpRespEndpoint extends NgBackendCall {
       case Some(uri) =>
         val ext = env.adminExtensions.extension[AiExtension].get
         val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r))
-        Future.sequence(mcpConnectors.map(_.readResource(uri))).flatMap { results =>
-          val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
-          jsonRpcResponse(id, Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson))))
+        Future.sequence(mcpConnectors.map(c => c.listResources().map(resources => (c, resources)))).flatMap { connectorsWithResources =>
+          val matchingConnectors = connectorsWithResources.collect {
+            case (connector, resources) if resources.exists(_.uri() == uri) => connector
+          }
+          Future.sequence(matchingConnectors.map(_.readResource(uri))).flatMap { results =>
+            val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
+            jsonRpcResponse(id, Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson))))
+          }
         }
     }
   }
