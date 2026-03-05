@@ -789,6 +789,7 @@ object OpenAiLikeProviders {
     OpenAiLikeProviderDef("gmi",          "GMI",          "https://api.gmi-serving.com/v1",                                                          apiKeyEnv = Some("GMI_API_KEY")),
     OpenAiLikeProviderDef("sarvam",       "Sarvam",       "https://api.sarvam.ai/v1",                 Map("max_completion_tokens" -> "max_tokens"), Map("api-subscription-key" -> "{api_key}"), Some("SARVAM_API_KEY")),
     OpenAiLikeProviderDef("assemblyai",   "AssemblyAI",   "https://llm-gateway.assemblyai.com/v1",                                                   apiKeyEnv = Some("ASSEMBLYAI_API_KEY")),
+    OpenAiLikeProviderDef("minimax",      "Minimax",      "https://api.minimax.io/v1",                                                               apiKeyEnv = Some("MINIMAX_API_KEY")),
   )
   val allIds: Set[String] = all.map(_.id).toSet
   def json: JsArray = JsArray(all.map(_.json))
