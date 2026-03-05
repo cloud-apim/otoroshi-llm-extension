@@ -16,15 +16,17 @@ case class OpenAiLikeProviderDef(
                                   headers: Map[String, String] = Map("Authorization" -> "Bearer {api_key}"),
                                   apiKeyEnv: Option[String] = None,
                                   additionalBodyParams: JsObject = Json.obj(),
+                                  supportsEmbeddings: Boolean = false,
                                 ) {
   def json: JsObject = Json.obj(
-    "id"                    -> id,
-    "name"                  -> name,
-    "base_url"              -> baseUrl,
-    "param_mappings"        -> JsObject(paramMappings.map { case (k, v) => k -> JsString(v) }),
-    "headers"               -> JsObject(headers.map { case (k, v) => k -> JsString(v) }),
-    "api_key_env"           -> apiKeyEnv.map(JsString.apply).getOrElse(JsNull).asValue,
+    "id"                     -> id,
+    "name"                   -> name,
+    "base_url"               -> baseUrl,
+    "param_mappings"         -> JsObject(paramMappings.map { case (k, v) => k -> JsString(v) }),
+    "headers"                -> JsObject(headers.map { case (k, v) => k -> JsString(v) }),
+    "api_key_env"            -> apiKeyEnv.map(JsString.apply).getOrElse(JsNull).asValue,
     "additional_body_params" -> additionalBodyParams,
+    "supports_embeddings"    -> supportsEmbeddings,
   )
 }
 
@@ -62,15 +64,15 @@ object OpenAiLikeProviders {
     OpenAiLikeProviderDef("hyperbolic",    "Hyperbolic",       "https://api.hyperbolic.xyz/v1",                             apiKeyEnv = Some("HYPERBOLIC_API_KEY")),
     OpenAiLikeProviderDef("lambda-ai",     "Lambda AI",        "https://api.lambda.ai/v1",                                  apiKeyEnv = Some("LAMBDA_API_KEY")),
     OpenAiLikeProviderDef("meta-llama",    "Meta Llama API",   "https://api.llama.com/compat/v1",                           apiKeyEnv = Some("LLAMA_API_KEY")),
-    OpenAiLikeProviderDef("nebius",        "Nebius AI Studio", "https://api.studio.nebius.ai/v1",       mct,                apiKeyEnv = Some("NEBIUS_API_KEY")),
+    OpenAiLikeProviderDef("nebius",        "Nebius AI Studio", "https://api.studio.nebius.ai/v1",       mct,                apiKeyEnv = Some("NEBIUS_API_KEY"),        supportsEmbeddings = true),
     OpenAiLikeProviderDef("novita",        "Novita AI",        "https://api.novita.ai/v3/openai",                           apiKeyEnv = Some("NOVITA_API_KEY")),
     OpenAiLikeProviderDef("nscale",        "Nscale",           "https://inference.api.nscale.com/v1",                       apiKeyEnv = Some("NSCALE_API_KEY")),
     OpenAiLikeProviderDef("nvidia-nim",    "Nvidia NIM",       "https://integrate.api.nvidia.com/v1",   mct,                apiKeyEnv = Some("NVIDIA_NIM_API_KEY")),
     OpenAiLikeProviderDef("perplexity",    "Perplexity",       "https://api.perplexity.ai",                                 apiKeyEnv = Some("PERPLEXITYAI_API_KEY")),
-    OpenAiLikeProviderDef("sambanova",     "SambaNova",        "https://api.sambanova.ai/v1",           mct,                apiKeyEnv = Some("SAMBANOVA_API_KEY")),
+    OpenAiLikeProviderDef("sambanova",     "SambaNova",        "https://api.sambanova.ai/v1",           mct,                apiKeyEnv = Some("SAMBANOVA_API_KEY"),     supportsEmbeddings = true),
     OpenAiLikeProviderDef("together-ai",   "Together AI",      "https://api.together.xyz/v1",                               apiKeyEnv = Some("TOGETHERAI_API_KEY")),
     OpenAiLikeProviderDef("zai",           "Z.AI",             "https://api.z.ai/api/paas/v4",                              apiKeyEnv = Some("ZAI_API_KEY")),
-    OpenAiLikeProviderDef("openrouter",    "OpenRouter",       "https://openrouter.ai/api/v1",                              apiKeyEnv = Some("OPENROUTER_API_KEY"), additionalBodyParams = Json.obj("usage" -> Json.obj("include" -> true))),
+    OpenAiLikeProviderDef("openrouter",    "OpenRouter",       "https://openrouter.ai/api/v1",                              apiKeyEnv = Some("OPENROUTER_API_KEY"), additionalBodyParams = Json.obj("usage" -> Json.obj("include" -> true)), supportsEmbeddings = true),
   )
   val allIds: Set[String] = all.map(_.id).toSet
   def json: JsArray = JsArray(all.map(_.json))
