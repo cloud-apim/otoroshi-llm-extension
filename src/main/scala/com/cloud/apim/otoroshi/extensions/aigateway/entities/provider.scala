@@ -335,6 +335,21 @@ case class AiProvider(
         new JlamaChatClient(opts, id).some
       }
       case "loadbalancer" => new LoadBalancerChatClient(this).some
+      case p if OpenAiLikeProviders.allIds.contains(p) => {
+        OpenAiLikeProviders.find(p).map { provDef =>
+          val api = new OpenAiApi(
+            _baseUrl = baseUrl.getOrElse(provDef.baseUrl),
+            token = token,
+            timeout = timeout.getOrElse(3.minutes),
+            providerName = provDef.name,
+            env = env,
+            param_mappings = provDef.paramMappings,
+            headers = provDef.headers,
+          )
+          val opts = OpenAiChatClientOptions.fromJson(options)
+          new OpenAiChatClient(api, opts, id, p, accumulateStreamConsumptions = true)
+        }
+      }
       case _ => None
     }
     rawClient.map(c => ChatClientDecorators(this, c, env))

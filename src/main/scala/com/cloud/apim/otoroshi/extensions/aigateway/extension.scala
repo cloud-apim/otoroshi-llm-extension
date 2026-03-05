@@ -849,6 +849,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      gemini: '${GeminiApi.baseUrl}',
             |      hugging: ''
             |    };
+            |    const OpenAiLikeProviders = ${OpenAiLikeProviders.json.stringify};
             |    const ClientOptions = {
             |      anthropic: ${AnthropicChatClientOptions().json.stringify},
             |      openai: ${OpenAiChatClientOptions().json.stringify},

@@ -557,6 +557,7 @@ class AiProvidersPage extends Component {
     { 'label': 'Gemini', value: 'gemini' },
     { 'label': 'JLama', value: 'jlama' },
     { 'label': 'Loadbalancer', value: 'loadbalancer' },
+    ...OpenAiLikeProviders.map(p => ({ label: p.name, value: p.id })),
   ], a => a.label)
 
   formSchema = (state) => ({
@@ -1582,7 +1583,7 @@ class AiProvidersPage extends Component {
         'metadata',
       ];
     }
-    if (state.provider === "openai-compatible") {
+    if (state.provider === "openai-compatible" || OpenAiLikeProviders.some(p => p.id === state.provider)) {
       return [
       '_loc', 'id', 'name', 'description',
       '<<<Provider',
@@ -2051,6 +2052,34 @@ class AiProvidersPage extends Component {
                 },
                 options: ClientOptions.huggingface,
               });
+            } else {
+              const openAiLikeDef = OpenAiLikeProviders.find(p => p.id === state.provider);
+              if (openAiLikeDef) {
+                const token = openAiLikeDef.api_key_env
+                  ? '${vault://env/' + openAiLikeDef.api_key_env + '}'
+                  : 'xxx';
+                update({
+                  id: state.id,
+                  name: state.name,
+                  description: state.description,
+                  tags: state.tags,
+                  metadata: state.metadata,
+                  provider: openAiLikeDef.id,
+                  connection: {
+                    base_url: openAiLikeDef.base_url,
+                    token: token,
+                    timeout: 180000,
+                    models_path: '/models',
+                    supports_completion: true,
+                    supports_tools: true,
+                    supports_streaming: true,
+                    acc_stream_consumptions: false,
+                    param_mappings: openAiLikeDef.param_mappings,
+                    headers: openAiLikeDef.headers,
+                  },
+                  options: ClientOptions.openai,
+                });
+              }
             }
           }
         }
