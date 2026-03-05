@@ -247,7 +247,6 @@ case class McpConnector(
   def listResourceTemplatesBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpResourceTemplate] = Await.result(listResourceTemplates(), 10.seconds)
   def listPromptsBlocking()(implicit ec: ExecutionContext, env: Env): Seq[McpPrompt] = Await.result(listPrompts(), 10.seconds)
   def listToolsBlocking()(implicit ec: ExecutionContext, env: Env): Seq[ToolSpecification] = Await.result(listTools(), 10.seconds)
-  def readResourceBlocking(uri: String)(implicit ec: ExecutionContext, env: Env): Option[McpReadResourceResult] = Await.result(readResource(uri), 10.seconds)
 
   def call(name: String, args: String)(implicit ec: ExecutionContext, env: Env): Future[String] = {
     if (matches(name)) {
