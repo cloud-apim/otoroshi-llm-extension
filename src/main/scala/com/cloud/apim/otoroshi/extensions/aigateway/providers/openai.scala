@@ -147,17 +147,41 @@ object OpenAiApi {
   val baseUrl = "https://api.openai.com/v1"
 }
 
-class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, providerName: String, env: Env, val supportsTools: Boolean = true, val supportsStreaming: Boolean = true, val supportsCompletion: Boolean = true) extends ApiClient[OpenAiApiResponse, OpenAiChatResponseChunk] {
-
-  // val supportsTools: Boolean = true
-  // val supportsStreaming: Boolean = true
-  // val supportsCompletion: Boolean = true
+class OpenAiApi(
+  _baseUrl: String = OpenAiApi.baseUrl,
+  token: String,
+  timeout: FiniteDuration = 3.minutes,
+  providerName: String,
+  env: Env,
+  val supportsTools: Boolean = true,
+  val supportsStreaming: Boolean = true,
+  val supportsCompletion: Boolean = true,
+  param_mappings: Map[String, String] = Map.empty,
+  headers: Map[String, String] = Map("Authorization" -> "Bearer {api_key}")
+) extends ApiClient[OpenAiApiResponse, OpenAiChatResponseChunk] {
 
   lazy val baseUrl: String = {
     if (_baseUrl.startsWith("https://api.openai.com") && !_baseUrl.startsWith("https://api.openai.com/v1")) {
       "https://api.openai.com/v1"
     } else {
       _baseUrl
+    }
+  }
+
+  private def resolvedHeaders: Seq[(String, String)] = {
+    val hdrs = if (headers.isEmpty) Map("Authorization" -> s"Bearer {api_key}") else headers
+    hdrs.map { case (k, v) => k -> v.replace("{api_key}", token) }.toSeq
+  }
+
+  private def applyParamMappings(body: Option[JsValue]): Option[JsValue] = {
+    if (param_mappings.isEmpty) body
+    else body.map { b =>
+      param_mappings.foldLeft(b.asObject) { case (obj, (from, to)) =>
+        obj.value.get(from) match {
+          case Some(value) => (obj - from) + (to -> value)
+          case None => obj
+        }
+      }
     }
   }
 
@@ -168,10 +192,11 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
     env.Ws
       .url(url)
       .withHttpHeaders(
-        "Authorization" -> s"Bearer ${token}",
-        "Accept" -> "application/json",
-        "Host" -> uri.authority.host.toString(),
-      ).applyOnWithOpt(body) {
+        resolvedHeaders ++ Seq(
+          "Accept" -> "application/json",
+          "Host" -> uri.authority.host.toString()
+        ): _*
+      ).applyOnWithOpt(applyParamMappings(body)) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
           .withBody(body)
@@ -194,10 +219,10 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
     env.Ws
       .url(url)
       .withHttpHeaders(
-        "Authorization" -> s"Bearer ${token}",
-        "Accept" -> "application/json",
-        "Host" -> uri.authority.host.toString(),
-        "Content-Type" -> entity.contentType.toString()
+        resolvedHeaders ++ Seq(
+          "Accept" -> "application/json",
+          "Host" -> uri.authority.host.toString(),
+          "Content-Type" -> entity.contentType.toString()): _*
       )
       .withBody(entity.dataBytes)
       .withMethod(method)
@@ -257,10 +282,10 @@ class OpenAiApi(_baseUrl: String = OpenAiApi.baseUrl, token: String, timeout: Fi
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
-        "Authorization" -> s"Bearer ${token}",
-        "Accept" -> "application/json",
-        "Host" -> uri.authority.host.toString(),
-      ).applyOnWithOpt(body) {
+        resolvedHeaders ++ Seq(
+          "Accept" -> "application/json",
+          "Host" -> uri.authority.host.toString()): _*
+      ).applyOnWithOpt(applyParamMappings(body)) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
           .withBody(body.asObject ++ Json.obj(

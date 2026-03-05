@@ -196,6 +196,8 @@ case class AiProvider(
       }
       case "openai-compatible" => {
         val supportsCompletion = connection.select("supports_completion").asOptBoolean.getOrElse(true)
+        val paramMappings = connection.select("param_mappings").asOpt[Map[String, String]].getOrElse(Map.empty)
+        val customHeaders = connection.select("headers").asOpt[Map[String, String]].getOrElse(Map("Authorization" -> "Bearer {api_key}"))
         val api = new OpenAiApi(
           _baseUrl = baseUrl.getOrElse(OpenAiApi.baseUrl),
           token = token,
@@ -205,6 +207,8 @@ case class AiProvider(
           supportsTools = connection.select("supports_tools").asOptBoolean.getOrElse(true),
           supportsStreaming = connection.select("supports_streaming").asOptBoolean.getOrElse(true),
           supportsCompletion = supportsCompletion,
+          param_mappings = paramMappings,
+          headers = customHeaders,
         )
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(
