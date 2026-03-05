@@ -128,6 +128,10 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
     models.contains(s"${provider}-${modelName}")
   }
 
+  def getModel(provider: String, modelName: String): Option[CostModel] = models.get(s"${provider}-${modelName}")
+  def findModel(provider: String, name: String): Option[CostModel] = models.values.find(m => m.litellm_provider == provider && m.name == name)
+  def searchModel(m: CostModel => Boolean): Option[CostModel] = models.values.find(m)
+
   def computeCosts(
     provider: String,
     modelName: String,
