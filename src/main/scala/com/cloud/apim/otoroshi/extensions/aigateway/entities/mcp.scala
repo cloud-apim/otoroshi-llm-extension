@@ -195,6 +195,7 @@ case class McpConnector(
         val opts = transport.sseOptions
         new WebSocketMcpTransport.Builder()
           .url(opts.url)
+          .headersSupplier(() => opts.headers.asJava)
           .logRequests(opts.log)
           .logResponses(opts.log)
           .timeout(java.time.Duration.ofMillis(opts.timeout.toMillis))
