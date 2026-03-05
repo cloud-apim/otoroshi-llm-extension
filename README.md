@@ -5,7 +5,7 @@
 **Connect, setup, secure and seamlessly manage LLM models using an Universal/OpenAI compatible API**
 
   - **Unified interface**: Simplify interactions and minimize integration hassles
-  - **Use multiple providers**: 10+ LLM providers supported right now, a lot more coming
+  - **Use multiple providers**: 50+ LLM providers supported right now, a lot more coming
   - **Load balancing**: Ensure optimal performance by distributing workloads across multiple providers
   - **Fallbacks**: Automatically switch LLMs during failures to deliver uninterrupted & accurate performance
   - **Automatic retries**: LLM APIs often have inexplicable failures. You can rescue a substantial number of your requests with our in-built automatic retries feature.
@@ -46,7 +46,7 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 * Scaleway 🇫🇷 🇪🇺
 * X.ai
 
-And 37 additional OpenAI-compatible providers: Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Chutes, CometAPI, CompactifAI, DeepInfra, Empower, Featherless AI, Fireworks AI, Friendli AI, Galadriel, GMI, Helicone, Hyperbolic, Lambda AI, LlamaGate, Meta Llama API, Minimax, Morph, Nano GPT, Nebius AI Studio, Novita AI, Nscale, Nvidia NIM, OpenRouter, Perplexity, Poe, SambaNova, Sarvam, Synthetic, Together AI, Venice AI, Xiaomi Mimo, Z.AI
+And 37 more including Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Chutes, CometAPI, CompactifAI, DeepInfra, Empower, Featherless AI, Fireworks AI, Friendli AI, Galadriel, GMI, Helicone, Hyperbolic, Lambda AI, LlamaGate, Meta Llama API, Minimax, Morph, Nano GPT, Nebius AI Studio, Novita AI, Nscale, Nvidia NIM, OpenRouter, Perplexity, Poe, SambaNova, Sarvam, Synthetic, Together AI, Venice AI, Xiaomi Mimo, Z.AI
 
 ## Supported Moderation models
 
