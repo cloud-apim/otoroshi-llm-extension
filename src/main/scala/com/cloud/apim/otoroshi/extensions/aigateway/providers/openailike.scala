@@ -35,7 +35,6 @@ object OpenAiLikeProviders {
   private val sarvamHeaders =  Map("api-subscription-key" -> "{api_key}")
 
   val all: Seq[OpenAiLikeProviderDef] = Seq(
-    // from litellm openai_like/providers.json
     OpenAiLikeProviderDef("helicone",      "Helicone",         "https://ai-gateway.helicone.ai/",                           apiKeyEnv = Some("HELICONE_API_KEY")),
     OpenAiLikeProviderDef("veniceai",      "Venice AI",        "https://api.venice.ai/api/v1",                              apiKeyEnv = Some("VENICE_AI_API_KEY")),
     OpenAiLikeProviderDef("xiaomi-mimo",   "Xiaomi Mimo",      "https://api.xiaomimimo.com/v1",         mct,                apiKeyEnv = Some("XIAOMI_MIMO_API_KEY")),
