@@ -15,7 +15,7 @@ import otoroshi.models.{EntityLocation, EntityLocationSupport}
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
 import otoroshi.storage.{BasicStore, RedisLike, RedisLikeStore}
-import otoroshi.utils.TypedMap
+import otoroshi.utils.{JsonPathValidator, TypedMap}
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiExtension, AiGatewayExtensionDatastores, AiGatewayExtensionState}
 import play.api.libs.json._
@@ -104,6 +104,82 @@ case class McpConnectorPoolSettings(size: Int = 1) {
   def json: JsValue = Json.obj("size" -> size)
 }
 
+case class McpConnectorCategoryRules(rules: Map[String, Seq[JsonPathValidator]] = Map.empty) {
+  def json: JsValue = McpConnectorCategoryRules.format.writes(this)
+  def rulesFor(name: String): Option[Seq[JsonPathValidator]] = {
+    rules.get(name).orElse(rules.get("*"))
+  }
+  def validate(name: String, ctx: JsValue)(implicit env: Env): Boolean = {
+    rulesFor(name) match {
+      case None => true
+      case Some(validators) => validators.forall(_.validate(ctx))
+    }
+  }
+  def merge(other: McpConnectorCategoryRules): McpConnectorCategoryRules = {
+    val allKeys = rules.keySet ++ other.rules.keySet
+    val merged = allKeys.map { k =>
+      k -> (rules.getOrElse(k, Seq.empty) ++ other.rules.getOrElse(k, Seq.empty))
+    }.toMap
+    McpConnectorCategoryRules(merged)
+  }
+}
+
+object McpConnectorCategoryRules {
+  val empty = McpConnectorCategoryRules()
+  val format = new Format[McpConnectorCategoryRules] {
+    override def writes(o: McpConnectorCategoryRules): JsValue = JsObject(o.rules.map {
+      case (k, v) => k -> JsArray(v.map(JsonPathValidator.format.writes))
+    })
+    override def reads(json: JsValue): JsResult[McpConnectorCategoryRules] = Try {
+      val rules = json.asOpt[JsObject].map(_.value.map {
+        case (k, v) => k -> v.asOpt[Seq[JsObject]].getOrElse(Seq.empty).flatMap(obj => JsonPathValidator.format.reads(obj).asOpt)
+      }.toMap).getOrElse(Map.empty)
+      McpConnectorCategoryRules(rules)
+    } match {
+      case Failure(ex) => JsError(ex.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+  }
+}
+
+case class McpConnectorRules(
+  toolRules: McpConnectorCategoryRules = McpConnectorCategoryRules.empty,
+  promptRules: McpConnectorCategoryRules = McpConnectorCategoryRules.empty,
+  resourceRules: McpConnectorCategoryRules = McpConnectorCategoryRules.empty,
+  resourceTemplatesRules: McpConnectorCategoryRules = McpConnectorCategoryRules.empty,
+) {
+  def json: JsValue = McpConnectorRules.format.writes(this)
+  def merge(other: McpConnectorRules): McpConnectorRules = McpConnectorRules(
+    toolRules = toolRules.merge(other.toolRules),
+    promptRules = promptRules.merge(other.promptRules),
+    resourceRules = resourceRules.merge(other.resourceRules),
+    resourceTemplatesRules = resourceTemplatesRules.merge(other.resourceTemplatesRules),
+  )
+}
+
+object McpConnectorRules {
+  val empty = McpConnectorRules()
+  val format = new Format[McpConnectorRules] {
+    override def writes(o: McpConnectorRules): JsValue = Json.obj(
+      "tool_rules" -> o.toolRules.json,
+      "prompt_rules" -> o.promptRules.json,
+      "resource_rules" -> o.resourceRules.json,
+      "resource_templates_rules" -> o.resourceTemplatesRules.json,
+    )
+    override def reads(json: JsValue): JsResult[McpConnectorRules] = Try {
+      McpConnectorRules(
+        toolRules = json.select("tool_rules").asOpt(McpConnectorCategoryRules.format).getOrElse(McpConnectorCategoryRules.empty),
+        promptRules = json.select("prompt_rules").asOpt(McpConnectorCategoryRules.format).getOrElse(McpConnectorCategoryRules.empty),
+        resourceRules = json.select("resource_rules").asOpt(McpConnectorCategoryRules.format).getOrElse(McpConnectorCategoryRules.empty),
+        resourceTemplatesRules = json.select("resource_templates_rules").asOpt(McpConnectorCategoryRules.format).getOrElse(McpConnectorCategoryRules.empty),
+      )
+    } match {
+      case Failure(ex) => JsError(ex.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+  }
+}
+
 case class McpConnector(
   location: EntityLocation = EntityLocation.default,
   id: String,
@@ -125,6 +201,8 @@ case class McpConnector(
   excludeResourceTemplateUris: Seq[String] = Seq.empty,
   includePrompts: Seq[String] = Seq.empty,
   excludePrompts: Seq[String] = Seq.empty,
+  allowRules: McpConnectorRules = McpConnectorRules.empty,
+  disallowRules: McpConnectorRules = McpConnectorRules.empty,
 ) extends EntityLocationSupport {
   override def internalId: String = id
 
@@ -245,44 +323,74 @@ case class McpConnector(
     }
   }
 
-  private def matchesTool(tool: ToolSpecification, attrs: TypedMap): Boolean = {
-    // TODO: apply generic validation here
-    matchesByName(tool.name(), includeFunctions, excludeFunctions)
+  private def matchesRules(name: String, ctx: JsValue, allowCategory: McpConnectorCategoryRules, disallowCategory: McpConnectorCategoryRules)(implicit env: Env): Boolean = {
+    val disallowed = disallowCategory.rulesFor(name) match {
+      case None => false
+      case Some(validators) => validators.forall(_.validate(ctx))
+    }
+    if (disallowed) return false
+    allowCategory.rulesFor(name) match {
+      case None => true
+      case Some(validators) => validators.forall(_.validate(ctx))
+    }
   }
 
-  def matchesResource(resource: McpResource, attrs: TypedMap): Boolean = {
-    // TODO: apply generic validation here
-    matchesByName(resource.name(), includeResources, excludeResources)
+  private def matchesTool(tool: ToolSpecification, ctx: JsValue, attrs: TypedMap)(implicit env: Env): Boolean = {
+    matchesByName(tool.name(), includeFunctions, excludeFunctions) &&
+      matchesRules(tool.name(), ctx, allowRules.toolRules, disallowRules.toolRules)
   }
-  def matchesResourceTemplate(resourceTemplate: McpResourceTemplate, attrs: TypedMap): Boolean = {
-    // TODO: apply generic validation here
+
+  def matchesResource(resource: McpResource, ctx: JsValue, attrs: TypedMap)(implicit env: Env): Boolean = {
+    matchesByName(resource.name(), includeResources, excludeResources) &&
+      matchesRules(resource.name(), ctx, allowRules.resourceRules, disallowRules.resourceRules)
+  }
+  def matchesResourceTemplate(resourceTemplate: McpResourceTemplate, ctx: JsValue, attrs: TypedMap)(implicit env: Env): Boolean = {
     matchesByName(resourceTemplate.name(), includeResourceTemplates, excludeResourceTemplates) &&
-      matchesByName(resourceTemplate.uriTemplate(), includeResourceTemplateUris, excludeResourceTemplateUris)
+      matchesByName(resourceTemplate.uriTemplate(), includeResourceTemplateUris, excludeResourceTemplateUris) &&
+      matchesRules(resourceTemplate.name(), ctx, allowRules.resourceTemplatesRules, disallowRules.resourceTemplatesRules)
   }
-  def matchesPrompt(prompt: McpPrompt, attrs: TypedMap): Boolean = {
-    // TODO: apply generic validation here
-    matchesByName(prompt.name(), includePrompts, excludePrompts)
+  def matchesPrompt(prompt: McpPrompt, ctx: JsValue, attrs: TypedMap)(implicit env: Env): Boolean = {
+    matchesByName(prompt.name(), includePrompts, excludePrompts) &&
+      matchesRules(prompt.name(), ctx, allowRules.promptRules, disallowRules.promptRules)
   }
 
   def listToolsBlocking(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Seq[ToolSpecification] = Await.result(listTools(attrs), 10.seconds)
-  def listResources(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResource]] = withClient(attrs)(_.listResources().asScala.filter(r => matchesResource(r, attrs)))
-  def listResourceTemplates(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResourceTemplate]] = withClient(attrs)(_.listResourceTemplates().asScala.filter(r => matchesResourceTemplate(r, attrs)))
-  def listPrompts(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpPrompt]] = withClient(attrs)(_.listPrompts().asScala.filter(r => matchesPrompt(r, attrs)))
-  def listTools(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = withClient(attrs)(_.listTools().asScala.filter(r => matchesTool(r, attrs)))
+  def listResources(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResource]] = {
+    val ctx = attrs.json
+    withClient(attrs)(_.listResources().asScala.filter(r => matchesResource(r, ctx, attrs)))
+  }
+  def listResourceTemplates(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResourceTemplate]] = {
+    val ctx = attrs.json
+    withClient(attrs)(_.listResourceTemplates().asScala.filter(r => matchesResourceTemplate(r, ctx, attrs)))
+  }
+  def listPrompts(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpPrompt]] = {
+    val ctx = attrs.json
+    withClient(attrs)(_.listPrompts().asScala.filter(r => matchesPrompt(r, ctx, attrs)))
+  }
+  def listTools(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = {
+    val ctx = attrs.json
+    withClient(attrs)(_.listTools().asScala.filter(r => matchesTool(r, ctx, attrs)))
+  }
 
   def readResource(uri: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Option[McpReadResourceResult]] = {
-    // TODO: need to check if validation works before everything else
-    withClient(attrs)(_.readResource(uri)).map(Option(_)).recover { case _ => None }
+    val ctx = attrs.json
+    if (matchesRules(uri, ctx, allowRules.resourceRules, disallowRules.resourceRules)) {
+      withClient(attrs)(_.readResource(uri)).map(Option(_)).recover { case _ => None }
+    } else {
+      None.vfuture
+    }
   }
   def getPrompt(name: String, arguments: Map[String, Object], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Option[McpGetPromptResult]] = {
-    if (matchesByName(name, includePrompts, excludePrompts)) {
+    val ctx = attrs.json
+    if (matchesByName(name, includePrompts, excludePrompts) && matchesRules(name, ctx, allowRules.promptRules, disallowRules.promptRules)) {
       withClient(attrs)(_.getPrompt(name, arguments.asJava)).map(Option(_)).recover { case _ => None }
     } else {
       None.vfuture
     }
   }
   def call(name: String, args: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
-    if (matchesByName(name, includeFunctions, excludeFunctions)) {
+    val ctx = attrs.json
+    if (matchesByName(name, includeFunctions, excludeFunctions) && matchesRules(name, ctx, allowRules.toolRules, disallowRules.toolRules)) {
       val request = ToolExecutionRequest.builder().id(UUID.randomUUID().toString()).name(name).arguments(args).build()
       withClient(attrs)(_.executeTool(request)).map { res =>
         if (res.isError) {
@@ -362,16 +470,18 @@ object McpConnector {
       "pool" -> o.pool.json,
       "transport" -> o.transport.json,
       "strict" -> o.strict,
-      "exclude_functions" -> o.excludeFunctions,
       "include_functions" -> o.includeFunctions,
-      "include_functions" -> o.includeResources,
-      "exclude_functions" -> o.excludeResources,
-      "include_resources" -> o.includeResourceTemplates,
-      "exclude_resources" -> o.excludeResourceTemplates,
-      "include_resource_templates" -> o.includeResourceTemplateUris,
-      "exclude_resource_templates" -> o.excludeResourceTemplateUris,
-      "include_resource_template_uris" -> o.includePrompts,
-      "exclude_resource_template_uris" -> o.excludePrompts,
+      "exclude_functions" -> o.excludeFunctions,
+      "include_resources" -> o.includeResources,
+      "exclude_resources" -> o.excludeResources,
+      "include_resource_templates" -> o.includeResourceTemplates,
+      "exclude_resource_templates" -> o.excludeResourceTemplates,
+      "include_resource_template_uris" -> o.includeResourceTemplateUris,
+      "exclude_resource_template_uris" -> o.excludeResourceTemplateUris,
+      "include_prompts" -> o.includePrompts,
+      "exclude_prompts" -> o.excludePrompts,
+      "allow_rules" -> o.allowRules.json,
+      "disallow_rules" -> o.disallowRules.json,
     )
 
     override def reads(json: JsValue): JsResult[McpConnector] = Try {
@@ -396,6 +506,8 @@ object McpConnector {
         excludeResourceTemplateUris = json.select("exclude_resource_template_uris").asOpt[Seq[String]].getOrElse(Seq.empty),
         includePrompts = json.select("include_prompts").asOpt[Seq[String]].getOrElse(Seq.empty),
         excludePrompts = json.select("exclude_prompts").asOpt[Seq[String]].getOrElse(Seq.empty),
+        allowRules = json.select("allow_rules").asOpt(McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
+        disallowRules = json.select("disallow_rules").asOpt(McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
       )
     } match {
       case Failure(ex) => JsError(ex.getMessage)
