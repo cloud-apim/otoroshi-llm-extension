@@ -4,7 +4,7 @@ import akka.actor.{Actor, ActorRef, PoisonPill, Props}
 import akka.stream.scaladsl.{Flow, Sink, Source, SourceQueueWithComplete}
 import akka.stream.{Materializer, OverflowStrategy}
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, McpConnector, McpSupport}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, McpConnector, McpConnectorRules, McpSupport}
 import dev.langchain4j.agent.tool.ToolSpecification
 import dev.langchain4j.mcp.client.{McpBlobResourceContents, McpResourceContents, McpTextResourceContents}
 import dev.langchain4j.model.chat.request.json.JsonSchemaElement
@@ -42,6 +42,8 @@ case class McpProxyEndpointConfig(
   excludeResourceTemplateUris: Seq[String] = Seq.empty,
   includePrompts: Seq[String] = Seq.empty,
   excludePrompts: Seq[String] = Seq.empty,
+  allowRules: McpConnectorRules = McpConnectorRules.empty,
+  disallowRules: McpConnectorRules = McpConnectorRules.empty,
 ) extends NgPluginConfig {
   def json: JsValue = McpProxyEndpointConfig.format.writes(this)
   private def matchesByName(name: String, include: Seq[String], exclude: Seq[String]): Boolean = {
@@ -71,6 +73,8 @@ case class McpProxyEndpointConfig(
     excludeResourceTemplateUris = (connector.excludeResourceTemplateUris ++ excludeResourceTemplateUris).distinct,
     includePrompts = (connector.includePrompts ++ includePrompts).distinct,
     excludePrompts = (connector.excludePrompts ++ excludePrompts).distinct,
+    allowRules = connector.allowRules.merge(allowRules),
+    disallowRules = connector.disallowRules.merge(disallowRules),
   )
 }
 
@@ -81,7 +85,8 @@ object McpProxyEndpointConfig {
     "include_resources", "exclude_resources",
     "include_resource_templates", "exclude_resource_templates",
     "include_resource_template_uris", "exclude_resource_template_uris",
-    "include_prompts", "exclude_prompts"
+    "include_prompts", "exclude_prompts",
+    "allow_rules", "disallow_rules"
   )
   val configSchema: Option[JsObject] = Some(Json.obj(
     "name" -> Json.obj(
@@ -165,6 +170,14 @@ object McpProxyEndpointConfig {
       "type" -> "string",
       "array" -> true,
       "label" -> "Exclude prompts"
+    ),
+    "allow_rules" -> Json.obj(
+      "type" -> "jsonobject",
+      "label" -> "Allow rules"
+    ),
+    "disallow_rules" -> Json.obj(
+      "type" -> "jsonobject",
+      "label" -> "Disallow rules"
     )
   ))
   val default = McpProxyEndpointConfig(
@@ -189,6 +202,8 @@ object McpProxyEndpointConfig {
       "exclude_resource_template_uris" -> o.excludeResourceTemplateUris,
       "include_prompts" -> o.includePrompts,
       "exclude_prompts" -> o.excludePrompts,
+      "allow_rules" -> o.allowRules.json,
+      "disallow_rules" -> o.disallowRules.json,
     )
     override def reads(json: JsValue): JsResult[McpProxyEndpointConfig] = Try {
       val singleRef = json.select("ref").asOpt[String].map(r => Seq(r)).getOrElse(Seq.empty)
@@ -209,6 +224,8 @@ object McpProxyEndpointConfig {
         excludeResourceTemplateUris = json.select("exclude_resource_template_uris").asOpt[Seq[String]].getOrElse(Seq.empty),
         includePrompts = json.select("include_prompts").asOpt[Seq[String]].getOrElse(Seq.empty),
         excludePrompts = json.select("exclude_prompts").asOpt[Seq[String]].getOrElse(Seq.empty),
+        allowRules = json.select("allow_rules").asOpt(McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
+        disallowRules = json.select("disallow_rules").asOpt(McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
