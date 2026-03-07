@@ -9,6 +9,10 @@ import Terminal from '@site/src/components/Terminal';
 now that your provider is fully setup, you can expose it to your organization. The idea here is to do it through an [Otoroshi route](https://maif.github.io/otoroshi/manual/entities/routes.html)
 with a plugin of type `backend` that will handle passing incoming request to the actual LLM provider.
 
+## Anthropic compatible plugin
+
+We also provide an [Anthropic Messages API compatible proxy](/docs/llm-gateway/anthropic-proxy) that allows any Anthropic API client (including **Claude Code**) to use any LLM provider managed by Otoroshi. See the [dedicated documentation page](/docs/llm-gateway/anthropic-proxy) for details.
+
 ## OpenAI compatible plugins
 
 we provide a set of plugin capable of exposing any supported LLM provider through a [compatible OpenAI API](https://platform.openai.com/docs/api-reference/chat).
