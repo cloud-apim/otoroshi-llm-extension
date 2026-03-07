@@ -300,6 +300,178 @@ Right after, you can create a new KEY, VALUE pair like this example (in the Otor
 
 Now you can use Github MCP server's functions to Create issues, list all issues, list pull requests and much more with your favorite LLMs !
 
+## Filtering tools, resources and prompts
+
+MCP connectors expose tools, resources, resource templates, and prompts from the MCP server. You can filter which ones are available using include/exclude patterns. All patterns support regex matching.
+
+### Filtering tools (functions)
+
+Use `include_functions` and `exclude_functions` to control which tools are exposed:
+
+```js
+{
+  "id": "mcp-connector_xxxxx",
+  "name": "filtered-mcp",
+  "transport": { ... },
+  "include_functions": ["get_.*", "list_.*"],
+  "exclude_functions": ["delete_.*", "drop_.*"]
+}
+```
+
+### Filtering resources
+
+Use `include_resources` and `exclude_resources` to control which resources are exposed:
+
+```js
+{
+  "include_resources": ["users", "projects"],
+  "exclude_resources": ["admin_.*"]
+}
+```
+
+### Filtering resource templates
+
+Use `include_resource_templates` and `exclude_resource_templates` to filter resource templates by name, and `include_resource_template_uris` / `exclude_resource_template_uris` to filter by URI template:
+
+```js
+{
+  "include_resource_templates": ["user_template"],
+  "exclude_resource_templates": [],
+  "include_resource_template_uris": ["file://.*"],
+  "exclude_resource_template_uris": ["file:///etc/.*"]
+}
+```
+
+### Filtering prompts
+
+Use `include_prompts` and `exclude_prompts` to control which prompts are exposed:
+
+```js
+{
+  "include_prompts": ["summarize", "translate"],
+  "exclude_prompts": ["debug_.*"]
+}
+```
+
+### Complete filtering example
+
+```js
+{
+  "id": "mcp-connector_xxxxx",
+  "name": "filtered-github-mcp",
+  "transport": {
+    "kind": "stdio",
+    "options": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${vault://local/mcp-github-token}"
+      }
+    }
+  },
+  "include_functions": ["list_.*", "get_.*", "search_.*"],
+  "exclude_functions": ["delete_.*"],
+  "include_resources": [],
+  "exclude_resources": [],
+  "include_prompts": [],
+  "exclude_prompts": []
+}
+```
+
+## Advanced rules
+
+Beyond simple include/exclude patterns, MCP connectors support advanced rules based on JsonPath validation. Rules allow you to control access to tools, resources, resource templates, and prompts based on the request context (consumer identity, apikey metadata, request details, etc.).
+
+Rules are organized by category and can target specific items by name or all items using the `*` wildcard.
+
+### Rule structure
+
+```js
+{
+  "allow_rules": {
+    "tool_rules": {
+      "sensitive_tool": [
+        { "path": "$.apikey.metadata.role", "value": "admin" }
+      ],
+      "*": [
+        { "path": "$.apikey.enabled", "value": true }
+      ]
+    },
+    "prompt_rules": { ... },
+    "resource_rules": { ... },
+    "resource_templates_rules": { ... }
+  },
+  "disallow_rules": {
+    "tool_rules": {
+      "dangerous_tool": [
+        { "path": "$.apikey.metadata.env", "value": "production" }
+      ]
+    },
+    "prompt_rules": { ... },
+    "resource_rules": { ... },
+    "resource_templates_rules": { ... }
+  }
+}
+```
+
+### How rules work
+
+1. **Disallow rules are evaluated first**: if a disallow rule matches, the item is blocked
+2. **Allow rules are evaluated next**: if an allow rule is defined for the item, it must match for the item to be accessible
+3. **If no rule is defined** for an item, it is accessible by default
+
+Rules use Otoroshi's `JsonPathValidator` format to validate against the request context, which includes consumer identity, apikey metadata, request headers, and more.
+
+### Example: restrict tools by consumer role
+
+```js
+{
+  "allow_rules": {
+    "tool_rules": {
+      "create_repository": [
+        { "path": "$.apikey.metadata.github_role", "value": "maintainer" }
+      ],
+      "delete_repository": [
+        { "path": "$.apikey.metadata.github_role", "value": "admin" }
+      ]
+    }
+  },
+  "disallow_rules": {
+    "tool_rules": {
+      "delete_repository": [
+        { "path": "$.apikey.metadata.env", "value": "production" }
+      ]
+    }
+  }
+}
+```
+
+In this example:
+- `create_repository` is only available to consumers with `github_role: maintainer` in their apikey metadata
+- `delete_repository` is only available to consumers with `github_role: admin`, and is always blocked in production environments
+
+## Authentication passthrough
+
+MCP connectors can forward the consumer's authentication token to the MCP server. This is useful when the MCP server needs to authenticate the consumer or apply its own authorization logic.
+
+In the transport headers configuration, use the `{input_token}` placeholder to inject the consumer's Bearer token:
+
+```js
+{
+  "transport": {
+    "kind": "sse",
+    "options": {
+      "url": "https://my-mcp-server.example.com/sse",
+      "headers": {
+        "Authorization": "Bearer {input_token}"
+      }
+    }
+  }
+}
+```
+
+The `{input_token}` placeholder is replaced at runtime with the Bearer token from the incoming request's `Authorization` header. This works with SSE, WebSocket, and Streamable HTTP transports.
+
 ## Postgres MCP Server
 
 User prompt to the LLM

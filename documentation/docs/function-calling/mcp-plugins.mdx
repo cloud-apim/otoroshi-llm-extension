@@ -6,6 +6,48 @@ import Terminal from '@site/src/components/Terminal';
 
 # MCP server exposition
 
+Otoroshi can expose tool functions and MCP connectors as MCP servers using three different transport protocols: HTTP, SSE, and WebSocket. This allows external MCP clients to connect to your Otoroshi-managed tools.
+
+## Filtering at the plugin level
+
+All MCP server exposition plugins (HTTP, SSE, WebSocket) support filtering which tools, resources, resource templates, and prompts are exposed to clients. These filters are applied on top of any filters already configured on the MCP connectors themselves.
+
+### Available filters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `include_functions` | array of strings | Only expose functions matching these regex patterns |
+| `exclude_functions` | array of strings | Hide functions matching these regex patterns |
+| `include_resources` | array of strings | Only expose resources matching these patterns |
+| `exclude_resources` | array of strings | Hide resources matching these patterns |
+| `include_resource_templates` | array of strings | Only expose resource templates matching these patterns |
+| `exclude_resource_templates` | array of strings | Hide resource templates matching these patterns |
+| `include_resource_template_uris` | array of strings | Only expose resource template URIs matching these patterns |
+| `exclude_resource_template_uris` | array of strings | Hide resource template URIs matching these patterns |
+| `include_prompts` | array of strings | Only expose prompts matching these patterns |
+| `exclude_prompts` | array of strings | Hide prompts matching these patterns |
+| `allow_rules` | object | Advanced JsonPath-based allow rules (see [MCP Connectors - Advanced rules](/docs/function-calling/mcp-connectors#advanced-rules)) |
+| `disallow_rules` | object | Advanced JsonPath-based disallow rules |
+
+### Example plugin configuration with filters
+
+```js
+{
+  "name": "filtered-mcp-server",
+  "version": "1.0.0",
+  "refs": ["tool-function_xxxxx"],
+  "mcp_refs": ["mcp-connector_xxxxx"],
+  "include_functions": ["get_.*", "list_.*"],
+  "exclude_functions": ["delete_.*"],
+  "include_prompts": ["summarize"],
+  "exclude_prompts": [],
+  "include_resources": [],
+  "exclude_resources": ["admin_.*"]
+}
+```
+
+These plugin-level filters are merged with the filters defined on each MCP connector. This means you can have broad access on the connector itself and restrict it further at the exposition level, or vice versa.
+
 ## MCP Http Plugin
 
 ![](/img/mcp-http-server-exposition-plugins-list.png)
