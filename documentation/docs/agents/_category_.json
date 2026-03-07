@@ -1,0 +1,8 @@
+{
+  "label": "AI Agents",
+  "position": 10,
+  "link": {
+    "type": "generated-index",
+    "description": "AI Agents features for agentic workflows"
+  }
+}

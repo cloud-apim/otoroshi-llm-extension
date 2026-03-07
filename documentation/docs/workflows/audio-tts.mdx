@@ -1,0 +1,62 @@
+---
+sidebar_position: 2
+---
+
+# Text to Speech
+
+The `audio_tts` function converts text to audio using an audio model provider.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.audio_tts`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The audio model provider id |
+| `encode_base64` | boolean | no | Return the audio as base64 encoded string (default: `false`) |
+| `file_out` | string | no | The file path to save the generated audio (default: a temporary file) |
+| `payload` | object | yes | The payload object |
+| `payload.input` | string | yes | The text to convert to speech |
+| `payload.model` | string | no | The model name |
+| `payload.voice` | string | no | The voice name |
+| `payload.instructions` | string | no | Instructions for the generation |
+| `payload.responseFormat` | string | no | The audio response format |
+| `payload.speed` | number | no | The speech speed |
+
+## Output
+
+When `encode_base64` is `true`:
+```json
+{
+  "content_type": "audio/mp3",
+  "base64": "..."
+}
+```
+
+When `encode_base64` is `false` (default):
+```json
+{
+  "content_type": "audio/mp3",
+  "file_out": "/tmp/audio-out-xxxxx.mp3"
+}
+```
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.audio_tts",
+  "args": {
+    "provider": "audio-model_xxxxx",
+    "encode_base64": true,
+    "payload": {
+      "input": "Hello, world!",
+      "model": "tts-1",
+      "voice": "alloy",
+      "speed": 1.0
+    }
+  },
+  "result": "audio_result"
+}
+```

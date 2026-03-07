@@ -1,0 +1,36 @@
+---
+sidebar_position: 7
+---
+
+# Tool Function Call
+
+The `tool_function_call` function calls a tool function registered in the LLM extension.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.tool_function_call`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The tool function provider id |
+| `function` | string | yes | The tool function name |
+| `arguments` | string/object | yes | The tool function arguments |
+
+## Output
+
+Returns the tool function result as a JSON value.
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.tool_function_call",
+  "args": {
+    "provider": "tool-function_xxxxx",
+    "function": "get_weather",
+    "arguments": "{\"city\": \"Paris\"}"
+  },
+  "result": "tool_result"
+}
+```

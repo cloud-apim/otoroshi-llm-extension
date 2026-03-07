@@ -1,0 +1,70 @@
+---
+sidebar_position: 1
+---
+
+# LLM Call
+
+The `llm_call` function allows you to call any LLM provider configured in Otoroshi from a workflow.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.llm_call`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The LLM provider id |
+| `openai_format` | boolean | no | Return the response in OpenAI format (default: `true`) |
+| `payload` | object | yes | The payload object |
+| `payload.messages` | array | yes | The chat messages array |
+| `payload.tool_functions` | array | no | List of tool function ids to use |
+| `payload.mcp_connectors` | array | no | List of MCP connector ids to use |
+| `payload.wasm_tools` | array | no | List of WASM tool ids to use |
+
+## Output
+
+Returns the LLM response. When `openai_format` is `true` (default), the response follows the OpenAI chat completion format. Otherwise, it returns the raw response from the extension.
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.llm_call",
+  "args": {
+    "provider": "provider_xxxxx",
+    "openai_format": true,
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "Hello, world!"
+        }
+      ]
+    }
+  },
+  "result": "llm_response"
+}
+```
+
+## Example with tool functions
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.llm_call",
+  "args": {
+    "provider": "provider_xxxxx",
+    "payload": {
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the weather in Paris?"
+        }
+      ],
+      "tool_functions": ["tool-function_xxxxx"],
+      "mcp_connectors": ["mcp-connector_xxxxx"]
+    }
+  },
+  "result": "llm_response"
+}
+```

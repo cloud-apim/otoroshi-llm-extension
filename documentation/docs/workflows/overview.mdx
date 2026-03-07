@@ -1,0 +1,127 @@
+---
+sidebar_position: 0
+---
+
+# Overview
+
+Otoroshi provides a powerful [workflow engine](https://maif.github.io/otoroshi/manual/topics/workflows.html) that lets you describe and execute sequences of logic using a JSON-based pseudo-language. Workflows allow you to orchestrate actions, transform data, trigger functions, and control flow based on conditional logic, all in a low-code fashion.
+
+The Otoroshi LLM Extension adds a set of **workflow functions** and **workflow nodes** specifically designed for AI and LLM use cases. These additions allow you to build complex AI pipelines directly within Otoroshi workflows, including LLM calls, audio processing, image/video generation, embeddings, vector store operations, content moderation, guardrails validation, MCP tool calls, persistent memory management, and full agentic workflows.
+
+## How workflows work
+
+A workflow is a JSON document with a `kind: "workflow"` root, a `steps` array containing nodes, and a `returned` field for the final output. Each node has a `kind` field that determines its behavior. The workflow engine maintains an isolated **memory** space where variables are stored and accessed across steps using expression language syntax like `${variable_name}`.
+
+To call a function from a workflow, you use a `call` node:
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.llm_call",
+  "args": {
+    "provider": "provider_xxxxx",
+    "payload": {
+      "messages": [
+        { "role": "user", "content": "Hello!" }
+      ]
+    }
+  },
+  "result": "llm_response"
+}
+```
+
+The result of the function call is stored in the workflow memory under the name specified by the `result` field, and can be referenced in subsequent steps.
+
+## Available functions
+
+The LLM extension registers the following workflow functions:
+
+| Function | Description |
+|----------|-------------|
+| [`llm_call`](./llm-call) | Call an LLM provider |
+| [`audio_tts`](./audio-tts) | Convert text to speech |
+| [`audio_stt`](./audio-stt) | Convert speech to text |
+| [`compute_embedding`](./compute-embedding) | Compute text embeddings |
+| [`generate_image`](./generate-image) | Generate images from text |
+| [`generate_video`](./generate-video) | Generate videos from text |
+| [`tool_function_call`](./tool-function-call) | Call a tool function |
+| [`mcp_function_call`](./mcp-function-call) | Call an MCP connector function |
+| [`moderation_call`](./moderation-call) | Call a moderation model |
+| [`guardrail_call`](./guardrail-call) | Validate input with a guardrail |
+| [`vector_store_add`](./vector-store-add) | Add an entry to a vector store |
+| [`vector_store_remove`](./vector-store-remove) | Remove an entry from a vector store |
+| [`vector_store_search`](./vector-store-search) | Search in a vector store |
+| [`memory_add_messages`](./memory-add-messages) | Add messages to persistent memory |
+| [`memory_get_messages`](./memory-get-messages) | Get messages from persistent memory |
+| [`memory_clear_messages`](./memory-clear-messages) | Clear messages from persistent memory |
+| [`agent`](./agent-function) | Run an AI agent (deprecated, use the [AI Agent node](/docs/agents/overview) instead) |
+
+## Available nodes
+
+The LLM extension also registers custom workflow nodes that can be used directly in workflow steps:
+
+| Node | Description |
+|------|-------------|
+| [`AI Agent`](/docs/agents/ai-agent-node) | Execute an AI agent with tool calling, handoffs, and memory |
+| [`AI Agent Router`](/docs/agents/router-node) | Use an LLM to choose which path to follow |
+| [`MCP Tools`](/docs/agents/mcp-tools-node) | Select an MCP connector for an agent |
+
+## Complete example
+
+Here is a complete workflow that uses the LLM extension to build a simple RAG (Retrieval Augmented Generation) pipeline:
+
+```json
+{
+  "kind": "workflow",
+  "steps": [
+    {
+      "kind": "call",
+      "function": "extensions.com.cloud-apim.llm-extension.compute_embedding",
+      "args": {
+        "provider": "embedding-model_xxxxx",
+        "payload": {
+          "input": ["${input.question}"],
+          "model": "text-embedding-ada-002"
+        }
+      },
+      "result": "question_embedding"
+    },
+    {
+      "kind": "call",
+      "function": "extensions.com.cloud-apim.llm-extension.vector_store_search",
+      "args": {
+        "provider": "embedding-store_xxxxx",
+        "payload": {
+          "embedding": {
+            "vector": "${question_embedding.data.0.embedding}"
+          },
+          "max_results": 5,
+          "min_score": 0.7
+        }
+      },
+      "result": "search_results"
+    },
+    {
+      "kind": "call",
+      "function": "extensions.com.cloud-apim.llm-extension.llm_call",
+      "args": {
+        "provider": "provider_xxxxx",
+        "payload": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "Answer the user question based on the following context: ${search_results}"
+            },
+            {
+              "role": "user",
+              "content": "${input.question}"
+            }
+          ]
+        }
+      },
+      "result": "llm_response"
+    }
+  ],
+  "returned": "${llm_response}"
+}
+```

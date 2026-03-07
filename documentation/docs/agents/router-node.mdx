@@ -1,0 +1,140 @@
+---
+sidebar_position: 2
+---
+
+# AI Agent Router
+
+The AI Agent Router node uses an LLM to intelligently decide which workflow path to follow. It presents each sub-node as a possible tool call to the LLM, and the LLM selects the most appropriate one based on the input and instructions.
+
+- **Node kind**: `extensions.com.cloud-apim.llm-extension.router`
+
+## How it works
+
+1. The router receives an input and a set of sub-nodes (paths)
+2. Each sub-node is presented to the LLM as a tool with its `id` and `description`
+3. The LLM chooses which tool (path) to call based on the instructions and input
+4. The selected sub-node is executed and its result is returned
+
+This is similar to a `switch` node, but the routing decision is made by an LLM rather than by deterministic predicates.
+
+## Configuration
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | Id of the LLM provider to use for routing |
+| `input` | string | no | The input to route (defaults to the `input` variable in workflow memory) |
+| `instructions` | array | yes | System instructions that guide the routing decision |
+| `model` | string | no | Override the model used by the provider |
+| `model_options` | object | no | Override model options |
+| `paths` | array | yes | The sub-nodes to choose from. Each must have an `id` and `description` |
+
+## Example
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.router",
+  "provider": "provider_xxxxx",
+  "input": "${input.question}",
+  "instructions": [
+    "You determine which agent to use based on the user's homework question"
+  ],
+  "paths": [
+    {
+      "id": "math_tutor",
+      "description": "Specialist agent for math questions",
+      "kind": "call",
+      "function": "extensions.com.cloud-apim.llm-extension.llm_call",
+      "args": {
+        "provider": "provider_xxxxx",
+        "payload": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "You provide help with math problems. Explain your reasoning at each step."
+            },
+            {
+              "role": "user",
+              "content": "${input.question}"
+            }
+          ]
+        }
+      },
+      "result": "call_res"
+    },
+    {
+      "id": "history_tutor",
+      "description": "Specialist agent for historical questions",
+      "kind": "call",
+      "function": "extensions.com.cloud-apim.llm-extension.llm_call",
+      "args": {
+        "provider": "provider_xxxxx",
+        "payload": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "You provide assistance with historical queries. Explain important events and context clearly."
+            },
+            {
+              "role": "user",
+              "content": "${input.question}"
+            }
+          ]
+        }
+      },
+      "result": "call_res"
+    }
+  ],
+  "result": "router_result"
+}
+```
+
+## Example with AI Agent nodes as paths
+
+The router paths can be any workflow node, including AI Agent nodes:
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.router",
+  "provider": "provider_xxxxx",
+  "input": "${input.question}",
+  "instructions": [
+    "Route the question to the most appropriate specialist."
+  ],
+  "paths": [
+    {
+      "id": "math_tutor",
+      "description": "Specialist agent for math questions",
+      "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+      "name": "math_tutor",
+      "provider": "provider_xxxxx",
+      "instructions": [
+        "You provide help with math problems. Explain your reasoning at each step and include examples."
+      ],
+      "input": "${input.question}"
+    },
+    {
+      "id": "history_tutor",
+      "description": "Specialist agent for historical questions",
+      "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+      "name": "history_tutor",
+      "provider": "provider_xxxxx",
+      "instructions": [
+        "You provide assistance with historical queries. Explain important events and context clearly."
+      ],
+      "input": "${input.question}"
+    }
+  ],
+  "result": "router_result"
+}
+```
+
+## Router vs Handoffs
+
+Both the router and handoffs allow dynamic routing, but they serve different purposes:
+
+| Feature | Router | Handoffs |
+|---------|--------|----------|
+| Decision point | Before any agent runs | During agent execution |
+| Use case | Route to different workflow paths | Transfer between agents mid-conversation |
+| Context | Only the input and instructions | Full conversation context |
+| Flexibility | Can route to any node type | Routes to other agents only |

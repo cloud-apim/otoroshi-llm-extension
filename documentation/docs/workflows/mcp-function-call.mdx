@@ -1,0 +1,36 @@
+---
+sidebar_position: 8
+---
+
+# MCP Function Call
+
+The `mcp_function_call` function calls a function exposed by an MCP (Model Context Protocol) connector.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.mcp_function_call`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The MCP connector provider id |
+| `function` | string | yes | The MCP function name to call |
+| `arguments` | string/object | yes | The MCP function arguments |
+
+## Output
+
+Returns the MCP function result as a JSON value.
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.mcp_function_call",
+  "args": {
+    "provider": "mcp-connector_xxxxx",
+    "function": "search",
+    "arguments": "{\"query\": \"Otoroshi documentation\"}"
+  },
+  "result": "mcp_result"
+}
+```

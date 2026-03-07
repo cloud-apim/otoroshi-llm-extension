@@ -1,0 +1,37 @@
+---
+sidebar_position: 16
+---
+
+# Memory Clear Messages
+
+The `memory_clear_messages` function clears all messages from a persistent memory store for a given session.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.memory_clear_messages`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The persistent memory provider id |
+| `payload` | object | yes | The payload object |
+| `payload.session_id` | string | yes | The session identifier |
+
+## Output
+
+Returns `null` on success.
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.memory_clear_messages",
+  "args": {
+    "provider": "memory_xxxxx",
+    "payload": {
+      "session_id": "session_001"
+    }
+  },
+  "result": "clear_result"
+}
+```

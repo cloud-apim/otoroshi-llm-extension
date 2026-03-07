@@ -1,0 +1,44 @@
+---
+sidebar_position: 15
+---
+
+# Memory Get Messages
+
+The `memory_get_messages` function retrieves messages from a persistent memory store for a given session.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.memory_get_messages`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The persistent memory provider id |
+| `payload` | object | yes | The payload object |
+| `payload.session_id` | string | yes | The session identifier |
+
+## Output
+
+Returns an array of message objects:
+
+```json
+[
+  { "role": "user", "content": "What is the capital of France?" },
+  { "role": "assistant", "content": "The capital of France is Paris." }
+]
+```
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.memory_get_messages",
+  "args": {
+    "provider": "memory_xxxxx",
+    "payload": {
+      "session_id": "session_001"
+    }
+  },
+  "result": "messages"
+}
+```

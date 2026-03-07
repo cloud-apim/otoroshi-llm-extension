@@ -1,0 +1,83 @@
+---
+sidebar_position: 0
+---
+
+# Overview
+
+The Otoroshi LLM Extension provides a complete AI agent framework that can be used within Otoroshi workflows. AI agents are autonomous entities that use LLMs to reason, take actions through tool calls, and collaborate with other agents through handoffs.
+
+## What is an AI Agent?
+
+An AI agent is a system that uses a Large Language Model (LLM) as its reasoning engine. Unlike a simple LLM call that produces a single response, an agent operates in a loop:
+
+1. The agent receives an input (user message)
+2. The LLM processes the input along with system instructions
+3. If the LLM decides it needs more information, it calls tools (functions, MCP connectors, etc.)
+4. The tool results are fed back to the LLM
+5. Steps 3-4 repeat until the LLM produces a final answer or the maximum number of turns is reached
+
+This loop allows agents to perform complex multi-step tasks autonomously.
+
+## Key features
+
+- **Tool calling**: Agents can use tool functions, MCP connectors, and inline tools defined as workflow nodes
+- **Agent handoffs**: An agent can transfer the conversation to another specialized agent
+- **Persistent memory**: Agents can remember previous conversations across sessions
+- **Guardrails**: Input and output validation to ensure safe and compliant responses
+- **Configurable turns**: Set a maximum number of reasoning loops to control execution
+- **LLM-based routing**: Use an LLM to intelligently route requests to different workflow paths
+
+## Agent components
+
+### Workflow nodes
+
+The extension provides three workflow nodes for building agentic workflows:
+
+| Node | Description |
+|------|-------------|
+| [AI Agent](./ai-agent-node) | The main agent node - executes an agent with tools, handoffs, memory, and guardrails |
+| [AI Agent Router](./router-node) | Uses an LLM to choose which workflow path to follow |
+| [MCP Tools](./mcp-tools-node) | Helper node to attach an MCP connector to an agent |
+
+### Workflow function (deprecated)
+
+The [`agent` function](/docs/workflows/agent-function) is the legacy way to run agents as a workflow function call. It is now deprecated in favor of the [AI Agent node](./ai-agent-node).
+
+## Architecture
+
+```
+                    +-------------------+
+                    |   User Input      |
+                    +--------+----------+
+                             |
+                    +--------v----------+
+                    |   AI Agent Node   |
+                    |                   |
+                    |  - Instructions   |
+                    |  - Provider       |
+                    |  - Tools          |
+                    |  - Guardrails     |
+                    |  - Memory         |
+                    +--------+----------+
+                             |
+                    +--------v----------+
+                    |   Agent Runner    |
+                    |   (Agent Loop)    |
+                    +--------+----------+
+                             |
+              +--------------+--------------+
+              |              |              |
+     +--------v---+  +------v------+  +----v-------+
+     | Tool Calls |  |  Handoffs   |  |   Final    |
+     | (functions,|  | (transfer   |  |  Response  |
+     |  MCP, etc) |  |  to another |  |            |
+     +--------+---+  |  agent)     |  +------------+
+              |       +------+------+
+              |              |
+              +--------------+
+              |
+     +--------v----------+
+     | Continue loop with |
+     | tool results       |
+     +--------------------+
+```

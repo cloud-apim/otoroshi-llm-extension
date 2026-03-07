@@ -1,0 +1,50 @@
+---
+sidebar_position: 14
+---
+
+# Memory Add Messages
+
+The `memory_add_messages` function adds messages to a persistent memory store for a given session.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.memory_add_messages`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The persistent memory provider id |
+| `payload` | object | yes | The payload object |
+| `payload.session_id` | string | yes | The session identifier |
+| `payload.messages` | array | yes | The messages to add |
+| `payload.messages[].role` | string | yes | The message role (e.g., `user`, `assistant`, `system`) |
+| `payload.messages[].content` | string | yes | The message content |
+
+## Output
+
+Returns `null` on success.
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.memory_add_messages",
+  "args": {
+    "provider": "memory_xxxxx",
+    "payload": {
+      "session_id": "session_001",
+      "messages": [
+        {
+          "role": "user",
+          "content": "What is the capital of France?"
+        },
+        {
+          "role": "assistant",
+          "content": "The capital of France is Paris."
+        }
+      ]
+    }
+  },
+  "result": "add_result"
+}
+```

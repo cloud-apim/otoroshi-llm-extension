@@ -1,0 +1,53 @@
+---
+sidebar_position: 5
+---
+
+# Generate Image
+
+The `generate_image` function generates images from text using an image generation model.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.generate_image`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The image generation provider id |
+| `payload` | object | yes | The image generation payload |
+| `payload.prompt` | string | yes | The image generation prompt |
+| `payload.background` | string | no | The background color |
+| `payload.model` | string | no | The model name |
+| `payload.moderation` | string | no | The moderation level |
+| `payload.n` | integer | no | Number of images to generate |
+| `payload.outputCompression` | integer | no | The output compression level |
+| `payload.outputFormat` | string | no | The output format (e.g., `png`, `jpg`) |
+| `payload.responseFormat` | string | no | The response format (e.g., `url`, `b64_json`) |
+| `payload.quality` | string | no | The image quality (e.g., `standard`, `hd`) |
+| `payload.size` | string | no | The image size (e.g., `1024x1024`) |
+| `payload.style` | string | no | The image style (e.g., `natural`, `vivid`) |
+
+## Output
+
+Returns the image generation result in OpenAI format.
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.generate_image",
+  "args": {
+    "provider": "image-model_xxxxx",
+    "payload": {
+      "prompt": "A beautiful sunset over the ocean",
+      "model": "dall-e-3",
+      "n": 1,
+      "quality": "standard",
+      "size": "1024x1024",
+      "style": "natural",
+      "responseFormat": "url"
+    }
+  },
+  "result": "image_result"
+}
+```

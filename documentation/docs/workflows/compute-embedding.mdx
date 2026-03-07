@@ -1,0 +1,60 @@
+---
+sidebar_position: 4
+---
+
+# Compute Embedding
+
+The `compute_embedding` function computes embeddings for text using an embedding model provider.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.compute_embedding`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The embedding model provider id |
+| `payload` | object | yes | The payload object |
+| `payload.input` | array | yes | The input strings to embed |
+| `payload.model` | string | no | The embedding model name |
+| `payload.dimensions` | integer | no | The embedding dimensions |
+| `payload.encoding_format` | string | no | The encoding format (default: `float`) |
+| `payload.user` | string | no | An identifier for the user |
+
+## Output
+
+Returns the embedding result in OpenAI format:
+
+```json
+{
+  "data": [
+    {
+      "embedding": [0.1, 0.2, ...],
+      "index": 0
+    }
+  ],
+  "model": "text-embedding-ada-002",
+  "usage": {
+    "prompt_tokens": 5,
+    "total_tokens": 5
+  }
+}
+```
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.compute_embedding",
+  "args": {
+    "provider": "embedding-model_xxxxx",
+    "payload": {
+      "input": ["Hello, world!"],
+      "model": "text-embedding-ada-002",
+      "dimensions": 1536,
+      "encoding_format": "float"
+    }
+  },
+  "result": "embedding_result"
+}
+```

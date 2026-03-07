@@ -1,0 +1,76 @@
+---
+sidebar_position: 10
+---
+
+# Guardrail Call
+
+The `guardrail_call` function validates input using a guardrail. This allows you to check content against various safety rules directly within a workflow.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.guardrail_call`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `kind` | string | yes | The guardrail kind (see available guardrails below) |
+| `config` | object | yes | The guardrail configuration |
+| `input` | string/object/array | yes | The input to validate |
+
+### Available guardrail kinds
+
+- `regex` - Regular expression matching
+- `webhook` - External webhook validation
+- `llm` - LLM-based validation
+- `secrets_leakage` - Detect secrets leakage
+- `auto_secrets_leakage` - Automatic secrets leakage detection
+- `gibberish` - Detect gibberish content
+- `pif` - Detect personal information
+- `moderation` - Language moderation
+- `moderation_model` - Model-based moderation
+- `toxic_language` - Detect toxic language
+- `racial_bias` - Detect racial bias
+- `gender_bias` - Detect gender bias
+- `personal_health_information` - Detect personal health information
+- `prompt_injection` - Detect prompt injection attempts
+- `faithfulness` - Check response faithfulness
+- `sentences` - Validate sentence count
+- `words` - Validate word count
+- `characters` - Validate character count
+- `contains` - Check if text contains specific content
+- `semantic_contains` - Semantic containment check
+- `quickjs` - QuickJS scripted validation
+- `wasm` - WASM-based validation
+
+## Output
+
+```json
+{
+  "pass": true
+}
+```
+
+or
+
+```json
+{
+  "pass": false,
+  "cause": "reason for denial"
+}
+```
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.guardrail_call",
+  "args": {
+    "kind": "regex",
+    "config": {
+      "deny": [".*credit card.*", ".*password.*"]
+    },
+    "input": "Hello, how are you?"
+  },
+  "result": "guardrail_result"
+}
+```

@@ -1,0 +1,44 @@
+---
+sidebar_position: 13
+---
+
+# Search in Vector Store
+
+The `vector_store_search` function searches for similar documents in a vector store (embedding store) using a vector query.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.vector_store_search`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The embedding store provider id |
+| `payload` | object | yes | The payload object |
+| `payload.embedding` | object | yes | The embedding to search with |
+| `payload.embedding.vector` | array | yes | The vector to search for |
+| `payload.max_results` | integer | no | Maximum number of results to return |
+| `payload.min_score` | number | no | Minimum similarity score threshold |
+
+## Output
+
+Returns the search results as a JSON array of matching documents with their similarity scores.
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.vector_store_search",
+  "args": {
+    "provider": "embedding-store_xxxxx",
+    "payload": {
+      "embedding": {
+        "vector": [0.1, 0.2, 0.3, 0.4]
+      },
+      "max_results": 10,
+      "min_score": 0.5
+    }
+  },
+  "result": "search_results"
+}
+```

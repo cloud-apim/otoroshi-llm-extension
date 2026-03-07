@@ -1,0 +1,68 @@
+---
+sidebar_position: 3
+---
+
+# Speech to Text
+
+The `audio_stt` function converts audio to text using an audio model provider.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.audio_stt`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The audio model provider id |
+| `decode_base64` | boolean | no | Whether the input audio is base64 encoded (default: `false`) |
+| `file_in` | string | no | The file path to read the audio from |
+| `payload` | object | yes | The payload object |
+| `payload.audio` | string | no | The audio data (base64 encoded if `decode_base64` is `true`) |
+| `payload.content_type` | string | no | The audio content type (default: `audio/mp3`) |
+| `payload.filename` | string | no | The audio file name |
+| `payload.model` | string | no | The model name |
+| `payload.language` | string | no | The language of the audio |
+| `payload.prompt` | string | no | A prompt to guide the transcription |
+| `payload.responseFormat` | string | no | The response format |
+| `payload.temperature` | number | no | The temperature for transcription |
+
+## Output
+
+Returns the transcribed text as a string.
+
+## Example with file input
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.audio_stt",
+  "args": {
+    "provider": "audio-model_xxxxx",
+    "file_in": "/path/to/audio.mp3",
+    "payload": {
+      "model": "whisper-1",
+      "language": "en"
+    }
+  },
+  "result": "transcription"
+}
+```
+
+## Example with base64 input
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.audio_stt",
+  "args": {
+    "provider": "audio-model_xxxxx",
+    "decode_base64": true,
+    "payload": {
+      "audio": "...",
+      "content_type": "audio/mp3",
+      "model": "whisper-1",
+      "language": "en"
+    }
+  },
+  "result": "transcription"
+}
+```

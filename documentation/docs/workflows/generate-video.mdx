@@ -1,0 +1,45 @@
+---
+sidebar_position: 6
+---
+
+# Generate Video
+
+The `generate_video` function generates videos from text using a video generation model.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.generate_video`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The video generation provider id |
+| `payload` | object | yes | The video generation payload |
+| `payload.prompt` | string | yes | The video generation prompt |
+| `payload.loop` | boolean | no | Whether the video should loop |
+| `payload.model` | string | no | The model name |
+| `payload.aspect_ratio` | string | no | The video aspect ratio |
+| `payload.resolution` | string | no | The video resolution |
+| `payload.duration` | string | no | The video duration |
+
+## Output
+
+Returns the video generation result in OpenAI format.
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.generate_video",
+  "args": {
+    "provider": "video-model_xxxxx",
+    "payload": {
+      "prompt": "A cat playing with a ball of yarn",
+      "model": "video-model",
+      "aspect_ratio": "16:9",
+      "duration": "5s"
+    }
+  },
+  "result": "video_result"
+}
+```

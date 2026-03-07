@@ -1,0 +1,37 @@
+---
+sidebar_position: 12
+---
+
+# Remove from Vector Store
+
+The `vector_store_remove` function removes a document entry from a vector store (embedding store).
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.vector_store_remove`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The embedding store provider id |
+| `payload` | object | yes | The payload object |
+| `payload.id` | string | yes | The document id to remove |
+
+## Output
+
+Returns `null` on success.
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.vector_store_remove",
+  "args": {
+    "provider": "embedding-store_xxxxx",
+    "payload": {
+      "id": "doc_001"
+    }
+  },
+  "result": "remove_result"
+}
+```

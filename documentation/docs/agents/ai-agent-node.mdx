@@ -1,0 +1,293 @@
+---
+sidebar_position: 1
+---
+
+# AI Agent Node
+
+The AI Agent node is the primary way to run an AI agent within an Otoroshi workflow. It acts as an autonomous agent that uses an LLM provider to reason and take actions.
+
+- **Node kind**: `extensions.com.cloud-apim.llm-extension.ai_agent`
+
+## Configuration
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | yes | Name of the agent |
+| `provider` | string | yes | Id of the LLM provider to use |
+| `description` | string | yes | Description of the agent (used for handoff descriptions) |
+| `instructions` | array/string | yes | System instructions that define agent behavior |
+| `input` | string/array/object | yes | The agent input - can be a text string, a messages array, or an expression language reference |
+| `model` | string | no | Override the model used by the provider |
+| `model_options` | object | no | Override model options (temperature, etc.) |
+| `tools` | array | no | List of tool function ids the agent can use |
+| `mcp_connectors` | array | no | List of MCP connector ids the agent can use |
+| `inline_tools` | array | no | List of inline tool definitions (see below) |
+| `memory` | string | no | Persistent memory provider id for conversation history |
+| `guardrails` | array | no | List of guardrail configurations |
+| `handoffs` | array | no | List of handoff configurations to other agents |
+| `run_config` | object | no | Runtime configuration |
+| `run_config.max_turns` | integer | no | Maximum number of agent turns (default: `10`) |
+
+## Basic example
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+  "name": "assistant",
+  "provider": "provider_xxxxx",
+  "description": "A helpful general-purpose assistant",
+  "instructions": [
+    "You are a helpful assistant that answers questions clearly and concisely."
+  ],
+  "input": "${input.question}",
+  "result": "agent_response"
+}
+```
+
+## Using tools
+
+Agents can use three types of tools:
+
+### Tool functions
+
+Reference existing tool functions registered in the LLM extension by their id:
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+  "name": "assistant",
+  "provider": "provider_xxxxx",
+  "description": "An assistant with tool access",
+  "instructions": ["You help users by calling appropriate tools."],
+  "input": "${input.question}",
+  "tools": ["tool-function_xxxxx", "tool-function_yyyyy"],
+  "result": "agent_response"
+}
+```
+
+### MCP connectors
+
+Reference MCP connectors to give the agent access to MCP server tools:
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+  "name": "assistant",
+  "provider": "provider_xxxxx",
+  "description": "An assistant with MCP access",
+  "instructions": ["You help users by using available MCP tools."],
+  "input": "${input.question}",
+  "mcp_connectors": ["mcp-connector_xxxxx"],
+  "result": "agent_response"
+}
+```
+
+### Inline tools
+
+Define tools directly within the agent configuration. Each inline tool runs a workflow node when called:
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+  "name": "assistant",
+  "provider": "provider_xxxxx",
+  "description": "An assistant with inline tools",
+  "instructions": ["You help users by calling tools when needed."],
+  "input": "${input.question}",
+  "inline_tools": [
+    {
+      "name": "get_current_time",
+      "description": "Returns the current date and time",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "description": "The timezone (e.g. Europe/Paris)"
+          }
+        }
+      },
+      "required": ["timezone"],
+      "node": {
+        "kind": "call",
+        "function": "core.system_call",
+        "args": {
+          "command": ["date"]
+        }
+      }
+    }
+  ],
+  "result": "agent_response"
+}
+```
+
+When the LLM decides to call an inline tool, the arguments are stored in the workflow memory as `tool_input`, and the associated workflow node is executed. The node result is returned to the LLM as the tool result.
+
+You can set `response_json_parse: true` (or `input_json_parse: true`) on an inline tool to parse the tool arguments as JSON before storing them in `tool_input`.
+
+## Agent handoffs
+
+Handoffs allow an agent to transfer the conversation to another specialized agent. The triage agent sees each possible handoff as a tool it can call.
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+  "name": "triage_agent",
+  "provider": "provider_xxxxx",
+  "description": "A triage agent that routes questions",
+  "instructions": [
+    "You determine which agent to use based on the user's question"
+  ],
+  "input": "${input.question}",
+  "handoffs": [
+    {
+      "enabled": true,
+      "agent": {
+        "name": "math_tutor",
+        "provider": "provider_xxxxx",
+        "description": "Specialist agent for math questions",
+        "instructions": [
+          "You provide help with math problems. Explain your reasoning at each step."
+        ],
+        "mcp_connectors": []
+      }
+    },
+    {
+      "enabled": true,
+      "agent": {
+        "name": "history_tutor",
+        "provider": "provider_xxxxx",
+        "description": "Specialist agent for historical questions",
+        "instructions": [
+          "You provide assistance with historical queries. Explain events and context clearly."
+        ],
+        "mcp_connectors": []
+      }
+    }
+  ],
+  "result": "agent_response"
+}
+```
+
+### Handoff configuration
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `enabled` | boolean | no | Whether this handoff is active (default: `true`) |
+| `agent` | object | yes | The target agent configuration (same structure as the AI Agent node) |
+| `tool_name_override` | string | no | Override the tool name (default: `transfer_to_<agent_name>`) |
+| `tool_description_override` | string | no | Override the tool description |
+
+When a handoff occurs, the LLM calls a function named `transfer_to_<agent_name>` (or the overridden name). The agent runner then executes the target agent with the same input, inheriting the provider and model configuration if not overridden.
+
+## Persistent memory
+
+Connect an agent to a persistent memory provider to maintain conversation history across workflow executions:
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+  "name": "assistant",
+  "provider": "provider_xxxxx",
+  "description": "An assistant with memory",
+  "instructions": ["You are a helpful assistant."],
+  "input": "${input.question}",
+  "memory": "memory_xxxxx",
+  "result": "agent_response"
+}
+```
+
+## Guardrails
+
+Apply guardrails to validate agent inputs and outputs:
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+  "name": "assistant",
+  "provider": "provider_xxxxx",
+  "description": "A safe assistant",
+  "instructions": ["You are a helpful assistant."],
+  "input": "${input.question}",
+  "guardrails": [
+    {
+      "id": "regex",
+      "before": true,
+      "after": false,
+      "config": {
+        "deny": [".*password.*", ".*credit card.*"]
+      }
+    },
+    {
+      "id": "prompt_injection",
+      "before": true,
+      "after": false,
+      "config": {
+        "provider": "provider_xxxxx"
+      }
+    }
+  ],
+  "result": "agent_response"
+}
+```
+
+### Available guardrail kinds
+
+`regex`, `webhook`, `llm`, `secrets_leakage`, `auto_secrets_leakage`, `gibberish`, `pif`, `moderation`, `moderation_model`, `toxic_language`, `racial_bias`, `gender_bias`, `personal_health_information`, `prompt_injection`, `faithfulness`, `sentences`, `words`, `characters`, `contains`, `semantic_contains`, `quickjs`, `wasm`
+
+## Complete example: multi-agent system with tools
+
+```json
+{
+  "kind": "workflow",
+  "steps": [
+    {
+      "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+      "name": "triage",
+      "provider": "provider_xxxxx",
+      "description": "A triage agent",
+      "instructions": [
+        "Route the user question to the appropriate specialist agent."
+      ],
+      "input": "${input.question}",
+      "handoffs": [
+        {
+          "enabled": true,
+          "agent": {
+            "name": "researcher",
+            "provider": "provider_xxxxx",
+            "description": "Research agent with web search capabilities",
+            "instructions": [
+              "You help users find information using web search tools."
+            ],
+            "mcp_connectors": ["mcp-connector_brave-search"]
+          }
+        },
+        {
+          "enabled": true,
+          "agent": {
+            "name": "coder",
+            "provider": "provider_xxxxx",
+            "description": "Coding assistant",
+            "instructions": [
+              "You help users with coding problems. Write clean, documented code."
+            ],
+            "tools": ["tool-function_code-executor"],
+            "mcp_connectors": []
+          }
+        }
+      ],
+      "guardrails": [
+        {
+          "id": "prompt_injection",
+          "before": true,
+          "after": false,
+          "config": { "provider": "provider_xxxxx" }
+        }
+      ],
+      "result": "agent_response"
+    }
+  ],
+  "returned": "${agent_response}"
+}
+```

@@ -1,0 +1,50 @@
+---
+sidebar_position: 9
+---
+
+# Moderation Call
+
+The `moderation_call` function calls a moderation model to check content for inappropriate material.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.moderation_call`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The moderation model provider id |
+| `payload` | object | yes | The payload object |
+| `payload.input` | string | yes | The text to moderate |
+
+## Output
+
+Returns the moderation result in OpenAI format:
+
+```json
+{
+  "model": "text-moderation-latest",
+  "results": [
+    {
+      "flagged": false,
+      "categories": { ... },
+      "category_scores": { ... }
+    }
+  ]
+}
+```
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.moderation_call",
+  "args": {
+    "provider": "moderation-model_xxxxx",
+    "payload": {
+      "input": "This is a test message"
+    }
+  },
+  "result": "moderation_result"
+}
+```

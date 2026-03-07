@@ -1,0 +1,44 @@
+---
+sidebar_position: 11
+---
+
+# Add to Vector Store
+
+The `vector_store_add` function adds a document entry to a vector store (embedding store).
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.vector_store_add`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The embedding store provider id |
+| `payload` | object | yes | The payload object |
+| `payload.id` | string | yes | The document id |
+| `payload.input` | string | yes | The document content |
+| `payload.embedding` | object | no | The pre-computed embedding |
+| `payload.embedding.vector` | array | no | The vector representation |
+
+## Output
+
+Returns `null` on success.
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.vector_store_add",
+  "args": {
+    "provider": "embedding-store_xxxxx",
+    "payload": {
+      "id": "doc_001",
+      "input": "Otoroshi is a reverse proxy for microservices",
+      "embedding": {
+        "vector": [0.1, 0.2, 0.3, 0.4]
+      }
+    }
+  },
+  "result": "add_result"
+}
+```

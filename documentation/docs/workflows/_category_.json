@@ -1,0 +1,8 @@
+{
+  "label": "Workflows",
+  "position": 9,
+  "link": {
+    "type": "generated-index",
+    "description": "All workflow functions and nodes added by the LLM extension"
+  }
+}
