@@ -1,0 +1,281 @@
+---
+sidebar_position: 5
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Anthropic Messages API Proxy
+
+The **LLM Anthropic Messages Proxy** plugin exposes any LLM provider managed by Otoroshi through an [Anthropic Messages API](https://docs.anthropic.com/en/api/messages)-compatible endpoint. This means any client that speaks the Anthropic API format (including **Claude Code**) can seamlessly use any LLM provider proxied by Otoroshi, whether it's OpenAI, Mistral, Ollama, Azure OpenAI, Cohere, or any other supported provider.
+
+## Why use this plugin?
+
+The main use case is to allow tools built for the Anthropic API to work with **any** LLM provider. For example, you can use **Claude Code** (Anthropic's CLI for Claude) with a completely different model like GPT-4, Mistral, or a local Ollama model, all routed and managed through Otoroshi.
+
+The plugin handles all the format translation automatically:
+- Converts Anthropic-format requests to the target provider's format
+- Converts responses back to Anthropic format
+- Supports both streaming (SSE) and non-streaming modes
+- Translates tool calling formats bidirectionally
+- Maps thinking/reasoning parameters
+
+## Using Claude Code with any model
+
+The most powerful use case is running **Claude Code** with any LLM provider proxied by Otoroshi. Here's how to set it up:
+
+### 1. Set up your Otoroshi route
+
+Create an Otoroshi route with the `Cloud APIM - LLM Anthropic messages Proxy` plugin and configure it with your desired LLM provider.
+
+### 2. Configure Claude Code environment variables
+
+```sh
+export ANTHROPIC_AUTH_TOKEN=your-otoroshi-api-key
+export ANTHROPIC_API_KEY=""
+export ANTHROPIC_BASE_URL=https://your-anthropic-proxy.your-domain.com
+```
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_AUTH_TOKEN` | Your Otoroshi API key (used for authentication on the route) |
+| `ANTHROPIC_API_KEY` | Set to empty string to prevent Claude Code from using the real Anthropic API |
+| `ANTHROPIC_BASE_URL` | The URL of your Otoroshi route exposing the Anthropic proxy |
+
+### 3. Launch Claude Code with your model
+
+```sh
+claude --model gpt-4o
+```
+
+Claude Code will send requests in Anthropic format to your Otoroshi route, which will translate them and forward them to the configured provider (e.g., OpenAI), then translate the response back to Anthropic format.
+
+## Plugin configuration
+
+The plugin is configured in the route's plugin section:
+
+```js
+{
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AnthropicCompatProxy",
+  "enabled": true,
+  "config": {
+    "refs": [
+      "provider_xxxxx"
+    ],
+    "override_model": ""
+  }
+}
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `refs` | array of strings | References to the LLM provider(s) to use. The first provider in the list is used by default |
+| `override_model` | string | Optional. Forces a specific model name regardless of what the client sends |
+
+### Provider selection
+
+The plugin supports multiple providers through the `refs` array. The provider is selected in the following order:
+
+1. If the request body contains a `provider` field matching one of the `refs`, that provider is used
+2. Otherwise, the first provider in the `refs` array is used
+
+This allows you to configure multiple providers and let the client choose which one to use.
+
+## Route configuration example
+
+```js
+{
+  "id": "route_anthropic_proxy",
+  "name": "Anthropic Proxy",
+  "frontend": {
+    "domains": [
+      "anthropic-proxy.your-domain.com"
+    ],
+    "strip_path": true,
+    "exact": false,
+    "headers": {},
+    "query": {},
+    "methods": []
+  },
+  "backend": {
+    "targets": [
+      {
+        "id": "target_1",
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "config": {}
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AnthropicCompatProxy",
+      "config": {
+        "refs": [
+          "provider_xxxxx"
+        ],
+        "override_model": ""
+      }
+    }
+  ]
+}
+```
+
+## Supported features
+
+### Streaming
+
+The plugin supports streaming responses via Server-Sent Events (SSE), fully compatible with the Anthropic streaming format. Streaming is activated when:
+- The request body contains `"stream": true`
+- Or the query parameter `?stream=true` is present
+- Or the header `x-stream: true` is present
+
+The streaming response follows the Anthropic SSE protocol with events: `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, and `message_stop`.
+
+### Tool calling
+
+The plugin fully supports tool calling (function calling). It translates between the Anthropic tool format and the OpenAI tool format automatically:
+
+- **Request**: Anthropic-format tools (`name`, `description`, `input_schema`) are converted to OpenAI-format tools (`function` with `name`, `description`, `parameters`)
+- **Request**: Anthropic-format `tool_use` and `tool_result` messages are converted to OpenAI-format `tool_calls` and `tool` messages
+- **Response**: OpenAI-format tool calls are converted back to Anthropic `tool_use` content blocks
+
+This means Claude Code's tool calling works seamlessly with any provider that supports function calling.
+
+### System messages
+
+The Anthropic API uses a top-level `system` field for system messages, while OpenAI uses a `system` role message. The plugin handles this conversion automatically:
+- A string `system` field is converted to a system message
+- An array of system blocks (with `type: "text"`) is concatenated and converted to a system message
+
+### Thinking / Extended thinking
+
+When a request includes Anthropic's `thinking` parameter (extended thinking mode), the plugin maps the thinking budget to a `reasoning_effort` parameter:
+
+| Budget ratio (thinking / max_tokens) | Reasoning effort |
+|--------------------------------------|-----------------|
+| 0 - 25% | `minimal` |
+| 25% - 50% | `low` |
+| 50% - 75% | `medium` |
+| 75% - 100% | `high` |
+
+### Structured output
+
+The plugin translates Anthropic's `output_config` with `json_schema` format to OpenAI's `response_format` with `json_schema` type, enabling structured output with any compatible provider.
+
+### Max tokens
+
+The `max_tokens` field from the Anthropic request is translated to the `max_completion_tokens` field for OpenAI-compatible providers.
+
+## Calling the API directly
+
+You can also call the proxy directly with `curl` or any HTTP client using the Anthropic Messages API format:
+
+```sh
+curl https://anthropic-proxy.your-domain.com/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your-otoroshi-api-key" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "gpt-4o",
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "role": "user",
+        "content": "Hello, how are you?"
+      }
+    ]
+  }'
+```
+
+The response will be in standard Anthropic Messages API format:
+
+```js
+{
+  "id": "msg_xxxxx",
+  "type": "message",
+  "role": "assistant",
+  "model": "gpt-4o",
+  "content": [
+    {
+      "type": "text",
+      "text": "Hello! I'm doing well, thank you for asking. How can I assist you today?"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 18
+  }
+}
+```
+
+## Using with tool calling
+
+Here's an example with tool calling:
+
+```sh
+curl https://anthropic-proxy.your-domain.com/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your-otoroshi-api-key" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "gpt-4o",
+    "max_tokens": 1024,
+    "tools": [
+      {
+        "name": "get_weather",
+        "description": "Get the current weather for a location",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The city and state, e.g. San Francisco, CA"
+            }
+          },
+          "required": ["location"]
+        }
+      }
+    ],
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is the weather in Paris?"
+      }
+    ]
+  }'
+```
+
+The response will contain tool use blocks in Anthropic format:
+
+```js
+{
+  "id": "msg_xxxxx",
+  "type": "message",
+  "role": "assistant",
+  "model": "gpt-4o",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "call_xxxxx",
+      "name": "get_weather",
+      "input": {
+        "location": "Paris, France"
+      }
+    }
+  ],
+  "stop_reason": "tool_use",
+  "stop_sequence": null,
+  "usage": {
+    "input_tokens": 50,
+    "output_tokens": 30
+  }
+}
+```
