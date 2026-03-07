@@ -6,11 +6,26 @@ import Terminal from '@site/src/components/Terminal';
 
 # MCP Connectors
 
-MCP connectors are tools to connect to MCP servers. 
+MCP connectors are tools to connect to MCP servers. They provide full MCP protocol support including tools, resources, resource templates, and prompts.
 
 You can find a list of pre-build MCP servers from [this repository](https://github.com/modelcontextprotocol/servers)
 
 We will add examples with pre-build entities from [our repository](https://github.com/cloud-apim/mcp-connectors-examples)
+
+## Supported MCP capabilities
+
+MCP connectors support the full MCP protocol:
+
+| Capability | Description |
+|------------|-------------|
+| **Tools** | Discover and call tools exposed by the MCP server |
+| **Resources** | List and read resources (files, data, documents, etc.) from the MCP server. Resources are returned with `uri`, `name`, `description`, and `mimeType`. Contents can be text or binary (blob). |
+| **Resource Templates** | List parameterized resource templates from the MCP server. Templates are returned with `uriTemplate`, `name`, `description`, and `mimeType`. |
+| **Prompts** | List and retrieve prompt templates from the MCP server. Prompts include `name`, `description`, and their `arguments` (each with `name`, `description`, and `required`). Getting a prompt returns its `description` and `messages` (each with `role` and `content`). |
+
+All capabilities support filtering via include/exclude patterns and advanced rules. See the [Filtering](#filtering-tools-resources-and-prompts) and [Advanced rules](#advanced-rules) sections below.
+
+## Configuration
 
 Here is the `MCP connector` configuration :
 

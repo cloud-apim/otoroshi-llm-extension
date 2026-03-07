@@ -32,8 +32,45 @@ Think of MCP like an airport control tower 🏢✈️ that manages how AI agents
 
 This makes AI more powerful and useful by allowing agents to remember, adapt, and take action across various platforms.
 
+## Supported MCP features
+
+Otoroshi provides full support for the MCP specification, both as a client (connecting to MCP servers) and as a server (exposing tools to MCP clients).
+
+### As an MCP client (MCP Connectors)
+
+[MCP Connectors](/docs/function-calling/mcp-connectors) allow Otoroshi to connect to external MCP servers and consume their capabilities:
+
+- **Tools** (`tools/list`, `tools/call`) - Discover and call tools exposed by MCP servers
+- **Resources** (`resources/list`, `resources/read`) - List and read resources (files, data, etc.) from MCP servers
+- **Resource Templates** (`resources/templates/list`) - List parameterized resource templates
+- **Prompts** (`prompts/list`, `prompts/get`) - List and retrieve prompt templates with their arguments
+
+All these features support [filtering](/docs/function-calling/mcp-connectors#filtering-tools-resources-and-prompts) (include/exclude patterns) and [advanced rules](/docs/function-calling/mcp-connectors#advanced-rules) (JsonPath-based access control).
+
+### As an MCP server (MCP Plugins)
+
+[MCP Server Plugins](/docs/function-calling/mcp-plugins) allow Otoroshi to expose tool functions and MCP connector capabilities as an MCP server, supporting three transport protocols:
+
+- **HTTP** - Simple request/response MCP server
+- **SSE** (Server-Sent Events) - Streaming MCP server for long-lived connections
+- **WebSocket** - Full-duplex MCP server
+
+All three transports support the full MCP protocol:
+
+| Method | Description |
+|--------|-------------|
+| `tools/list` | List available tools |
+| `tools/call` | Execute a tool |
+| `resources/list` | List available resources |
+| `resources/read` | Read a resource by URI |
+| `resources/templates/list` | List available resource templates |
+| `prompts/list` | List available prompts |
+| `prompts/get` | Get a prompt with its messages |
+
+Resources are returned with their `uri`, `name`, `description`, and `mimeType`. Resource contents can be text or binary (blob). Prompts include their `name`, `description`, and `arguments` (with `name`, `description`, and `required` for each argument). When getting a prompt, the response includes the prompt `description` and its `messages` (each with a `role` and `content`).
+
 ## Otoroshi + MCP = ❤️
 
 With Otoroshi you can use many tools to interact with MCP.
 
-Thanks to our [MCP Connectors](/docs/function-calling/mcp-connectors) you can link Otoroshi with your [AI provider] and an MCP Server.
+Thanks to our [MCP Connectors](/docs/function-calling/mcp-connectors) you can link Otoroshi with your AI provider and an MCP Server.
