@@ -128,6 +128,125 @@ Go to [Data Exporters](http://otoroshi.oto.tools:8080/bo/dashboard/exporters) pa
 }
 ```
 
+## Extra analytics data in GatewayEvent
+
+In addition to the dedicated `LLMUsageAudit` events, the LLM extension also enriches the standard Otoroshi `GatewayEvent` (the analytics event generated for every HTTP request passing through a route) with LLM-specific data. This data is added to the `ExtraAnalyticsData` field of the `GatewayEvent` using different keys depending on the operation type.
+
+### Analytics data keys
+
+| Key | Operation type | Added by |
+|-----|----------------|----------|
+| `ai` | Chat completion, text completion | LLM providers (OpenAI, Anthropic, Mistral, etc.) |
+| `ai-embedding` | Embedding generation | Embedding model auditing decorator |
+| `ai-audio` | Audio translation, speech-to-text | Audio model auditing decorator |
+| `ai-image` | Image generation, image editing | Image model auditing decorator |
+| `ai-moderation` | Content moderation | Moderation model auditing decorator |
+| `ai-video` | Video generation | Video model auditing decorator |
+
+Each key contains an array of objects, one per LLM call made during the request processing. This allows tracking multiple LLM calls within a single HTTP request (e.g., when using fallbacks or load balancing).
+
+### `ai` key structure (chat/completion)
+
+For chat and text completion operations, each provider adds a slug to the `ai` array with the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider_kind` | string | The provider type (e.g., `"openai"`, `"AzureOpenAi"`, `"Anthropic"`) |
+| `provider` | string | The provider entity ID |
+| `duration` | number | Request duration in milliseconds |
+| `model` | string | The model used |
+| `rate_limit` | object | Rate limit information (`requests_limit`, `requests_remaining`, `tokens_limit`, `tokens_remaining`) |
+| `usage` | object | Token usage (`prompt_tokens`, `generation_tokens`, `reasoning_tokens`) |
+| `cache` | object | Cache information (if a cache hit occurred) |
+| `deployment_id` | string | Azure OpenAI deployment ID (Azure providers only) |
+| `resource_name` | string | Azure OpenAI resource name (Azure providers only) |
+
+Additionally, the [LLM Token Rate Limiting](/docs/cost-optimizations/quotas) plugin can enrich the first element of the `ai` array with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `consumer_rate_limit.max_tokens` | number | Maximum allowed tokens in the window |
+| `consumer_rate_limit.window_millis` | number | Rate limit window duration in milliseconds |
+| `consumer_rate_limit.consumed_tokens` | number | Tokens consumed in the current window |
+| `consumer_rate_limit.remaining_tokens` | number | Remaining tokens in the current window |
+
+### `ai-embedding` key structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider_kind` | string | The provider type |
+| `provider` | string | The provider entity ID |
+| `duration` | number | Request duration in milliseconds |
+| + response fields | | The full embedding response (model, usage, data) |
+
+### `ai-audio` key structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider_kind` | string | The provider type |
+| `provider` | string | The provider entity ID |
+| `duration` | number | Request duration in milliseconds |
+| + response fields | | The full audio response (text, language, duration, segments) |
+
+### `ai-image` key structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider_kind` | string | The provider type |
+| `provider` | string | The provider entity ID |
+| `duration` | number | Request duration in milliseconds |
+| + response fields | | The full image response (created, data) |
+
+### `ai-moderation` key structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider_kind` | string | The provider type |
+| `provider` | string | The provider entity ID |
+| `duration` | number | Request duration in milliseconds |
+| + response fields | | The full moderation response (id, model, results) |
+
+### `ai-video` key structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider_kind` | string | The provider type |
+| `provider` | string | The provider entity ID |
+| `duration` | number | Request duration in milliseconds |
+| + response fields | | The full video response |
+
+### Example GatewayEvent extra analytics data
+
+```json
+{
+  "ai": [
+    {
+      "provider_kind": "openai",
+      "provider": "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
+      "duration": 415,
+      "model": "gpt-4o-mini",
+      "rate_limit": {
+        "requests_limit": 10000,
+        "requests_remaining": 9999,
+        "tokens_limit": 200000,
+        "tokens_remaining": 199993
+      },
+      "usage": {
+        "prompt_tokens": 11,
+        "generation_tokens": 18,
+        "reasoning_tokens": 0
+      },
+      "consumer_rate_limit": {
+        "max_tokens": 1000,
+        "window_millis": 60000,
+        "consumed_tokens": 29,
+        "remaining_tokens": 971
+      }
+    }
+  ]
+}
+```
+
 ## LLMUsageAudit event example
 
 Here is a full example of a `LLMUsageAudit` event for a chat completion request:
