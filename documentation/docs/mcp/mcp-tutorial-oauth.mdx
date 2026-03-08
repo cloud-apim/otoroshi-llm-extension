@@ -77,7 +77,7 @@ First, configure an OAuth2/OIDC authentication module in Otoroshi that points to
   "introspectionUrl": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/token/introspect",
   "loginUrl": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/auth",
   "logoutUrl": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/logout",
-  "callbackUrl": "https://your-otoroshi.example.com/privateapps/generic/callback",
+  "callbackUrl": "http://your-otoroshi.oto.tools:8080/privateapps/generic/callback",
   "scope": "openid email profile",
   "readProfileFromToken": false,
   "jwtVerifier": {
