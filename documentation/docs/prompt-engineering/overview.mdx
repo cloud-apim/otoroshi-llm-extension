@@ -1,19 +1,57 @@
 ---
-sidebar_position: 2
+sidebar_position: 1
 ---
 
 import Terminal from '@site/src/components/Terminal';
 
 # Overview
 
-Prompt engineering enhances interactions with LLMs by optimizing prompt structure, leveraging contextual information, and utilizing templating techniques. 
+The Otoroshi LLM extension provides a complete prompt engineering toolkit to control, optimize, and standardize interactions with LLMs. You can store reusable prompts, create message templates with dynamic expressions, and inject contextual information around user messages.
 
-This ensures efficient, accurate, and cost-effective responses for your users.
+## Features
 
-## Prompt Templating
-Prompt templating allows users to define standardized templates for commonly used queries, reducing redundancy and improving response consistency.
+| Feature | Description |
+|---------|-------------|
+| [Prompt library](/docs/prompt-engineering/prompt-library) | Store and reuse prompt texts across providers, plugins, and guardrails |
+| [Prompt templating](/docs/prompt-engineering/prompt-templating) | Define message templates with `@{path}` expressions that dynamically inject request data |
+| [Prompt context](/docs/prompt-engineering/prompt-context) | Inject pre/post messages (system prompts, instructions) around user messages |
+| [Prompt validator](/docs/prompt-engineering/prompt-validator) | Validate prompt content against allow/deny regex patterns |
 
-## Context Injection
+## How they work together
 
-Context injection improves LLM responses by supplying relevant background information, enabling more precise and insightful answers.
+These features can be combined in a single route to build powerful prompt pipelines:
 
+1. **Prompt validator** (access validation step) — checks that the consumer's messages comply with allow/deny patterns
+2. **Prompt template** (request transformation step) — optionally replaces the consumer's messages with a template-rendered message set
+3. **Prompt context** (request transformation step) — injects pre/post messages around the (possibly templated) messages
+4. **Provider-level context** (decorator) — the provider can also inject its own default context
+
+Multiple prompt context plugins can be stacked on a single route — their pre/post messages accumulate.
+
+## Provider-level context settings
+
+In addition to the plugin-based context injection, each LLM provider entity has its own context settings:
+
+```js
+{
+  "context": {
+    "default": "context-entity-id",
+    "contexts": ["context-entity-id-1", "context-entity-id-2"]
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `default` | string | `null` | Default PromptContext ID applied automatically when no context is specified in the request |
+| `contexts` | array | `[]` | Whitelist of allowed PromptContext IDs that consumers can select from |
+
+Consumers can select a context by including `"context": "<id-or-name>"` in the request body. Only contexts listed in the provider's whitelist are accepted. If no context is specified, the `default` context is used.
+
+## Admin API
+
+| Entity | API path |
+|--------|----------|
+| Prompts | `ai-gateway.extensions.cloud-apim.com/v1/prompts` |
+| Prompt Templates | `ai-gateway.extensions.cloud-apim.com/v1/prompt-templates` |
+| Prompt Contexts | `ai-gateway.extensions.cloud-apim.com/v1/prompt-contexts` |

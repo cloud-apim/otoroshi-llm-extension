@@ -1,9 +1,154 @@
 ---
-sidebar_position: 3
+sidebar_position: 4
 ---
 
 import Terminal from '@site/src/components/Terminal';
 
 # Prompt context
 
+Prompt contexts let you inject pre-messages and post-messages around the consumer's messages. This is the primary way to add system prompts, instructions, or framing information to LLM interactions without modifying the consumer's request.
+
+## How it works
+
+The consumer sends messages like:
+
+```json
+[
+  {"role": "user", "content": "What is the weather in Paris?"}
+]
+```
+
+With a prompt context that has a system prompt as a pre-message, the LLM actually receives:
+
+```json
+[
+  {"role": "system", "content": "You are an english butler. Always respond politely and formally."},
+  {"role": "user", "content": "What is the weather in Paris?"},
+  {"role": "system", "content": "Remember to be concise."}
+]
+```
+
+## Entity structure
+
+```js
+{
+  "id": "context_xxx",
+  "name": "English Butler",
+  "description": "Makes the LLM respond like an english butler",
+  "pre_messages": [
+    {
+      "role": "system",
+      "content": "You are an english butler. Always respond politely and formally."
+    }
+  ],
+  "post_messages": [
+    {
+      "role": "system",
+      "content": "Remember to be concise."
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pre_messages` | array | Messages prepended before the consumer's messages |
+| `post_messages` | array | Messages appended after the consumer's messages |
+
+Each message has:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `role` | string | Message role (`system`, `user`, `assistant`) |
+| `content` | string | Message content |
+
+## Two ways to use contexts
+
+### 1. Plugin-based (route level)
+
+Add the **Cloud APIM - LLM Proxy - prompt context** plugin to your route, **before** the LLM proxy plugin:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiPromptContext",
+  "config": {
+    "ref": "context-entity-id"
+  }
+}
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ref` | string | Reference to a PromptContext entity ID |
+
+Multiple context plugins can be stacked on the same route. Their pre/post messages accumulate.
+
+### 2. Provider-level (provider settings)
+
+Each LLM provider entity has a `context` setting that supports a default context and a whitelist of selectable contexts:
+
+```js
+{
+  "context": {
+    "default": "context-entity-id",
+    "contexts": ["context-entity-id-1", "context-entity-id-2"]
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `default` | string | `null` | Default context applied automatically when no context is specified |
+| `contexts` | array | `[]` | Whitelist of contexts that consumers can select from |
+
+Consumers can select a context by including `"context"` in the request body:
+
+```sh
+curl --request POST \
+  --url http://myroute.oto.tools:8080/v1/chat/completions \
+  --header 'content-type: application/json' \
+  --data '{
+  "messages": [
+    {"role": "user", "content": "Hello!"}
+  ],
+  "context": "context-entity-id-1"
+}'
+```
+
+The context can be referenced by **ID or name**. Only contexts listed in the provider's whitelist are accepted. The `context` field is stripped from the body before forwarding to the LLM.
+
+## Plugin vs. provider-level context
+
+| Aspect | Plugin-based | Provider-level |
+|--------|:------------:|:--------------:|
+| Configured on | Route | Provider entity |
+| Consumer can choose | No | Yes (from whitelist) |
+| Default context | Always applied | Applied when consumer doesn't specify one |
+| Stackable | Yes (multiple plugins) | No (one context per request) |
+| Use case | Fixed context per route | Multi-persona or multi-tenant setup |
+
+## Example: multi-persona provider
+
+Configure a provider with multiple available contexts:
+
+```js
+{
+  "context": {
+    "default": "context_butler",
+    "contexts": ["context_butler", "context_engineer", "context_teacher"]
+  }
+}
+```
+
+Consumers select the persona in their request:
+
+```json
+{"messages": [{"role": "user", "content": "Explain quantum computing"}], "context": "context_teacher"}
+```
+
 <iframe  width="956" height="538" src="https://www.youtube.com/embed/1YHFaMYSw6M?si=2DMJFJf9k2rk4wGo" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
+## Testing contexts
+
+The admin UI includes a built-in context tester. Provide a user message and test the context injection + LLM call directly from the Otoroshi back-office.

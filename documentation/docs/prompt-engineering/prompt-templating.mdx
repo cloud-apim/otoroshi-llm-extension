@@ -1,20 +1,129 @@
 ---
-sidebar_position: 2
+sidebar_position: 3
 ---
 
 import Terminal from '@site/src/components/Terminal';
 
 # Prompt templating
 
-![](/img/templating.png)
+Prompt templates let you define standardized message sets with dynamic expression placeholders. When a template is active, it **replaces** the consumer's messages entirely, giving you full control over what gets sent to the LLM.
 
-do not forget to disable options override
+## How it works
+
+1. The consumer sends a request to the route
+2. The prompt template plugin intercepts the request and resolves the template
+3. Expression placeholders (`@{path}`) are replaced with values from the request context
+4. The rendered messages replace the consumer's original messages
+5. The request is forwarded to the LLM provider with the templated messages
+
+## Template syntax
+
+A template is a JSON array of message objects with `@{path}` expression placeholders:
+
+```js
+[
+  {
+    "role": "system",
+    "content": "You are a helpful assistant for the @{request.route.name} service."
+  },
+  {
+    "role": "user",
+    "content": "@{body.text}"
+  }
+]
+```
+
+### Expression format
+
+Expressions use the `@{path}` syntax where `path` is a JSON path resolved against the template context object.
+
+The context object contains:
+
+| Path prefix | Description |
+|-------------|-------------|
+| `body.*` | The incoming request body fields |
+| `request.*` | The Otoroshi request context (route, headers, query params, etc.) |
+
+### Expression examples
+
+| Expression | Description |
+|------------|-------------|
+| `@{body.text}` | The `text` field from the request body |
+| `@{body.messages[0].content}` | First message content from the request body |
+| `@{request.route.name}` | Route name |
+| `@{request.route.id}` | Route ID |
+
+## Entity structure
+
+```js
+{
+  "id": "template_xxx",
+  "name": "Translation template",
+  "description": "Translates the body text field to English",
+  "template": "[{\"role\": \"system\", \"content\": \"Translate the following text to English.\"}, {\"role\": \"user\", \"content\": \"@{body.text}\"}]"
+}
+```
+
+## Plugin configuration
+
+Add the **Cloud APIM - LLM Proxy - prompt template** plugin to your route, **before** the LLM proxy plugin:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiPromptTemplate",
+  "config": {
+    "ref": "template-entity-id"
+  }
+}
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ref` | string | Reference to a PromptTemplate entity ID |
+
+**Important:** When using templates, disable `allow_config_override` on the provider to prevent the consumer from bypassing the template by sending their own messages:
 
 ![](/img/templating-override.png)
 
-then call your template
+## Example
+
+### Template
+
+```json
+[
+  {"role": "system", "content": "You are a travel assistant. Answer questions about destinations."},
+  {"role": "user", "content": "Tell me about @{body.destination} for a @{body.duration} trip."}
+]
+```
+
+### Consumer request
+
+```sh
+curl --request POST \
+  --url http://myroute.oto.tools:8080/ \
+  --header 'content-type: application/json' \
+  --data '{
+  "destination": "Japan",
+  "duration": "2 weeks"
+}'
+```
+
+### Result sent to LLM
+
+```json
+[
+  {"role": "system", "content": "You are a travel assistant. Answer questions about destinations."},
+  {"role": "user", "content": "Tell me about Japan for a 2 weeks trip."}
+]
+```
+
+![](/img/templating.png)
 
 ![](/img/templating-call.png)
 
 <iframe  width="956" height="538" src="https://www.youtube.com/embed/SqyKki3We90?si=by-ITIPZb1lLTgPW" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
+## Testing templates
+
+The admin UI includes a built-in template tester. Provide a JSON context object and test the template rendering + LLM call directly from the Otoroshi back-office.

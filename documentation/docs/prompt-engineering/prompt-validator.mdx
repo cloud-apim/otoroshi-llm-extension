@@ -1,0 +1,74 @@
+---
+sidebar_position: 5
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Prompt validator
+
+The prompt validator plugin validates the content of consumer messages against regex-based allow/deny patterns before they reach the LLM provider. This is a lightweight alternative to LLM-based [guardrails](/docs/guardrails/overview) for pattern-based content filtering.
+
+## How it works
+
+1. The plugin stores its allow/deny patterns in the request attributes
+2. The LLM proxy reads these patterns and validates every message content against them
+3. If validation fails, the request is rejected
+
+### Validation logic
+
+- **Allow patterns**: if any are defined, at least one must match the message content
+- **Deny patterns**: if any match the message content, the message is denied
+- A message passes validation only when it is **not denied** AND **allowed**
+
+## Plugin configuration
+
+Add the **Cloud APIM - LLM Proxy - prompt validator** plugin to your route, **before** the LLM proxy plugin:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiPromptValidator",
+  "config": {
+    "allow": [],
+    "deny": []
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `allow` | array | `[]` | Regex patterns — if non-empty, at least one must match for the message to pass |
+| `deny` | array | `[]` | Regex patterns — if any matches, the message is denied |
+
+## Stacking validators
+
+Multiple prompt validator plugins can be stacked on the same route. All validators must pass for the request to be allowed — their allow/deny patterns accumulate.
+
+## Examples
+
+### Block requests containing code
+
+```js
+{
+  "deny": ["```.*```", "<script.*>", "eval\\(", "exec\\("]
+}
+```
+
+### Only allow questions about a specific topic
+
+```js
+{
+  "allow": ["(?i).*(weather|forecast|temperature|climate).*"]
+}
+```
+
+### Combine allow and deny
+
+```js
+{
+  "allow": ["(?i).*(product|pricing|support).*"],
+  "deny": ["(?i).*(competitor|internal|confidential).*"]
+}
+```
+
+This allows only messages about products, pricing, or support, while blocking any mention of competitors or confidential information.

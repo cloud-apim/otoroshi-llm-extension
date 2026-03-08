@@ -1,0 +1,51 @@
+---
+sidebar_position: 2
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Prompt library
+
+The prompt library lets you store reusable prompt texts as named entities. Prompts can be referenced by ID from multiple plugins, guardrails, and other features, providing a single source of truth for your prompt texts.
+
+## Entity structure
+
+```js
+{
+  "id": "prompt_xxx",
+  "name": "English translator",
+  "description": "A system prompt for translating content to English",
+  "prompt": "You are a professional translator. Translate the following content to English. Return only the translation, no explanation."
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Auto-generated with `prompt_` prefix |
+| `name` | string | A descriptive name for the prompt |
+| `description` | string | What this prompt is used for |
+| `prompt` | string | The actual prompt text |
+
+## Where prompts can be referenced
+
+Prompts can be referenced via their ID (`prompt_ref`) from:
+
+- **[Request body modifier](/docs/http-plugins/http-request-body-modifier)** — system prompt for transforming request bodies
+- **[Response body modifier](/docs/http-plugins/http-response-body-modifier)** — system prompt for transforming response bodies
+- **[Response generator](/docs/http-plugins/http-response-generator)** — prompt for generating responses
+- **[LLM Response endpoint](/docs/http-plugins/llm-response-endpoint)** — prompt with Expression Language
+- **[Context validator](/docs/http-plugins/http-request-validation)** — system prompt for validating requests
+- **[WebSocket validator](/docs/http-plugins/websocket-validation)** — system prompt for validating WebSocket messages
+- **[LLM guardrails](/docs/guardrails/overview)** — validation prompt for custom LLM-based guardrails
+
+## Testing prompts
+
+The admin UI includes a built-in prompt tester. Select a provider and test your prompt directly from the Otoroshi back-office without creating a route.
+
+## Admin API
+
+```
+ai-gateway.extensions.cloud-apim.com/v1/prompts
+```
+
+Standard CRUD operations are supported.
