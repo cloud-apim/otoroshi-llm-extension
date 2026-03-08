@@ -1,5 +1,5 @@
 ---
-sidebar_position: 3
+sidebar_position: 0
 ---
 
 import Terminal from '@site/src/components/Terminal';
@@ -38,18 +38,18 @@ Otoroshi provides full support for the MCP specification, both as a client (conn
 
 ### As an MCP client (MCP Connectors)
 
-[MCP Connectors](/docs/function-calling/mcp-connectors) allow Otoroshi to connect to external MCP servers and consume their capabilities:
+[MCP Connectors](/docs/mcp/mcp-connectors) allow Otoroshi to connect to external MCP servers and consume their capabilities:
 
 - **Tools** (`tools/list`, `tools/call`) - Discover and call tools exposed by MCP servers
 - **Resources** (`resources/list`, `resources/read`) - List and read resources (files, data, etc.) from MCP servers
 - **Resource Templates** (`resources/templates/list`) - List parameterized resource templates
 - **Prompts** (`prompts/list`, `prompts/get`) - List and retrieve prompt templates with their arguments
 
-All these features support [filtering](/docs/function-calling/mcp-connectors#filtering-tools-resources-and-prompts) (include/exclude patterns) and [advanced rules](/docs/function-calling/mcp-connectors#advanced-rules) (JsonPath-based access control).
+All these features support [filtering](/docs/mcp/mcp-connectors#filtering-tools-resources-and-prompts) (include/exclude patterns) and [advanced rules](/docs/mcp/mcp-connectors#advanced-rules) (JsonPath-based access control).
 
 ### As an MCP server (MCP Plugins)
 
-[MCP Server Plugins](/docs/function-calling/mcp-plugins) allow Otoroshi to expose tool functions and MCP connector capabilities as an MCP server, supporting three transport protocols:
+[MCP Server Plugins](/docs/mcp/mcp-plugins) allow Otoroshi to expose tool functions and MCP connector capabilities as an MCP server, supporting three transport protocols:
 
 - **HTTP** - Simple request/response MCP server
 - **SSE** (Server-Sent Events) - Streaming MCP server for long-lived connections
@@ -73,4 +73,4 @@ Resources are returned with their `uri`, `name`, `description`, and `mimeType`. 
 
 With Otoroshi you can use many tools to interact with MCP.
 
-Thanks to our [MCP Connectors](/docs/function-calling/mcp-connectors) you can link Otoroshi with your AI provider and an MCP Server.
+Thanks to our [MCP Connectors](/docs/mcp/mcp-connectors) you can link Otoroshi with your AI provider and an MCP Server.
