@@ -4,42 +4,133 @@ sidebar_position: 1
 
 import Terminal from '@site/src/components/Terminal';
 
-# Wasm Functions
+# QuickJs and WASM Functions
 
-## 🤖 What Are Tool Calls in LLMs?
-Tool calls in Large Language Models (LLMs) allow the model to interact with external tools, APIs, or functions to fetch real-world data or perform tasks beyond its native capabilities.
+The Otoroshi LLM extension supports two WASM-based backends for tool functions: **QuickJs** (JavaScript in WASM) and **WasmPlugin** (full WASM plugins).
 
-Instead of relying solely on pre-trained knowledge, LLMs can dynamically query functions like `get_flight_times` to provide accurate, real-time information.
+## QuickJs backend
 
-### 🔹 How Do Tool Calls Work?
-When an LLM identifies a request that matches a tool’s function, it formats the request into a structured call (like an API request) and processes the response before delivering it to the user.
+The QuickJs backend executes **JavaScript** code inside a WASM-based QuickJS runtime. This is the simplest way to create tool functions — write JavaScript that processes the tool arguments and returns a result.
 
-## ✈️ What is `get_flight_times`?
-The `get_flight_times` function is a tool call that helps you retrieve flight durations between two locations. By providing a departure and arrival destination, you can get accurate estimates of how long your flight will take.
+### JavaScript code format
 
-## 🛠️ How Does it Work?
-The function operates by taking in two key parameters:
-- **departure** 🛫 – The airport or city where your flight begins.
-- **arrival** 🛬 – The airport or city where your flight ends.
+Your JavaScript code must export a `tool_call` function:
 
-Once you provide these details, `get_flight_times` fetches the estimated duration of direct and indirect flights between the specified locations. The function considers factors like average flight speeds, distances between airports, and typical air traffic conditions.
+```js
+'inline module';
 
-## 📝 Example Usage
-Imagine you want to check the flight duration from **New York (JFK)** to **Los Angeles (LAX)**:
-```python
-get_flight_times(departure="JFK", arrival="LAX")
+exports.tool_call = function(args) {
+  const parsedArgs = JSON.parse(args);
+  // Process the arguments...
+  return JSON.stringify({
+    result: "your result here"
+  });
+}
 ```
-The function will return the estimated flight duration, such as `5h 30m` for a direct flight or longer if layovers are involved.
 
-![](/img/tool-calls-1.png)
+The function receives the tool arguments as a JSON string and must return a JSON string.
 
-![](/img/tool-calls-2.png)
+### JavaScript source options
 
-![](/img/tool-calls-3.png)
+The `jsPath` option supports multiple sources:
 
-## Next flight function example
+| Source | Format | Description |
+|--------|--------|-------------|
+| Inline | Start with `'inline module';` | JavaScript code embedded directly in the entity |
+| URL | `https://...` or `http://...` | Fetched from a remote URL (cached for 120s) |
+| File | `file:///path/to/script.js` | Loaded from local filesystem |
+| S3 | `s3://bucket/path/script.js` | Loaded from an S3-compatible storage |
 
-In this example, we will create a tool call function named `next_flight` that will take two IATA codes (airport codes like CDG for Paris Charles-De-Gaulle) and will return the flight number and when the flight will take off from now.
+### QuickJs entity configuration
+
+```js
+{
+  "name": "my_tool",
+  "description": "Description of what the tool does",
+  "strict": true,
+  "parameters": {
+    "param1": {
+      "type": "string",
+      "description": "First parameter"
+    }
+  },
+  "required": ["param1"],
+  "backend": {
+    "kind": "QuickJs",
+    "options": {
+      "jsPath": "'inline module';\n\nexports.tool_call = function(args) {\n  return JSON.stringify({ result: 'hello' });\n}"
+    }
+  }
+}
+```
+
+The JavaScript runtime has **HTTP access enabled**, so your tool functions can make HTTP calls to external APIs.
+
+---
+
+## WasmPlugin backend
+
+The WasmPlugin backend executes a **full WASM plugin** registered in Otoroshi. This is useful for more complex tool functions or when you want to use compiled languages (Rust, Go, etc.).
+
+### WasmPlugin entity configuration
+
+```js
+{
+  "name": "my_wasm_tool",
+  "description": "A tool backed by a WASM plugin",
+  "strict": true,
+  "parameters": {
+    "input": {
+      "type": "string",
+      "description": "The input"
+    }
+  },
+  "required": ["input"],
+  "backend": {
+    "kind": "WasmPlugin",
+    "options": {
+      "wasmPlugin": "wasm-plugin-entity-id"
+    }
+  }
+}
+```
+
+The WASM plugin must expose a function (defaults to `tool_call`) that receives the arguments as a string and returns the result as a string.
+
+---
+
+## Workflow backend
+
+The Workflow backend executes an Otoroshi workflow by reference:
+
+```js
+{
+  "name": "my_workflow_tool",
+  "description": "A tool backed by a workflow",
+  "strict": true,
+  "parameters": {
+    "query": {
+      "type": "string",
+      "description": "The search query"
+    }
+  },
+  "required": ["query"],
+  "backend": {
+    "kind": "Workflow",
+    "options": {
+      "workflow_id": "workflow-entity-id"
+    }
+  }
+}
+```
+
+The tool arguments are passed as the workflow input. The workflow result is returned as the tool result.
+
+---
+
+## Example: `next_flight` function
+
+In this example, we create a QuickJs tool function named `next_flight` that takes two IATA airport codes and returns flight information.
 
 ### Function configuration
 
@@ -54,7 +145,7 @@ exports.tool_call = function(args) {
 }
 ```
 
-Function parameters 
+Function parameters:
 
 ```js
 {
@@ -68,7 +159,15 @@ Function parameters
   }
 }
 ```
-### Request to our endpoint
+
+![](/img/tool-calls-1.png)
+
+![](/img/tool-calls-2.png)
+
+![](/img/tool-calls-3.png)
+
+### Request
+
 ```sh
 curl --request POST \
   --url http://wasm-tool-function.oto.tools:8080/ \
@@ -83,7 +182,9 @@ curl --request POST \
 }'
 ```
 
-LLM Response with our tool function `next_flight`
+### Response
+
+The LLM processes the tool call transparently and returns the final answer:
 
 ```js
 {
@@ -118,17 +219,9 @@ LLM Response with our tool function `next_flight`
 
 ```js
 {
-  "_loc": {
-    "tenant": "default",
-    "teams": [
-      "default"
-    ]
-  },
   "id": "tool-function_f6562221-1c0f-4f8e-aae6-279beb0144dd",
   "name": "next_flight",
   "description": "This function returns the next flight.",
-  "metadata": {},
-  "tags": [],
   "strict": true,
   "parameters": {
     "departure": {
@@ -146,25 +239,18 @@ LLM Response with our tool function `next_flight`
     "options": {
       "jsPath": "'inline module';\n\nexports.tool_call = function(args) {\n  const formattedArguments = JSON.parse(args);\n  return JSON.stringify({\n    nextflight: `flight ${parseInt(Math.random() * 10000)} from ${formattedArguments[\"departure\"]} to ${formattedArguments[\"arrival\"]} is taking off in ${parseInt(Math.random() * 10)} hours`\n  })\n}"
     }
-  },
-  "kind": "ai-gateway.extensions.cloud-apim.com/ToolFunction"
+  }
 }
 ```
 
 ### Provider configuration
+
+Reference the tool function in the provider's `wasm_tools` array:
+
 ```js
 {
-  "_loc": {
-    "tenant": "default",
-    "teams": [
-      "default"
-    ]
-  },
   "id": "provider_6699f127-34d1-4fef-b3ad-6bcf592ed9c6",
   "name": "OpenAI provider + tool wasm function",
-  "description": "An OpenAI LLM api provider",
-  "metadata": {},
-  "tags": [],
   "provider": "openai",
   "connection": {
     "base_url": "https://api.openai.com/v1",
@@ -173,163 +259,11 @@ LLM Response with our tool function `next_flight`
   },
   "options": {
     "model": "gpt-4o-mini",
-    "frequency_penalty": null,
-    "logit_bias": null,
-    "logprobs": null,
-    "top_logprobs": null,
-    "max_tokens": null,
-    "n": 1,
-    "presence_penalty": null,
-    "response_format": null,
-    "seed": null,
-    "stop": null,
-    "stream": false,
-    "temperature": 1,
-    "top_p": 1,
-    "tools": null,
-    "tool_choice": null,
-    "user": null,
     "wasm_tools": [
       "tool-function_f6562221-1c0f-4f8e-aae6-279beb0144dd"
     ],
     "mcp_connectors": [],
     "allow_config_override": true
-  },
-  "provider_fallback": null,
-  "context": {
-    "default": null,
-    "contexts": []
-  },
-  "models": {
-    "include": [],
-    "exclude": []
-  },
-  "guardrails": [],
-  "guardrails_fail_on_deny": false,
-  "cache": {
-    "strategy": "none",
-    "ttl": 300000,
-    "score": 0.8
-  },
-  "kind": "ai-gateway.extensions.cloud-apim.com/Provider"
-}
-```
-
-### Endpoint configuration
-
-```js
-{
-  "_loc": {
-    "tenant": "default",
-    "teams": [
-      "default"
-    ]
-  },
-  "id": "route_52b9e4b69-d161-4e26-9a32-4bcc4c25e2db",
-  "name": "wasm tool function example",
-  "description": "wasm tool function example",
-  "tags": [],
-  "metadata": {},
-  "enabled": true,
-  "debug_flow": false,
-  "export_reporting": false,
-  "capture": false,
-  "groups": [
-    "default"
-  ],
-  "bound_listeners": [],
-  "frontend": {
-    "domains": [
-      "wasm-tool-function.oto.tools"
-    ],
-    "strip_path": true,
-    "exact": false,
-    "headers": {},
-    "query": {},
-    "methods": []
-  },
-  "backend": {
-    "targets": [
-      {
-        "id": "target_1",
-        "hostname": "request.otoroshi.io",
-        "port": 443,
-        "tls": true,
-        "weight": 1,
-        "predicate": {
-          "type": "AlwaysMatch"
-        },
-        "protocol": "HTTP/1.1",
-        "ip_address": null,
-        "tls_config": {
-          "certs": [],
-          "trusted_certs": [],
-          "enabled": false,
-          "loose": false,
-          "trust_all": false
-        }
-      }
-    ],
-    "root": "/",
-    "rewrite": false,
-    "load_balancing": {
-      "type": "RoundRobin"
-    },
-    "client": {
-      "retries": 1,
-      "max_errors": 20,
-      "retry_initial_delay": 50,
-      "backoff_factor": 2,
-      "call_timeout": 30000,
-      "call_and_stream_timeout": 120000,
-      "connection_timeout": 10000,
-      "idle_timeout": 60000,
-      "global_timeout": 30000,
-      "sample_interval": 2000,
-      "proxy": {},
-      "custom_timeouts": [],
-      "cache_connection_settings": {
-        "enabled": false,
-        "queue_size": 2048
-      }
-    },
-    "health_check": {
-      "enabled": false,
-      "url": "",
-      "timeout": 5000,
-      "healthyStatuses": [],
-      "unhealthyStatuses": []
-    }
-  },
-  "backend_ref": null,
-  "plugins": [
-    {
-      "enabled": true,
-      "debug": false,
-      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
-      "include": [],
-      "exclude": [],
-      "config": {},
-      "bound_listeners": [],
-      "plugin_index": {
-        "transform_request": 0
-      }
-    },
-    {
-      "enabled": true,
-      "debug": false,
-      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
-      "include": [],
-      "exclude": [],
-      "config": {
-        "refs": [
-          "provider_6699f127-34d1-4fef-b3ad-6bcf592ed9c6"
-        ]
-      },
-      "bound_listeners": [],
-      "plugin_index": {}
-    }
-  ],
-  "kind": "proxy.otoroshi.io/Route"
+  }
 }
 ```

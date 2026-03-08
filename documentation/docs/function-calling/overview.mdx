@@ -6,16 +6,145 @@ import Terminal from '@site/src/components/Terminal';
 
 # Overview
 
-Otoroshi LLM Extension support classic function call provided by the consumer if the underlying provider supports it.
-However, it can do a lot more about it.
+The Otoroshi LLM extension provides advanced function calling (tool calling) capabilities. The gateway can intercept LLM responses that request tool calls, execute the tools server-side, and send the results back to the LLM — all transparently to the consumer.
 
-## How does function calling work ?
+## How does function calling work?
 
+1. The consumer sends a chat completion request to the gateway
+2. The gateway injects the configured tool definitions into the request and forwards it to the LLM provider
+3. The LLM responds with a `tool_calls` request (instead of a text response)
+4. The gateway **executes the tools server-side** (JavaScript, HTTP, WASM, or Workflow)
+5. The gateway appends the tool results to the conversation and re-sends it to the LLM
+6. Steps 3-5 repeat until the LLM produces a final text response (or the max calls limit is reached)
+7. The final response is returned to the consumer
 
-## How can Otoroshi LLM Extension help ?
+The consumer only sees the final text response — the tool calling loop is entirely handled by the gateway.
+
+## Tool function backends
+
+A tool function is defined as an entity with a name, description, JSON schema parameters, and a **backend** that executes the function. Five backend kinds are supported:
+
+| Backend | Description |
+|---------|-------------|
+| [QuickJs](/docs/function-calling/function-wasm-calling) | JavaScript code executed in a WASM-based QuickJS runtime |
+| [WasmPlugin](/docs/function-calling/function-wasm-calling#wasmplugin-backend) | A full WASM plugin registered in Otoroshi |
+| [HTTP](/docs/function-calling/http-functions) | HTTP call to an external endpoint |
+| Workflow | Execute an Otoroshi workflow |
+| Route | (Reserved for future use) |
+
+## Supported providers
+
+The following providers support the tool calling loop (both blocking and streaming):
+
+| Provider | Tool calling | Streaming tools |
+|----------|:------------:|:---------------:|
+| OpenAI | Yes | Yes |
+| Azure OpenAI | Yes | Yes |
+| Anthropic | Yes | Yes |
+| Mistral | Yes | Yes |
+| Groq | Yes | Yes |
+| X-AI (Grok) | Yes | Yes |
+| Cohere | Yes | Yes |
+| Ollama | Yes | No |
+
+## Provider configuration
+
+To enable function calling on a provider, add tool function IDs to the `wasm_tools` (or `tool_functions`) array in the provider options:
+
+```js
+{
+  "provider": "openai",
+  "connection": {
+    "base_url": "https://api.openai.com/v1",
+    "token": "${vault://local/openai-token}",
+    "timeout": 30000
+  },
+  "options": {
+    "model": "gpt-4o-mini",
+    "wasm_tools": [
+      "tool-function_xxx",
+      "tool-function_yyy"
+    ],
+    "mcp_connectors": [],
+    "max_function_calls": 10,
+    "allow_config_override": true
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `wasm_tools` | array | `[]` | List of tool function entity IDs. Also accepts `tool_functions` as alias |
+| `mcp_connectors` | array | `[]` | List of [MCP connector](/docs/mcp/mcp-connectors) IDs |
+| `max_function_calls` | integer | `10` | Maximum number of recursive tool call iterations (safety limit) |
+| `allow_config_override` | boolean | `true` | Allow consumers to override config in the request body |
+
+If the consumer's request already includes a `tools` array, the gateway passes it through to the provider as-is (no injection of configured tools).
+
+## Tool function entity
+
+A tool function entity defines a callable tool with its JSON schema and backend:
+
+```js
+{
+  "id": "tool-function_xxx",
+  "name": "get_weather",
+  "description": "Get the current weather for a given location",
+  "strict": true,
+  "parameters": {
+    "location": {
+      "type": "string",
+      "description": "The city name"
+    },
+    "unit": {
+      "type": "string",
+      "description": "Temperature unit",
+      "enum": ["celsius", "fahrenheit"]
+    }
+  },
+  "required": ["location"],
+  "backend": {
+    "kind": "QuickJs",
+    "options": {
+      "jsPath": "..."
+    }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The tool name sent to the LLM (must be unique per provider) |
+| `description` | string | Description of what the tool does (used by the LLM to decide when to call it) |
+| `strict` | boolean | Whether to enforce strict JSON schema validation |
+| `parameters` | object | JSON schema of the function parameters |
+| `required` | array | List of required parameter names |
+| `backend` | object | Backend configuration (kind + options) |
+
+## Tool naming convention
+
+The gateway prefixes tool names to route tool calls to the correct backend:
+
+| Prefix | Source |
+|--------|--------|
+| `wasm___` | A registered tool function entity |
+| `wasm_____inline_` | An inline function from an agent configuration |
+| `mcp___` | An MCP connector tool |
+
+These prefixes are added/removed transparently — the LLM and the consumer see clean tool names.
 
 ## MCP Connectors as tool functions
 
 [MCP Connectors](/docs/mcp/mcp-connectors) can also be used as tool functions called by the gateway during LLM interactions. When attached to an LLM provider, MCP connectors expose their tools as callable functions, enabling the LLM to interact with external services (databases, APIs, etc.) through the MCP protocol.
 
 For more details on MCP support, see the [MCP documentation](/docs/mcp/overview).
+
+## Admin API
+
+Tool function entities are available at:
+
+```
+ai-gateway.extensions.cloud-apim.com/v1/tool-functions
+```
+
+Standard CRUD operations are supported (GET, POST, PUT, DELETE).
