@@ -4,26 +4,164 @@ sidebar_position: 1
 
 import Terminal from '@site/src/components/Terminal';
 
-# Video generation Models
+# Video generation
 
+The Otoroshi LLM extension provides video generation capabilities through an OpenAI-compatible API. You can configure video generation providers, expose them through Otoroshi routes, and let consumers generate videos from text prompts.
 
-## Default configuration
+## Supported providers
 
-Demonstration with Luma 
+| Provider | Text-to-Video | Default model |
+|----------|:-------------:|---------------|
+| Luma | Yes | `ray-flash-2` |
 
-Used model is *ray-flash-2*
+Currently, **Luma** (Dream Machine API) is the only supported video generation provider.
+
+## Features
+
+- **Text-to-video generation** from text prompts
+- **Model routing** — route to different providers using `provider/model` syntax
+- **Model constraints** — restrict which models consumers can use via include/exclude regex patterns
+- **Budget enforcement** — video generation costs are tracked and budgets are enforced
+- **Cost tracking** — per-request cost tracking integrated with [cost tracking](/docs/cost-optimizations/cost-tracking)
+- **Configurable parameters** — control aspect ratio, resolution, duration, and looping
+
+## API endpoint
+
+The extension exposes a video generation endpoint through an Otoroshi route plugin:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/videos/generations` | POST | Generate a video from a text prompt |
+
+## Plugin configuration
+
+Add the **Cloud APIM - Video generation backend** plugin to your route:
 
 ```js
 {
-  "connection": {
-    "token": "${vault://local/LUMA_API_TOKEN}",
-    "timeout": 30000
-  },
-  "options": {
-    "model": "ray-flash-2",
-    "aspect_ratio": "16:9",
-    "resolution": "720p",
-    "duration": "5s"
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.VideosGen",
+  "config": {
+    "refs": ["video-model-entity-id"]
   }
 }
 ```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refs` | array | `[]` | List of Video Model entity IDs |
+
+## Generation request
+
+```sh
+curl --request POST \
+  --url http://myroute.oto.tools:8080/v1/videos/generations \
+  --header 'content-type: application/json' \
+  --data '{
+  "prompt": "A cat playing with a ball of yarn in a sunny garden",
+  "model": "ray-flash-2",
+  "aspect_ratio": "16:9",
+  "resolution": "720p",
+  "duration": "5s",
+  "loop": false
+}'
+```
+
+### Generation parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `prompt` | string | The text prompt describing the video to generate |
+| `model` | string | Model name (can include provider prefix) |
+| `aspect_ratio` | string | Aspect ratio (e.g., `16:9`) |
+| `resolution` | string | Video resolution (e.g., `720p`) |
+| `duration` | string | Video duration (e.g., `5s`) |
+| `loop` | boolean | Whether the video should loop |
+
+### Generation response
+
+```js
+{
+  "created": 1762441013,
+  "data": [
+    {
+      "url": "https://...",
+      "b64_json": null,
+      "revised_prompt": null
+    }
+  ],
+  "usage": {
+    "total_tokens": 0,
+    "input_tokens": 0,
+    "output_tokens": 0
+  }
+}
+```
+
+## Model routing
+
+When multiple video model providers are configured in `refs`, you can target a specific provider using the `model` field in your request:
+
+```js
+{
+  "prompt": "a sunset over the ocean",
+  "model": "providerName/modelName"
+}
+```
+
+The provider can be referenced by:
+- **Entity name** (slug): `my-luma-provider/ray-flash-2`
+- **Entity ID**: `video-model-id###ray-flash-2`
+
+If no provider prefix is specified, the first configured ref is used.
+
+## Entity configuration
+
+A video model entity is configured with a provider type, connection settings, and generation options:
+
+```js
+{
+  "id": "video-model-entity-id",
+  "name": "My Luma Provider",
+  "description": "A Luma video generation provider",
+  "provider": "luma",
+  "config": {
+    "connection": {
+      "token": "${vault://local/LUMA_API_TOKEN}",
+      "timeout": 180000
+    },
+    "options": {
+      "model": "ray-flash-2",
+      "aspect_ratio": "16:9",
+      "resolution": "720p",
+      "duration": "5s"
+    }
+  },
+  "models": {
+    "include": [],
+    "exclude": []
+  }
+}
+```
+
+The `token` field supports **comma-separated round-robin tokens** — if the token contains commas, the system rotates through them.
+
+### Luma options
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable or disable video generation |
+| `model` | string | `ray-flash-2` | The Luma model to use |
+| `aspect_ratio` | string | `16:9` | Video aspect ratio |
+| `resolution` | string | `720p` | Video resolution |
+| `duration` | string | `5s` | Video duration |
+| `loop` | boolean | — | Whether the video should loop |
+
+Request-level parameters override entity-level configuration.
+
+### Luma models
+
+| Model | Description |
+|-------|-------------|
+| `ray-flash-2` | Fast generation model |
+| `photon-1` | High quality model |
