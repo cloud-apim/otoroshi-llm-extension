@@ -4,20 +4,211 @@ sidebar_position: 2
 
 import Terminal from '@site/src/components/Terminal';
 
-# Supported image gen. models
+# Supported providers and models
 
-* OpenAI 
-  * dall-e-2
-  * dall-e-3
-  * gpt-image-1
-* Azure OpenAI
-* Cloud Temple 🇫🇷 🇪🇺
-* Grok
-  * grok-2-image
-* Luma
-  * photon-1 (default)
-  * photon-flash-1
-* Gemini
-  * google/nano-banana-pro
-* Hive
-  * black-forest-labs/flux-schnell
+## OpenAI
+
+- **Base URL:** `https://api.openai.com/v1`
+- **Generation:** Yes
+- **Editing:** Yes
+
+### Models
+
+| Model | Features |
+|-------|----------|
+| `gpt-image-1` | Full token usage tracking, editing support |
+| `dall-e-3` | `revised_prompt` in response |
+| `dall-e-2` | Legacy model |
+
+### Generation parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | string | `gpt-image-1` | Model name |
+| `n` | integer | `1` | Number of images |
+| `size` | string | `auto` | Image dimensions |
+| `quality` | string | `auto` | Image quality (`standard`, `hd`, `auto`) |
+| `style` | string | — | Image style (`natural`, `vivid`) |
+| `response_format` | string | — | `url` or `b64_json` |
+| `background` | string | — | Background setting |
+| `moderation` | string | — | Moderation level |
+| `output_compression` | integer | — | Output compression level |
+| `output_format` | string | — | Output format (`png`, `jpeg`) |
+
+### Edition parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | string | `gpt-image-1` | Model name |
+| `n` | integer | — | Number of results |
+| `size` | string | — | Image dimensions |
+| `quality` | string | — | Image quality |
+| `background` | string | — | Background setting |
+| `response_format` | string | — | `url` or `b64_json` |
+
+---
+
+## Azure OpenAI
+
+- **Base URL:** Computed from Azure resource configuration
+- **Generation:** Yes
+- **Editing:** No
+
+### Connection
+
+Azure OpenAI requires specific connection settings:
+
+```js
+{
+  "connection": {
+    "resource_name": "my-azure-resource",
+    "deployment_id": "my-deployment",
+    "api_version": "2024-02-01",
+    "api_key": "xxx"
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `resource_name` | string | — | Azure resource name |
+| `deployment_id` | string | — | Deployment/model ID |
+| `api_version` | string | `2024-02-01` | API version |
+| `api_key` | string | — | API key (alternative to bearer token) |
+
+### Generation parameters
+
+Same as OpenAI, with the following constraint:
+
+**Allowed sizes:** `1024x1024`, `1792x1024`, `1024x1792` only. Any other value defaults to `1024x1024`.
+
+### Models
+
+| Model | Features |
+|-------|----------|
+| `gpt-image-1` | Full token usage tracking |
+| `dall-e-3` | `revised_prompt` in response |
+| `dall-e-2` | Legacy model |
+
+---
+
+## Cloud Temple
+
+- **Base URL:** `https://api.ai.cloud-temple.com/v1`
+- **Generation:** Yes
+- **Editing:** Yes
+
+Cloud Temple exposes an OpenAI-compatible API. It uses the same parameters and options as OpenAI.
+
+---
+
+## Gemini
+
+- **Base URL:** `https://generativelanguage.googleapis.com/v1beta/openai`
+- **Generation:** Yes
+- **Editing:** Yes
+
+Gemini exposes an OpenAI-compatible image API. It uses the same parameters and options as OpenAI.
+
+### Models
+
+| Model | Description |
+|-------|-------------|
+| `imagen-3.0-generate-002` | Default Imagen 3 model |
+| `google/nano-banana-pro` | Gemini 3 Pro Image via AI/ML API |
+
+---
+
+## Grok (X-AI)
+
+- **Base URL:** `https://api.x.ai`
+- **Generation:** Yes
+- **Editing:** No
+
+### Models
+
+| Model | Description |
+|-------|-------------|
+| `grok-2-image` | Default Grok image model |
+
+### Generation parameters
+
+Grok has a simpler parameter set:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | string | `grok-2-image` | Model name |
+| `n` | integer | `1` | Number of images |
+| `response_format` | string | `url` | `url` or `b64_json` |
+
+Size, quality, and style parameters are not supported.
+
+---
+
+## Luma
+
+- **Base URL:** `https://api.lumalabs.ai`
+- **Generation:** Yes
+- **Editing:** No
+
+Luma uses the Dream Machine API for image generation.
+
+### Models
+
+| Model | Description |
+|-------|-------------|
+| `photon-1` | Default Luma model |
+| `photon-flash-1` | Fast generation model |
+
+### Generation parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | string | `photon-1` | Model name |
+
+Only prompt and model are supported. Size, quality, and other parameters are not available.
+
+---
+
+## Hive
+
+- **Base URL:** `https://api.thehive.ai/api/v3`
+- **Generation:** Yes
+- **Editing:** No
+
+Hive uses a unique API where the model name is part of the URL path.
+
+### Models
+
+| Model | Description |
+|-------|-------------|
+| `black-forest-labs/flux-schnell` | Default model (FLUX Schnell) |
+
+### Generation parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | string | `black-forest-labs/flux-schnell` | Model name (used as URL path segment) |
+| `num_images` | integer | — | Number of images |
+| `image_size.width` | integer | `1024` | Image width in pixels |
+| `image_size.height` | integer | `1024` | Image height in pixels |
+| `num_inference_steps` | integer | — | Number of inference steps |
+| `seed` | integer | — | Random seed for reproducibility |
+| `output_quality` | integer | `90` | Output quality (0-100) |
+| `output_format` | string | `jpeg` | Output format |
+
+Note: Hive uses `width`/`height` integers instead of a size string like `1024x1024`.
+
+---
+
+## Provider comparison
+
+| Feature | OpenAI | Azure | Cloud Temple | Gemini | Grok | Luma | Hive |
+|---------|:------:|:-----:|:------------:|:------:|:----:|:----:|:----:|
+| Generation | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Editing | Yes | No | Yes | Yes | No | No | No |
+| Size control | Yes | Yes (restricted) | Yes | Yes | No | No | Yes (w/h) |
+| Quality control | Yes | Yes | Yes | Yes | No | No | Yes |
+| Style control | Yes | Yes | Yes | Yes | No | No | No |
+| Seed/reproducibility | No | No | No | No | No | No | Yes |
+| Inference steps | No | No | No | No | No | No | Yes |

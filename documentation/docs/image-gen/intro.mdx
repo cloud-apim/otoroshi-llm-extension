@@ -4,4 +4,187 @@ sidebar_position: 1
 
 import Terminal from '@site/src/components/Terminal';
 
-# Image generation Models
+# Image generation
+
+The Otoroshi LLM extension provides a unified, OpenAI-compatible API for generating and editing images across multiple providers. You can configure image generation providers, expose them through Otoroshi routes, and let consumers generate images using a standard API.
+
+## Supported providers
+
+| Provider | Generation | Editing | Default model |
+|----------|:----------:|:-------:|---------------|
+| [OpenAI](/docs/image-gen/models#openai) | Yes | Yes | `gpt-image-1` |
+| [Azure OpenAI](/docs/image-gen/models#azure-openai) | Yes | No | `gpt-image-1` |
+| [Cloud Temple](/docs/image-gen/models#cloud-temple) | Yes | Yes | — |
+| [Gemini](/docs/image-gen/models#gemini) | Yes | Yes | `imagen-3.0-generate-002` |
+| [Grok (X-AI)](/docs/image-gen/models#grok-x-ai) | Yes | No | `grok-2-image` |
+| [Luma](/docs/image-gen/models#luma) | Yes | No | `photon-1` |
+| [Hive](/docs/image-gen/models#hive) | Yes | No | `black-forest-labs/flux-schnell` |
+
+## Features
+
+- **Image generation** from text prompts (all providers)
+- **Image editing** from uploaded images + text prompt (OpenAI, Gemini, Cloud Temple)
+- **Model routing** — route to different providers using `provider/model` syntax in the `model` field
+- **Decode mode** — return raw image bytes instead of JSON when generating a single image
+- **Model constraints** — restrict which models consumers can use via include/exclude regex patterns
+- **Budget enforcement** — image generation costs are tracked and budgets are enforced
+- **Cost tracking** — per-request cost tracking integrated with [cost tracking](/docs/cost-optimizations/cost-tracking)
+
+## API endpoints
+
+The extension exposes two OpenAI-compatible endpoints through Otoroshi route plugins:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/images/generations` | POST | Generate images from a text prompt |
+| `/v1/images/edits` | POST | Edit an existing image (multipart upload) |
+
+## Plugin configuration
+
+### Image generation plugin
+
+Add the **Cloud APIM - Image generation backend** plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatImagesGen",
+  "config": {
+    "refs": ["image-model-entity-id"],
+    "decode": false
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refs` | array | `[]` | List of Image Model entity IDs |
+| `decode` | boolean | `false` | When `true`, returns raw image bytes instead of JSON for single-image responses |
+
+### Image editing plugin
+
+Add the **Cloud APIM - Image edition backend** plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatImagesEdit",
+  "config": {
+    "refs": ["image-model-entity-id"],
+    "max_size_upload": 104857600
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refs` | array | `[]` | List of Image Model entity IDs |
+| `max_size_upload` | number | `104857600` (100MB) | Maximum upload file size in bytes |
+
+## Model routing
+
+When multiple image model providers are configured in `refs`, you can target a specific provider using the `model` field in your request:
+
+```js
+{
+  "prompt": "a cat in space",
+  "model": "providerName/modelName"
+}
+```
+
+The provider can be referenced by:
+- **Entity name** (slug): `openai-provider/gpt-image-1`
+- **Entity ID**: `image-model-id###gpt-image-1`
+
+If no provider prefix is specified, the first configured ref is used.
+
+## Entity configuration
+
+An image model entity is configured with a provider type, connection settings, and generation/edition options:
+
+```js
+{
+  "id": "image-model-entity-id",
+  "name": "My Image Provider",
+  "description": "An image generation provider",
+  "provider": "openai",
+  "config": {
+    "connection": {
+      "base_url": "https://api.openai.com/v1",
+      "token": "sk-xxx",
+      "timeout": 180000
+    },
+    "options": {
+      "generation": {
+        "enabled": true,
+        "model": "gpt-image-1",
+        "size": "auto",
+        "quality": "auto",
+        "n": 1
+      },
+      "edition": {
+        "enabled": true,
+        "model": "gpt-image-1",
+        "n": 1
+      }
+    }
+  },
+  "models": {
+    "include": [],
+    "exclude": []
+  }
+}
+```
+
+The `token` field supports **comma-separated round-robin tokens** — if the token contains commas, the system rotates through them.
+
+## Generation request
+
+```sh
+curl --request POST \
+  --url http://myroute.oto.tools:8080/v1/images/generations \
+  --header 'content-type: application/json' \
+  --data '{
+  "prompt": "a white siamese cat",
+  "model": "gpt-image-1",
+  "n": 1,
+  "size": "1024x1024"
+}'
+```
+
+### Generation parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `prompt` | string | The text prompt describing the image to generate |
+| `model` | string | Model name (can include provider prefix) |
+| `n` | integer | Number of images to generate |
+| `size` | string | Image dimensions (e.g., `1024x1024`, `1792x1024`) |
+| `quality` | string | Image quality (`standard`, `hd`, `auto`) |
+| `style` | string | Image style (`natural`, `vivid`) |
+| `response_format` | string | Response format (`url` or `b64_json`) |
+| `background` | string | Background setting |
+| `moderation` | string | Moderation level |
+| `output_compression` | integer | Output compression level |
+| `output_format` | string | Output format (e.g., `png`, `jpeg`) |
+
+Not all parameters are supported by all providers. See the [models page](/docs/image-gen/models) for per-provider details.
+
+### Generation response
+
+```js
+{
+  "created": 1762441013,
+  "data": [
+    {
+      "url": "https://...",
+      "b64_json": null,
+      "revised_prompt": "a white siamese cat sitting gracefully..."
+    }
+  ]
+}
+```
+
+## Image editing
+
+See the [image editing page](/docs/image-gen/editing) for details on editing images with supported providers.

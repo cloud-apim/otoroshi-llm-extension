@@ -1,0 +1,114 @@
+---
+sidebar_position: 3
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Image editing
+
+Image editing allows you to modify an existing image using a text prompt. The extension supports image editing through providers that expose an OpenAI-compatible `/images/edits` endpoint.
+
+## Supported providers
+
+| Provider | Editing support |
+|----------|:--------------:|
+| OpenAI | Yes |
+| Gemini | Yes |
+| Cloud Temple | Yes |
+| Azure OpenAI | No |
+| Grok (X-AI) | No |
+| Luma | No |
+| Hive | No |
+
+## Plugin configuration
+
+Add the **Cloud APIM - Image edition backend** plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatImagesEdit",
+  "config": {
+    "refs": ["image-model-entity-id"],
+    "max_size_upload": 104857600
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refs` | array | `[]` | List of Image Model entity IDs (must support editing) |
+| `max_size_upload` | number | `104857600` (100MB) | Maximum upload file size in bytes |
+
+## API
+
+The editing endpoint accepts **multipart form data**:
+
+```sh
+curl --request POST \
+  --url http://myroute.oto.tools:8080/v1/images/edits \
+  --header 'content-type: multipart/form-data' \
+  -F "image=@photo.png" \
+  -F "prompt=add a red hat to the person" \
+  -F "model=gpt-image-1" \
+  -F "n=1" \
+  -F "size=1024x1024"
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `image` | file | The image to edit (uploaded as multipart file) |
+| `prompt` | string | A text description of the desired edit |
+| `model` | string | Model name (can include provider prefix) |
+| `n` | integer | Number of images to generate |
+| `size` | string | Image dimensions (e.g., `1024x1024`) |
+| `quality` | string | Image quality (`standard`, `hd`) |
+| `background` | string | Background setting |
+| `response_format` | string | `url` or `b64_json` |
+
+### Response
+
+```js
+{
+  "created": 1762441013,
+  "data": [
+    {
+      "url": "https://...",
+      "b64_json": null,
+      "revised_prompt": null
+    }
+  ]
+}
+```
+
+## Entity configuration
+
+To enable editing on a provider, set `edition.enabled` to `true` in the entity options:
+
+```js
+{
+  "provider": "openai",
+  "config": {
+    "connection": {
+      "base_url": "https://api.openai.com/v1",
+      "token": "sk-xxx",
+      "timeout": 180000
+    },
+    "options": {
+      "generation": {
+        "enabled": true,
+        "model": "gpt-image-1"
+      },
+      "edition": {
+        "enabled": true,
+        "model": "gpt-image-1",
+        "n": 1,
+        "quality": "hd",
+        "size": "1024x1024"
+      }
+    }
+  }
+}
+```
