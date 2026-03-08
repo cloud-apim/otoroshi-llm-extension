@@ -4,9 +4,11 @@ sidebar_position: 6
 
 import Terminal from '@site/src/components/Terminal';
 
-# 🌿 Ecological impact
+# Ecological impact
 
-If you want to track the ecological impact of your LLM Usage, you can enable it in the Otoroshi LLM Extension (it should be enabled by default)
+If you want to track the ecological impact of your LLM Usage, you can enable it in the Otoroshi LLM Extension (it should be enabled by default).
+
+### Configuration
 
 ```hocon
 impacts {
@@ -18,31 +20,136 @@ impacts {
   electricity-mix = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_IMPACTS_ELECTRICITY_MIX}
   embed-impacts-in-responses = false
   embed-impacts-in-responses = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_IMPACTS_EMBED_IMPACTS_IN_RESPONSES}
+  custom-models = "{\"aliases\": [],\"models\": []}"
+  custom-models = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_IMPACTS_CUSTOM_MODELS}
+  custom-electricity-mix = "name,adpe,pe,gwp\n"
+  custom-electricity-mix = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_IMPACTS_CUSTOM_ELECTRICITY_MIX}
 }
 ```
 
-Once it's enabled, audit events of kind `LLMUsageAudit` will have an `impacts`.
-You can also embed the `impacts` value in your LLM responses using the `impacts.embed-impacts-in-responses` config.
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable or disable ecological impact tracking |
+| `embed-description-in-json` | boolean | `true` | Include human-readable descriptions in the impact JSON output |
+| `electricity-mix` | string | `"WOR"` | Default electricity mix zone code (see available zones below) |
+| `embed-impacts-in-responses` | boolean | `false` | Always embed impacts in LLM responses |
+| `custom-models` | string (JSON) | `"{}"` | Custom model architectures for impact computation (see below) |
+| `custom-electricity-mix` | string (CSV) | `""` | Custom electricity mix definitions (see below) |
+
+Once it's enabled, audit events of kind `LLMUsageAudit` will have an `impacts` field.
+You can also embed the `impacts` value in your LLM responses using the `impacts.embed-impacts-in-responses` config or by adding `?embed_impacts=true` to your query.
 Please remember that the `impacts` value is just an estimate of the real ecological impact of your LLM usage.
 
-The ecological impact computation is based on project [EcoLogits](https://ecologits.ai/latest/) and only supports right now the following providers
+### Impact metrics
 
+The ecological impact output contains the following metrics:
+
+| Metric | Unit | Description |
+|--------|------|-------------|
+| `energy` | kWh | Energy: related to the final electricity consumption |
+| `gwp` | kgCO2eq | Global Warming Potential (GWP): related to climate change, commonly known as GHG emissions |
+| `adpe` | kgSbeq | Abiotic Depletion Potential for Elements (ADPe): related to the depletion of minerals and metals |
+| `pe` | MJ | Primary Energy (PE): related to the energy consumed from primary sources like oil, gas or coal |
+
+Each metric contains a `value` with `min`, `max`, and `avg` estimates. The output is split into:
+
+- **Top-level metrics**: combined usage + embodied impacts
+- **`usage`**: impacts of the energy consumption during model execution
+- **`embodied`**: impacts related to resource extraction, manufacturing, and transportation of the hardware
+
+### Supported providers
+
+The ecological impact computation is based on project [EcoLogits](https://ecologits.ai/latest/) and only supports right now the following providers:
+
+- OpenAI
+- Anthropic
 - Mistral
 - Gemini
-- Anthropic
-- OpenAI
 - Cohere
 - HuggingFace
 
-but if you're okay with approximations, you can set some metadata on your providers to use supported providers / models
+For unsupported providers, you can set metadata on your provider entities to map them to a supported provider/model:
 
-- `eco-impacts-electricity-mix-zone`: the country where the model is hosted
 - `eco-impacts-provider`: the provider used for eco impacts computation
 - `eco-impacts-model`: the model used for eco impacts computation
+- `eco-impacts-electricity-mix-zone`: the electricity mix zone to use for this provider
+
+### Available electricity mix zones
+
+The following ISO country codes are available as electricity mix zones:
+
+| Code | Country | Code | Country | Code | Country |
+|------|---------|------|---------|------|---------|
+| `ARG` | Argentina | `GBR` | United Kingdom | `NLD` | Netherlands |
+| `AUS` | Australia | `GRC` | Greece | `NOR` | Norway |
+| `AUT` | Austria | `HUN` | Hungary | `NZL` | New Zealand |
+| `BEL` | Belgium | `IDN` | Indonesia | `POL` | Poland |
+| `BGR` | Bulgaria | `IND` | India | `PRT` | Portugal |
+| `BRA` | Brazil | `IRL` | Ireland | `ROU` | Romania |
+| `CAN` | Canada | `ISL` | Iceland | `RUS` | Russia |
+| `CHE` | Switzerland | `ITA` | Italy | `SVK` | Slovakia |
+| `CHL` | Chile | `JPN` | Japan | `SVN` | Slovenia |
+| `CHN` | China | `KOR` | South Korea | `SWE` | Sweden |
+| `CYP` | Cyprus | `LTU` | Lithuania | `THA` | Thailand |
+| `CZE` | Czech Republic | `LUX` | Luxembourg | `TUR` | Turkey |
+| `DEU` | Germany | `LVA` | Latvia | `TWN` | Taiwan |
+| `DNK` | Denmark | `MEX` | Mexico | `UKR` | Ukraine |
+| `ESP` | Spain | `MLT` | Malta | `USA` | United States |
+| `EST` | Estonia | `MYS` | Malaysia | `WOR` | World (default) |
+| `FIN` | Finland | | | | |
+| `FRA` | France | | | | |
+
+### Custom models
+
+You can define custom model architectures for impact computation using the `custom-models` config. The format is:
+
+```json
+{
+  "aliases": [],
+  "models": [
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "my-custom-model",
+      "architecture": {
+        "type": "dense",
+        "parameters": 1760000000000
+      },
+      "warnings": [],
+      "sources": []
+    }
+  ]
+}
+```
+
+The `architecture.type` can be `"dense"` or `"moe"` (Mixture of Experts). For MoE models, use:
+
+```json
+{
+  "architecture": {
+    "type": "moe",
+    "total": 1760000000000,
+    "active": 440000000000
+  }
+}
+```
+
+### Custom electricity mix
+
+You can define custom electricity mix zones using the `custom-electricity-mix` config. The format is CSV with columns: `name,adpe,pe,gwp`:
+
+```csv
+name,adpe,pe,gwp
+MYZONE,0.00000004858,9.3135,0.04418
+```
+
+- `adpe`: Abiotic Depletion Potential for Elements (kgSbeq/kWh)
+- `pe`: Primary Energy (MJ/kWh)
+- `gwp`: Global Warming Potential (kgCO2eq/kWh)
 
 ## Example of ecological impact embed in responses
 
-**NOTE**: you can embed costs tracking informations by using `embed_impacts=true` query param
+**NOTE**: you can embed ecological impact informations by using `embed_impacts=true` query param
 
 ```sh
 $ curl --request POST \
@@ -212,108 +319,9 @@ $ curl --request POST \
   "user" : null,
   "apikey" : null,
   "route" : {
-    "_loc" : {
-      "tenant" : "default",
-      "teams" : [ "default" ]
-    },
     "id" : "route_e4a9d6cb3-d859-4203-a860-8d1dd6d09557",
     "name" : "test",
-    "description" : "A new route",
-    "tags" : [ ],
-    "metadata" : {
-      "created_at" : "2025-03-28T10:10:19.448+01:00",
-      "updated_at" : "2025-03-28T10:48:48.218+01:00"
-    },
-    "enabled" : true,
-    "debug_flow" : false,
-    "export_reporting" : false,
-    "capture" : false,
-    "groups" : [ "default" ],
-    "bound_listeners" : [ ],
-    "frontend" : {
-      "domains" : [ "test.oto.tools" ],
-      "strip_path" : true,
-      "exact" : false,
-      "headers" : { },
-      "query" : { },
-      "methods" : [ ]
-    },
-    "backend" : {
-      "targets" : [ {
-        "id" : "target_1",
-        "hostname" : "request.otoroshi.io",
-        "port" : 443,
-        "tls" : true,
-        "weight" : 1,
-        "backup" : false,
-        "predicate" : {
-          "type" : "AlwaysMatch"
-        },
-        "protocol" : "HTTP/1.1",
-        "ip_address" : null,
-        "tls_config" : {
-          "certs" : [ ],
-          "trusted_certs" : [ ],
-          "enabled" : false,
-          "loose" : false,
-          "trust_all" : false
-        }
-      } ],
-      "root" : "/",
-      "rewrite" : false,
-      "load_balancing" : {
-        "type" : "RoundRobin"
-      },
-      "client" : {
-        "retries" : 1,
-        "max_errors" : 20,
-        "retry_initial_delay" : 50,
-        "backoff_factor" : 2,
-        "call_timeout" : 30000,
-        "call_and_stream_timeout" : 120000,
-        "connection_timeout" : 10000,
-        "idle_timeout" : 60000,
-        "global_timeout" : 30000,
-        "sample_interval" : 2000,
-        "proxy" : { },
-        "custom_timeouts" : [ ],
-        "cache_connection_settings" : {
-          "enabled" : false,
-          "queue_size" : 2048
-        }
-      },
-      "health_check" : {
-        "enabled" : false,
-        "url" : "",
-        "timeout" : 5000,
-        "healthyStatuses" : [ ],
-        "unhealthyStatuses" : [ ]
-      }
-    },
-    "backend_ref" : null,
-    "plugins" : [ {
-      "enabled" : true,
-      "debug" : false,
-      "plugin" : "cp:otoroshi.next.plugins.OverrideHost",
-      "include" : [ ],
-      "exclude" : [ ],
-      "config" : { },
-      "bound_listeners" : [ ],
-      "plugin_index" : {
-        "transform_request" : 0
-      }
-    }, {
-      "enabled" : true,
-      "debug" : false,
-      "plugin" : "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy",
-      "include" : [ ],
-      "exclude" : [ ],
-      "config" : {
-        "refs" : [ "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691" ]
-      },
-      "bound_listeners" : [ ],
-      "plugin_index" : { }
-    } ]
+    "..."
   },
   "input_prompt" : [ {
     "role" : "user",
@@ -327,75 +335,15 @@ $ curl --request POST \
       }
     } ],
     "metadata" : {
-      "rate_limit" : {
-        "requests_limit" : 10000,
-        "requests_remaining" : 9998,
-        "tokens_limit" : 200000,
-        "tokens_remaining" : 199993
-      },
-      "usage" : {
-        "prompt_tokens" : 11,
-        "generation_tokens" : 18,
-        "reasoning_tokens" : 0
-      }
+      "rate_limit" : { "..." },
+      "usage" : { "..." }
     }
   },
   "provider_details" : {
-    "_loc" : {
-      "tenant" : "default",
-      "teams" : [ "default" ]
-    },
     "id" : "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
     "name" : "OpenAI",
-    "description" : "An OpenAI LLM api provider",
-    "metadata" : {
-      "created_at" : "2025-03-28T10:10:51.558+01:00"
-    },
-    "tags" : [ ],
     "provider" : "openai",
-    "connection" : {
-      "base_url" : "https://api.openai.com/v1",
-      "token" : "xxx",
-      "timeout" : 30000
-    },
-    "options" : {
-      "model" : "gpt-4o-mini",
-      "frequency_penalty" : null,
-      "logit_bias" : null,
-      "logprobs" : null,
-      "top_logprobs" : null,
-      "max_tokens" : null,
-      "n" : 1,
-      "presence_penalty" : null,
-      "response_format" : null,
-      "seed" : null,
-      "stop" : null,
-      "stream" : false,
-      "temperature" : 1,
-      "top_p" : 1,
-      "tools" : null,
-      "tool_choice" : null,
-      "user" : null,
-      "wasm_tools" : [ ],
-      "mcp_connectors" : [ ],
-      "allow_config_override" : true
-    },
-    "provider_fallback" : null,
-    "context" : {
-      "default" : null,
-      "contexts" : [ ]
-    },
-    "models" : {
-      "include" : [ ],
-      "exclude" : [ ]
-    },
-    "guardrails" : [ ],
-    "guardrails_fail_on_deny" : false,
-    "cache" : {
-      "strategy" : "none",
-      "ttl" : 300000,
-      "score" : 0.8
-    }
+    "..."
   },
   "impacts" : {
     "energy" : {
@@ -435,76 +383,23 @@ $ curl --request POST \
       "description" : "Primary Energy (PE): related to the energy consumed from primary sources like oil, gas or coal in MJ"
     },
     "usage" : {
-      "energy" : {
-        "value" : {
-          "min" : 0.000045859386,
-          "max" : 0.000140325354,
-          "avg" : 0.00009309237000000001
-        },
-        "unit" : "kWh",
-        "description" : "Energy: related to the final electricity consumption in kWh"
-      },
-      "gwp" : {
-        "value" : {
-          "min" : 0.000027078958526507997,
-          "max" : 0.00008285903437921199,
-          "avg" : 0.000054968996452859996
-        },
-        "unit" : "kgCO2eq",
-        "description" : "Global Warming Potential (GWP): related to climate change, commonly known as GHG emissions in kgCO2eq"
-      },
-      "adpe" : {
-        "value" : {
-          "min" : 3.3830835927287995E-12,
-          "max" : 1.0351913624863199E-11,
-          "avg" : 6.8674986087959995E-12
-        },
-        "unit" : "kgSbeq",
-        "description" : "Abiotic Depletion Potential for Elements (ADPe): related to the depletion of minerals and metals in kgSbeq"
-      },
-      "pe" : {
-        "value" : {
-          "min" : 0.000458043547368,
-          "max" : 0.001401569635752,
-          "avg" : 0.00092980659156
-        },
-        "unit" : "MJ",
-        "description" : "Primary Energy (PE): related to the energy consumed from primary sources like oil, gas or coal in MJ"
-      },
+      "energy" : { "..." },
+      "gwp" : { "..." },
+      "adpe" : { "..." },
+      "pe" : { "..." },
       "description" : "related to the impacts of the energy consumption during model execution"
     },
     "embodied" : {
-      "gwp" : {
-        "value" : {
-          "min" : 0.0000016972352785388126,
-          "max" : 0.000002647341890410959,
-          "avg" : 0.0000021722885844748857
-        },
-        "unit" : "kgCO2eq",
-        "description" : "Global Warming Potential (GWP): related to climate change, commonly known as GHG emissions in kgCO2eq"
-      },
-      "adpe" : {
-        "value" : {
-          "min" : 1.150057109589041E-10,
-          "max" : 1.7938552191780823E-10,
-          "avg" : 1.4719561643835617E-10
-        },
-        "unit" : "kgSbeq",
-        "description" : "Abiotic Depletion Potential for Elements (ADPe): related to the depletion of minerals and metals in kgSbeq"
-      },
-      "pe" : {
-        "value" : {
-          "min" : 0.00002155292212785388,
-          "max" : 0.0000336181755890411,
-          "avg" : 0.00002758554885844749
-        },
-        "unit" : "MJ",
-        "description" : "Primary Energy (PE): related to the energy consumed from primary sources like oil, gas or coal in MJ"
-      },
+      "gwp" : { "..." },
+      "adpe" : { "..." },
+      "pe" : { "..." },
       "description" : "related to resource extraction, manufacturing and transportation of the hardware"
     },
     "warnings" : null
-  }
+  },
+  "costs" : null,
+  "budgets" : null,
+  "consumer_rate_limit" : null
 }
 ```
 
