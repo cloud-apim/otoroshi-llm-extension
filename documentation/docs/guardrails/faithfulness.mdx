@@ -1,0 +1,101 @@
+import Terminal from '@site/src/components/Terminal';
+
+# Faithfulness (Hallucination detection)
+
+The **Faithfulness** guardrail detects hallucinations by evaluating whether LLM responses are faithful to a provided reference context. It is particularly useful in RAG (Retrieval-Augmented Generation) pipelines where the LLM should only answer based on retrieved documents.
+
+## How it works
+
+The guardrail uses a multi-step evaluation pipeline powered by a separate LLM provider:
+
+1. **Statement extraction**: The content is broken down into discrete, atomic statements (no pronouns, fully self-contained)
+2. **Verdict generation**: Each statement is evaluated against the provided context. For each statement, the LLM judges whether it can be directly inferred from the context (verdict `1` = faithful, `0` = not faithful)
+3. **Score computation**: A faithfulness score is computed as `faithful statements / total statements`
+4. **Threshold comparison**: If the score exceeds the configured threshold, the content passes. Otherwise it is denied.
+
+### Example
+
+Given the context: *"The Eiffel Tower is located in Paris, France. It was built in 1889."*
+
+| Statement | Verdict | Reason |
+|-----------|:-------:|--------|
+| "The Eiffel Tower is in Paris" | 1 | Directly inferable from context |
+| "It was built in 1889" | 1 | Directly inferable from context |
+| "It is 330 meters tall" | 0 | Not mentioned in context |
+
+Score = 2/3 = 0.66. With a threshold of 0.8, this would be **denied**.
+
+## Configuration
+
+The following configuration has to be placed in your LLM provider entity in the `Guardrail Validation` section.
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": false,
+    "after": true,
+    "id": "faithfulness",
+    "config": {
+      "ref": "provider_xxxxxxxxx",
+      "context": "The Eiffel Tower is located in Paris, France. It was built in 1889 for the World's Fair.",
+      "threshold": 0.8,
+      "exclude_out_of_scope_statements": true
+    }
+  }
+]
+```
+
+### Field explanations
+
+- **enabled**: `true` — The guardrail is active
+- **before**: Applies to user input before sending to the LLM. Typically set to `false` for faithfulness checking.
+- **after**: Applies to the LLM response. Typically set to `true` to validate LLM output against the context.
+- **id**: `"faithfulness"` — The identifier for this guardrail
+
+#### Config section
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|:--------:|---------|-------------|
+| `ref` (or `provider`) | string | Yes | — | Reference ID of the LLM provider used to perform the faithfulness evaluation. This provider makes the LLM calls for statement extraction and verdict generation. |
+| `context` | string or array of strings | No | `"--"` | The reference context against which faithfulness is evaluated. Can be a single string or an array of strings (joined together). |
+| `threshold` | number | No | `0.8` | Minimum faithfulness score (0.0 to 1.0) required for the content to pass. |
+| `exclude_out_of_scope_statements` | boolean | No | `true` | When `true`, statements that do not refer to the context at all receive verdict 1 (pass). When `false`, all statements must be directly inferable from the context. |
+
+## Context as an array
+
+You can provide context as an array of strings, useful when your context comes from multiple retrieved documents:
+
+```js
+{
+  "ref": "provider_xxxxxxxxx",
+  "context": [
+    "Document 1: The Eiffel Tower was built in 1889.",
+    "Document 2: It is located on the Champ de Mars in Paris.",
+    "Document 3: Gustave Eiffel's company designed and built it."
+  ],
+  "threshold": 0.7
+}
+```
+
+## Out of scope statements
+
+The `exclude_out_of_scope_statements` parameter controls how statements unrelated to the context are handled:
+
+- **`true`** (default): Statements that don't refer to the context at all get verdict `1` (pass). This is useful when the LLM may include general knowledge alongside context-based answers.
+- **`false`**: All statements must be directly inferable from the context. Use this for strict faithfulness checking where the LLM should only use information from the provided context.
+
+## Performance considerations
+
+This guardrail makes **two sequential LLM calls** per evaluation (statement extraction + verdict generation). This means:
+
+- Higher latency compared to simpler guardrails
+- Additional token costs from the evaluation LLM
+- Consider using a fast, cost-effective model for the evaluation provider (e.g. `gpt-4o-mini`)
+
+## Use cases
+
+- **RAG pipelines**: Ensure LLM answers stick to the retrieved documents and don't hallucinate
+- **Customer support**: Validate that responses are based on the company's knowledge base
+- **Legal/compliance**: Ensure generated content is grounded in provided reference material
+- **Fact-checking**: Verify that LLM outputs match known facts from a trusted source

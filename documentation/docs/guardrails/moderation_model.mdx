@@ -1,0 +1,70 @@
+import Terminal from '@site/src/components/Terminal';
+
+# Moderation Model
+
+The **Moderation Model** guardrail delegates content moderation to a dedicated moderation model (such as [OpenAI's moderation endpoint](https://platform.openai.com/docs/guides/moderation)) rather than using an LLM prompt.
+
+This is different from the [Language moderation](/docs/guardrails/moderation) guardrail which uses a regular LLM provider with a hardcoded prompt. The Moderation Model guardrail calls a purpose-built moderation API that is faster, cheaper, and more accurate for content classification.
+
+## How it works
+
+1. All message content is concatenated and sent to the configured moderation model
+2. The moderation model analyzes the content and returns flagged categories (e.g. `hate`, `violence`, `sexual`, etc.)
+3. If any category is flagged, the request is denied with a message listing the flagged categories
+4. If nothing is flagged, the request passes through
+
+## Configuration
+
+The following configuration has to be placed in your LLM provider entity in the `Guardrail Validation` section.
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": true,
+    "id": "moderation_model",
+    "config": {
+      "moderation_model": "moderation_model_xxxxxxxxx"
+    }
+  }
+]
+```
+
+### Field explanations
+
+- **enabled**: `true` — The guardrail is active
+- **before**: `true` — The guardrail applies to user input before sending to the LLM
+- **after**: `true` — The guardrail applies to the LLM response
+- **id**: `"moderation_model"` — The identifier for this guardrail
+
+#### Config section
+
+- **moderation_model**: Reference ID to a moderation model entity configured in the AI extension. This must point to a dedicated moderation model (e.g. OpenAI's `omni-moderation-latest`), not a regular LLM provider.
+
+## Supported moderation models
+
+See the [supported moderation models](/docs/category/-cost-optimization) section. Currently supported:
+
+* OpenAI
+  * omni-moderation-latest
+
+## Denial response example
+
+When content is flagged, the guardrail returns a denial message like:
+
+```
+Message has been flagged in the following categories: hate, violence
+```
+
+## When to use this vs Language moderation
+
+| | Moderation Model | Language Moderation |
+|--|:--|:--|
+| **Backend** | Dedicated moderation API | Regular LLM with a prompt |
+| **Speed** | Fast (purpose-built) | Slower (full LLM call) |
+| **Cost** | Low | Higher (uses LLM tokens) |
+| **Accuracy** | High for standard categories | Customizable via prompt |
+| **Customization** | Fixed categories from the API | Flexible, prompt-driven |
+
+Use **Moderation Model** when you need fast, reliable detection of standard harmful content categories. Use **Language Moderation** when you need custom moderation rules beyond standard categories.
