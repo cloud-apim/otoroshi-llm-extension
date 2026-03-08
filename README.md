@@ -112,8 +112,8 @@ And 37 more including Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Ch
 * Luma
   * photon-1 (default)
   * photon-flash-1
-* AI/ML API
-  * google/nano-banana-pro (Gemini 3 Pro Image)
+* Gemini
+  * google/nano-banana-pro
 * Hive
   * black-forest-labs/flux-schnell
 
