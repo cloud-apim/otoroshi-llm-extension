@@ -33,6 +33,7 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 * Anthropic
 * Azure OpenAI
 * Azure AI Foundry
+* Cloud Temple 🇫🇷 🇪🇺
 * Cloudflare
 * Cohere
 * Deepseek
@@ -102,6 +103,7 @@ And 37 more including Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Ch
   * dall-e-3
   * gpt-image-1
 * Azure OpenAI
+* Cloud Temple 🇫🇷 🇪🇺
 * Grok
   * grok-2-image
 * Luma
