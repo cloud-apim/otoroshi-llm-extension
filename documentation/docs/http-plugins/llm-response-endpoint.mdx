@@ -1,0 +1,89 @@
+---
+sidebar_position: 7
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# LLM Response endpoint
+
+The **LLM Response endpoint** plugin acts as a backend that sends a predefined prompt to an LLM and returns the raw generations. Unlike the [Response generator](/docs/http-plugins/http-response-generator), this plugin supports **Otoroshi Expression Language** in the prompt, allowing you to dynamically inject request data, route information, API key metadata, and more into the prompt.
+
+## How it works
+
+1. A request arrives at the route
+2. The plugin applies Expression Language substitution to the configured prompt, injecting request context (URI, headers, query params, etc.)
+3. The resolved prompt is sent to the LLM provider
+4. The raw LLM generations are returned as JSON
+
+## Plugin configuration
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.LlmResponseEndpoint",
+  "config": {
+    "ref": "provider-entity-id",
+    "prompt": "The user is requesting ${req.uri}. Generate a helpful response based on this path.",
+    "prompt_ref": null,
+    "context_ref": null
+  }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ref` | string | `""` | LLM Provider entity ID |
+| `prompt` | string | `""` | The prompt to send to the LLM. Supports [Expression Language](https://maif.github.io/otoroshi/manual/topics/expression-language.html) |
+| `prompt_ref` | string | `null` | Reference to a stored prompt entity (EL is also applied) |
+| `context_ref` | string | `null` | Reference to a stored context entity (EL is also applied) |
+
+## Response format
+
+```js
+{
+  "generations": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "..."
+      }
+    }
+  ]
+}
+```
+
+## Expression Language examples
+
+You can use Otoroshi's [Expression Language](https://maif.github.io/otoroshi/manual/topics/expression-language.html) to inject dynamic values into the prompt:
+
+| Expression | Description |
+|------------|-------------|
+| `${req.uri}` | Request URI |
+| `${req.method}` | HTTP method |
+| `${req.header.X-Custom}` | Request header value |
+| `${req.query.param}` | Query parameter value |
+| `${route.id}` | Route ID |
+| `${route.name}` | Route name |
+| `${apikey.id}` | API key ID |
+| `${apikey.name}` | API key name |
+| `${apikey.metadata.key}` | API key metadata value |
+
+## Example: dynamic documentation endpoint
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "Generate API documentation for the endpoint ${req.method} ${req.uri}. The API belongs to ${route.name}. Return the documentation in markdown format."
+}
+```
+
+## Example: personalized response based on API key
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "The user ${apikey.metadata.username} (plan: ${apikey.metadata.plan}) is requesting ${req.uri}. Generate a personalized welcome message."
+}
+```

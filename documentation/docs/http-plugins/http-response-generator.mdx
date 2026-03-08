@@ -6,7 +6,98 @@ import Terminal from '@site/src/components/Terminal';
 
 # HTTP response generator
 
+The **LLM Response generator** plugin acts as a complete backend — it does not forward requests to any upstream service. Instead, it sends a pre-configured prompt to an LLM and uses the LLM's response as the HTTP response body.
+
+## How it works
+
+1. A request arrives at the route
+2. The plugin sends the configured prompt to the LLM provider (the request body is not used)
+3. The LLM generates a response
+4. The LLM response is returned directly to the client as the HTTP response
+
+This is useful for creating AI-powered endpoints that generate content entirely from a prompt, without any backend service.
+
 ![](/img/http-response-generator.png)
 
 <iframe  width="956" height="538" src="https://www.youtube.com/embed/ObD4j3fVm" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
+## Plugin configuration
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiResponseGenerator",
+  "config": {
+    "ref": "provider-entity-id",
+    "prompt": "Generate a random motivational quote in JSON format: {\"quote\": \"...\", \"author\": \"...\"}",
+    "prompt_ref": null,
+    "context_ref": null,
+    "is_response": false,
+    "status": 200,
+    "headers": {}
+  }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ref` | string | `""` | LLM Provider entity ID |
+| `prompt` | string | `""` | The prompt to send to the LLM |
+| `prompt_ref` | string | `null` | Reference to a stored prompt entity |
+| `context_ref` | string | `null` | Reference to a stored context entity for pre/post messages |
+| `is_response` | boolean | `false` | When `true`, the LLM response is parsed as a full HTTP response (see below) |
+| `status` | number | `200` | HTTP status code for the response (used when `is_response` is `false`) |
+| `headers` | object | `{}` | HTTP response headers (used when `is_response` is `false`) |
+
+## Full HTTP response mode
+
+When `is_response` is set to `true`, the LLM is expected to return a complete HTTP response as a JSON object:
+
+```json
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": "{\"quote\": \"The only way to do great work is to love what you do.\", \"author\": \"Steve Jobs\"}"
+}
+```
+
+The plugin will use these values to construct the actual HTTP response.
+
+## Example: AI-powered FAQ endpoint
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "You are a helpful FAQ assistant for our product. Answer common questions about pricing, features, and support. Return a JSON object with a 'question' and 'answer' field.",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json"
+  }
+}
+```
+
+## Example: dynamic content generation
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "Generate an HTML page with a random poem about technology. Include basic CSS styling.",
+  "is_response": true
+}
+```
+
+The LLM would return:
+
+```json
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><style>body{font-family:serif;max-width:600px;margin:40px auto}</style></head><body><h1>Digital Dreams</h1><p>...</p></body></html>"
+}
+```

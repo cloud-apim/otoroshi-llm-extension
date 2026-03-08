@@ -6,5 +6,63 @@ import Terminal from '@site/src/components/Terminal';
 
 # HTTP request body modifier
 
+The **LLM Request body modifier** plugin intercepts incoming HTTP request bodies, sends them to an LLM with a configured system prompt, and replaces the request body with the LLM's response before forwarding it to the backend.
+
+## How it works
+
+1. The plugin intercepts the incoming request body
+2. The body content is sent as a "user" message to the configured LLM provider, along with a system prompt
+3. The LLM processes the content and generates a transformed version
+4. The original request body is replaced with the LLM's response
+5. The modified request is forwarded to the backend
+
+This is useful for preprocessing, reformatting, translating, or enriching request data before it reaches your backend.
 
 ![](/img/http-request-body-modifier.png)
+
+## Plugin configuration
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiRequestBodyModifier",
+  "config": {
+    "ref": "provider-entity-id",
+    "prompt": "Translate the following text to English and return only the translation:",
+    "prompt_ref": null,
+    "context_ref": null,
+    "extractor": null
+  }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ref` | string | `""` | LLM Provider entity ID to use for processing |
+| `prompt` | string | `""` | System prompt sent to the LLM along with the request body |
+| `prompt_ref` | string | `null` | Reference to a stored prompt entity (alternative to inline prompt) |
+| `context_ref` | string | `null` | Reference to a stored context entity for pre/post messages |
+| `extractor` | string | `null` | Regex pattern to extract a specific part of the LLM response |
+
+## Example: translate request body
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "Translate the following JSON body values to English. Return only the translated JSON, no explanation."
+}
+```
+
+## Example: with regex extractor
+
+If the LLM response contains extra text around the actual result, use the `extractor` regex to extract just the part you need:
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "Extract the email address from the following text and return it in the format: EMAIL: <address>",
+  "extractor": "EMAIL:\\s*(.*)"
+}
+```

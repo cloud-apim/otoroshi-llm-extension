@@ -6,7 +6,68 @@ import Terminal from '@site/src/components/Terminal';
 
 # Websocket message validation
 
+The **LLM Websocket message validator** plugin uses an LLM to validate WebSocket messages in real-time. Each text message sent by the client is checked against an LLM prompt before being forwarded to the backend.
+
+## How it works
+
+1. A WebSocket connection is established between the client and the backend through Otoroshi
+2. When the client sends a text message, the plugin intercepts it
+3. The message content is sent to the configured LLM provider with a system prompt
+4. The LLM returns `"true"` (valid) or `"false"` (invalid), optionally with a reason
+5. Valid messages are forwarded to the backend. Invalid messages are dropped or replaced with an error message
+6. Binary messages pass through without validation
+
 ![](/img/websocket-validation.png)
 
 <iframe  width="956" height="538" src="https://www.youtube.com/embed/D27rsWoFlZU?si=0UNy0ACKLABkozjZ" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
+## Plugin configuration
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiWebsocketMessageValidator",
+  "config": {
+    "ref": "provider-entity-id",
+    "prompt": "You are a content moderator. Analyze the following WebSocket message. Return 'true' if the message is appropriate, or a JSON object {\"result\": false, \"reason\": \"explanation\"} if it should be blocked.",
+    "prompt_ref": null,
+    "context_ref": null,
+    "extractor": null
+  }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ref` | string | `""` | LLM Provider entity ID |
+| `prompt` | string | `""` | System prompt instructing the LLM how to validate messages |
+| `prompt_ref` | string | `null` | Reference to a stored prompt entity |
+| `context_ref` | string | `null` | Reference to a stored context entity |
+| `extractor` | string | `null` | Regex pattern to extract the result from the LLM response |
+
+## LLM response format
+
+The LLM can return:
+- `"true"` — message is valid, forward to backend
+- `"false"` — message is invalid, drop it
+- `{"result": false, "reason": "explanation"}` — message is invalid, send the reason back to the client as a text message
+
+## Example: chat moderation
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "You are a chat moderator. Analyze the following message and determine if it is appropriate for a professional chat room. Return {\"result\": true} if appropriate, or {\"result\": false, \"reason\": \"brief explanation\"} if not. Block profanity, harassment, spam, and off-topic content."
+}
+```
+
+## Example: data validation
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "The following is a WebSocket message that should contain valid JSON with a 'type' and 'data' field. Return 'true' if it is valid, 'false' if not."
+}
+```

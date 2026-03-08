@@ -6,6 +6,80 @@ import Terminal from '@site/src/components/Terminal';
 
 # HTTP response body modifier
 
+The **LLM Response body modifier** plugin intercepts HTTP response bodies from your backend, sends them to an LLM with a configured system prompt, and replaces the response with the LLM's output before returning it to the client.
+
+## How it works
+
+1. The backend returns a response with a body
+2. The plugin sends the response body to the configured LLM provider with a system prompt
+3. The LLM processes the content and returns a transformed version
+4. The original response body is replaced with the LLM's output
+5. The modified response is returned to the client
+
+This is useful for post-processing responses: translating, summarizing, reformatting, enriching, or sanitizing backend output.
+
 ![](/img/http-response-body-modifier.png)
 
 <iframe  width="956" height="538" src="https://www.youtube.com/embed/U_1Im3cwIvo" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
+## Plugin configuration
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiResponseBodyModifier",
+  "config": {
+    "ref": "provider-entity-id",
+    "prompt": "Summarize the following API response in 2-3 sentences:",
+    "prompt_ref": null,
+    "context_ref": null,
+    "extractor": null,
+    "is_response": false
+  }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ref` | string | `""` | LLM Provider entity ID |
+| `prompt` | string | `""` | System prompt sent to the LLM along with the response body |
+| `prompt_ref` | string | `null` | Reference to a stored prompt entity |
+| `context_ref` | string | `null` | Reference to a stored context entity for pre/post messages |
+| `extractor` | string | `null` | Regex pattern to extract a specific part of the LLM response |
+| `is_response` | boolean | `false` | When `true`, the LLM response is parsed as a full HTTP response (see below) |
+
+## Full HTTP response mode
+
+When `is_response` is set to `true`, the LLM is expected to return a complete HTTP response as a JSON object:
+
+```json
+{
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "body": "{\"message\": \"transformed response\"}"
+}
+```
+
+The plugin will use these values to construct the actual HTTP response (status code, headers, and body).
+
+## Example: translate response
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "Translate the following API response body to French. Return only the translated content, preserving the JSON structure."
+}
+```
+
+## Example: sanitize response
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "Remove any personally identifiable information (PII) from the following API response. Replace PII with '[REDACTED]'. Return only the sanitized content."
+}
+```

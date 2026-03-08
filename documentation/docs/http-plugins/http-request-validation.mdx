@@ -4,8 +4,69 @@ sidebar_position: 1
 
 import Terminal from '@site/src/components/Terminal';
 
-# Request validation
+# Request validation (LLM Context validator)
+
+The **LLM Context validator** plugin uses an LLM to validate incoming HTTP requests based on their full context. The LLM acts as a smart access control layer, deciding whether to allow or deny each request.
+
+## How it works
+
+1. The plugin serializes the entire request context (method, path, headers, query parameters, body, etc.) as JSON
+2. This context is sent to the configured LLM provider along with a system prompt
+3. The LLM analyzes the request and returns `"true"` (allow) or `"false"` (deny)
+4. If denied, the plugin returns HTTP 403 Forbidden
+
+This enables context-aware access validation that goes beyond simple rules — the LLM can evaluate complex conditions, detect suspicious patterns, or enforce business logic.
 
 ![](/img/http-request-validation.png)
 
 <iframe  width="956" height="538" src="https://www.youtube.com/embed/TwdHFxf-69s?si=0UNy0ACKLABkozjZ" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
+## Plugin configuration
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiContextValidator",
+  "config": {
+    "ref": "provider-entity-id",
+    "prompt": "You are a security validator. Analyze the following HTTP request context and determine if it should be allowed. Return only 'true' or 'false'.",
+    "prompt_ref": null,
+    "context_ref": null,
+    "extractor": null
+  }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ref` | string | `""` | LLM Provider entity ID |
+| `prompt` | string | `""` | System prompt instructing the LLM how to validate the request |
+| `prompt_ref` | string | `null` | Reference to a stored prompt entity |
+| `context_ref` | string | `null` | Reference to a stored context entity for pre/post messages |
+| `extractor` | string | `null` | Regex pattern to extract the boolean result from the LLM response |
+
+## LLM response format
+
+The LLM must return one of:
+- The string `"true"` or `"false"`
+- A JSON object: `{"result": true}` or `{"result": false}`
+
+## Example: block requests with sensitive data
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "Analyze the following HTTP request context. Return 'false' if the request body contains any personally identifiable information (PII) like social security numbers, credit card numbers, or email addresses. Return 'true' otherwise."
+}
+```
+
+## Example: enforce business rules
+
+```js
+{
+  "ref": "provider_openai",
+  "prompt": "You are an API gateway validator. The following is an HTTP request context in JSON format. Check if the request complies with our API usage policy: POST requests must have a Content-Type header, GET requests must not have a body. Return 'true' if compliant, 'false' otherwise."
+}
+```

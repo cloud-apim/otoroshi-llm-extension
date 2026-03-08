@@ -1,0 +1,63 @@
+---
+sidebar_position: 8
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# LLMs.txt support
+
+The **LLMs.txt Accept Markdown** plugin implements the [llms.txt standard](https://llmstxt.org/). When an incoming request includes the `Accept: text/markdown` header, the plugin automatically tries to find and serve a markdown variant of the requested page.
+
+## How it works
+
+1. A request arrives with `Accept: text/markdown` in its headers
+2. The plugin tries multiple markdown variant paths in parallel:
+   - `{path}.md`
+   - `{path}.html.md`
+   - `{path}/index.html.md`
+3. If a variant returns a successful response from the backend, it is returned to the client
+4. If no markdown variant is found, the request falls through to the normal backend
+
+Variant path resolutions are **cached** to avoid repeated lookups.
+
+## Plugin configuration
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.MarkdownAcceptPlugin",
+  "config": {
+    "cachingEnabled": true,
+    "maxCacheSize": 500,
+    "cacheTtlMinutes": 30
+  }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `cachingEnabled` | boolean | `true` | Enable/disable variant path caching |
+| `maxCacheSize` | number | `500` | Maximum number of cached variant path mappings |
+| `cacheTtlMinutes` | number | `30` | TTL for cached variant paths in minutes |
+
+## Caching behavior
+
+- **Variant cache**: Maps original paths to their resolved markdown variant paths. Avoids re-probing the backend on repeated requests for the same path.
+- **Error cache**: 5xx responses from the backend are cached for 1 minute to avoid hammering a failing backend.
+- Cache is per-plugin-configuration (different routes with different configs have separate caches).
+
+## Example
+
+A request to `https://example.com/docs/api` with `Accept: text/markdown` will try:
+
+1. `https://example.com/docs/api.md`
+2. `https://example.com/docs/api.html.md`
+3. `https://example.com/docs/api/index.html.md`
+
+The first successful response is cached and returned. Subsequent requests for the same path will use the cached variant directly.
+
+## What is llms.txt?
+
+The [llms.txt standard](https://llmstxt.org/) provides a way for websites to offer markdown versions of their content that are optimized for consumption by LLMs. By serving clean markdown instead of HTML with navigation, scripts, and styling, LLMs can more effectively understand and use the content.
