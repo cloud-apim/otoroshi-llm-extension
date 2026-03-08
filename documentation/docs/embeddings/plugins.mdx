@@ -4,12 +4,143 @@ sidebar_position: 4
 
 import Terminal from '@site/src/components/Terminal';
 
-# Embedding plugins
+# Embedding plugin
 
-Otoroshi LLM extension provides a plugin called 'OpenAI compat. embedding' to expose embedding models on a route
+The Otoroshi LLM extension provides the **Cloud APIM - LLM OpenAI Compat. Embeddings** plugin to expose embedding models on an Otoroshi route. The API is compatible with the [OpenAI embeddings API](https://platform.openai.com/docs/api-reference/embeddings).
+
+## Plugin configuration
+
+Add the plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatEmbedding",
+  "config": {
+    "refs": ["embedding-model-entity-id"]
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refs` | array | `[]` | List of Embedding Model entity IDs |
 
 ![](/img/embedding-plugin.png)
 
-when we call the route with this plugin, the response has the same format as [an OpenAI one](https://platform.openai.com/docs/api-reference/embeddings)
+## Usage
+
+```sh
+curl --request POST \
+  --url http://myroute.oto.tools:8080/v1/embeddings \
+  --header 'content-type: application/json' \
+  --data '{
+  "input": "Hello world",
+  "model": "text-embedding-3-small"
+}'
+```
+
+### Batch embedding
+
+You can embed multiple texts in a single request by passing an array:
+
+```sh
+curl --request POST \
+  --url http://myroute.oto.tools:8080/v1/embeddings \
+  --header 'content-type: application/json' \
+  --data '{
+  "input": ["Hello world", "How are you?", "Goodbye"],
+  "model": "text-embedding-3-small"
+}'
+```
+
+### Response
+
+```js
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": [0.0023064255, -0.009327292, ...]
+    }
+  ],
+  "model": "text-embedding-3-small",
+  "usage": {
+    "prompt_tokens": 2,
+    "total_tokens": 2
+  }
+}
+```
 
 ![](/img/embedding-plugin-call.png)
+
+### Base64 encoding
+
+For more compact responses, use `"encoding_format": "base64"`:
+
+```sh
+curl --request POST \
+  --url http://myroute.oto.tools:8080/v1/embeddings \
+  --header 'content-type: application/json' \
+  --data '{
+  "input": "Hello world",
+  "model": "text-embedding-3-small",
+  "encoding_format": "base64"
+}'
+```
+
+The embedding vectors are returned as base64-encoded strings of little-endian float bytes instead of JSON arrays.
+
+## Model routing
+
+When multiple embedding model providers are configured in `refs`, you can target a specific provider using the `model` field:
+
+```js
+{
+  "input": "Hello world",
+  "model": "providerName/modelName"
+}
+```
+
+The provider can be referenced by:
+- **Entity name** (slug): `my-openai-embeddings/text-embedding-3-small`
+- **Entity ID**: `embedding-model-id###text-embedding-3-small`
+
+If no provider prefix is specified, the first configured ref is used.
+
+## Route example
+
+A complete route configuration exposing an embedding model:
+
+```js
+{
+  "frontend": {
+    "domains": ["embeddings.my-domain.com"]
+  },
+  "backend": {
+    "targets": [
+      {
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "config": {}
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatEmbedding",
+      "config": {
+        "refs": ["embedding-model-entity-id"]
+      }
+    }
+  ]
+}
+```

@@ -5,3 +5,110 @@ sidebar_position: 1
 import Terminal from '@site/src/components/Terminal';
 
 # Overview
+
+The Otoroshi LLM extension provides a unified, OpenAI-compatible API for computing text embeddings across multiple providers. Embeddings are vector representations of text that capture semantic meaning, enabling similarity search, clustering, and RAG (Retrieval-Augmented Generation) pipelines.
+
+## Features
+
+- **16+ embedding providers** including cloud APIs and a local ONNX model
+- **OpenAI-compatible API** — standard `/v1/embeddings` endpoint
+- **Batch embedding** — embed multiple texts in a single request
+- **Encoding formats** — `float` (JSON array) or `base64` (compact binary)
+- **Model routing** — route to different providers using `provider/model` syntax
+- **Model constraints** — restrict which models consumers can use via include/exclude regex patterns
+- **Budget enforcement** — embedding costs are tracked and budgets are enforced
+- **Cost tracking** — per-request cost tracking integrated with [cost tracking](/docs/cost-optimizations/cost-tracking)
+- **Embedding stores** — local in-memory vector stores for similarity search
+- **Token round-robin** — distribute load across multiple API tokens
+
+## API endpoint
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/v1/embeddings` | POST | Compute embeddings for one or more text inputs |
+
+## Request
+
+```sh
+curl --request POST \
+  --url http://myroute.oto.tools:8080/v1/embeddings \
+  --header 'content-type: application/json' \
+  --data '{
+  "input": ["Hello world", "How are you?"],
+  "model": "text-embedding-3-small",
+  "encoding_format": "float"
+}'
+```
+
+### Request parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `input` | string or array | The text(s) to embed. Can be a single string or an array of strings for batch embedding |
+| `model` | string | Model name. Can include a provider prefix for [model routing](/docs/embeddings/plugins#model-routing) |
+| `dimensions` | integer | Requested embedding dimensions (supported by some models like `text-embedding-3-small`) |
+| `encoding_format` | string | Output format: `"float"` (default, JSON array of numbers) or `"base64"` (compact binary encoding) |
+| `user` | string | End-user identifier for tracking |
+
+## Response
+
+```js
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "index": 0,
+      "embedding": [0.0023064255, -0.009327292, ...]
+    },
+    {
+      "object": "embedding",
+      "index": 1,
+      "embedding": [-0.0015486241, 0.0073928963, ...]
+    }
+  ],
+  "model": "text-embedding-3-small",
+  "usage": {
+    "prompt_tokens": 8,
+    "total_tokens": 8
+  }
+}
+```
+
+With `"encoding_format": "base64"`, each embedding is returned as a base64-encoded string of little-endian float bytes instead of a JSON array.
+
+## Embedding stores
+
+The extension also provides **embedding stores** for storing and searching embedding vectors locally. Currently only a local in-memory store is supported, backed by langchain4j's `InMemoryEmbeddingStore`.
+
+Embedding stores are used internally by the [semantic cache](/docs/cost-optimizations/semantic-cache) and can be used in [workflows](/docs/workflows/overview) via dedicated functions:
+- `vector_store_add` — add a document with its embedding to a store
+- `vector_store_remove` — remove a document by ID
+- `vector_store_search` — search by embedding vector similarity
+
+### Store configuration
+
+```js
+{
+  "provider": "local",
+  "config": {
+    "connection": {
+      "name": "my-store",
+      "session_id": "optional-session-id",
+      "init_content": "https://example.com/initial-data.json"
+    },
+    "options": {
+      "max_results": 3,
+      "min_score": 0.7
+    }
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection.name` | string | — | Store name |
+| `connection.session_id` | string | — | Optional session ID for per-session isolation |
+| `connection.init_content` | string | — | URL to initial content (HTTP/HTTPS, `file://`, or `s3://`) |
+| `options.max_results` | integer | `3` | Maximum number of results returned by search |
+| `options.min_score` | number | `0.7` | Minimum cosine similarity score for search matches |

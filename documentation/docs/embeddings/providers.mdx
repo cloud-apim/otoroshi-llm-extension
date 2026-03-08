@@ -4,23 +4,233 @@ sidebar_position: 2
 
 import Terminal from '@site/src/components/Terminal';
 
-# Supported Embedding providers
+# Supported providers
 
-Here is a list of all embedding providers available in the Otoroshi LLM Extension :
+## OpenAI
 
-* All MiniLM L6 V2 (embedded)
-* Azure OpenAI
-* Azure AI Foundry
-* Cloud Temple 🇫🇷 🇪🇺
-* Cohere
-* Deepseek
-* Gemini
-* Huggingface 🇫🇷 🇪🇺
-* Mistral 🇫🇷 🇪🇺
-* Nebius AI Studio
-* Ollama (Local Models)
-* OpenAI
-* OpenRouter
-* SambaNova
-* Scaleway 🇫🇷 🇪🇺
-* X.ai
+- **Base URL:** `https://api.openai.com/v1`
+- **Default model:** `text-embedding-3-small`
+- **API endpoint:** `POST /embeddings`
+
+### Models
+
+| Model | Dimensions | Description |
+|-------|:----------:|-------------|
+| `text-embedding-3-small` | 1536 | Small, fast, cost-effective |
+| `text-embedding-3-large` | 3072 | Higher quality, supports custom dimensions |
+| `text-embedding-ada-002` | 1536 | Legacy model |
+
+Supports the `dimensions` parameter to reduce embedding size (for `text-embedding-3-*` models).
+
+---
+
+## Azure OpenAI
+
+- **Base URL:** Computed from Azure resource configuration
+- **API endpoint:** `POST /embeddings`
+
+Azure OpenAI supports two modes depending on the `api_version` setting:
+
+### v1 mode
+
+When `api_version` is set to `"v1"`, behaves identically to OpenAI. Uses the standard connection config with `base_url` and `token`.
+
+### Legacy mode
+
+Uses Azure-specific connection settings:
+
+```js
+{
+  "connection": {
+    "resource_name": "my-azure-resource",
+    "deployment_id": "my-embedding-deployment",
+    "api_version": "2024-02-01",
+    "api_key": "xxx"
+  }
+}
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `resource_name` | string | Azure resource name |
+| `deployment_id` | string | Deployment ID (used as model) |
+| `api_version` | string | API version (use `"v1"` for OpenAI-compatible mode) |
+| `api_key` | string | API key (alternative to bearer token) |
+
+---
+
+## Azure AI Foundry
+
+- **Base URL:** `https://<resource>.services.ai.azure.com/models`
+- **Default model:** `text-embedding-3-small`
+- **API endpoint:** `POST /embeddings`
+
+Uses OpenAI-compatible API.
+
+---
+
+## Mistral 🇫🇷 🇪🇺
+
+- **Base URL:** `https://api.mistral.ai`
+- **Default model:** `mistral-embed`
+- **API endpoint:** `POST /v1/embeddings`
+
+### Models
+
+| Model | Dimensions | Description |
+|-------|:----------:|-------------|
+| `mistral-embed` | 1024 | Multilingual embedding model |
+
+---
+
+## Ollama (Local Models)
+
+- **Base URL:** `http://localhost:11434`
+- **Default model:** `snowflake-arctic-embed:22m`
+- **API endpoint:** `POST /api/embed`
+
+Ollama uses its native embed API (not OpenAI-compatible format). The token is optional for local installations.
+
+### Models
+
+Any embedding model available in Ollama can be used, for example:
+- `snowflake-arctic-embed:22m`
+- `nomic-embed-text`
+- `mxbai-embed-large`
+
+---
+
+## Cohere
+
+- **Base URL:** `https://api.cohere.com`
+- **Default model:** `embed-multilingual-v3.0`
+- **API endpoint:** `POST /v2/embed`
+
+Cohere uses its own API format (not OpenAI-compatible). The extension handles the translation automatically.
+
+### Models
+
+| Model | Dimensions | Description |
+|-------|:----------:|-------------|
+| `embed-multilingual-v3.0` | 1024 | Multilingual, 100+ languages |
+| `embed-english-v3.0` | 1024 | English-optimized |
+
+---
+
+## Gemini
+
+- **Base URL:** `https://generativelanguage.googleapis.com/v1beta/openai`
+- **Default model:** `gemini-embedding-001`
+- **API endpoint:** `POST /embeddings`
+
+Uses OpenAI-compatible API.
+
+---
+
+## X-AI (Grok)
+
+- **Base URL:** `https://api.x.ai`
+- **Default model:** `v1`
+- **API endpoint:** `POST /v1/embeddings`
+
+---
+
+## Deepseek
+
+- **Base URL:** `https://api.deepseek.com`
+- **Default model:** `deepseek-r1`
+- **API endpoint:** `POST /embeddings`
+
+Uses OpenAI-compatible API.
+
+---
+
+## Scaleway 🇫🇷 🇪🇺
+
+- **Base URL:** `https://api.scaleway.ai/v1`
+- **Default model:** `qwen3-embedding-8b`
+- **API endpoint:** `POST /embeddings`
+
+Uses OpenAI-compatible API.
+
+---
+
+## Cloud Temple 🇫🇷 🇪🇺
+
+- **Base URL:** `https://api.ai.cloud-temple.com/v1`
+- **Default model:** `embeddinggemma:300m`
+- **API endpoint:** `POST /embeddings`
+
+Uses OpenAI-compatible API.
+
+---
+
+## Huggingface 🇫🇷 🇪🇺
+
+- **Base URL:** `https://api-inference.huggingface.co/v1`
+- **Default model:** `Qwen/Qwen3-Embedding-8B`
+- **API endpoint:** `POST /embeddings`
+
+Uses OpenAI-compatible API.
+
+---
+
+## Nebius AI Studio
+
+- **Base URL:** `https://api.studio.nebius.ai/v1`
+- **API endpoint:** `POST /embeddings`
+
+Uses OpenAI-compatible API.
+
+---
+
+## SambaNova
+
+- **Base URL:** `https://api.sambanova.ai/v1`
+- **API endpoint:** `POST /embeddings`
+
+Uses OpenAI-compatible API.
+
+---
+
+## OpenRouter
+
+- **Base URL:** `https://openrouter.ai/api/v1`
+- **API endpoint:** `POST /embeddings`
+
+Uses OpenAI-compatible API. Provides access to multiple embedding models from different providers.
+
+---
+
+## All MiniLM L6 V2 (local)
+
+- **No API call** — runs entirely in-process via ONNX runtime
+- **Model:** `all-minilm-l6-v2`
+- **Dimensions:** 384
+
+This model is embedded in the extension and requires no external connection or API token. It is used internally by the [semantic cache](/docs/cost-optimizations/semantic-cache).
+
+Token usage is not tracked for this model.
+
+---
+
+## Provider comparison
+
+| Provider | API format | Default model | Dimensions | Special features |
+|----------|-----------|---------------|:----------:|------------------|
+| OpenAI | OpenAI | `text-embedding-3-small` | 1536 | Custom dimensions |
+| Azure OpenAI | OpenAI or Azure | (deployment) | varies | Two auth modes |
+| Azure AI Foundry | OpenAI | `text-embedding-3-small` | 1536 | — |
+| Mistral | OpenAI | `mistral-embed` | 1024 | — |
+| Ollama | Ollama native | `snowflake-arctic-embed:22m` | varies | Local, no token needed |
+| Cohere | Cohere v2 | `embed-multilingual-v3.0` | 1024 | Multilingual |
+| Gemini | OpenAI | `gemini-embedding-001` | varies | — |
+| X-AI | OpenAI | `v1` | varies | — |
+| Deepseek | OpenAI | `deepseek-r1` | varies | — |
+| Scaleway | OpenAI | `qwen3-embedding-8b` | varies | — |
+| Cloud Temple | OpenAI | `embeddinggemma:300m` | varies | — |
+| Huggingface | OpenAI | `Qwen/Qwen3-Embedding-8B` | varies | — |
+| Nebius | OpenAI | — | varies | — |
+| SambaNova | OpenAI | — | varies | — |
+| OpenRouter | OpenAI | — | varies | Multi-provider |
+| All MiniLM L6 V2 | Local ONNX | `all-minilm-l6-v2` | 384 | No API call |
