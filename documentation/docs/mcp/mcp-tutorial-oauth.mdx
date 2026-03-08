@@ -542,6 +542,93 @@ MCP Client                           Otoroshi                          Keycloak
     │                                    │                                │
 ```
 
+## Step 5: Test with MCP Inspector
+
+The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is an interactive developer tool for testing and debugging MCP servers. You can use it to connect to your OAuth-protected MCP server with a visual UI.
+
+### Launch the Inspector
+
+```bash
+npx @modelcontextprotocol/inspector
+```
+
+This opens the Inspector UI at [http://localhost:6274](http://localhost:6274).
+
+### Connect to your MCP server
+
+1. In the Inspector UI, select **Streamable HTTP** as the transport type
+2. Enter your MCP server URL: `https://mcp-geocoding.oto.tools/mcp`
+3. In the **Headers** section, add the `Authorization` header with your Bearer token:
+
+| Header name | Value |
+|-------------|-------|
+| `Authorization` | `Bearer <your-access-token>` |
+
+:::tip
+To quickly get a token, run the curl command from Step 4.3 and copy the resulting `access_token` value.
+:::
+
+4. Click **Connect**
+
+### Explore tools
+
+Once connected, the Inspector shows the server capabilities. Navigate to the **Tools** tab to see your two geocoding tools listed with their names, descriptions, and input schemas.
+
+### Call a tool
+
+1. Click on the `geocode_address` tool
+2. Fill in the arguments:
+   - **address**: `Tour Eiffel, Paris`
+   - **limit**: `1`
+3. Click **Run Tool**
+4. The Inspector displays the GeoJSON response from the IGN API with coordinates, label, city, and confidence score
+
+Repeat with `reverse_geocode` using coordinates like `lat: 48.8584`, `lon: 2.2945` to verify the reverse lookup.
+
+### CLI mode
+
+You can also use the Inspector in CLI mode to quickly test without the UI:
+
+```bash
+# Obtain a token
+ACCESS_TOKEN=$(curl -s -X POST \
+  "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/token" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=your-client-id" \
+  -d "client_secret=your-client-secret" \
+  -d "scope=openid" | jq -r '.access_token')
+
+# List tools
+npx @modelcontextprotocol/inspector \
+  --cli \
+  --transport http \
+  --header "Authorization: Bearer $ACCESS_TOKEN" \
+  https://mcp-geocoding.oto.tools/mcp \
+  --method tools/list
+
+# Call geocode_address
+npx @modelcontextprotocol/inspector \
+  --cli \
+  --transport http \
+  --header "Authorization: Bearer $ACCESS_TOKEN" \
+  https://mcp-geocoding.oto.tools/mcp \
+  --method tools/call \
+  --tool-name geocode_address \
+  --tool-arg address="73 avenue de Paris, Saint-Mandé" \
+  --tool-arg limit=1
+
+# Call reverse_geocode
+npx @modelcontextprotocol/inspector \
+  --cli \
+  --transport http \
+  --header "Authorization: Bearer $ACCESS_TOKEN" \
+  https://mcp-geocoding.oto.tools/mcp \
+  --method tools/call \
+  --tool-name reverse_geocode \
+  --tool-arg lat=48.8566 \
+  --tool-arg lon=2.3522
+```
+
 ## Going further
 
 - **Add more tools**: Create additional tool functions (e.g., cadastral parcel search using the IGN `?index=parcel` parameter) and add their IDs to the `refs` array in the McpRespEndpoint config
