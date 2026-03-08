@@ -632,7 +632,6 @@ npx @modelcontextprotocol/inspector \
 ## Going further
 
 - **Add more tools**: Create additional tool functions (e.g., cadastral parcel search using the IGN `?index=parcel` parameter) and add their IDs to the `refs` array in the McpRespEndpoint config
-- **Use SSE transport**: Replace `McpRespEndpoint` with `McpSseEndpoint` if your MCP clients need server-sent events for streaming
 - **Add MCP connectors**: Combine your HTTP tool functions with [MCP connectors](/docs/mcp/mcp-connectors) by adding connector IDs to the `mcp_refs` array
 - **Fine-tune access control**: Use the [MCP plugin filters](/docs/mcp/mcp-plugins#filtering-at-the-plugin-level) to control which tools are exposed to which clients
 - **Connect to an LLM provider**: Attach these same tool functions to an [LLM provider](/docs/function-calling/overview#provider-configuration) so the LLM can call them during chat completions
