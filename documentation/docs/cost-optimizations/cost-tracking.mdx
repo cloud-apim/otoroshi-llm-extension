@@ -22,14 +22,32 @@ costs-tracking {
   enabled = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_ENABLED}
   embed-costs-tracking-in-responses = false
   embed-costs-tracking-in-responses = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_EMBED_COSTS_TRACKING_IN_RESPONSES}
+  custom-prices = "{}"
+  custom-prices = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_CUSTOM_PRICES}
 }
 ```
 
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable or disable cost tracking |
+| `embed-costs-tracking-in-responses` | boolean | `false` | Always embed costs in LLM responses |
+| `custom-prices` | string (JSON) | `"{}"` | Custom model prices in LiteLLM format (see below) |
+
 Once it's enabled, audit events of kind `LLMUsageAudit` will have a `costs` object.
 
-You can also embed the `costs` value in your LLM responses using the `costs-tracking.embed-costs-tracking-in-responses` config.
+You can also embed the `costs` value in your LLM responses using the `costs-tracking.embed-costs-tracking-in-responses` config or by adding `?embed_costs=true` to your query.
 
-The costs tracking  computation is based on project [LitLLM](https://docs.litellm.ai/) models price dictionnary and only supports right now the following providers
+### Price computation
+
+The cost tracking uses a **three-layer pricing strategy**:
+
+1. **Built-in LiteLLM prices**: the full [LitLLM](https://docs.litellm.ai/) model price dictionary, bundled with the extension
+2. **Built-in custom prices**: additional prices defined by the extension for models not in LiteLLM
+3. **User-defined prices**: your own prices via the `custom-prices` config (highest priority, overrides the others)
+
+### Supported providers
+
+Cost tracking natively supports the following providers:
 
 - openai
 - deepseek
@@ -43,10 +61,48 @@ The costs tracking  computation is based on project [LitLLM](https://docs.litell
 - anthropic
 - groq
 
-but if you're okay with approximations, you can set some metadata on your providers to use supported providers / models
+For unsupported providers, you can set metadata on the provider entity to map it to a supported provider/model:
 
-- `costs-tracking-provider`: the provider used for costs tracking computation
-- `costs-tracking-model`: the model used for costs tracking computation
+- `costs-tracking-provider`: the provider name used for price lookup
+- `costs-tracking-model`: the model name used for price lookup
+
+### Custom prices
+
+You can define custom per-model prices using the `custom-prices` config parameter. The format follows the LiteLLM price dictionary structure:
+
+```json
+{
+  "my-provider/my-model": {
+    "input_cost_per_token": 0.000001,
+    "output_cost_per_token": 0.000002,
+    "output_cost_per_reasoning_token": 0.000005
+  }
+}
+```
+
+Available pricing fields:
+
+| Field | Description |
+|-------|-------------|
+| `input_cost_per_token` | Cost per input token |
+| `output_cost_per_token` | Cost per output token |
+| `output_cost_per_reasoning_token` | Cost per reasoning token (falls back to `output_cost_per_token` if not set) |
+| `input_cost_per_image` | Cost per input image |
+| `output_cost_per_image` | Cost per output image |
+
+### Cost output
+
+Each response with cost tracking includes:
+
+```js
+{
+  "input_cost": 0.00000165,
+  "output_cost": 0.0000108,
+  "reasoning_cost": 0,
+  "total_cost": 0.00001245,
+  "currency": "dollar"
+}
+```
 
 ## Example of costs tracking embed in responses
 

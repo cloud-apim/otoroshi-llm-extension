@@ -8,15 +8,22 @@ import Terminal from '@site/src/components/Terminal';
 
 ![](/img/cost-optimization.svg)
 
-## ⚡ Cache: Fast and Efficient
+Otoroshi LLM Extension provides a comprehensive set of cost optimization features to help you monitor, control, and reduce your LLM spending.
 
-We provide a simple yet powerful caching mechanism :
+## Features
 
-- ✅ **Semantic caching** for intelligent retrieval
-- 🔍 **Embeddings-based storage** for high-relevance matches
-- 🗃️ **Vector search database** ensures ultra-fast lookups
+- [**Cost tracking**](/docs/cost-optimizations/cost-tracking): Monitor the cost of every LLM request in real-time, with per-model pricing based on the LiteLLM price dictionary. Costs can be embedded in API responses and audit events.
+- [**Budgets**](/docs/cost-optimizations/budgets): Define spending limits (in USD or tokens) per consumer, provider, model, or any scope. Budgets can block requests when exceeded or emit alerts.
+- [**Token quotas**](/docs/cost-optimizations/quotas): Rate-limit LLM usage by token count per time window, grouped by any attribute (API key, user, route, custom expression).
+- [**Simple cache**](/docs/cost-optimizations/simple-cache): In-memory cache based on exact prompt matching. Cached responses return zero token usage, avoiding provider costs entirely.
+- [**Semantic cache**](/docs/cost-optimizations/semantic-cache): Embedding-based cache that matches semantically similar prompts, even when the wording differs. Uses a local MiniLM model for embeddings.
 
-This results in reduced latency and improved response times for frequently accessed data.
+## How caching saves costs
 
-You can activate caching on any provider
+When a cache (simple or semantic) returns a hit, the response is served directly from memory. The request never reaches the LLM provider, so:
 
+- No tokens are consumed (usage is reported as zero)
+- No cost is incurred
+- Response time is near-instant
+
+You can activate caching on any provider via the `cache` configuration in the provider entity.

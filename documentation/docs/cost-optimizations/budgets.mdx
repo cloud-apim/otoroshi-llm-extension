@@ -39,9 +39,46 @@ A budget is defined for a scope based on pretty much whatever you want (apikey, 
 
 ![](/img/budgets-scope.png)
 
-A budget can block requests on exceeded limits or just emit alerts
+#### Scope options
+
+| Scope | Description |
+|-------|-------------|
+| `apikeys` | List of API key IDs |
+| `users` | List of user IDs |
+| `groups` | List of API group IDs |
+| `providers` | List of LLM provider IDs |
+| `models` | List of model names |
+| `extractFromApikeyMeta` | Extract budget ref from API key metadata |
+| `extractFromApikeyGroupMeta` | Extract budget ref from API key group metadata |
+| `extractFromUserMeta` | Extract budget ref from user metadata |
+| `extractFromUserAuthModuleMeta` | Extract budget ref from auth module metadata |
+| `extractFromProviderMeta` | Extract budget ref from provider metadata |
+| `rules` | JsonPath-based rules for advanced scoping |
+| `rulesMatchMode` | Rule matching mode: `All` (all rules must match) or `Any` (at least one rule must match) |
+| `alwaysApplyRules` | When `true`, rules are always evaluated even if explicit lists match |
+
+#### Duration units
+
+Budget limits are applied for a renewable duration between the start and end date:
+
+| Unit | Description |
+|------|-------------|
+| `hour` | Limits reset every hour |
+| `day` | Limits reset every day |
+| `year` | Limits reset every year |
+
+### Action on exceed
+
+A budget can block requests on exceeded limits or just emit alerts.
 
 ![](/img/budgets-action-on-exceed.png)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `mode` | string | — | `"soft"` (alerts only) or `"block"` (deny requests with HTTP 429) |
+| `alertOnExceed` | boolean | — | Emit an alert when the budget is exceeded |
+| `alertOnAlmostExceed` | boolean | — | Emit an alert when the budget is almost exceeded |
+| `alertOnAlmostExceedPercentage` | number | `80` | Percentage threshold for "almost exceeded" alerts (e.g. 80 means alert at 80% consumption) |
 
 ### Admin API 
 
