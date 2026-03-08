@@ -1,0 +1,410 @@
+---
+sidebar_position: 6
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Open Responses API Proxy
+
+The **LLM OpenResponse Proxy** plugin exposes any LLM provider managed by Otoroshi through an [Open Responses](https://www.openresponses.org/)-compatible API endpoint. [Open Responses](https://www.openresponses.org/specification) is an open-source specification for multi-provider, interoperable LLM interfaces, backed by NVIDIA, Vercel, OpenRouter, Hugging Face, Databricks, Red Hat, Ollama, OpenAI, and others.
+
+This means any client that speaks the Open Responses API format can seamlessly use any LLM provider proxied by Otoroshi.
+
+## Why use this plugin?
+
+The Open Responses specification addresses fragmentation in LLM APIs by providing a shared, open schema. It introduces several key concepts beyond the classic chat completions API:
+
+- **Items as fundamental units**: responses are structured around items (messages, function calls, reasoning) rather than simple choices
+- **Agentic workflow support**: built-in support for tool calling loops, function call inputs/outputs, and multi-turn agent interactions
+- **Streaming with semantic events**: streaming uses meaningful lifecycle events (`response.created`, `response.in_progress`, `response.completed`) rather than raw deltas
+- **Multi-modal inputs**: native support for text, images, audio, video, and file inputs
+
+The plugin handles all the format translation automatically between the Open Responses format and the underlying provider's format.
+
+## Supported features
+
+### Input types
+
+The plugin supports all Open Responses input types:
+
+| Input type | Description |
+|------------|-------------|
+| **Simple text** | `"input": "Hello"` - a plain text string as user message |
+| **Message items** | `"input": [{"type": "message", "role": "user", "content": "Hello"}]` |
+| **Function call items** | `"input": [{"type": "function_call", ...}]` - previous function calls for multi-turn |
+| **Function call output items** | `"input": [{"type": "function_call_output", ...}]` - tool results |
+
+### Content types
+
+Within message items, the following content types are supported:
+
+| Content type | Description |
+|-------------|-------------|
+| `input_text` | Text content |
+| `input_image` | Image content via URL |
+| `input_audio` | Audio content (data + format) |
+| `input_video` | Video content (data + format) |
+| `input_file` | File content (filename + data) |
+
+### Instructions
+
+The `instructions` field is translated to a system message, equivalent to the system prompt:
+
+```js
+{
+  "model": "gpt-4o",
+  "instructions": "You are a helpful assistant that speaks French.",
+  "input": "Hello!"
+}
+```
+
+### Tool calling
+
+The plugin fully supports tool calling in Open Responses format. Tools are defined at the top level with `name`, `description`, and `parameters`:
+
+```js
+{
+  "model": "gpt-4o",
+  "input": "What's the weather in Paris?",
+  "tools": [
+    {
+      "type": "function",
+      "name": "get_weather",
+      "description": "Get the current weather for a location",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "The city name"
+          }
+        },
+        "required": ["location"]
+      }
+    }
+  ]
+}
+```
+
+When the model calls a tool, the response contains `function_call` items:
+
+```js
+{
+  "id": "resp_xxxxx",
+  "object": "response",
+  "status": "completed",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_xxxxx",
+      "status": "completed",
+      "role": "assistant",
+      "content": [{"type": "output_text", "text": ""}]
+    },
+    {
+      "type": "function_call",
+      "id": "fc_xxxxx",
+      "call_id": "call_xxxxx",
+      "name": "get_weather",
+      "arguments": "{\"location\":\"Paris\"}",
+      "status": "in_progress"
+    }
+  ]
+}
+```
+
+To continue the conversation with the tool result, send the function call and its output back in the input:
+
+```js
+{
+  "model": "gpt-4o",
+  "input": [
+    {
+      "type": "function_call",
+      "call_id": "call_xxxxx",
+      "name": "get_weather",
+      "arguments": "{\"location\":\"Paris\"}"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_xxxxx",
+      "output": "{\"temperature\": 18, \"condition\": \"sunny\"}"
+    }
+  ],
+  "tools": [...]
+}
+```
+
+### Streaming
+
+The plugin supports streaming responses via Server-Sent Events (SSE), fully compatible with the Open Responses streaming protocol. Streaming is activated when:
+- The request body contains `"stream": true`
+- Or the query parameter `?stream=true` is present
+- Or the header `x-stream: true` is present
+
+The streaming response follows the Open Responses SSE event lifecycle:
+
+| Event | Description |
+|-------|-------------|
+| `response.created` | Response object has been created |
+| `response.in_progress` | Model is generating output |
+| `response.output_item.added` | A new output item started |
+| `response.content_part.added` | A new content part started |
+| `response.output_text.delta` | Incremental text chunk |
+| `response.output_text.done` | Text generation complete for this content part |
+| `response.content_part.done` | Content part finalized |
+| `response.output_item.done` | Output item finalized |
+| `response.completed` | Full response completed with final output and usage |
+
+Each event includes a monotonically increasing `sequence_number` for ordering.
+
+### Request parameters
+
+The following Open Responses request parameters are supported:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model` | string | Model identifier |
+| `input` | string or array | The input content (text or items) |
+| `instructions` | string | System instructions |
+| `tools` | array | Tool definitions |
+| `tool_choice` | string or object | Tool selection strategy (`auto`, `required`, `none`) |
+| `temperature` | number | Sampling temperature |
+| `top_p` | number | Nucleus sampling parameter |
+| `max_output_tokens` | number | Maximum tokens to generate |
+| `parallel_tool_calls` | boolean | Allow parallel tool calls |
+| `stream` | boolean | Enable streaming |
+| `store` | boolean | Store the response |
+| `metadata` | object | Custom metadata |
+| `truncation` | string | Truncation strategy (`auto` or `disabled`) |
+| `previous_response_id` | string | Resume from a previous response |
+| `reasoning` | object | Reasoning configuration (`effort`, `summary`) |
+| `text` | object | Text output format configuration |
+| `service_tier` | string | Service tier hint |
+
+### Response format
+
+Responses follow the Open Responses specification:
+
+```js
+{
+  "id": "resp_xxxxx",
+  "object": "response",
+  "created_at": 1234567890,
+  "completed_at": 1234567890,
+  "status": "completed",
+  "model": "gpt-4o",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_xxxxx",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Hello! How can I help you today?",
+          "annotations": [],
+          "logprobs": []
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 15,
+    "total_tokens": 27,
+    "input_tokens_details": {
+      "cached_tokens": 0
+    },
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  },
+  "tool_choice": "auto",
+  "tools": [],
+  "temperature": 1.0,
+  "top_p": 1.0,
+  "truncation": "disabled",
+  "reasoning": {
+    "effort": "none",
+    "summary": "auto"
+  }
+}
+```
+
+## Plugin configuration
+
+The plugin is configured in the route's plugin section:
+
+```js
+{
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenResponseCompatProxy",
+  "enabled": true,
+  "config": {
+    "refs": [
+      "provider_xxxxx"
+    ]
+  }
+}
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `refs` | array of strings | References to the LLM provider(s) to use. The first provider in the list is used by default |
+
+### Provider selection
+
+The plugin supports multiple providers through the `refs` array. The provider is selected in the following order:
+
+1. If the request body contains a `provider` field matching one of the `refs`, that provider is used
+2. Otherwise, the first provider in the `refs` array is used
+
+## Route configuration example
+
+```js
+{
+  "id": "route_open_response_proxy",
+  "name": "Open Responses Proxy",
+  "frontend": {
+    "domains": [
+      "open-responses.your-domain.com"
+    ],
+    "strip_path": true,
+    "exact": false,
+    "headers": {},
+    "query": {},
+    "methods": []
+  },
+  "backend": {
+    "targets": [
+      {
+        "id": "target_1",
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "config": {}
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenResponseCompatProxy",
+      "config": {
+        "refs": [
+          "provider_xxxxx"
+        ]
+      }
+    }
+  ]
+}
+```
+
+## Calling the API
+
+### Simple text input
+
+```sh
+curl https://open-responses.your-domain.com/ \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "input": "Hello, how are you?"
+  }'
+```
+
+### With system instructions
+
+```sh
+curl https://open-responses.your-domain.com/ \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "instructions": "You are a helpful assistant that always responds in French.",
+    "input": "What is the capital of Japan?"
+  }'
+```
+
+### Structured message input
+
+```sh
+curl https://open-responses.your-domain.com/ \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "input": [
+      {
+        "type": "message",
+        "role": "developer",
+        "content": "You are a concise assistant."
+      },
+      {
+        "type": "message",
+        "role": "user",
+        "content": "Explain quantum computing in one sentence."
+      }
+    ]
+  }'
+```
+
+### Streaming
+
+```sh
+curl https://open-responses.your-domain.com/ \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "stream": true,
+    "input": "Tell me a short story."
+  }'
+```
+
+### With tools
+
+```sh
+curl https://open-responses.your-domain.com/ \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "input": "What is the weather in Tokyo?",
+    "tools": [
+      {
+        "type": "function",
+        "name": "get_weather",
+        "description": "Get the current weather for a location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The city name"
+            }
+          },
+          "required": ["location"]
+        }
+      }
+    ]
+  }'
+```
+
+## How it works
+
+The plugin acts as a translation layer between the Open Responses API format and Otoroshi's internal OpenAI-compatible format:
+
+1. **Input translation**: Open Responses `input` items (messages, function calls, function call outputs) are converted to OpenAI-style `messages` array
+2. **Tool translation**: Open Responses tool definitions (`name`, `description`, `parameters` at top level) are wrapped into OpenAI format (`function` object)
+3. **Parameter mapping**: `max_output_tokens` maps to `max_completion_tokens`, `instructions` becomes a system message
+4. **Response translation**: OpenAI-style responses are converted back to Open Responses format with proper `output` items, status fields, and usage details
+5. **Streaming translation**: OpenAI SSE chunks are wrapped into Open Responses semantic events with proper lifecycle management
+
+This means you can use **any** LLM provider supported by Otoroshi (OpenAI, Anthropic, Mistral, Ollama, Azure, Cohere, Deepseek, and 50+ others) through the Open Responses API format.
