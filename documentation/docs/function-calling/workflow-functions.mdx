@@ -1,0 +1,324 @@
+---
+sidebar_position: 3
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Workflow Functions
+
+Workflow functions allow you to use [Otoroshi workflows](https://maif.github.io/otoroshi/manual/entities/workflows.html) as tool function backends. When the LLM decides to call a tool, the gateway executes the referenced workflow with the tool arguments as input and returns the workflow result to the LLM.
+
+This is the most powerful backend kind — workflows can chain HTTP calls, transform data, apply conditional logic, call other LLM providers, query vector stores, and much more.
+
+## How it works
+
+1. The LLM decides to call the tool with structured arguments (e.g., `{"query": "latest news"}`)
+2. The gateway looks up the referenced Otoroshi workflow by ID
+3. The tool arguments are passed as the workflow input (`${workflow_input}`)
+4. The workflow executes its steps (HTTP calls, data transformations, LLM calls, etc.)
+5. The workflow `returned` value is sent back to the LLM as the tool result
+
+## Configuration
+
+```js
+{
+  "name": "my_workflow_tool",
+  "description": "A tool backed by an Otoroshi workflow",
+  "strict": true,
+  "parameters": {
+    "query": {
+      "type": "string",
+      "description": "The search query"
+    }
+  },
+  "required": ["query"],
+  "backend": {
+    "kind": "Workflow",
+    "options": {
+      "workflow_id": "workflow-entity-id"
+    }
+  }
+}
+```
+
+### Options
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `workflow_id` | string | The ID of the Otoroshi workflow entity to execute |
+
+## Input handling
+
+The tool arguments are passed as the workflow input and accessible via `${workflow_input}` in the workflow steps:
+
+- If the arguments are a **JSON object** (e.g., `{"city": "Paris", "unit": "celsius"}`), each key is directly accessible: `${workflow_input.city}`, `${workflow_input.unit}`
+- If the arguments are a **plain string**, they are wrapped as `{"input": "the string"}` and accessible via `${workflow_input.input}`
+
+## Output handling
+
+The workflow's `returned` value is serialized to JSON and sent back as the tool result. If the workflow terminates with an error, the error is returned as `{"error": ...}`.
+
+## What are Otoroshi workflows?
+
+[Otoroshi workflows](https://maif.github.io/otoroshi/manual/topics/workflows.html) are a JSON-based orchestration engine built into Otoroshi. They allow you to build complex automation pipelines using a visual editor or JSON configuration.
+
+A workflow is a directed graph of **nodes** that execute sequentially or in parallel. Key node types include:
+
+| Node | Purpose |
+|------|---------|
+| `workflow` | Sequential step execution |
+| `call` | Invoke a function (HTTP, LLM, store, etc.) |
+| `assign` | Set variables in workflow memory |
+| `if` / `switch` | Conditional branching |
+| `foreach` / `map` / `filter` | Array iteration and transformation |
+| `parallel` | Concurrent execution |
+| `try` | Error handling |
+| `value` | Return a literal value |
+
+### Built-in functions
+
+Workflows come with 30+ built-in functions including:
+
+- **HTTP**: `core.http_client` — make HTTP requests to external APIs
+- **Storage**: `core.store_get`, `core.store_set`, `core.store_del` — key-value storage
+- **System**: `core.system_call`, `core.env_get`, `core.config_read`
+- **Workflow**: `core.workflow_call` — call other workflows
+- **WASM**: `core.wasm_call` — execute WASM plugins
+
+The LLM extension registers [additional workflow functions](/docs/workflows/overview) for AI operations (LLM calls, embeddings, vector store, moderation, etc.).
+
+### Basic workflow structure
+
+```js
+{
+  "kind": "workflow",
+  "steps": [
+    {
+      "kind": "call",
+      "function": "core.http_client",
+      "args": {
+        "url": "https://api.example.com/search?q=${workflow_input.query}",
+        "method": "GET"
+      },
+      "result": "api_response"
+    },
+    {
+      "kind": "assign",
+      "values": {
+        "formatted_result": {
+          "$jq": {
+            "value": { "$mem_ref": { "name": "api_response" } },
+            "filter": ".body | fromjson | .results"
+          }
+        }
+      }
+    }
+  ],
+  "returned": { "$mem_ref": { "name": "formatted_result" } }
+}
+```
+
+For full documentation on workflows, see the [Otoroshi workflows documentation](https://maif.github.io/otoroshi/manual/topics/workflows.html).
+
+## Examples
+
+### RAG search tool
+
+A tool that searches a vector store and returns relevant context:
+
+```js
+{
+  "name": "search_knowledge_base",
+  "description": "Search the knowledge base for relevant information",
+  "strict": true,
+  "parameters": {
+    "query": {
+      "type": "string",
+      "description": "The search query"
+    }
+  },
+  "required": ["query"],
+  "backend": {
+    "kind": "Workflow",
+    "options": {
+      "workflow_id": "workflow_rag_search"
+    }
+  }
+}
+```
+
+With a workflow that computes embeddings and queries a vector store:
+
+```js
+{
+  "kind": "workflow",
+  "steps": [
+    {
+      "kind": "call",
+      "function": "extensions.com.cloud-apim.llm-extension.compute_embedding",
+      "args": {
+        "provider": "embedding-provider-id",
+        "input": "${workflow_input.query}"
+      },
+      "result": "embedding"
+    },
+    {
+      "kind": "call",
+      "function": "extensions.com.cloud-apim.llm-extension.vector_store_search",
+      "args": {
+        "provider": "vector-store-id",
+        "vector": { "$mem_ref": { "name": "embedding" } },
+        "limit": 5
+      },
+      "result": "search_results"
+    }
+  ],
+  "returned": { "$mem_ref": { "name": "search_results" } }
+}
+```
+
+### API aggregation tool
+
+A tool that calls multiple APIs and aggregates the results:
+
+```js
+{
+  "name": "get_city_info",
+  "description": "Get comprehensive information about a city including weather and population",
+  "strict": true,
+  "parameters": {
+    "city": {
+      "type": "string",
+      "description": "The city name"
+    }
+  },
+  "required": ["city"],
+  "backend": {
+    "kind": "Workflow",
+    "options": {
+      "workflow_id": "workflow_city_info"
+    }
+  }
+}
+```
+
+With a workflow that makes parallel HTTP calls:
+
+```js
+{
+  "kind": "workflow",
+  "steps": [
+    {
+      "kind": "parallel",
+      "parallels": [
+        {
+          "kind": "call",
+          "function": "core.http_client",
+          "args": {
+            "url": "https://api.weather.example.com/v1/weather?city=${workflow_input.city}",
+            "method": "GET"
+          },
+          "result": "weather"
+        },
+        {
+          "kind": "call",
+          "function": "core.http_client",
+          "args": {
+            "url": "https://api.geodata.example.com/v1/city?name=${workflow_input.city}",
+            "method": "GET"
+          },
+          "result": "geo_data"
+        }
+      ]
+    },
+    {
+      "kind": "assign",
+      "values": {
+        "result": {
+          "weather": { "$mem_ref": { "name": "weather" } },
+          "geo_data": { "$mem_ref": { "name": "geo_data" } }
+        }
+      }
+    }
+  ],
+  "returned": { "$mem_ref": { "name": "result" } }
+}
+```
+
+### LLM sub-call tool
+
+A tool that calls another LLM provider to process data:
+
+```js
+{
+  "name": "summarize_text",
+  "description": "Summarize a long text into a concise summary",
+  "strict": true,
+  "parameters": {
+    "text": {
+      "type": "string",
+      "description": "The text to summarize"
+    }
+  },
+  "required": ["text"],
+  "backend": {
+    "kind": "Workflow",
+    "options": {
+      "workflow_id": "workflow_summarize"
+    }
+  }
+}
+```
+
+With a workflow that calls an LLM provider:
+
+```js
+{
+  "kind": "workflow",
+  "steps": [
+    {
+      "kind": "call",
+      "function": "extensions.com.cloud-apim.llm-extension.llm_call",
+      "args": {
+        "provider": "llm-provider-id",
+        "prompt": "Summarize the following text in 3 sentences:\n\n${workflow_input.text}"
+      },
+      "result": "summary"
+    }
+  ],
+  "returned": { "$mem_ref": { "name": "summary" } }
+}
+```
+
+## Provider configuration
+
+Reference workflow-backed tool functions in the provider's `wasm_tools` array like any other tool function:
+
+```js
+{
+  "provider": "openai",
+  "connection": {
+    "base_url": "https://api.openai.com/v1",
+    "token": "${vault://local/openai-token}",
+    "timeout": 30000
+  },
+  "options": {
+    "model": "gpt-4o",
+    "wasm_tools": [
+      "tool-function_rag_search",
+      "tool-function_city_info"
+    ],
+    "max_function_calls": 10
+  }
+}
+```
+
+## Comparison with other backends
+
+| Aspect | QuickJs | HTTP | Workflow |
+|--------|---------|------|----------|
+| **Complexity** | Simple logic | Single API call | Multi-step orchestration |
+| **Capabilities** | JavaScript + HTTP | HTTP request/response | HTTP, LLM, vector store, conditions, loops, parallel execution |
+| **Data transformation** | JavaScript code | `response_path` extraction | Full operator library (`$jq`, `$map_get`, `$projection`, etc.) |
+| **Error handling** | try/catch in JS | HTTP error codes | `try` nodes with error handling steps |
+| **Best for** | Quick data processing | Calling a single external API | Complex pipelines, RAG, multi-API aggregation |

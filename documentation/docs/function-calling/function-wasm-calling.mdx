@@ -99,35 +99,6 @@ The WASM plugin must expose a function (defaults to `tool_call`) that receives t
 
 ---
 
-## Workflow backend
-
-The Workflow backend executes an Otoroshi workflow by reference:
-
-```js
-{
-  "name": "my_workflow_tool",
-  "description": "A tool backed by a workflow",
-  "strict": true,
-  "parameters": {
-    "query": {
-      "type": "string",
-      "description": "The search query"
-    }
-  },
-  "required": ["query"],
-  "backend": {
-    "kind": "Workflow",
-    "options": {
-      "workflow_id": "workflow-entity-id"
-    }
-  }
-}
-```
-
-The tool arguments are passed as the workflow input. The workflow result is returned as the tool result.
-
----
-
 ## Example: `next_flight` function
 
 In this example, we create a QuickJs tool function named `next_flight` that takes two IATA airport codes and returns flight information.
