@@ -1,0 +1,550 @@
+---
+sidebar_position: 3
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Tutorial: OAuth-protected MCP server with geocoding tools
+
+In this tutorial, you will build a complete, production-ready MCP server that exposes geocoding tools from the French national geocoding API ([Géoplateforme IGN](https://data.geopf.fr/geocodage/)). The server will be protected with OAuth 2.0 using Otoroshi's OIDC JWT verification and will expose the standard `.well-known/oauth-protected-resource` discovery document.
+
+## What you will build
+
+- **2 tool functions** using HTTP backends that call the IGN geocoding API (no API key required)
+  - `geocode_address` — convert a French address into GPS coordinates
+  - `reverse_geocode` — find the nearest address from GPS coordinates
+- **1 MCP server route** exposing these tools via the MCP HTTP transport
+- **OAuth 2.0 protection** using Otoroshi's `OIDCJwtVerifier` plugin with Keycloak
+- **OAuth Protected Resource metadata** served at `/.well-known/oauth-protected-resource`
+
+## Prerequisites
+
+- A running Otoroshi instance with the LLM Extension installed ([install guide](/docs/install))
+- An OIDC provider (this tutorial uses Keycloak, but any OIDC provider works)
+
+## Architecture overview
+
+```
+                                ┌──────────────────────────────────┐
+                                │         Otoroshi Route           │
+                                │   mcp-geocoding.oto.tools        │
+   MCP Client ──── request ────►│                                  │
+                                │  1. StaticResponse               │
+                                │     (.well-known/oauth-pr...     │
+                                │                                  │
+                                │  2. OIDCJwtVerifier              │
+                                │     (validates Bearer token)     │
+                                │                                  │
+                                │  3. McpRespEndpoint              │
+                                │     (MCP HTTP transport)         │
+                                │         │                        │
+                                └─────────┼────────────────────────┘
+                                          │
+                           ┌──────────────┼──────────────┐
+                           │              │              │
+                      geocode_address  reverse_geocode   │
+                           │              │              │
+                           └──────┬───────┘              │
+                                  │                      │
+                                  ▼                      │
+                     ┌────────────────────────┐          │
+                     │  IGN Geocoding API     │          │
+                     │  data.geopf.fr         │          │
+                     │  (free, no API key)    │          │
+                     └────────────────────────┘          │
+                                                         │
+                                              ┌──────────┴──────────┐
+                                              │   Keycloak          │
+                                              │   (OIDC provider)   │
+                                              └─────────────────────┘
+```
+
+## Step 1: Create the OIDC auth module
+
+First, configure an OAuth2/OIDC authentication module in Otoroshi that points to your Keycloak realm. Go to **Settings > Authentication modules > Create new module** and select **OAuth2 / OIDC provider**.
+
+```js
+{
+  "type": "oauth2",
+  "id": "auth_mod_keycloak-mcp",
+  "name": "Keycloak MCP",
+  "desc": "Keycloak OIDC module for MCP OAuth",
+  "clientId": "${vault://local/keycloak-client-id}",
+  "clientSecret": "${vault://local/keycloak-client-secret}",
+  "authorizeUrl": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/auth",
+  "tokenUrl": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/token",
+  "userInfoUrl": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/userinfo",
+  "introspectionUrl": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/token/introspect",
+  "loginUrl": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/auth",
+  "logoutUrl": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/logout",
+  "scope": "openid email profile",
+  "readProfileFromToken": false,
+  "jwtVerifier": {
+    "type": "JWKSAlgoSettings",
+    "url": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/certs",
+    "timeout": 2000,
+    "headers": {},
+    "ttl": 3600000,
+    "kty": "RSA"
+  },
+  "nameField": "email",
+  "emailField": "email",
+  "oidConfig": "https://your-keycloak.example.com/realms/mcp/.well-known/openid-configuration",
+  "kind": "security.otoroshi.io/AuthModule"
+}
+```
+
+:::tip
+You can use the [Otoroshi Vault](/docs/llm-gateway/secrets) to store your `clientId` and `clientSecret` securely using `${vault://local/keycloak-client-id}` and `${vault://local/keycloak-client-secret}`.
+:::
+
+## Step 2: Create the tool functions
+
+### geocode_address
+
+This tool converts a French address into GPS coordinates using the IGN `/search` endpoint. Create a new tool function entity from the admin API or from the Otoroshi UI.
+
+```js
+{
+  "id": "tool-function_geocode-address",
+  "name": "geocode_address",
+  "description": "Geocode a French address: returns GPS coordinates (latitude, longitude), full label, city, postcode, and confidence score. Use this to find the location of any address in France.",
+  "strict": true,
+  "parameters": {
+    "address": {
+      "type": "string",
+      "description": "The French address to geocode (e.g. '73 Avenue de Paris, Saint-Mandé')"
+    },
+    "limit": {
+      "type": "string",
+      "description": "Maximum number of results to return (default: 5, max: 50)",
+      "enum": ["1", "3", "5", "10"]
+    }
+  },
+  "required": ["address"],
+  "backend": {
+    "kind": "Http",
+    "options": {
+      "url": "https://data.geopf.fr/geocodage/search?q=${address}&limit=${limit}",
+      "method": "GET",
+      "headers": {
+        "Accept": "application/json"
+      },
+      "timeout": 10000
+    }
+  }
+}
+```
+
+### reverse_geocode
+
+This tool finds the nearest address from GPS coordinates using the IGN `/reverse` endpoint.
+
+```js
+{
+  "id": "tool-function_reverse-geocode",
+  "name": "reverse_geocode",
+  "description": "Reverse geocode GPS coordinates: returns the nearest French address, city, postcode, and label from latitude and longitude.",
+  "strict": true,
+  "parameters": {
+    "lat": {
+      "type": "string",
+      "description": "Latitude (e.g. '48.8566')"
+    },
+    "lon": {
+      "type": "string",
+      "description": "Longitude (e.g. '2.3522')"
+    }
+  },
+  "required": ["lat", "lon"],
+  "backend": {
+    "kind": "Http",
+    "options": {
+      "url": "https://data.geopf.fr/geocodage/reverse?lat=${lat}&lon=${lon}&limit=5",
+      "method": "GET",
+      "headers": {
+        "Accept": "application/json"
+      },
+      "timeout": 10000
+    }
+  }
+}
+```
+
+:::info
+The IGN Géoplateforme geocoding API is **free** and requires **no API key**. It supports up to 50 requests per second per IP address. Responses are in GeoJSON format.
+:::
+
+### Test the tools manually
+
+You can verify that the IGN API works by calling it directly:
+
+```bash
+# Geocode an address
+curl "https://data.geopf.fr/geocodage/search?q=10+rue+de+Rivoli+Paris&limit=1"
+
+# Reverse geocode coordinates (Eiffel Tower)
+curl "https://data.geopf.fr/geocodage/reverse?lat=48.8584&lon=2.2945&limit=1"
+```
+
+## Step 3: Create the MCP server route
+
+Create a new route in Otoroshi that exposes the tool functions as an MCP HTTP server, protected by OAuth 2.0.
+
+This route uses three plugins:
+
+1. **StaticResponse** — serves the `.well-known/oauth-protected-resource` document (unauthenticated)
+2. **OIDCJwtVerifier** — validates the Bearer token on all other paths (returns `401` with `WWW-Authenticate` header if invalid)
+3. **McpRespEndpoint** — handles MCP protocol requests
+
+```js
+{
+  "_loc": {
+    "tenant": "default",
+    "teams": ["default"]
+  },
+  "id": "route_mcp-geocoding-server",
+  "name": "MCP Geocoding Server (OAuth-protected)",
+  "description": "An OAuth-protected MCP server exposing IGN geocoding tools",
+  "tags": ["mcp", "geocoding", "oauth"],
+  "metadata": {},
+  "enabled": true,
+  "debug_flow": false,
+  "export_reporting": false,
+  "capture": false,
+  "groups": ["default"],
+  "bound_listeners": [],
+  "frontend": {
+    "domains": ["mcp-geocoding.oto.tools"],
+    "strip_path": true,
+    "exact": false,
+    "headers": {},
+    "query": {},
+    "methods": []
+  },
+  "backend": {
+    "targets": [
+      {
+        "id": "target_1",
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true,
+        "weight": 1,
+        "predicate": { "type": "AlwaysMatch" },
+        "protocol": "HTTP/1.1",
+        "ip_address": null,
+        "tls_config": {
+          "certs": [],
+          "trusted_certs": [],
+          "enabled": false,
+          "loose": false,
+          "trust_all": false
+        }
+      }
+    ],
+    "root": "/",
+    "rewrite": false,
+    "load_balancing": { "type": "RoundRobin" }
+  },
+  "backend_ref": null,
+  "plugins": [
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "include": [],
+      "exclude": [],
+      "config": {},
+      "bound_listeners": [],
+      "plugin_index": {
+        "transform_request": 0
+      }
+    },
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi.next.plugins.StaticResponse",
+      "include": ["/.well-known/oauth-protected-resource"],
+      "exclude": [],
+      "config": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*"
+        },
+        "body": "{\"resource\":\"https://mcp-geocoding.oto.tools/mcp\",\"authorization_servers\":[\"https://your-keycloak.example.com/realms/mcp\"],\"scopes_supported\":[\"openid\",\"mcp:tools\",\"mcp:resources\"],\"bearer_methods_supported\":[\"header\"],\"resource_documentation\":\"https://mcp-geocoding.oto.tools/docs\"}"
+      },
+      "bound_listeners": [],
+      "plugin_index": {}
+    },
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi.next.plugins.OIDCJwtVerifier",
+      "include": [],
+      "exclude": ["/.well-known/oauth-protected-resource"],
+      "config": {
+        "ref": "auth_mod_keycloak-mcp",
+        "user": true,
+        "custom_response": true,
+        "custom_response_status": 401,
+        "custom_response_headers": {
+          "WWW-Authenticate": "Bearer realm=\"mcp\", resource_metadata=\"https://mcp-geocoding.oto.tools/.well-known/oauth-protected-resource\""
+        },
+        "custom_response_body": "{\"error\":\"unauthorized\",\"error_description\":\"A valid Bearer access token is required to access this MCP server\"}"
+      },
+      "bound_listeners": [],
+      "plugin_index": {}
+    },
+    {
+      "enabled": true,
+      "debug": false,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpRespEndpoint",
+      "include": [],
+      "exclude": ["/.well-known/oauth-protected-resource"],
+      "config": {
+        "name": "mcp-geocoding",
+        "version": "1.0.0",
+        "refs": [
+          "tool-function_geocode-address",
+          "tool-function_reverse-geocode"
+        ],
+        "mcp_refs": []
+      },
+      "bound_listeners": [],
+      "plugin_index": {}
+    }
+  ],
+  "kind": "proxy.otoroshi.io/Route"
+}
+```
+
+### Key configuration details
+
+#### StaticResponse plugin
+
+This plugin serves the [OAuth Protected Resource metadata](https://datatracker.ietf.org/doc/html/rfc9728) at `/.well-known/oauth-protected-resource`. The `include` field restricts it to only this path.
+
+```js
+{
+  "resource": "https://mcp-geocoding.oto.tools/mcp",
+  "authorization_servers": ["https://your-keycloak.example.com/realms/mcp"],
+  "scopes_supported": ["openid", "mcp:tools", "mcp:resources"],
+  "bearer_methods_supported": ["header"],
+  "resource_documentation": "https://mcp-geocoding.oto.tools/docs"
+}
+```
+
+This document tells MCP clients how to authenticate — which authorization server to use and which scopes to request.
+
+#### OIDCJwtVerifier plugin
+
+| Field | Value | Description |
+|-------|-------|-------------|
+| `ref` | `auth_mod_keycloak-mcp` | References the OIDC auth module created in step 1 |
+| `user` | `true` | Extracts the user profile from the JWT token, making user identity available downstream |
+| `exclude` | `["/.well-known/oauth-protected-resource"]` | The discovery endpoint must be accessible without authentication |
+| `custom_response` | `true` | Enables a custom 401 response |
+| `custom_response_headers` | `WWW-Authenticate: Bearer ...` | Returns the standard WWW-Authenticate header pointing to the resource metadata |
+
+When a request arrives without a valid token, the plugin returns:
+
+```
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer realm="mcp",
+  resource_metadata="https://mcp-geocoding.oto.tools/.well-known/oauth-protected-resource"
+Content-Type: application/json
+
+{"error":"unauthorized","error_description":"A valid Bearer access token is required to access this MCP server"}
+```
+
+This follows the [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) standard, enabling MCP clients to automatically discover the authorization server and obtain a token.
+
+## Step 4: Test the MCP server
+
+### 1. Discover the OAuth metadata
+
+```bash
+curl https://mcp-geocoding.oto.tools/.well-known/oauth-protected-resource
+```
+
+Expected response:
+
+```json
+{
+  "resource": "https://mcp-geocoding.oto.tools/mcp",
+  "authorization_servers": ["https://your-keycloak.example.com/realms/mcp"],
+  "scopes_supported": ["openid", "mcp:tools", "mcp:resources"],
+  "bearer_methods_supported": ["header"],
+  "resource_documentation": "https://mcp-geocoding.oto.tools/docs"
+}
+```
+
+### 2. Verify the 401 response without a token
+
+```bash
+curl -v https://mcp-geocoding.oto.tools/mcp
+```
+
+Expected response:
+
+```
+< HTTP/1.1 401 Unauthorized
+< WWW-Authenticate: Bearer realm="mcp", resource_metadata="https://mcp-geocoding.oto.tools/.well-known/oauth-protected-resource"
+
+{"error":"unauthorized","error_description":"A valid Bearer access token is required to access this MCP server"}
+```
+
+### 3. Obtain an access token from Keycloak
+
+```bash
+# Client credentials grant
+ACCESS_TOKEN=$(curl -s -X POST \
+  "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/token" \
+  -d "grant_type=client_credentials" \
+  -d "client_id=your-client-id" \
+  -d "client_secret=your-client-secret" \
+  -d "scope=openid" | jq -r '.access_token')
+```
+
+### 4. Initialize the MCP session
+
+```bash
+curl -X POST https://mcp-geocoding.oto.tools/mcp \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2025-03-26",
+      "capabilities": {},
+      "clientInfo": {
+        "name": "test-client",
+        "version": "1.0.0"
+      }
+    }
+  }'
+```
+
+### 5. List available tools
+
+```bash
+curl -X POST https://mcp-geocoding.oto.tools/mcp \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/list",
+    "params": {}
+  }'
+```
+
+Expected response (truncated):
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "result": {
+    "tools": [
+      {
+        "name": "geocode_address",
+        "description": "Geocode a French address: returns GPS coordinates ...",
+        "inputSchema": { ... }
+      },
+      {
+        "name": "reverse_geocode",
+        "description": "Reverse geocode GPS coordinates ...",
+        "inputSchema": { ... }
+      }
+    ]
+  }
+}
+```
+
+### 6. Call the geocode_address tool
+
+```bash
+curl -X POST https://mcp-geocoding.oto.tools/mcp \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "geocode_address",
+      "arguments": {
+        "address": "10 rue de Rivoli, Paris",
+        "limit": "1"
+      }
+    }
+  }'
+```
+
+The tool calls the IGN API at `https://data.geopf.fr/geocodage/search?q=10+rue+de+Rivoli,+Paris&limit=1` and returns the GeoJSON result through the MCP protocol.
+
+### 7. Call the reverse_geocode tool
+
+```bash
+curl -X POST https://mcp-geocoding.oto.tools/mcp \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 4,
+    "method": "tools/call",
+    "params": {
+      "name": "reverse_geocode",
+      "arguments": {
+        "lat": "48.8566",
+        "lon": "2.3522"
+      }
+    }
+  }'
+```
+
+## OAuth flow summary
+
+The complete OAuth authentication flow for an MCP client connecting to this server:
+
+```
+MCP Client                           Otoroshi                          Keycloak
+    │                                    │                                │
+    ├── POST /mcp ───────────────────────►                                │
+    │   (no token)                       │                                │
+    │                                    │                                │
+    ◄── 401 Unauthorized ────────────────┤                                │
+    │   WWW-Authenticate: Bearer         │                                │
+    │   resource_metadata=".../.well-    │                                │
+    │   known/oauth-protected-resource"  │                                │
+    │                                    │                                │
+    ├── GET /.well-known/oauth-pr... ────►                                │
+    │                                    │                                │
+    ◄── 200 OK ──────────────────────────┤                                │
+    │   { authorization_servers: [...] } │                                │
+    │                                    │                                │
+    ├── POST /token ─────────────────────────────────────────────────────►│
+    │   grant_type=client_credentials    │                                │
+    │                                    │                                │
+    ◄── 200 { access_token: "..." } ─────────────────────────────────────┤
+    │                                    │                                │
+    ├── POST /mcp ───────────────────────►                                │
+    │   Authorization: Bearer <token>    │                                │
+    │                                    ├── verify JWT (JWKS) ──────────►│
+    │                                    ◄── OK ─────────────────────────┤
+    │                                    │                                │
+    ◄── 200 MCP response ───────────────┤                                │
+    │                                    │                                │
+```
+
+## Going further
+
+- **Add more tools**: Create additional tool functions (e.g., cadastral parcel search using the IGN `?index=parcel` parameter) and add their IDs to the `refs` array in the McpRespEndpoint config
+- **Use SSE transport**: Replace `McpRespEndpoint` with `McpSseEndpoint` if your MCP clients need server-sent events for streaming
+- **Add MCP connectors**: Combine your HTTP tool functions with [MCP connectors](/docs/mcp/mcp-connectors) by adding connector IDs to the `mcp_refs` array
+- **Fine-tune access control**: Use the [MCP plugin filters](/docs/mcp/mcp-plugins#filtering-at-the-plugin-level) to control which tools are exposed to which clients
+- **Connect to an LLM provider**: Attach these same tool functions to an [LLM provider](/docs/function-calling/overview#provider-configuration) so the LLM can call them during chat completions
