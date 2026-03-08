@@ -237,9 +237,41 @@ The `models` object restricts which models can be used with this provider, using
 
 A model is allowed if it matches at least one `include` pattern (or `include` is empty) AND does not match any `exclude` pattern.
 
-Model restrictions can also be applied at the API key level using metadata:
-- `ai_models_include`: comma-separated list of include patterns
-- `ai_models_exclude`: comma-separated list of exclude patterns
+### Per API key / per user restrictions
+
+In addition to the provider-level restrictions, model access can be further restricted per API key or per user through their metadata. This allows fine-grained control: for example, a single provider exposing multiple models can restrict each consumer to only the models they are entitled to use.
+
+The following metadata keys are supported on both **API keys** and **users** (Otoroshi private app users):
+
+| Metadata key | Description |
+|---|---|
+| `ai_models_include` | Comma-separated list of regex patterns for allowed models |
+| `ai_models_exclude` | Comma-separated list of regex patterns for denied models |
+
+For example, to restrict an API key to only GPT-4 models:
+
+```json
+{
+  "metadata": {
+    "ai_models_include": "gpt-4.*"
+  }
+}
+```
+
+To restrict a user to GPT-4 while excluding preview models:
+
+```json
+{
+  "metadata": {
+    "ai_models_include": "gpt-4.*",
+    "ai_models_exclude": ".*preview.*"
+  }
+}
+```
+
+All three levels of restrictions are combined: a model is allowed only if it passes the **provider** restrictions, **AND** the **API key** restrictions (if any), **AND** the **user** restrictions (if any). If a model is denied at any level, the request is rejected with `{"error": "you can't use this model"}`.
+
+This mechanism applies to all model types: LLM providers, embedding models, audio models, image models, video models, and moderation models.
 
 ## Cache
 
