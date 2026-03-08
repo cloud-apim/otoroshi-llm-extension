@@ -69,9 +69,12 @@ And 37 more including Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Ch
 
 * OpenAI
     * whisper-1
-
+    * gpt-4o-mini-transcribe
 * Groq
   * whisper-large-v3
+* Mistral
+  * voxtral-mini-latest
+  * voxtral-mini-2507
 
 ## Supported LLM Embeddings models
 
@@ -109,6 +112,8 @@ And 37 more including Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Ch
 * Luma
   * photon-1 (default)
   * photon-flash-1
+* AI/ML API
+  * google/nano-banana-pro (Gemini 3 Pro Image)
 * Hive
   * black-forest-labs/flux-schnell
 
