@@ -10,21 +10,18 @@ Resilience ensures that LLM interactions remain highly available and fault-toler
 
 ## Key Features
 
-- Load Balancing: Distribute requests across multiple providers to optimize performance.
-- Fallback Mechanism: Automatically switch to alternative LLMs in case of failures.
-- Automatic Retries: Retry failed requests based on configurable rules to maximize successful responses.
-- Rate Limiting & Quotas: Prevent overloading a single provider by distributing usage effectively.
+- **Load Balancing**: Distribute requests across multiple providers to optimize performance and availability. See [Load Balancing](/docs/llm-gateway/loadbalancing).
+- **Fallback Mechanism**: Automatically switch to alternative LLM providers in case of failures. See [Fallback](/docs/llm-gateway/fallback).
+- **Rate Limiting & Quotas**: Prevent overloading a single provider by distributing usage effectively. See [Quotas](/docs/cost-optimizations/quotas).
 
-## Provider fallback
+## Load Balancing
 
-Requests are first sent to a primary LLM provider. If the request fails, the system retries or falls back to a secondary provider.
+The load balancer is a virtual provider that distributes requests across multiple providers using configurable strategies (round robin, random, best response time).
 
-![fallback](../../static/img/fallback.png)
+[Read the full Load Balancing documentation](/docs/llm-gateway/loadbalancing)
 
-## Provider loadbalancing
+## Fallback
 
-Load balancing ensures even distribution, reducing provider overload.
+The fallback mechanism automatically retries failed requests on an alternative provider, ensuring service continuity.
 
-![lb](../../static/img/lb.png)
-
-
+[Read the full Fallback documentation](/docs/llm-gateway/fallback)

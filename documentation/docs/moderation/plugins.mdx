@@ -1,0 +1,121 @@
+---
+sidebar_position: 3
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Moderation plugin
+
+The Otoroshi LLM extension provides the **Cloud APIM - Text moderation backend** plugin to expose moderation models on an Otoroshi route. The API is compatible with the [OpenAI moderations API](https://platform.openai.com/docs/api-reference/moderations).
+
+## Plugin configuration
+
+Add the plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatModeration",
+  "config": {
+    "refs": ["moderation-model-entity-id"]
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refs` | array | `[]` | List of Moderation Model entity IDs |
+
+## Usage
+
+```sh
+curl --request POST \
+  --url http://myroute.oto.tools:8080/v1/moderations \
+  --header 'content-type: application/json' \
+  --data '{
+  "input": "I love programming!",
+  "model": "omni-moderation-latest"
+}'
+```
+
+### Response
+
+```js
+{
+  "results": [
+    {
+      "flagged": false,
+      "categories": {
+        "hate": false,
+        "violence": false,
+        "sexual": false,
+        "self-harm": false
+      },
+      "category_scores": {
+        "hate": 0.00001,
+        "violence": 0.00002,
+        "sexual": 0.00001,
+        "self-harm": 0.000005
+      }
+    }
+  ],
+  "model": "omni-moderation-latest",
+  "usage": {
+    "total_tokens": 4,
+    "input_tokens": 4,
+    "output_tokens": 0
+  }
+}
+```
+
+## Model routing
+
+When multiple moderation model providers are configured in `refs`, you can target a specific provider using the `model` field:
+
+```js
+{
+  "input": "Text to moderate",
+  "model": "providerName/modelName"
+}
+```
+
+The provider can be referenced by:
+- **Entity name** (slug): `my-openai-moderation/omni-moderation-latest`
+- **Entity ID**: `moderation-model-id###omni-moderation-latest`
+
+If no provider prefix is specified, the first configured ref is used.
+
+## Route example
+
+A complete route configuration exposing a moderation endpoint:
+
+```js
+{
+  "frontend": {
+    "domains": ["moderation.my-domain.com"]
+  },
+  "backend": {
+    "targets": [
+      {
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "config": {}
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatModeration",
+      "config": {
+        "refs": ["moderation-model-entity-id"]
+      }
+    }
+  ]
+}
+```

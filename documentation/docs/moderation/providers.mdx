@@ -1,0 +1,62 @@
+---
+sidebar_position: 2
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Supported providers
+
+## OpenAI
+
+- **Base URL:** `https://api.openai.com/v1`
+- **Default model:** `omni-moderation-latest`
+- **API endpoint:** `POST /moderations`
+
+### Models
+
+| Model | Description |
+|-------|-------------|
+| `omni-moderation-latest` | Latest multimodal moderation model |
+| `text-moderation-latest` | Latest text-only moderation model |
+| `text-moderation-stable` | Stable text-only moderation model |
+
+### Categories
+
+OpenAI moderation models classify content into the following categories:
+
+| Category | Description |
+|----------|-------------|
+| `hate` | Content expressing hate toward a group |
+| `hate/threatening` | Hateful content with threats of violence |
+| `harassment` | Content harassing individuals or groups |
+| `harassment/threatening` | Harassment with threats of violence |
+| `self-harm` | Content promoting or depicting self-harm |
+| `self-harm/intent` | Content expressing intent of self-harm |
+| `self-harm/instructions` | Instructions for self-harm |
+| `sexual` | Sexual content |
+| `sexual/minors` | Sexual content involving minors |
+| `violence` | Content depicting violence |
+| `violence/graphic` | Graphic depictions of violence |
+
+---
+
+## Mistral
+
+- **Base URL:** `https://api.mistral.ai`
+- **Default model:** `mistral-moderation-latest`
+- **API endpoint:** `POST /v1/moderations`
+
+### Models
+
+| Model | Description |
+|-------|-------------|
+| `mistral-moderation-latest` | Latest Mistral moderation model |
+
+---
+
+## Provider comparison
+
+| Provider | Default model | API format | Categories |
+|----------|---------------|------------|------------|
+| OpenAI | `omni-moderation-latest` | OpenAI | 11 categories |
+| Mistral | `mistral-moderation-latest` | OpenAI-compatible | Provider-specific |

@@ -6,7 +6,11 @@ import Terminal from '@site/src/components/Terminal';
 
 # Supported LLM Providers
 
-Here is a list of all providers available in the Otoroshi LLM Extension :
+Here is a list of all LLM chat providers available in the Otoroshi LLM Extension :
+
+### Native providers
+
+These providers have dedicated implementations with full support for their specific APIs:
 
 * Anthropic
 * Azure OpenAI
@@ -14,16 +18,23 @@ Here is a list of all providers available in the Otoroshi LLM Extension :
 * Cloud Temple 🇫🇷 🇪🇺
 * Cloudflare
 * Cohere
+* Deepseek
 * Gemini
 * Groq
 * Huggingface 🇫🇷 🇪🇺
+* JLama (Local Java inference)
 * Mistral 🇫🇷 🇪🇺
 * Ollama (Local Models)
 * OpenAI
+* OpenAI Compatible (any OpenAI-compatible API)
 * OVH AI Endpoints 🇫🇷 🇪🇺
 * Scaleway 🇫🇷 🇪🇺
 * X.ai
-* Deepseek
+
+### OpenAI-compatible providers
+
+These providers use an OpenAI-compatible API and are supported through the generic OpenAI compatibility layer:
+
 * Abliteration
 * AI/ML API
 * Apertis
@@ -61,3 +72,7 @@ Here is a list of all providers available in the Otoroshi LLM Extension :
 * Venice AI
 * Xiaomi Mimo
 * Z.AI
+
+### Virtual providers
+
+* Load Balancer - distributes requests across multiple providers (see [Resilience](/docs/llm-gateway/loadbalancing))
