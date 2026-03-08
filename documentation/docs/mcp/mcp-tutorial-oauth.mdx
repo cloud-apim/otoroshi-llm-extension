@@ -273,7 +273,7 @@ This route uses three plugins:
           "Content-Type": "application/json",
           "Access-Control-Allow-Origin": "*"
         },
-        "body": "{\"resource\":\"https://mcp-geocoding.oto.tools/mcp\",\"authorization_servers\":[\"https://your-keycloak.example.com/realms/mcp\"],\"scopes_supported\":[\"openid\",\"mcp:tools\",\"mcp:resources\"],\"bearer_methods_supported\":[\"header\"],\"resource_documentation\":\"https://mcp-geocoding.oto.tools/docs\"}"
+        "body": "{\"resource\":\"http://mcp-geocoding.oto.tools:8080/mcp\",\"authorization_servers\":[\"https://your-keycloak.example.com/realms/mcp\"],\"scopes_supported\":[\"openid\",\"mcp:tools\",\"mcp:resources\"],\"bearer_methods_supported\":[\"header\"],\"resource_documentation\":\"http://mcp-geocoding.oto.tools:8080/docs\"}"
       },
       "bound_listeners": [],
       "plugin_index": {}
@@ -290,7 +290,7 @@ This route uses three plugins:
         "custom_response": true,
         "custom_response_status": 401,
         "custom_response_headers": {
-          "WWW-Authenticate": "Bearer realm=\"mcp\", resource_metadata=\"https://mcp-geocoding.oto.tools/.well-known/oauth-protected-resource\""
+          "WWW-Authenticate": "Bearer realm=\"mcp\", resource_metadata=\"http://mcp-geocoding.oto.tools:8080/.well-known/oauth-protected-resource\""
         },
         "custom_response_body": "{\"error\":\"unauthorized\",\"error_description\":\"A valid Bearer access token is required to access this MCP server\"}"
       },
@@ -328,11 +328,11 @@ This plugin serves the [OAuth Protected Resource metadata](https://datatracker.i
 
 ```js
 {
-  "resource": "https://mcp-geocoding.oto.tools/mcp",
+  "resource": "http://mcp-geocoding.oto.tools:8080/mcp",
   "authorization_servers": ["https://your-keycloak.example.com/realms/mcp"],
   "scopes_supported": ["openid", "mcp:tools", "mcp:resources"],
   "bearer_methods_supported": ["header"],
-  "resource_documentation": "https://mcp-geocoding.oto.tools/docs"
+  "resource_documentation": "http://mcp-geocoding.oto.tools:8080/docs"
 }
 ```
 
@@ -353,7 +353,7 @@ When a request arrives without a valid token, the plugin returns:
 ```
 HTTP/1.1 401 Unauthorized
 WWW-Authenticate: Bearer realm="mcp",
-  resource_metadata="https://mcp-geocoding.oto.tools/.well-known/oauth-protected-resource"
+  resource_metadata="http://mcp-geocoding.oto.tools:8080/.well-known/oauth-protected-resource"
 Content-Type: application/json
 
 {"error":"unauthorized","error_description":"A valid Bearer access token is required to access this MCP server"}
@@ -366,32 +366,32 @@ This follows the [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) stand
 ### 1. Discover the OAuth metadata
 
 ```bash
-curl https://mcp-geocoding.oto.tools/.well-known/oauth-protected-resource
+curl http://mcp-geocoding.oto.tools:8080/.well-known/oauth-protected-resource
 ```
 
 Expected response:
 
 ```json
 {
-  "resource": "https://mcp-geocoding.oto.tools/mcp",
+  "resource": "http://mcp-geocoding.oto.tools:8080/mcp",
   "authorization_servers": ["https://your-keycloak.example.com/realms/mcp"],
   "scopes_supported": ["openid", "mcp:tools", "mcp:resources"],
   "bearer_methods_supported": ["header"],
-  "resource_documentation": "https://mcp-geocoding.oto.tools/docs"
+  "resource_documentation": "http://mcp-geocoding.oto.tools:8080/docs"
 }
 ```
 
 ### 2. Verify the 401 response without a token
 
 ```bash
-curl -v https://mcp-geocoding.oto.tools/mcp
+curl -v http://mcp-geocoding.oto.tools:8080/mcp
 ```
 
 Expected response:
 
 ```
 < HTTP/1.1 401 Unauthorized
-< WWW-Authenticate: Bearer realm="mcp", resource_metadata="https://mcp-geocoding.oto.tools/.well-known/oauth-protected-resource"
+< WWW-Authenticate: Bearer realm="mcp", resource_metadata="http://mcp-geocoding.oto.tools:8080/.well-known/oauth-protected-resource"
 
 {"error":"unauthorized","error_description":"A valid Bearer access token is required to access this MCP server"}
 ```
@@ -411,7 +411,7 @@ ACCESS_TOKEN=$(curl -s -X POST \
 ### 4. Initialize the MCP session
 
 ```bash
-curl -X POST https://mcp-geocoding.oto.tools/mcp \
+curl -X POST http://mcp-geocoding.oto.tools:8080/mcp \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -432,7 +432,7 @@ curl -X POST https://mcp-geocoding.oto.tools/mcp \
 ### 5. List available tools
 
 ```bash
-curl -X POST https://mcp-geocoding.oto.tools/mcp \
+curl -X POST http://mcp-geocoding.oto.tools:8080/mcp \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -469,7 +469,7 @@ Expected response (truncated):
 ### 6. Call the geocode_address tool
 
 ```bash
-curl -X POST https://mcp-geocoding.oto.tools/mcp \
+curl -X POST http://mcp-geocoding.oto.tools:8080/mcp \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -491,7 +491,7 @@ The tool calls the IGN API at `https://data.geopf.fr/geocodage/search?q=10+rue+d
 ### 7. Call the reverse_geocode tool
 
 ```bash
-curl -X POST https://mcp-geocoding.oto.tools/mcp \
+curl -X POST http://mcp-geocoding.oto.tools:8080/mcp \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -557,7 +557,7 @@ This opens the Inspector UI at [http://localhost:6274](http://localhost:6274).
 ### Connect to your MCP server
 
 1. In the Inspector UI, select **Streamable HTTP** as the transport type
-2. Enter your MCP server URL: `https://mcp-geocoding.oto.tools/mcp`
+2. Enter your MCP server URL: `http://mcp-geocoding.oto.tools:8080/mcp`
 3. In the **Headers** section, add the `Authorization` header with your Bearer token:
 
 | Header name | Value |
@@ -603,7 +603,7 @@ npx @modelcontextprotocol/inspector \
   --cli \
   --transport http \
   --header "Authorization: Bearer $ACCESS_TOKEN" \
-  https://mcp-geocoding.oto.tools/mcp \
+  http://mcp-geocoding.oto.tools:8080/mcp \
   --method tools/list
 
 # Call geocode_address
@@ -611,7 +611,7 @@ npx @modelcontextprotocol/inspector \
   --cli \
   --transport http \
   --header "Authorization: Bearer $ACCESS_TOKEN" \
-  https://mcp-geocoding.oto.tools/mcp \
+  http://mcp-geocoding.oto.tools:8080/mcp \
   --method tools/call \
   --tool-name geocode_address \
   --tool-arg address="73 avenue de Paris, Saint-Mandé" \
@@ -622,7 +622,7 @@ npx @modelcontextprotocol/inspector \
   --cli \
   --transport http \
   --header "Authorization: Bearer $ACCESS_TOKEN" \
-  https://mcp-geocoding.oto.tools/mcp \
+  http://mcp-geocoding.oto.tools:8080/mcp \
   --method tools/call \
   --tool-name reverse_geocode \
   --tool-arg lat=48.8566 \
