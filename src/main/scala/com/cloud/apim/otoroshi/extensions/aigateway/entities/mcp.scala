@@ -203,6 +203,7 @@ case class McpConnector(
   excludePrompts: Seq[String] = Seq.empty,
   allowRules: McpConnectorRules = McpConnectorRules.empty,
   disallowRules: McpConnectorRules = McpConnectorRules.empty,
+  forwardAuth: Boolean = false,
 ) extends EntityLocationSupport {
   override def internalId: String = id
 
@@ -260,8 +261,8 @@ case class McpConnector(
 
   private def buildClient(attrs: TypedMap): DefaultMcpClient = {
     // val inputToken: String = attrs.get(otoroshi.plugins.Keys.MatchedRawInputTokenKey).getOrElse("--") // TODO: use MatchedRawInputTokenKey
-    val inputToken: String = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.headers.get("Authorization")).map(_.replaceFirst("Bearer ", "")).getOrElse("--")
-    val headers: Map[String, String] = transport.sseOptions.headers.mapValues(_.applyOnWithPredicate(_.contains("{input_token}"))(_.replace("{input_token}", inputToken)))
+    val inputToken: String = if (forwardAuth) attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.headers.get("Authorization")).map(_.replaceFirst("Bearer ", "")).getOrElse("--") else "--"
+    val headers: Map[String, String] = if (forwardAuth) transport.sseOptions.headers.mapValues(_.applyOnWithPredicate(_.contains("{input_token}"))(_.replace("{input_token}", inputToken))) else transport.sseOptions.headers
     val trsprt = transport.kind match {
       case McpConnectorTransportKind.Stdio => {
         val opts = transport.stdioOptions
@@ -482,6 +483,7 @@ object McpConnector {
       "exclude_prompts" -> o.excludePrompts,
       "allow_rules" -> o.allowRules.json,
       "disallow_rules" -> o.disallowRules.json,
+      "forward_auth" -> o.forwardAuth,
     )
 
     override def reads(json: JsValue): JsResult[McpConnector] = Try {
@@ -508,6 +510,7 @@ object McpConnector {
         excludePrompts = json.select("exclude_prompts").asOpt[Seq[String]].getOrElse(Seq.empty),
         allowRules = json.select("allow_rules").asOpt(McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
         disallowRules = json.select("disallow_rules").asOpt(McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
+        forwardAuth = json.select("forward_auth").asOpt[Boolean].getOrElse(false),
       )
     } match {
       case Failure(ex) => JsError(ex.getMessage)

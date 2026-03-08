@@ -50,6 +50,10 @@ class McpConnectorsPage extends Component {
       type: 'bool',
       props: { label: 'Strict tool calls', placeholder: 'Strict tool calls' },
     },
+    'forward_auth': {
+      type: 'bool',
+      props: { label: 'Forward OAuth2 authentication', help: 'When enabled, the incoming OAuth2 Bearer token will be forwarded to the MCP server by replacing {input_token} placeholders in transport headers' },
+    },
     'include_functions': {
       type: 'array',
       props: {
@@ -85,7 +89,7 @@ class McpConnectorsPage extends Component {
   ];
 
   formFlow = [
-    '_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options', 'strict', '---', 'include_functions', 'exclude_functions'];
+    '_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options', 'strict', 'forward_auth', '---', 'include_functions', 'exclude_functions'];
 
   componentDidMount() {
     this.props.setTitle(`MCP Connectors`);
@@ -119,7 +123,8 @@ class McpConnectorsPage extends Component {
               }
             }
           },
-          strict: true
+          strict: true,
+          forward_auth: false
         }),
         itemName: "MCP Connector",
         formSchema: this.formSchema,
