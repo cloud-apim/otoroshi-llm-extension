@@ -1,0 +1,215 @@
+---
+sidebar_position: 6
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# LLM Bots Blocker (Proof of Work)
+
+The **LLM Bots Blocker** plugin protects your routes against automated LLM bot scraping by requiring visitors to solve a cryptographic **Proof of Work** (PoW) challenge before accessing your content.
+
+## Why block LLM bots?
+
+LLM companies deploy bots (crawlers, scrapers) that massively crawl websites to collect training data. Unlike traditional search engine bots that index pages, these bots download entire sites content at scale. This causes several problems:
+
+- **Bandwidth and infrastructure costs**: massive automated traffic increases server load and bandwidth bills
+- **Intellectual property**: your content is used to train commercial AI models without consent or compensation
+- **Degraded user experience**: bot traffic can slow down your site for real users
+- **Rate limit exhaustion**: bots can consume API quotas intended for legitimate users
+
+Traditional methods like `robots.txt` or user-agent blocking are easily bypassed. A Proof of Work challenge provides a much stronger defense: it requires executing JavaScript in a real browser, which is something headless bots and simple HTTP clients cannot do efficiently.
+
+## How it works
+
+The plugin implements a challenge-response protocol based on SHA-256 hash computation:
+
+### 1. Challenge phase
+
+When a visitor arrives without a valid PoW cookie, the plugin intercepts the request and returns an HTML page containing a JavaScript worker. The worker receives a random challenge string and a difficulty level.
+
+### 2. Solving phase
+
+The JavaScript worker iterates through nonce values, computing `SHA-256(challenge + ":" + nonce)` until it finds a hash whose binary representation starts with at least N leading zero bits (where N is the configured difficulty). A progress bar is displayed to the user during this process, which typically takes less than 2 seconds.
+
+### 3. Verification phase
+
+The browser sends the solution (challenge, nonce, hash) back to the server via a POST request with the `Oto-LLm-Pow` header. The server verifies:
+- The challenge exists and has not expired
+- The hash matches `SHA-256(challenge + ":" + nonce)`
+- The hash has enough leading zero bits
+
+### 4. Token phase
+
+Upon successful verification, the server issues a signed HMAC-SHA256 cookie. Subsequent requests carrying this cookie are allowed through without re-solving. The cookie can be bound to the visitor's IP and/or User-Agent for additional security.
+
+## Configuration
+
+```js
+{
+  "difficulty": 8,
+  "token_ttl_seconds": 300,
+  "challenge_ttl_seconds": 120,
+  "cookie_name": "oto_llm_pow",
+  "cookie_domain": null,
+  "cookie_path": "/",
+  "cookie_same_site": "Lax",
+  "bind_ip": true,
+  "bind_ua": true,
+  "secret": null,
+  "allowed_ips": [],
+  "blocked_ips": [],
+  "allowed_user_agents": [],
+  "blocked_user_agents": [],
+  "allowed_headers": {},
+  "blocked_headers": {}
+}
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `difficulty` | number | `8` | Number of leading zero bits required in the hash. Higher values make the challenge harder (each +1 roughly doubles the computation time) |
+| `token_ttl_seconds` | number | `300` | How long (in seconds) the PoW cookie remains valid after solving |
+| `challenge_ttl_seconds` | number | `120` | How long (in seconds) a challenge remains valid before expiring |
+| `cookie_name` | string | `oto_llm_pow` | Name of the cookie used to store the PoW token |
+| `cookie_domain` | string | `null` | Domain for the cookie. If null, uses the current domain |
+| `cookie_path` | string | `/` | Path for the cookie |
+| `cookie_same_site` | string | `Lax` | SameSite attribute for the cookie (`Lax`, `Strict`, or `None`) |
+| `bind_ip` | boolean | `true` | Bind the token to the client's IP address. Prevents cookie theft across IPs |
+| `bind_ua` | boolean | `true` | Bind the token to the client's User-Agent. Prevents cookie reuse from different browsers |
+| `secret` | string | `null` | Secret key for HMAC signing the cookie. If null, uses the Otoroshi secret |
+
+### Difficulty tuning
+
+The `difficulty` parameter controls the computational cost of the challenge:
+
+| Difficulty | Approximate time | Use case |
+|:----------:|:----------------:|----------|
+| 4-6 | < 100ms | Light protection, minimal user friction |
+| 8 | ~ 200ms - 1s | Good default, blocks most bots |
+| 12-16 | 1s - 10s | Strong protection, noticeable delay |
+| 20+ | 10s+ | Very aggressive, may impact user experience |
+
+A difficulty of **8** (default) provides a good balance: fast enough for real browsers but expensive at scale for bots.
+
+### Bypass rules
+
+You can configure bypass rules to let certain traffic through without requiring PoW:
+
+#### IP-based bypass
+
+```js
+{
+  "allowed_ips": ["192.168.1.0/24", "10\\.0\\..*"],
+  "blocked_ips": ["203.0.113.50"]
+}
+```
+
+- `allowed_ips`: requests from these IPs skip the PoW challenge entirely. Supports CIDR notation and regex patterns.
+- `blocked_ips`: requests from these IPs are always blocked (even if they solve the PoW).
+
+#### User-Agent-based bypass
+
+```js
+{
+  "allowed_user_agents": ["Googlebot.*", "Bingbot.*"],
+  "blocked_user_agents": ["BadBot.*"]
+}
+```
+
+- `allowed_user_agents`: requests with matching User-Agent skip the PoW challenge. Supports regex patterns.
+- `blocked_user_agents`: requests with matching User-Agent are always blocked.
+
+#### Header-based bypass
+
+```js
+{
+  "allowed_headers": {
+    "X-Internal-Token": "my-secret-value"
+  },
+  "blocked_headers": {
+    "X-Known-Bad": ".*"
+  }
+}
+```
+
+- `allowed_headers`: requests with matching header key/value pairs skip the PoW challenge. Values support regex.
+- `blocked_headers`: requests with matching header key/value pairs are always blocked.
+
+A request is bypassed only when **all three conditions** (IP, User-Agent, and headers) match their respective allow rules.
+
+## Plugin setup
+
+Add the plugin to your route configuration:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.ProofOfWorkPlugin",
+  "config": {
+    "difficulty": 8,
+    "token_ttl_seconds": 300,
+    "challenge_ttl_seconds": 120,
+    "bind_ip": true,
+    "bind_ua": true
+  }
+}
+```
+
+### Full route example
+
+```js
+{
+  "id": "route_pow_protected",
+  "name": "PoW Protected Site",
+  "frontend": {
+    "domains": ["my-site.example.com"],
+    "strip_path": true,
+    "exact": false
+  },
+  "backend": {
+    "targets": [
+      {
+        "hostname": "my-backend.internal",
+        "port": 8080,
+        "tls": false
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "config": {}
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.ProofOfWorkPlugin",
+      "config": {
+        "difficulty": 8,
+        "token_ttl_seconds": 600,
+        "challenge_ttl_seconds": 120,
+        "bind_ip": true,
+        "bind_ua": true,
+        "allowed_ips": ["10.0.0.0/8"],
+        "allowed_user_agents": ["Googlebot.*"]
+      }
+    }
+  ]
+}
+```
+
+## Cluster support
+
+The plugin fully supports Otoroshi cluster mode. Challenges are stored in the Otoroshi datastore and synchronized between leader and worker nodes. When running in worker mode, challenge operations (create, read, delete) are forwarded to the leader node to ensure consistency across the cluster.
+
+## How it differs from CAPTCHAs
+
+| | Proof of Work | CAPTCHA |
+|--|:--|:--|
+| **User interaction** | None - fully automatic | Requires manual solving |
+| **Accessibility** | No accessibility barriers | Can be difficult for some users |
+| **Privacy** | No third-party service involved | Often relies on external services (e.g. Google reCAPTCHA) |
+| **Effectiveness** | Strong against headless bots | Increasingly solved by AI |
+| **User experience** | Transparent, ~1-2 second wait | Interrupts user flow |
