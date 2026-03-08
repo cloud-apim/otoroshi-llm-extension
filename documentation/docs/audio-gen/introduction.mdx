@@ -4,4 +4,75 @@ sidebar_position: 1
 
 import Terminal from '@site/src/components/Terminal';
 
-# Audio generation models introduction
+# Audio Models
+
+Otoroshi LLM Extension provides full support for audio generation models, enabling **Text-to-Speech** (TTS), **Speech-to-Text** (STT), and **Audio Translation** capabilities through a unified OpenAI-compatible API.
+
+## Supported providers
+
+| Provider | TTS | STT | Translation |
+|----------|:---:|:---:|:-----------:|
+| OpenAI | Yes | Yes | Yes |
+| Azure OpenAI | Yes | Yes | Yes |
+| Cloud Temple 🇫🇷 🇪🇺 | Yes | Yes | Yes |
+| Groq | Yes | Yes | Yes |
+| ElevenLabs | Yes | Yes | No |
+| Mistral | No | Yes | No |
+
+## Features
+
+- **Unified API**: All providers are exposed through OpenAI-compatible endpoints, regardless of the underlying provider
+- **Multiple providers**: Use different providers for TTS and STT on the same audio model entity
+- **Model routing**: Route to a specific provider using the `provider_id###model_name` or `provider_id/model_name` syntax in the `model` field
+- **Vault integration**: API tokens support Otoroshi vault references (e.g. `${vault://local/my-token}`)
+- **Model constraints**: Restrict which models can be used via allow/block lists, enforceable per API key or per user
+- **Auditing**: STT and Translation calls are fully audited with usage tracking, eco-impact, and cost reporting
+- **Workflow integration**: TTS and STT are available as workflow functions for use in agentic pipelines
+
+## API endpoints
+
+Three Otoroshi plugins expose audio capabilities as API routes:
+
+| Plugin | Endpoint | Description |
+|--------|----------|-------------|
+| **Cloud APIM - Text to speech backend** | `POST /v1/audio/speech` | Converts text to audio |
+| **Cloud APIM - Speech to text backend** | `POST /v1/audio/transcriptions` | Transcribes audio to text |
+| **Cloud APIM - Audio translation backend** | `POST /v1/audio/translations` | Translates audio to English text |
+
+## Audio model entity
+
+An Audio Model entity groups TTS, STT, and Translation configurations under a single provider:
+
+```js
+{
+  "id": "audio-gen-model_xxxxxxxxx",
+  "name": "My Audio Model",
+  "description": "Audio model with TTS and STT",
+  "provider": "openai",
+  "config": {
+    "connection": {
+      "token": "${vault://local/OPENAI_API_TOKEN}",
+      "timeout": 30000
+    },
+    "options": {
+      "tts": {
+        "enabled": true,
+        "model": "gpt-4o-mini-tts",
+        "voice": "alloy",
+        "response_format": "mp3",
+        "speed": 1
+      },
+      "stt": {
+        "enabled": true,
+        "model": "whisper-1"
+      },
+      "translation": {
+        "enabled": true,
+        "model": "whisper-1"
+      }
+    }
+  }
+}
+```
+
+Each capability (TTS, STT, Translation) can be individually enabled or disabled. See the dedicated pages for detailed configuration per provider.

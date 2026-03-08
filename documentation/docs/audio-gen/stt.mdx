@@ -4,42 +4,205 @@ sidebar_position: 3
 
 import Terminal from '@site/src/components/Terminal';
 
-# Speech-to-text (STT)
+# Speech-to-Text (STT)
 
-## Supported providers
+Speech-to-Text transcribes audio files into text. Otoroshi exposes STT through an OpenAI-compatible API endpoint.
 
-* OpenAI
-  * whisper-1
-  * gpt-4o-mini-transcribe
-* Groq
-  * whisper-large-v3
-* Mistral
-  * voxtral-mini-latest
-  * voxtral-mini-2507
+## Supported providers and models
 
-## Configuration
+| Provider | Models |
+|----------|--------|
+| **OpenAI** | `whisper-1`, `gpt-4o-mini-transcribe` |
+| **Azure OpenAI** | `whisper-1`, `gpt-4o-mini-transcribe` |
+| **Cloud Temple** 🇫🇷 🇪🇺 | `whisper-1`, `gpt-4o-mini-transcribe` |
+| **Groq** | `whisper-large-v3`, `whisper-large-v3-turbo`, `distil-whisper-large-v3-en` |
+| **ElevenLabs** | `scribe_v1` |
+| **Mistral** | `voxtral-mini-latest`, `voxtral-mini-2507` |
+
+## STT configuration
+
+### OpenAI / Azure OpenAI / Cloud Temple
 
 ```js
 {
-  "connection": {
-    "token": "${vault://local/OPENAI_API_TOKEN}",
-    "timeout": 30000
-  },
-  "options": {
-    "tts": {
-      "enabled": true,
-      "model": "gpt-4o-mini-tts",
-      "response_format": "mp3",
-      "speed": 1
-    },
-    "stt": {
-      "enabled": true,
-      "model": "gpt-4o-mini-transcribe"
-    },
-    "translation": {
-      "enabled": true,
-      "model": "whisper-1"
-    }
+  "stt": {
+    "enabled": true,
+    "model": "whisper-1",
+    "language": "en",
+    "prompt": "Optional context for better transcription",
+    "response_format": "json",
+    "temperature": 0
   }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable or disable STT |
+| `model` | string | — | The STT model to use |
+| `language` | string | — | Language of the audio (ISO 639-1 code, e.g. `en`, `fr`, `de`) |
+| `prompt` | string | — | Optional text to guide the model's transcription style |
+| `response_format` | string | — | Response format: `json`, `text`, `srt`, `verbose_json`, `vtt` |
+| `temperature` | number | — | Sampling temperature between 0 and 1 |
+
+### Groq
+
+Same parameters as OpenAI.
+
+```js
+{
+  "stt": {
+    "enabled": true,
+    "model": "whisper-large-v3-turbo",
+    "language": "en"
+  }
+}
+```
+
+### ElevenLabs
+
+```js
+{
+  "stt": {
+    "enabled": true,
+    "model_id": "scribe_v1",
+    "language": "en"
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable or disable STT |
+| `model_id` | string | `scribe_v1` | The ElevenLabs STT model |
+| `language` | string | — | Language code for transcription |
+
+### Mistral (Voxtral)
+
+```js
+{
+  "stt": {
+    "enabled": true,
+    "model": "voxtral-mini-latest",
+    "language": "fr",
+    "diarize": true,
+    "temperature": 0
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable or disable STT |
+| `model` | string | — | The Voxtral model to use |
+| `language` | string | — | Language of the audio |
+| `diarize` | boolean | — | Enable speaker diarization (identifies different speakers in the audio). Mistral-specific feature. |
+| `temperature` | number | — | Sampling temperature |
+
+## API usage
+
+### Plugin setup
+
+Add the **Cloud APIM - Speech to text backend** plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatSpeechToText",
+  "config": {
+    "refs": ["audio-gen-model_xxxxxxxxx"],
+    "max_size_upload": 104857600
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refs` | array of strings | — | References to audio model entities |
+| `max_size_upload` | number | `104857600` (100 MB) | Maximum upload file size in bytes |
+
+### Request
+
+```sh
+curl https://my-audio-endpoint.example.com/v1/audio/transcriptions \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -F "file=@recording.mp3" \
+  -F "model=whisper-1" \
+  -F "language=en"
+```
+
+The request is sent as multipart form data.
+
+### Request parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `file` | file | The audio file to transcribe (required) |
+| `model` | string | Model to use. Supports `provider_id###model_name` routing syntax |
+| `language` | string | Language of the audio |
+| `prompt` | string | Optional context for better transcription |
+| `response_format` | string | Desired response format |
+| `temperature` | string | Sampling temperature |
+
+### Response
+
+```js
+{
+  "text": "Hello, how are you today?"
+}
+```
+
+## Full entity example with Mistral (Voxtral)
+
+```js
+{
+  "id": "audio-gen-model_xxxxxxxxx",
+  "name": "Mistral Voxtral STT",
+  "description": "Mistral speech-to-text with Voxtral",
+  "provider": "mistral",
+  "config": {
+    "connection": {
+      "token": "${vault://local/MISTRAL_API_TOKEN}",
+      "timeout": 30000
+    },
+    "options": {
+      "stt": {
+        "enabled": true,
+        "model": "voxtral-mini-latest",
+        "diarize": true
+      }
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/AudioModel"
+}
+```
+
+## Full entity example with ElevenLabs
+
+```js
+{
+  "id": "audio-gen-model_xxxxxxxxx",
+  "name": "ElevenLabs Audio",
+  "description": "ElevenLabs TTS and STT",
+  "provider": "elevenlabs",
+  "config": {
+    "connection": {
+      "token": "${vault://local/ELEVENLABS_API_KEY}",
+      "timeout": 30000
+    },
+    "options": {
+      "tts": {
+        "enabled": true,
+        "model_id": "eleven_multilingual_v2",
+        "voice_id": "21m00Tcm4TlvDq8ikWAM",
+        "output_format": "mp3_44100_128"
+      },
+      "stt": {
+        "enabled": true,
+        "model_id": "scribe_v1"
+      }
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/AudioModel"
 }
 ```

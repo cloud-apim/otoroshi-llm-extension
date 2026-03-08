@@ -4,46 +4,182 @@ sidebar_position: 2
 
 import Terminal from '@site/src/components/Terminal';
 
-# Text-to-speech (TTS)
+# Text-to-Speech (TTS)
 
-## Default entity configuration 
+Text-to-Speech converts text input into audio output. Otoroshi exposes TTS through an OpenAI-compatible API endpoint.
+
+## Supported providers and models
+
+| Provider | Models | Default voice |
+|----------|--------|---------------|
+| **OpenAI** | `tts-1`, `tts-1-hd`, `gpt-4o-mini-tts` | `alloy` |
+| **Azure OpenAI** | `tts`, `tts-hd`, `gpt-4o-mini-tts` | `alloy` |
+| **Cloud Temple** 🇫🇷 🇪🇺 | `tts-1`, `tts-1-hd`, `gpt-4o-mini-tts` | `alloy` |
+| **Groq** | `playai-tts`, `playai-tts-arabic` | `alloy` |
+| **ElevenLabs** | `eleven_monolingual_v1`, `eleven_multilingual_v2` | `Rachel` |
+
+## Available voices
+
+### OpenAI / Azure OpenAI / Cloud Temple
+
+`alloy`, `ash`, `ballad`, `coral`, `echo`, `fable`, `onyx`, `nova`, `sage`, `shimmer`, `verse`
+
+### Groq
+
+`Arista-PlayAI`, `Atlas-PlayAI`, `Basil-PlayAI`
+
+### ElevenLabs
+
+Voices are fetched dynamically from the ElevenLabs API. You can browse available voices in the Otoroshi admin UI when configuring the audio model entity.
+
+## TTS configuration
+
+### OpenAI / Azure OpenAI / Cloud Temple
 
 ```js
 {
-  "connection": {
-    "token": "${vault://local/GROQ_API_TOKEN}",
-    "timeout": 30000
-  },
-  "options": {
-    "tts": {
-      "enabled": true,
-      "model": "playai-tts",
-      "response_format": "wav"
-    },
-    "stt": {
-      "enabled": true,
-      "model": "whisper-large-v3-turbo"
-    },
-    "translation": {
-      "enabled": true,
-      "model": "whisper-large-v3"
-    }
+  "tts": {
+    "enabled": true,
+    "model": "gpt-4o-mini-tts",
+    "voice": "alloy",
+    "instructions": "Speak in a friendly tone",
+    "response_format": "mp3",
+    "speed": 1.0
   }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable or disable TTS |
+| `model` | string | `gpt-4o-mini-tts` | The TTS model to use |
+| `voice` | string | `alloy` | The voice to use for generation |
+| `instructions` | string | — | Optional instructions for the voice (e.g. tone, style) |
+| `response_format` | string | — | Audio format: `mp3`, `opus`, `aac`, `flac`, `wav`, `pcm` |
+| `speed` | number | — | Speed of the generated audio (0.25 to 4.0) |
+
+### Groq
+
+```js
+{
+  "tts": {
+    "enabled": true,
+    "model": "playai-tts",
+    "voice": "Arista-PlayAI",
+    "response_format": "wav"
+  }
+}
+```
+
+Same parameters as OpenAI.
+
+### ElevenLabs
+
+```js
+{
+  "tts": {
+    "enabled": true,
+    "model_id": "eleven_monolingual_v1",
+    "voice_id": "21m00Tcm4TlvDq8ikWAM",
+    "output_format": "mp3_44100_128"
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable or disable TTS |
+| `model_id` | string | `eleven_monolingual_v1` | The ElevenLabs model ID |
+| `voice_id` | string | `21m00Tcm4TlvDq8ikWAM` | The ElevenLabs voice ID (Rachel by default) |
+| `output_format` | string | `mp3_44100_128` | Output audio format |
+
+## API usage
+
+### Plugin setup
+
+Add the **Cloud APIM - Text to speech backend** plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatTextToSpeech",
+  "config": {
+    "refs": ["audio-gen-model_xxxxxxxxx"]
+  }
+}
+```
+
+### Request
+
+```sh
+curl https://my-audio-endpoint.example.com/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "input": "Hello, how are you today?",
+    "model": "gpt-4o-mini-tts",
+    "voice": "alloy",
+    "response_format": "mp3",
+    "speed": 1.0
+  }' \
+  --output speech.mp3
+```
+
+The response is a streamed audio file with the appropriate content type.
+
+### Request parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `input` | string | The text to convert to speech (required) |
+| `model` | string | Model to use. Supports `provider_id###model_name` routing syntax |
+| `voice` | string | Voice to use |
+| `instructions` | string | Optional voice instructions |
+| `response_format` | string | Desired audio format |
+| `speed` | number | Playback speed multiplier |
+
+## Full entity example with OpenAI
+
+```js
+{
+  "id": "audio-gen-model_xxxxxxxxx",
+  "name": "OpenAI Audio",
+  "description": "OpenAI text-to-speech",
+  "provider": "openai",
+  "config": {
+    "connection": {
+      "token": "${vault://local/OPENAI_API_TOKEN}",
+      "timeout": 30000
+    },
+    "options": {
+      "tts": {
+        "enabled": true,
+        "model": "gpt-4o-mini-tts",
+        "voice": "alloy",
+        "response_format": "mp3",
+        "speed": 1
+      },
+      "stt": {
+        "enabled": true,
+        "model": "whisper-1"
+      },
+      "translation": {
+        "enabled": true,
+        "model": "whisper-1"
+      }
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/AudioModel"
 }
 ```
 
 ## Full entity example with Groq
 
-`TTS model used is *whisper-large-v3*`
-
-
 ```js
 {
-  "id": "audio-gen-model_9a0c79eb-f7e3-40d7-b31d-c26fe28022cf",
+  "id": "audio-gen-model_xxxxxxxxx",
   "name": "Groq TTS",
   "description": "Groq text-to-speech",
-  "tags": [],
-  "metadata": {},
   "provider": "groq",
   "config": {
     "connection": {

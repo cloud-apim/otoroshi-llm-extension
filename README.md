@@ -64,6 +64,8 @@ And 37 more including Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Ch
     * playai-tts
     * playai-tts-arabic
 * ElevenLabs
+    * eleven_monolingual_v1
+    * eleven_multilingual_v2
 
 ## Supported Audio Speech-to-text models
 
@@ -72,6 +74,8 @@ And 37 more including Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Ch
     * gpt-4o-mini-transcribe
 * Groq
   * whisper-large-v3
+* ElevenLabs
+  * scribe_v1
 * Mistral
   * voxtral-mini-latest
   * voxtral-mini-2507
