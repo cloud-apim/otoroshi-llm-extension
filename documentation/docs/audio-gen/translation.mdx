@@ -1,0 +1,84 @@
+---
+sidebar_position: 4
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Audio Translation
+
+Audio Translation transcribes audio files and translates them into English. This is distinct from Speech-to-Text which transcribes in the original language.
+
+## Supported providers
+
+| Provider | Models |
+|----------|--------|
+| **OpenAI** | `whisper-1` |
+| **Azure OpenAI** | `whisper-1` |
+| **Cloud Temple** 🇫🇷 🇪🇺 | `whisper-1` |
+| **Groq** | `whisper-large-v3` |
+
+ElevenLabs and Mistral do not support audio translation.
+
+## Translation configuration
+
+### OpenAI / Azure OpenAI / Cloud Temple
+
+```js
+{
+  "translation": {
+    "enabled": true,
+    "model": "whisper-1",
+    "prompt": "Optional context for the translation",
+    "response_format": "json",
+    "temperature": 0
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable or disable translation |
+| `model` | string | — | The model to use for translation |
+| `prompt` | string | — | Optional text to guide the translation style |
+| `response_format` | string | — | Response format: `json`, `text`, `srt`, `verbose_json`, `vtt` |
+| `temperature` | number | — | Sampling temperature between 0 and 1 |
+
+### Groq
+
+Same parameters as OpenAI.
+
+## API usage
+
+### Plugin setup
+
+Add the **Cloud APIM - Audio translation backend** plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatTranslation",
+  "config": {
+    "refs": ["audio-gen-model_xxxxxxxxx"],
+    "max_size_upload": 104857600
+  }
+}
+```
+
+### Request
+
+```sh
+curl https://my-audio-endpoint.example.com/v1/audio/translations \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -F "file=@recording_french.mp3" \
+  -F "model=whisper-1"
+```
+
+### Response
+
+```js
+{
+  "text": "Hello, how are you today?"
+}
+```
+
+The audio content is translated into English regardless of the source language.
