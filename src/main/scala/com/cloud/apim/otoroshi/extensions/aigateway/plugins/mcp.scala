@@ -518,7 +518,7 @@ case class SseSession(
   }
 }
 
-class McpSseEndpoint extends NgBackendCall {
+class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
 
   override def name: String = "Cloud APIM - MCP SSE Endpoint"
   override def description: Option[String] = "Exposes tool functions as an MCP server using the SSE Transport".some
@@ -526,7 +526,7 @@ class McpSseEndpoint extends NgBackendCall {
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
-  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def steps: Seq[NgStep] = Seq(NgStep.ValidateAccess, NgStep.CallBackend)
   override def useDelegates: Boolean = false
   override def defaultConfigObject: Option[NgPluginConfig] = Some(McpProxyEndpointConfig.default)
 
@@ -541,6 +541,10 @@ class McpSseEndpoint extends NgBackendCall {
       ext.logger.info("the 'MCP SSE Endpoint' plugin is available !")
     }
     ().vfuture
+  }
+
+  override def access(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+    McpOAuthFilterUtils.access(ctx, internalName)
   }
 
   def error(status: Int, msg: String): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
@@ -863,7 +867,7 @@ class McpSseEndpoint extends NgBackendCall {
   }
 }
 
-class McpWebsocketEndpoint extends NgWebsocketBackendPlugin {
+class McpWebsocketEndpoint extends NgWebsocketBackendPlugin with NgAccessValidator {
 
   override def name: String = "Cloud APIM - MCP WebSocket Endpoint"
   override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official) WebSocket Transport".some
@@ -871,7 +875,7 @@ class McpWebsocketEndpoint extends NgWebsocketBackendPlugin {
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
-  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def steps: Seq[NgStep] = Seq(NgStep.ValidateAccess, NgStep.CallBackend)
   override def defaultConfigObject: Option[NgPluginConfig] = Some(McpProxyEndpointConfig.default)
 
   override def noJsForm: Boolean = true
@@ -880,9 +884,13 @@ class McpWebsocketEndpoint extends NgWebsocketBackendPlugin {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'MCP SSE Endpoint' plugin is available !")
+      ext.logger.info("the 'MCP WebSocket Endpoint' plugin is available !")
     }
     ().vfuture
+  }
+
+  override def access(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+    McpOAuthFilterUtils.access(ctx, internalName)
   }
 
   override def callBackend(ctx: NgWebsocketPluginContext)(implicit env: Env, ec: ExecutionContext): Flow[Message, Message, _] = {
