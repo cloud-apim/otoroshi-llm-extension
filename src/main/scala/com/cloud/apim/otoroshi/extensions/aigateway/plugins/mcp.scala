@@ -4,6 +4,7 @@ import akka.actor.{Actor, ActorRef, PoisonPill, Props}
 import akka.stream.scaladsl.{Flow, Sink, Source, SourceQueueWithComplete}
 import akka.stream.{Materializer, OverflowStrategy}
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.agents.InlineFunction
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, McpConnector, McpConnectorRules, McpSupport}
 import dev.langchain4j.agent.tool.ToolSpecification
 import dev.langchain4j.mcp.client.{McpBlobResourceContents, McpResourceContents, McpTextResourceContents}
@@ -14,6 +15,7 @@ import otoroshi.models.{InHeader, InQueryParam, JwtTokenLocation, LocalJwtVerifi
 import otoroshi.next.plugins.{OIDCAuthToken, OIDCAuthTokenConfig, OIDCJwtVerifierConfig}
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
+import otoroshi.next.workflow.WorkflowRun
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
 import otoroshi.utils.http.RequestImplicits.EnhancedRequestHeader
@@ -22,6 +24,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.http.websocket.Message
 import play.api.libs.json._
 import play.api.libs.streams.ActorFlow
+import play.api.libs.typedmap.TypedKey
 import play.api.mvc.{Result, Results}
 
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
@@ -32,6 +35,7 @@ import scala.util.{Failure, Success, Try}
 
 object McpOAuthFilterUtils {
 
+  val McpUserAuthTokenKey = TypedKey[String]("cloud-apim.ai-gateway.mcp.McpUserAuthToken")
   val sources = Seq(InHeader("Authorization", "Bearer "), InQueryParam("access_token"))
 
   def unauthorizedResult(ctx: NgAccessContext, config: McpProxyEndpointConfig, oidcModule: OAuth2ModuleConfig)(implicit env: Env, ec: ExecutionContext): Result = {
@@ -77,7 +81,8 @@ object McpOAuthFilterUtils {
                         ctx.user,
                         ctx.attrs.get(otoroshi.plugins.Keys.ElCtxKey).getOrElse(Map.empty),
                         ctx.attrs
-                      ) { _ =>
+                      ) { t =>
+                        ctx.attrs.put(McpUserAuthTokenKey -> token)
                         OIDCAuthToken.getSession(
                           ctx,
                           oidcModule,
