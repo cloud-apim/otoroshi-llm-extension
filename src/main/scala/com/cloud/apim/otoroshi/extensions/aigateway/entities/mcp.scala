@@ -18,6 +18,7 @@ import otoroshi.storage.{BasicStore, RedisLike, RedisLikeStore}
 import otoroshi.utils.{JsonPathValidator, TypedMap}
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiExtension, AiGatewayExtensionDatastores, AiGatewayExtensionState}
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpOAuthFilterUtils
 import play.api.libs.json._
 
 import java.util.UUID
@@ -260,8 +261,15 @@ case class McpConnector(
   override def json: JsValue = McpConnector.format.writes(this)
 
   private def buildClient(attrs: TypedMap): DefaultMcpClient = {
-    // val inputToken: String = attrs.get(otoroshi.plugins.Keys.MatchedRawInputTokenKey).getOrElse("--") // TODO: use MatchedRawInputTokenKey
-    val inputToken: String = if (forwardAuth) attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.headers.get("Authorization")).map(_.replaceFirst("Bearer ", "")).getOrElse("--") else "--"
+    val inputToken: String = if (forwardAuth) {
+      attrs.get(McpOAuthFilterUtils.McpUserAuthTokenKey)
+        // .orElse(attrs.get(otoroshi.plugins.Keys.MatchedRawInputTokenKey)) // TODO: use MatchedRawInputTokenKey
+        .orElse(
+          attrs.get(otoroshi.plugins.Keys.RequestKey)
+            .flatMap(_.headers.get("Authorization")).map(_.replaceFirst("Bearer ", ""))
+        )
+        .getOrElse("--")
+    } else "--"
     val headers: Map[String, String] = if (forwardAuth) transport.sseOptions.headers.mapValues(_.applyOnWithPredicate(_.contains("{input_token}"))(_.replace("{input_token}", inputToken))) else transport.sseOptions.headers
     val trsprt = transport.kind match {
       case McpConnectorTransportKind.Stdio => {
