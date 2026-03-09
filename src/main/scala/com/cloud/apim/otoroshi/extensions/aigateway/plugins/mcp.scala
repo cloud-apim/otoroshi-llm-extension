@@ -1574,7 +1574,11 @@ class McpProtectedResourceMetadata extends NgBackendCall {
             m match {
               case oidcModule: OAuth2ModuleConfig => {
                 val resource = config.resource.getOrElse(s"${ctx.rawRequest.theProtocol}://${ctx.rawRequest.theHost}")
-                val authorizationServer = Uri(oidcModule.authorizeUrl).copy(path = Uri.Path./).toString()
+                val authorizationServer = oidcModule
+                    .oidConfig
+                    .filter(_.trim.nonEmpty)
+                    .map(_.replace("/.well-known/openid-configuration", ""))
+                    .getOrElse(Uri(oidcModule.authorizeUrl).copy(path = Uri.Path./).toString())
                 val scopes = config.scopesSupported.getOrElse {
                   oidcModule.scope.split("\\s+").filter(_.nonEmpty).toSeq
                 }
