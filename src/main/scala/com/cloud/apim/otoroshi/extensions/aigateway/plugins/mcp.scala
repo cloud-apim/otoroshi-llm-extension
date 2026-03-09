@@ -8,7 +8,10 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, M
 import dev.langchain4j.agent.tool.ToolSpecification
 import dev.langchain4j.mcp.client.{McpBlobResourceContents, McpResourceContents, McpTextResourceContents}
 import dev.langchain4j.model.chat.request.json.JsonSchemaElement
+import otoroshi.auth.OAuth2ModuleConfig
 import otoroshi.env.Env
+import otoroshi.models.{InHeader, InQueryParam, JwtTokenLocation, LocalJwtVerifier}
+import otoroshi.next.plugins.{OIDCAuthToken, OIDCAuthTokenConfig, OIDCJwtVerifierConfig}
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.security.IdGenerator
@@ -19,7 +22,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.http.websocket.Message
 import play.api.libs.json._
 import play.api.libs.streams.ActorFlow
-import play.api.mvc.Results
+import play.api.mvc.{Result, Results}
 
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
 import scala.collection.concurrent.TrieMap
@@ -27,9 +30,93 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Try}
 
+object McpOAuthFilterUtils {
+
+  val sources = Seq(InHeader("Authorization", "Bearer "), InQueryParam("access_token"))
+
+  def unauthorizedResult(ctx: NgAccessContext, config: McpProxyEndpointConfig, oidcModule: OAuth2ModuleConfig)(implicit env: Env, ec: ExecutionContext): Result = {
+    val realmName = oidcModule.cookieSuffix(ctx.route.legacy)
+    val authPrmUrl = config.authPrmUrl.getOrElse(s"${ctx.request.theProtocol}://${ctx.request.theHost}/.well-known/oauth-protected-resource")
+    Results.Status(401)(Json.obj("error" -> "unauthorized"))
+      .withHeaders("WWW-Authenticate"-> s"""Bearer realm="${realmName}", resource_metadata="${authPrmUrl}"""")
+      .as("application/json")
+  }
+
+  def access(ctx: NgAccessContext, internalName: String)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+    val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default)
+    config.authModuleRef match {
+      case None if !config.enforceOAuth => NgAccess.NgAllowed.vfuture
+      case None if config.enforceOAuth  => NgAccess.NgDenied(Results.BadRequest(Json.obj("error" -> "no auth. module setup"))).vfuture
+      case Some(_) if !config.enforceOAuth => NgAccess.NgAllowed.vfuture
+      case Some(authModuleId) if config.enforceOAuth =>
+        env.proxyState.authModule(authModuleId) match {
+          case None    => NgAccess.NgDenied(Results.BadRequest(Json.obj("error" -> "auth. module not found"))).vfuture
+          case Some(m) =>
+            m match {
+              case oidcModule: OAuth2ModuleConfig if oidcModule.jwtVerifier.isDefined => {
+                val customResult = unauthorizedResult(ctx, config, oidcModule)
+                val verifier     = LocalJwtVerifier()
+                  .copy(
+                    enabled = true,
+                    algoSettings = oidcModule.jwtVerifier.get
+                  )
+                sources.iterator.map(s => s.token(ctx.request).map(t => (s, t))).collectFirst { case Some(tuple) =>
+                  tuple
+                } match {
+                  case None                  =>
+                    NgAccess
+                      .NgDenied(customResult)
+                      .vfuture
+                  case Some((source, token)) =>
+                    verifier
+                      .copy(source = source)
+                      .verifyGen[NgAccess](
+                        ctx.request,
+                        ctx.route.legacy,
+                        ctx.apikey,
+                        ctx.user,
+                        ctx.attrs.get(otoroshi.plugins.Keys.ElCtxKey).getOrElse(Map.empty),
+                        ctx.attrs
+                      ) { _ =>
+                        OIDCAuthToken.getSession(
+                          ctx,
+                          oidcModule,
+                          OIDCAuthTokenConfig(
+                            ref = authModuleId,
+                            opaque = false,
+                            fetchUserProfile = true,
+                            validateAudience = false,
+                            headerName = "Authorization"
+                          ),
+                          Some(token)
+                        )
+                      }
+                      .map {
+                        case Left(result) => NgAccess.NgDenied(customResult)
+                        case Right(r)     => r
+                      }
+                }
+              }
+              case _                                                                  =>
+                NgAccess
+                  .NgDenied(
+                    Results.BadRequest(
+                      Json.obj("error" -> "auth. module not an oidc module or does not have jwt verification settings")
+                    )
+                  )
+                  .vfuture
+            }
+        }
+    }
+  }
+}
+
 case class McpProxyEndpointConfig(
   name: Option[String],
   version: Option[String],
+  enforceOAuth: Boolean = false,
+  authModuleRef: Option[String] = None,
+  authPrmUrl: Option[String] = None,
   functionRefs: Seq[String],
   mcpRefs: Seq[String],
   includeFunctions: Seq[String] = Seq.empty,
@@ -80,13 +167,17 @@ case class McpProxyEndpointConfig(
 
 object McpProxyEndpointConfig {
   val configFlow: Seq[String] = Seq(
-    "name", "version", "refs", "mcp_refs",
+    "name", "version",
+    "refs", "mcp_refs",
+    "enforce_oauth",
+    "auth_module_ref",
+    "auth_prm_url",
     "include_functions", "exclude_functions",
     "include_resources", "exclude_resources",
     "include_resource_templates", "exclude_resource_templates",
     "include_resource_template_uris", "exclude_resource_template_uris",
     "include_prompts", "exclude_prompts",
-    "allow_rules", "disallow_rules"
+    "allow_rules", "disallow_rules",
   )
   val configSchema: Option[JsObject] = Some(Json.obj(
     "name" -> Json.obj(
@@ -96,6 +187,25 @@ object McpProxyEndpointConfig {
     "version" -> Json.obj(
       "type" -> "string",
       "label" -> "MCP server version"
+    ),
+    "enforce_oauth" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Enforce OAuth"
+    ),
+    "auth_prm_url" -> Json.obj(
+      "type" -> "string",
+      "label" -> "OAuth PRM URL"
+    ),
+    "auth_module_ref" -> Json.obj(
+      "type"  -> "select",
+      "label" -> s"Auth. module",
+      "props" -> Json.obj(
+        "optionsFrom"        -> "/bo/api/proxy/apis/security.otoroshi.io/v1/auth-modules",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id"
+        )
+      )
     ),
     "refs" -> Json.obj(
       "type" -> "select",
@@ -190,6 +300,9 @@ object McpProxyEndpointConfig {
     override def writes(o: McpProxyEndpointConfig): JsValue = Json.obj(
       "name" -> o.name.map(_.json).getOrElse(JsNull).asValue,
       "version" -> o.version.map(_.json).getOrElse(JsNull).asValue,
+      "enforce_oauth" -> o.enforceOAuth,
+      "auth_module_ref" -> o.authModuleRef.map(_.json).getOrElse(JsNull).asValue,
+      "auth_prm_url" -> o.authPrmUrl.map(_.json).getOrElse(JsNull).asValue,
       "refs" -> o.functionRefs,
       "mcp_refs" -> o.mcpRefs,
       "include_functions" -> o.includeFunctions,
@@ -212,6 +325,9 @@ object McpProxyEndpointConfig {
       McpProxyEndpointConfig(
         name = json.select("name").asOptString.filter(_.trim.nonEmpty),
         version = json.select("version").asOptString.filter(_.trim.nonEmpty),
+        enforceOAuth = json.select("enforce_oauth").asOptBoolean.getOrElse(false),
+        authModuleRef = json.select("auth_module_ref").asOptString,
+        authPrmUrl = json.select("auth_prm_url").asOptString,
         functionRefs = allRefs,
         mcpRefs = json.select("mcp_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
         includeFunctions = json.select("include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
@@ -1060,7 +1176,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
   }
 }
 
-class McpRespEndpoint extends NgBackendCall {
+class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
 
   override def name: String = "Cloud APIM - MCP HTTP Endpoint"
   override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official) HTTP Transport".some
@@ -1068,7 +1184,7 @@ class McpRespEndpoint extends NgBackendCall {
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
-  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def steps: Seq[NgStep] = Seq(NgStep.ValidateAccess, NgStep.CallBackend)
   override def useDelegates: Boolean = false
   override def defaultConfigObject: Option[NgPluginConfig] = Some(McpProxyEndpointConfig.default)
 
@@ -1287,6 +1403,10 @@ class McpRespEndpoint extends NgBackendCall {
           }
         }
     }
+  }
+
+  override def access(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+    McpOAuthFilterUtils.access(ctx, internalName)
   }
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
