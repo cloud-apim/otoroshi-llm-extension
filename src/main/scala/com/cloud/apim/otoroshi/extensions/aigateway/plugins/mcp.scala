@@ -1,6 +1,7 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.actor.{Actor, ActorRef, PoisonPill, Props}
+import akka.http.scaladsl.model.Uri
 import akka.stream.scaladsl.{Flow, Sink, Source, SourceQueueWithComplete}
 import akka.stream.{Materializer, OverflowStrategy}
 import akka.util.ByteString
@@ -11,7 +12,7 @@ import dev.langchain4j.mcp.client.{McpBlobResourceContents, McpResourceContents,
 import dev.langchain4j.model.chat.request.json.JsonSchemaElement
 import otoroshi.auth.OAuth2ModuleConfig
 import otoroshi.env.Env
-import otoroshi.models.{InHeader, InQueryParam, JwtTokenLocation, LocalJwtVerifier}
+import otoroshi.models.{InHeader, InQueryParam, JWKSAlgoSettings, JwtTokenLocation, LocalJwtVerifier}
 import otoroshi.next.plugins.{OIDCAuthToken, OIDCAuthTokenConfig, OIDCJwtVerifierConfig}
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
@@ -1460,3 +1461,152 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
   }
 }
 
+case class McpProtectedResourceMetadataConfig(
+  authModuleRef: Option[String] = None,
+  resource: Option[String] = None,
+  scopesSupported: Option[Seq[String]] = None,
+  bearerMethodsSupported: Seq[String] = Seq("header", "query"),
+  resourceDocumentation: Option[String] = None,
+) extends NgPluginConfig {
+  def json: JsValue = McpProtectedResourceMetadataConfig.format.writes(this)
+}
+
+object McpProtectedResourceMetadataConfig {
+  val configFlow: Seq[String] = Seq(
+    "auth_module_ref",
+    "resource",
+    "scopes_supported",
+    "bearer_methods_supported",
+    "resource_documentation",
+  )
+  val configSchema: Option[JsObject] = Some(Json.obj(
+    "auth_module_ref" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "Auth. module",
+      "props" -> Json.obj(
+        "optionsFrom"        -> "/bo/api/proxy/apis/security.otoroshi.io/v1/auth-modules",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id"
+        )
+      )
+    ),
+    "resource" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Resource identifier"
+    ),
+    "scopes_supported" -> Json.obj(
+      "type"  -> "string",
+      "array" -> true,
+      "label" -> "Scopes supported (override)"
+    ),
+    "bearer_methods_supported" -> Json.obj(
+      "type"  -> "string",
+      "array" -> true,
+      "label" -> "Bearer methods supported"
+    ),
+    "resource_documentation" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Resource documentation URL"
+    ),
+  ))
+  val default = McpProtectedResourceMetadataConfig()
+  val format = new Format[McpProtectedResourceMetadataConfig] {
+    override def writes(o: McpProtectedResourceMetadataConfig): JsValue = Json.obj(
+      "auth_module_ref" -> o.authModuleRef.map(_.json).getOrElse(JsNull).asValue,
+      "resource" -> o.resource.map(_.json).getOrElse(JsNull).asValue,
+      "scopes_supported" -> o.scopesSupported.map(s => JsArray(s.map(_.json))).getOrElse(JsNull).asValue,
+      "bearer_methods_supported" -> o.bearerMethodsSupported,
+      "resource_documentation" -> o.resourceDocumentation.map(_.json).getOrElse(JsNull).asValue,
+    )
+    override def reads(json: JsValue): JsResult[McpProtectedResourceMetadataConfig] = Try {
+      McpProtectedResourceMetadataConfig(
+        authModuleRef = json.select("auth_module_ref").asOptString,
+        resource = json.select("resource").asOptString.filter(_.trim.nonEmpty),
+        scopesSupported = json.select("scopes_supported").asOpt[Seq[String]].filter(_.nonEmpty),
+        bearerMethodsSupported = json.select("bearer_methods_supported").asOpt[Seq[String]].getOrElse(Seq("header", "query")),
+        resourceDocumentation = json.select("resource_documentation").asOptString.filter(_.trim.nonEmpty),
+      )
+    } match {
+      case Failure(exception) => JsError(exception.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+  }
+}
+
+class McpProtectedResourceMetadata extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - MCP Protected Resource Metadata document"
+  override def description: Option[String] = "Exposes the OAuth 2.0 Protected Resource Metadata (RFC 9728) document for MCP endpoints".some
+
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(McpProtectedResourceMetadataConfig.default)
+
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = McpProtectedResourceMetadataConfig.configFlow
+  override def configSchema: Option[JsObject] = McpProtectedResourceMetadataConfig.configSchema
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'MCP Protected Resource Metadata' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(McpProtectedResourceMetadataConfig.format).getOrElse(McpProtectedResourceMetadataConfig.default)
+    config.authModuleRef match {
+      case None =>
+        NgProxyEngineError.NgResultProxyEngineError(
+          Results.BadRequest(Json.obj("error" -> "no auth. module configured"))
+        ).leftf
+      case Some(authModuleId) =>
+        env.proxyState.authModule(authModuleId) match {
+          case None =>
+            NgProxyEngineError.NgResultProxyEngineError(
+              Results.BadRequest(Json.obj("error" -> "auth. module not found"))
+            ).leftf
+          case Some(m) =>
+            m match {
+              case oidcModule: OAuth2ModuleConfig => {
+                val resource = config.resource.getOrElse(s"${ctx.rawRequest.theProtocol}://${ctx.rawRequest.theHost}")
+                val authorizationServer = Uri(oidcModule.authorizeUrl).copy(path = Uri.Path./).toString()
+                val scopes = config.scopesSupported.getOrElse {
+                  oidcModule.scope.split("\\s+").filter(_.nonEmpty).toSeq
+                }
+                val jwksUri = oidcModule.jwtVerifier.flatMap {
+                  case jwks: JWKSAlgoSettings => Some(jwks.url)
+                  case _ => None
+                }
+                var prmJson = Json.obj(
+                  "resource" -> resource,
+                  "bearer_methods_supported" -> config.bearerMethodsSupported,
+                )
+                prmJson = prmJson ++ Json.obj("authorization_servers" -> Json.arr(authorizationServer))
+                if (scopes.nonEmpty) {
+                  prmJson = prmJson ++ Json.obj("scopes_supported" -> scopes)
+                }
+                if (jwksUri.isDefined) {
+                  prmJson = prmJson ++ Json.obj("jwks_uri" -> jwksUri.get)
+                }
+                if (config.resourceDocumentation.isDefined) {
+                  prmJson = prmJson ++ Json.obj("resource_documentation" -> config.resourceDocumentation.get)
+                }
+                BackendCallResponse(
+                  NgPluginHttpResponse.fromResult(Results.Ok(prmJson).as("application/json")),
+                  None
+                ).rightf
+              }
+              case _ =>
+                NgProxyEngineError.NgResultProxyEngineError(
+                  Results.BadRequest(Json.obj("error" -> "auth. module is not an OAuth2/OIDC module"))
+                ).leftf
+            }
+        }
+    }
+  }
+}
