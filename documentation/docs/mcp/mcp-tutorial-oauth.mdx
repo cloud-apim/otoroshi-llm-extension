@@ -6,16 +6,15 @@ import Terminal from '@site/src/components/Terminal';
 
 # Tutorial: OAuth-protected MCP server with geocoding tools
 
-In this tutorial, you will build a complete, production-ready MCP server that exposes geocoding tools from the French national geocoding API ([Géoplateforme IGN](https://data.geopf.fr/geocodage/)). The server will be protected with OAuth 2.0 using Otoroshi's OIDC JWT verification and will expose the standard `.well-known/oauth-protected-resource` discovery document.
+In this tutorial, you will build a complete, production-ready MCP server that exposes geocoding tools from the French national geocoding API ([Géoplateforme IGN](https://data.geopf.fr/geocodage/)). The server will be protected with OAuth 2.0 using the built-in `enforceOAuth` option of the MCP plugin and will expose the standard `.well-known/oauth-protected-resource` discovery document via the dedicated `McpProtectedResourceMetadata` plugin.
 
 ## What you will build
 
 - **2 tool functions** using HTTP backends that call the IGN geocoding API (no API key required)
   - `geocode_address` — convert a French address into GPS coordinates
   - `reverse_geocode` — find the nearest address from GPS coordinates
-- **1 MCP server route** exposing these tools via the MCP HTTP transport
-- **OAuth 2.0 protection** using Otoroshi's `OIDCJwtVerifier` plugin with Keycloak
-- **OAuth Protected Resource metadata** served at `/.well-known/oauth-protected-resource`
+- **1 MCP server route** exposing these tools via the MCP HTTP transport with built-in OAuth 2.0 protection
+- **OAuth Protected Resource metadata** automatically derived from your OIDC auth module and served at `/.well-known/oauth-protected-resource`
 
 ## Prerequisites
 
@@ -29,14 +28,14 @@ In this tutorial, you will build a complete, production-ready MCP server that ex
                                 │         Otoroshi Route           │
                                 │   mcp-geocoding.oto.tools        │
    MCP Client ──── request ────►│                                  │
-                                │  1. StaticResponse               │
+                                │  1. McpProtectedResourceMetadata │
                                 │     (.well-known/oauth-pr...     │
+                                │     auto-generated from OIDC)    │
                                 │                                  │
-                                │  2. OIDCJwtVerifier              │
-                                │     (validates Bearer token)     │
-                                │                                  │
-                                │  3. McpRespEndpoint              │
-                                │     (MCP HTTP transport)         │
+                                │  2. McpRespEndpoint              │
+                                │     enforce_oauth: true          │
+                                │     (validates Bearer token +    │
+                                │      MCP HTTP transport)         │
                                 │         │                        │
                                 └─────────┼────────────────────────┘
                                           │
@@ -192,11 +191,10 @@ curl "https://data.geopf.fr/geocodage/reverse?lat=48.8584&lon=2.2945&limit=1"
 
 Create a new route in Otoroshi that exposes the tool functions as an MCP HTTP server, protected by OAuth 2.0.
 
-This route uses three plugins:
+This route uses two plugins:
 
-1. **StaticResponse** — serves the `.well-known/oauth-protected-resource` document (unauthenticated)
-2. **OIDCJwtVerifier** — validates the Bearer token on all other paths (returns `401` with `WWW-Authenticate` header if invalid)
-3. **McpRespEndpoint** — handles MCP protocol requests
+1. **McpProtectedResourceMetadata** — serves the [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) Protected Resource Metadata document at `/.well-known/oauth-protected-resource`, automatically derived from your OIDC auth module (authorization server URL, JWKS URI, scopes)
+2. **McpRespEndpoint** — handles MCP protocol requests with built-in OAuth enforcement: validates the Bearer token using the same auth module and returns a `401` with `WWW-Authenticate` header pointing to the PRM document if the token is missing or invalid
 
 ```js
 {
@@ -264,35 +262,13 @@ This route uses three plugins:
     {
       "enabled": true,
       "debug": false,
-      "plugin": "cp:otoroshi.next.plugins.StaticResponse",
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpProtectedResourceMetadata",
       "include": ["/.well-known/oauth-protected-resource"],
       "exclude": [],
       "config": {
-        "status": 200,
-        "headers": {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*"
-        },
-        "body": "{\"resource\":\"http://mcp-geocoding.oto.tools:8080/mcp\",\"authorization_servers\":[\"https://your-keycloak.example.com/realms/mcp\"],\"scopes_supported\":[\"openid\",\"mcp:tools\",\"mcp:resources\"],\"bearer_methods_supported\":[\"header\"],\"resource_documentation\":\"http://mcp-geocoding.oto.tools:8080/docs\"}"
-      },
-      "bound_listeners": [],
-      "plugin_index": {}
-    },
-    {
-      "enabled": true,
-      "debug": false,
-      "plugin": "cp:otoroshi.next.plugins.OIDCJwtVerifier",
-      "include": [],
-      "exclude": ["/.well-known/oauth-protected-resource"],
-      "config": {
-        "ref": "auth_mod_keycloak-mcp",
-        "user": true,
-        "custom_response": true,
-        "custom_response_status": 401,
-        "custom_response_headers": {
-          "WWW-Authenticate": "Bearer realm=\"mcp\", resource_metadata=\"http://mcp-geocoding.oto.tools:8080/.well-known/oauth-protected-resource\""
-        },
-        "custom_response_body": "{\"error\":\"unauthorized\",\"error_description\":\"A valid Bearer access token is required to access this MCP server\"}"
+        "auth_module_ref": "auth_mod_keycloak-mcp",
+        "scopes_supported": ["openid", "mcp:tools", "mcp:resources"],
+        "bearer_methods_supported": ["header", "query"]
       },
       "bound_listeners": [],
       "plugin_index": {}
@@ -301,11 +277,13 @@ This route uses three plugins:
       "enabled": true,
       "debug": false,
       "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpRespEndpoint",
-      "include": [],
+      "include": ["/mcp"],
       "exclude": ["/.well-known/oauth-protected-resource"],
       "config": {
         "name": "mcp-geocoding",
         "version": "1.0.0",
+        "enforce_oauth": true,
+        "auth_module_ref": "auth_mod_keycloak-mcp",
         "refs": [
           "tool-function_geocode-address",
           "tool-function_reverse-geocode"
@@ -322,31 +300,43 @@ This route uses three plugins:
 
 ### Key configuration details
 
-#### StaticResponse plugin
+#### McpProtectedResourceMetadata plugin
 
-This plugin serves the [OAuth Protected Resource metadata](https://datatracker.ietf.org/doc/html/rfc9728) at `/.well-known/oauth-protected-resource`. The `include` field restricts it to only this path.
+This plugin serves the [OAuth Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) document at `/.well-known/oauth-protected-resource`. Instead of hardcoding the metadata as a static JSON string, it **automatically derives** the document from your OIDC auth module:
 
-```js
+| Field | Source | Description |
+|-------|--------|-------------|
+| `resource` | Auto (request URL) | The resource identifier. Defaults to the current protocol and host (e.g. `http://mcp-geocoding.oto.tools:8080`). Can be overridden in config. |
+| `authorization_servers` | Auth module `oidConfig` | Derived from the OIDC discovery URL by stripping `/.well-known/openid-configuration` |
+| `scopes_supported` | Config override or auth module `scope` | If `scopes_supported` is set in the plugin config, it is used. Otherwise the scopes are extracted from the auth module's `scope` field. |
+| `jwks_uri` | Auth module `jwtVerifier` | Extracted from the JWKS URL in the auth module's JWT verifier settings |
+| `bearer_methods_supported` | Config | Defaults to `["header", "query"]` |
+
+The resulting document looks like:
+
+```json
 {
-  "resource": "http://mcp-geocoding.oto.tools:8080/mcp",
+  "resource": "http://mcp-geocoding.oto.tools:8080",
+  "bearer_methods_supported": ["header", "query"],
   "authorization_servers": ["https://your-keycloak.example.com/realms/mcp"],
   "scopes_supported": ["openid", "mcp:tools", "mcp:resources"],
-  "bearer_methods_supported": ["header"],
-  "resource_documentation": "http://mcp-geocoding.oto.tools:8080/docs"
+  "jwks_uri": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/certs"
 }
 ```
 
-This document tells MCP clients how to authenticate — which authorization server to use and which scopes to request.
+This document tells MCP clients how to authenticate — which authorization server to use, which scopes to request, and where to find the public keys for token verification.
 
-#### OIDCJwtVerifier plugin
+:::tip
+If you change your OIDC provider or its configuration, the PRM document updates automatically — no need to manually edit a static JSON body.
+:::
+
+#### McpRespEndpoint plugin (with OAuth enforcement)
 
 | Field | Value | Description |
 |-------|-------|-------------|
-| `ref` | `auth_mod_keycloak-mcp` | References the OIDC auth module created in step 1 |
-| `user` | `true` | Extracts the user profile from the JWT token, making user identity available downstream |
-| `exclude` | `["/.well-known/oauth-protected-resource"]` | The discovery endpoint must be accessible without authentication |
-| `custom_response` | `true` | Enables a custom 401 response |
-| `custom_response_headers` | `WWW-Authenticate: Bearer ...` | Returns the standard WWW-Authenticate header pointing to the resource metadata |
+| `enforce_oauth` | `true` | Enables built-in OAuth 2.0 token validation on all MCP requests |
+| `auth_module_ref` | `auth_mod_keycloak-mcp` | References the OIDC auth module created in step 1. The plugin uses its JWKS settings to verify Bearer tokens. |
+| `exclude` | `["/.well-known/oauth-protected-resource"]` | The discovery endpoint is handled by the McpProtectedResourceMetadata plugin |
 
 When a request arrives without a valid token, the plugin returns:
 
@@ -356,10 +346,10 @@ WWW-Authenticate: Bearer realm="mcp",
   resource_metadata="http://mcp-geocoding.oto.tools:8080/.well-known/oauth-protected-resource"
 Content-Type: application/json
 
-{"error":"unauthorized","error_description":"A valid Bearer access token is required to access this MCP server"}
+{"error":"unauthorized"}
 ```
 
-This follows the [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) standard, enabling MCP clients to automatically discover the authorization server and obtain a token.
+The `resource_metadata` URL in the `WWW-Authenticate` header is automatically constructed from the request's protocol and host, pointing to the path served by the McpProtectedResourceMetadata plugin. This follows the [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) standard, enabling MCP clients to automatically discover the authorization server and obtain a token.
 
 ## Step 4: Test the MCP server
 
@@ -373,11 +363,11 @@ Expected response:
 
 ```json
 {
-  "resource": "http://mcp-geocoding.oto.tools:8080/mcp",
+  "resource": "http://mcp-geocoding.oto.tools:8080",
+  "bearer_methods_supported": ["header", "query"],
   "authorization_servers": ["https://your-keycloak.example.com/realms/mcp"],
   "scopes_supported": ["openid", "mcp:tools", "mcp:resources"],
-  "bearer_methods_supported": ["header"],
-  "resource_documentation": "http://mcp-geocoding.oto.tools:8080/docs"
+  "jwks_uri": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/certs"
 }
 ```
 
@@ -393,7 +383,7 @@ Expected response:
 < HTTP/1.1 401 Unauthorized
 < WWW-Authenticate: Bearer realm="mcp", resource_metadata="http://mcp-geocoding.oto.tools:8080/.well-known/oauth-protected-resource"
 
-{"error":"unauthorized","error_description":"A valid Bearer access token is required to access this MCP server"}
+{"error":"unauthorized"}
 ```
 
 ### 3. Obtain an access token from Keycloak
@@ -517,6 +507,8 @@ MCP Client                           Otoroshi                          Keycloak
     │                                    │                                │
     ├── POST /mcp ───────────────────────►                                │
     │   (no token)                       │                                │
+    │                          McpRespEndpoint                            │
+    │                          (enforce_oauth)                            │
     │                                    │                                │
     ◄── 401 Unauthorized ────────────────┤                                │
     │   WWW-Authenticate: Bearer         │                                │
@@ -524,6 +516,8 @@ MCP Client                           Otoroshi                          Keycloak
     │   known/oauth-protected-resource"  │                                │
     │                                    │                                │
     ├── GET /.well-known/oauth-pr... ────►                                │
+    │                     McpProtectedResourceMetadata                    │
+    │                     (auto-generated from OIDC)                      │
     │                                    │                                │
     ◄── 200 OK ──────────────────────────┤                                │
     │   { authorization_servers: [...] } │                                │
@@ -535,6 +529,8 @@ MCP Client                           Otoroshi                          Keycloak
     │                                    │                                │
     ├── POST /mcp ───────────────────────►                                │
     │   Authorization: Bearer <token>    │                                │
+    │                          McpRespEndpoint                            │
+    │                          (enforce_oauth)                            │
     │                                    ├── verify JWT (JWKS) ──────────►│
     │                                    ◄── OK ──────────────────────────┤
     │                                    │                                │
@@ -635,3 +631,5 @@ npx @modelcontextprotocol/inspector \
 - **Add MCP connectors**: Combine your HTTP tool functions with [MCP connectors](/docs/mcp/mcp-connectors) by adding connector IDs to the `mcp_refs` array
 - **Fine-tune access control**: Use the [MCP plugin filters](/docs/mcp/mcp-plugins#filtering-at-the-plugin-level) to control which tools are exposed to which clients
 - **Connect to an LLM provider**: Attach these same tool functions to an [LLM provider](/docs/function-calling/overview#provider-configuration) so the LLM can call them during chat completions
+- **Custom resource identifier**: Set the `resource` field in the McpProtectedResourceMetadata config to override the auto-detected value (useful when behind a reverse proxy or load balancer)
+- **Custom scopes**: Override `scopes_supported` in the McpProtectedResourceMetadata config to advertise specific scopes (e.g., `["openid", "mcp:tools", "mcp:resources"]`) instead of using all scopes from the auth module
