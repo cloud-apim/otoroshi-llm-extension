@@ -285,12 +285,14 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
       val headers = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).getOrElse(Map.empty[String, String])
       ctx.attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
         case Some(oldValue @ JsObject(_)) => {
-          oldValue ++ Json.obj("ai-consumer-rate-limit" -> Json.obj(
+          val entry = Json.obj(
             "max_tokens" -> headers.get("X-Llm-Ratelimit-Max-Tokens").map(_.toInt).getOrElse(-1).json,
             "window_millis" -> headers.get("X-Llm-Ratelimit-Window-Millis").map(_.toInt).getOrElse(-1).json,
             "consumed_tokens" -> headers.get("X-Llm-Ratelimit-Consumed-Tokens").map(_.toInt).getOrElse(-1).json,
             "remaining_tokens" -> headers.get("X-Llm-Ratelimit-Remaining-Tokens").map(_.toInt).getOrElse(-1).json,
-          ))
+          )
+          val arr = oldValue.select("ai-consumer-rate-limit").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+          oldValue ++ Json.obj("ai-consumer-rate-limit" -> (arr :+ entry))
         }
         case _ => Json.obj()
       }
@@ -306,12 +308,14 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
       val headers = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).getOrElse(Map.empty[String, String])
       ctx.attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
         case Some(oldValue @ JsObject(_)) => {
-          oldValue ++ Json.obj("ai-consumer-rate-limit" -> Json.obj(
+          val entry = Json.obj(
             "max_tokens" -> headers.get("X-Llm-Ratelimit-Max-Tokens").map(_.toInt).getOrElse(-1).json,
             "window_millis" -> headers.get("X-Llm-Ratelimit-Window-Millis").map(_.toInt).getOrElse(-1).json,
             "consumed_tokens" -> headers.get("X-Llm-Ratelimit-Consumed-Tokens").map(_.toInt).getOrElse(-1).json,
             "remaining_tokens" -> headers.get("X-Llm-Ratelimit-Remaining-Tokens").map(_.toInt).getOrElse(-1).json,
-          ))
+          )
+          val arr = oldValue.select("ai-consumer-rate-limit").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+          oldValue ++ Json.obj("ai-consumer-rate-limit" -> (arr :+ entry))
         }
         case _ => Json.obj()
       }
