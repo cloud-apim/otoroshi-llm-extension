@@ -284,15 +284,13 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     updateQuotas(ctx, config).map { _ =>
       val headers = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).getOrElse(Map.empty[String, String])
       ctx.attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-        case Some(obj @ JsObject(_)) => {
-          val arr = obj.select("ai").asOpt[List[JsObject]].getOrElse(List.empty)
-          val head = arr.headOption.map(_.as[JsObject] ++ Json.obj("consumer_rate_limit" -> Json.obj(
+        case Some(oldValue @ JsObject(_)) => {
+          oldValue ++ Json.obj("ai-consumer-rate-limit" -> Json.obj(
             "max_tokens" -> headers.get("X-Llm-Ratelimit-Max-Tokens").map(_.toInt).getOrElse(-1).json,
             "window_millis" -> headers.get("X-Llm-Ratelimit-Window-Millis").map(_.toInt).getOrElse(-1).json,
             "consumed_tokens" -> headers.get("X-Llm-Ratelimit-Consumed-Tokens").map(_.toInt).getOrElse(-1).json,
             "remaining_tokens" -> headers.get("X-Llm-Ratelimit-Remaining-Tokens").map(_.toInt).getOrElse(-1).json,
-          )))
-          Json.obj("ai" -> JsArray(head.toSeq ++ arr.drop(1)))
+          ))
         }
         case _ => Json.obj()
       }
@@ -307,15 +305,13 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     updateQuotas(ctx, config).map { _ =>
       val headers = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).getOrElse(Map.empty[String, String])
       ctx.attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
-        case Some(obj @ JsObject(_)) => {
-          val arr = obj.select("ai").asOpt[List[JsObject]].getOrElse(List.empty)
-          val head = arr.headOption.map(_.as[JsObject] ++ Json.obj("consumer_rate_limit" -> Json.obj(
+        case Some(oldValue @ JsObject(_)) => {
+          oldValue ++ Json.obj("ai-consumer-rate-limit" -> Json.obj(
             "max_tokens" -> headers.get("X-Llm-Ratelimit-Max-Tokens").map(_.toInt).getOrElse(-1).json,
             "window_millis" -> headers.get("X-Llm-Ratelimit-Window-Millis").map(_.toInt).getOrElse(-1).json,
             "consumed_tokens" -> headers.get("X-Llm-Ratelimit-Consumed-Tokens").map(_.toInt).getOrElse(-1).json,
             "remaining_tokens" -> headers.get("X-Llm-Ratelimit-Remaining-Tokens").map(_.toInt).getOrElse(-1).json,
-          )))
-          Json.obj("ai" -> JsArray(head.toSeq ++ arr.drop(1)))
+          ))
         }
         case _ => Json.obj()
       }
