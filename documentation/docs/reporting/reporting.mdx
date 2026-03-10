@@ -142,6 +142,7 @@ In addition to the dedicated `LLMUsageAudit` events, the LLM extension also enri
 | `ai-image` | Image generation, image editing | Image model auditing decorator |
 | `ai-moderation` | Content moderation | Moderation model auditing decorator |
 | `ai-video` | Video generation | Video model auditing decorator |
+| `ai-consumer-rate-limit` | Token rate limiting | [LLM Token Rate Limiting](/docs/cost-optimizations/quotas) plugin |
 
 Each key contains an array of objects, one per LLM call made during the request processing. This allows tracking multiple LLM calls within a single HTTP request (e.g., when using fallbacks or load balancing).
 
@@ -161,14 +162,16 @@ For chat and text completion operations, each provider adds a slug to the `ai` a
 | `deployment_id` | string | Azure OpenAI deployment ID (Azure providers only) |
 | `resource_name` | string | Azure OpenAI resource name (Azure providers only) |
 
-Additionally, the [LLM Token Rate Limiting](/docs/cost-optimizations/quotas) plugin can enrich the first element of the `ai` array with:
+### `ai-consumer-rate-limit` key structure
+
+The [LLM Token Rate Limiting](/docs/cost-optimizations/quotas) plugin adds an `ai-consumer-rate-limit` array to the extra analytics data. Each entry in the array is appended during response or error transformation, with the following fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `consumer_rate_limit.max_tokens` | number | Maximum allowed tokens in the window |
-| `consumer_rate_limit.window_millis` | number | Rate limit window duration in milliseconds |
-| `consumer_rate_limit.consumed_tokens` | number | Tokens consumed in the current window |
-| `consumer_rate_limit.remaining_tokens` | number | Remaining tokens in the current window |
+| `max_tokens` | number | Maximum allowed tokens in the window |
+| `window_millis` | number | Rate limit window duration in milliseconds |
+| `consumed_tokens` | number | Tokens consumed in the current window |
+| `remaining_tokens` | number | Remaining tokens in the current window |
 
 ### `ai-embedding` key structure
 
@@ -235,13 +238,15 @@ Additionally, the [LLM Token Rate Limiting](/docs/cost-optimizations/quotas) plu
         "prompt_tokens": 11,
         "generation_tokens": 18,
         "reasoning_tokens": 0
-      },
-      "consumer_rate_limit": {
-        "max_tokens": 1000,
-        "window_millis": 60000,
-        "consumed_tokens": 29,
-        "remaining_tokens": 971
       }
+    }
+  ],
+  "ai-consumer-rate-limit": [
+    {
+      "max_tokens": 1000,
+      "window_millis": 60000,
+      "consumed_tokens": 29,
+      "remaining_tokens": 971
     }
   ]
 }
