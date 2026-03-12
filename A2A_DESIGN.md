@@ -1,36 +1,36 @@
 # A2A (Agent-to-Agent) Protocol - Design Document
 
-## Contexte
+## Context
 
-Ce document décrit le design pour l'intégration du protocole A2A (Agent-to-Agent, initié par Google, maintenant sous Linux Foundation) dans l'extension LLM d'Otoroshi. L'objectif est double :
+This document describes the design for integrating the A2A (Agent-to-Agent) protocol, initiated by Google and now under the Linux Foundation, into the Otoroshi LLM extension. The goal is twofold:
 
-1. **A2A Server** : exposer des agents locaux (définis via `AgentConfig` ou des workflows) comme des serveurs A2A accessibles par des clients/agents externes
-2. **A2A Connector** : se connecter à des agents A2A distants et les utiliser comme des outils (tools) dans les agents locaux, de la même manière que les `McpConnector`
+1. **A2A Server**: expose local agents (defined via `AgentConfig` or workflows) as A2A servers accessible by external clients/agents
+2. **A2A Connector**: connect to remote A2A agents and use them as tools within local agents, similar to `McpConnector`
 
 ---
 
-## Le protocole A2A en bref
+## The A2A protocol in a nutshell
 
-### Principes fondamentaux
+### Core principles
 
-- Les agents communiquent sans exposer leur état interne, mémoire, outils ou plans
-- La découverte se fait via des **Agent Cards** (documents JSON de métadonnées)
-- La communication utilise **JSON-RPC 2.0 sur HTTPS**
-- Le travail est organisé autour de **Tasks** (unités de travail avec état) et **Messages** (tours de conversation individuels)
-- Les **contextId** regroupent logiquement plusieurs Tasks pour la cohérence multi-turn
+- Agents communicate without exposing their internal state, memory, tools, or plans
+- Discovery happens through **Agent Cards** (JSON metadata documents)
+- Communication uses **JSON-RPC 2.0 over HTTPS**
+- Work is organized around **Tasks** (stateful work units) and **Messages** (individual conversation turns)
+- **contextId** logically groups multiple Tasks for multi-turn coherence
 
 ### Agent Card
 
-Publié à l'URI bien connue : `https://{domain}/.well-known/agent.json`
+Published at the well-known URI: `https://{domain}/.well-known/agent.json`
 
 ```json
 {
-  "name": "Mon Agent",
-  "description": "Description de l'agent",
+  "name": "My Agent",
+  "description": "Agent description",
   "version": "1.0.0",
   "supportedInterfaces": [
     {
-      "url": "https://mon-agent.example.com/a2a",
+      "url": "https://my-agent.example.com/a2a",
       "protocolBinding": "JSONRPC",
       "protocolVersion": "0.3.0"
     }
@@ -58,9 +58,9 @@ Publié à l'URI bien connue : `https://{domain}/.well-known/agent.json`
     {
       "id": "math-tutor",
       "name": "Math Tutor",
-      "description": "Aide avec les problèmes de mathématiques",
+      "description": "Help with math problems",
       "tags": ["math", "tutoring"],
-      "examples": ["Résous cette équation : 2x + 3 = 7"],
+      "examples": ["Solve this equation: 2x + 3 = 7"],
       "inputModes": ["text/plain"],
       "outputModes": ["text/plain"]
     }
@@ -68,20 +68,20 @@ Publié à l'URI bien connue : `https://{domain}/.well-known/agent.json`
 }
 ```
 
-### Méthodes JSON-RPC
+### JSON-RPC Methods
 
-| Méthode | Description | Priorité |
+| Method | Description | Priority |
 |---|---|---|
-| `message/send` | Envoi synchrone d'un message, retourne un Task ou Message | **P0** |
-| `message/stream` | Envoi avec streaming SSE | **P0** |
-| `tasks/get` | Récupérer l'état d'une tâche | **P0** |
-| `tasks/cancel` | Annuler une tâche active | **P1** |
-| `tasks/list` | Lister les tâches (avec filtres) | **P2** |
-| `tasks/resubscribe` | Reprendre le streaming d'une tâche existante | **P2** |
-| `tasks/pushNotificationConfig/*` | Gestion des webhooks de notification | **P3** |
-| `agent/getAuthenticatedExtendedCard` | Agent Card étendu avec auth | **P3** |
+| `message/send` | Synchronous message send, returns a Task or Message | **P0** |
+| `message/stream` | Send with SSE streaming | **P0** |
+| `tasks/get` | Retrieve task state | **P0** |
+| `tasks/cancel` | Cancel an active task | **P1** |
+| `tasks/list` | List tasks (with filters) | **P2** |
+| `tasks/resubscribe` | Resume streaming for an existing task | **P2** |
+| `tasks/pushNotificationConfig/*` | Notification webhook management | **P3** |
+| `agent/getAuthenticatedExtendedCard` | Extended Agent Card with auth | **P3** |
 
-### Cycle de vie des Tasks
+### Task lifecycle
 
 ```
             ┌──────────┐
@@ -101,24 +101,24 @@ Publié à l'URI bien connue : `https://{domain}/.well-known/agent.json`
             └────────────────┘
 ```
 
-**États terminaux** : `completed`, `failed`, `canceled`, `rejected`
-**États interactifs** : `input_required`, `auth_required` (le client peut renvoyer un message)
+**Terminal states**: `completed`, `failed`, `canceled`, `rejected`
+**Interactive states**: `input_required`, `auth_required` (client can send a follow-up message)
 
-### Format des Messages et Parts
+### Message and Part format
 
 ```json
 {
   "messageId": "msg-001",
   "role": "user",
   "parts": [
-    {"type": "text", "text": "Bonjour, aide-moi avec ce problème"},
+    {"type": "text", "text": "Hello, help me with this problem"},
     {"type": "file", "file": {"uri": "https://...", "mimeType": "application/pdf"}},
     {"type": "data", "data": {"key": "value"}}
   ]
 }
 ```
 
-### Format d'une requête JSON-RPC `message/send`
+### JSON-RPC `message/send` request format
 
 ```json
 {
@@ -129,7 +129,7 @@ Publié à l'URI bien connue : `https://{domain}/.well-known/agent.json`
     "message": {
       "messageId": "msg-001",
       "role": "user",
-      "parts": [{"type": "text", "text": "Planifie un trajet de Paris à Lyon"}],
+      "parts": [{"type": "text", "text": "Plan a route from Paris to Lyon"}],
       "contextId": "ctx-optional",
       "taskId": "task-optional"
     },
@@ -141,7 +141,7 @@ Publié à l'URI bien connue : `https://{domain}/.well-known/agent.json`
 }
 ```
 
-### Format d'une réponse JSON-RPC (Task)
+### JSON-RPC response format (Task)
 
 ```json
 {
@@ -155,7 +155,7 @@ Publié à l'URI bien connue : `https://{domain}/.well-known/agent.json`
       "message": {
         "role": "agent",
         "messageId": "msg-resp-001",
-        "parts": [{"type": "text", "text": "Voici le trajet planifié..."}]
+        "parts": [{"type": "text", "text": "Here is the planned route..."}]
       },
       "timestamp": "2026-03-12T10:00:00.000Z"
     },
@@ -167,77 +167,77 @@ Publié à l'URI bien connue : `https://{domain}/.well-known/agent.json`
 
 ### Streaming (SSE)
 
-Le `message/stream` retourne des Server-Sent Events. Chaque ligne `data:` contient une réponse JSON-RPC complète wrappant un `StreamResponse` qui peut être :
-- `task` : objet Task complet
-- `message` : message intermédiaire
-- `statusUpdate` : `TaskStatusUpdateEvent`
-- `artifactUpdate` : `TaskArtifactUpdateEvent`
+`message/stream` returns Server-Sent Events. Each `data:` line contains a complete JSON-RPC response wrapping a `StreamResponse` which can be:
+- `task`: full Task object
+- `message`: intermediate message
+- `statusUpdate`: `TaskStatusUpdateEvent`
+- `artifactUpdate`: `TaskArtifactUpdateEvent`
 
 ```
-data: {"jsonrpc":"2.0","id":1,"result":{"statusUpdate":{"taskId":"task-123","contextId":"ctx-456","status":{"state":"working","message":{"role":"agent","messageId":"m1","parts":[{"type":"text","text":"Traitement en cours..."}]}}}}}
+data: {"jsonrpc":"2.0","id":1,"result":{"statusUpdate":{"taskId":"task-123","contextId":"ctx-456","status":{"state":"working","message":{"role":"agent","messageId":"m1","parts":[{"type":"text","text":"Processing..."}]}}}}}
 
 data: {"jsonrpc":"2.0","id":1,"result":{"artifactUpdate":{"taskId":"task-123","contextId":"ctx-456","artifact":{"artifactId":"art-1","parts":[{"type":"text","text":"chunk..."}]},"append":true,"lastChunk":false}}}
 
 data: {"jsonrpc":"2.0","id":1,"result":{"statusUpdate":{"taskId":"task-123","contextId":"ctx-456","status":{"state":"completed"}}}}
 ```
 
-### Codes d'erreur A2A
+### A2A error codes
 
-| Erreur | Code JSON-RPC | Description |
+| Error | JSON-RPC Code | Description |
 |---|---|---|
-| TaskNotFoundError | -32001 | Tâche inexistante |
-| TaskNotCancelableError | -32002 | Tâche non annulable |
-| PushNotificationNotSupportedError | -32003 | Notifications push non supportées |
-| UnsupportedOperationError | -32004 | Opération non implémentée |
-| ContentTypeNotSupportedError | -32005 | Type de contenu non supporté |
-| InvalidAgentResponseError | -32006 | Réponse agent invalide |
+| TaskNotFoundError | -32001 | Task does not exist |
+| TaskNotCancelableError | -32002 | Task cannot be canceled |
+| PushNotificationNotSupportedError | -32003 | Push notifications not supported |
+| UnsupportedOperationError | -32004 | Operation not implemented |
+| ContentTypeNotSupportedError | -32005 | Content type not supported |
+| InvalidAgentResponseError | -32006 | Invalid agent response |
 
 ---
 
-## Design proposé
+## Proposed design
 
-### Vue d'ensemble
+### Overview
 
 ```
 ┌───────────────────────────────────────────────────────────────────┐
 │                        Otoroshi                                   │
 │                                                                   │
 │  ┌──────────────────┐    ┌─────────────────────────────────────┐  │
-│  │  A2A Server      │    │  Agents locaux                      │  │
+│  │  A2A Server      │    │  Local agents                       │  │
 │  │  (NgBackendCall) │───▶│  AgentConfig / Workflow             │  │
 │  │                  │    │                                     │  │
 │  │  - Agent Card    │    │  ┌───────────┐  ┌───────────────┐   │  │
 │  │  - message/send  │    │  │ Provider  │  │ A2A Connector │   │  │
-│  │  - message/stream│    │  │ (LLM)     │  │ (tool)        │───┼──┼──▶ Agent A2A distant
+│  │  - message/stream│    │  │ (LLM)     │  │ (tool)        │───┼──┼──▶ Remote A2A Agent
 │  │  - tasks/get     │    │  └───────────┘  └───────────────┘   │  │
 │  │  - tasks/cancel  │    │                                     │  │
 │  └────────┬─────────┘    └─────────────────────────────────────┘  │
 │           │                                                       │
 │  ┌────────▼─────────┐    ┌─────────────────────────────────────┐  │
 │  │  A2AServer Entity│    │  A2AConnector Entity                │  │
-│  │  (config)        │    │  (config connexion distante)        │  │
+│  │  (config)        │    │  (remote connection config)         │  │
 │  └──────────────────┘    └─────────────────────────────────────┘  │
 │                                                                   │
 │  ┌────────────────────────────────────────────────────────────┐   │
 │  │  A2ATask Store (Redis, TTL)                                │   │
-│  │  Stockage des tâches en cours et terminées                 │   │
+│  │  Storage for active and completed tasks                    │   │
 │  └────────────────────────────────────────────────────────────┘   │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-### Partie 1 : A2A Server
+### Part 1: A2A Server
 
-#### Nouvelle entité : `A2AServer`
+#### New entity: `A2AServer`
 
-Stockée en Redis, configurée via l'admin UI. Définit comment un agent est exposé en A2A.
+Stored in Redis, configured via the admin UI. Defines how an agent is exposed as A2A.
 
 ```json
 {
   "id": "a2a-server_xxx",
-  "name": "Mon Agent A2A",
-  "description": "Un agent exposé via le protocole A2A",
+  "name": "My A2A Agent",
+  "description": "An agent exposed via the A2A protocol",
   "tags": [],
   "metadata": {},
 
@@ -253,9 +253,9 @@ Stockée en Redis, configurée via l'admin UI. Définit comment un agent est exp
       {
         "id": "main",
         "name": "Main Skill",
-        "description": "Le skill principal de l'agent",
+        "description": "The agent's main skill",
         "tags": ["general"],
-        "examples": ["Exemple de requête"]
+        "examples": ["Example request"]
       }
     ]
   },
@@ -263,7 +263,7 @@ Stockée en Redis, configurée via l'admin UI. Définit comment un agent est exp
   "backend": {
     "kind": "agent",
     "agent": {
-      "name": "Mon Agent",
+      "name": "My Agent",
       "description": "...",
       "instructions": ["..."],
       "provider": "provider_xxx",
@@ -277,7 +277,7 @@ Stockée en Redis, configurée via l'admin UI. Définit comment un agent est exp
 }
 ```
 
-**Alternative pour le backend** : au lieu d'inline l'`AgentConfig`, on pourrait référencer un workflow :
+**Backend alternative**: instead of inlining the `AgentConfig`, we could reference a workflow:
 
 ```json
 {
@@ -288,7 +288,7 @@ Stockée en Redis, configurée via l'admin UI. Définit comment un agent est exp
 }
 ```
 
-Ou même référencer une route existante (pour réutiliser un LLMProxy déjà configuré) :
+Or even reference an existing route (to reuse an already configured LLMProxy):
 
 ```json
 {
@@ -299,24 +299,24 @@ Ou même référencer une route existante (pour réutiliser un LLMProxy déjà c
 }
 ```
 
-**Question ouverte** : est-ce qu'on veut supporter les 3 modes (agent inline, workflow, route) ou commencer simple avec juste agent inline + workflow ?
+**Open question**: do we want to support all 3 modes (inline agent, workflow, route) or start simple with just inline agent + workflow?
 
-#### Plugin : `A2AServerPlugin` (NgBackendCall)
+#### Plugin: `A2AServerPlugin` (NgBackendCall)
 
-Ce plugin serait attaché à une route Otoroshi et gérerait toutes les requêtes A2A.
+This plugin would be attached to an Otoroshi route and handle all A2A requests.
 
-**Routage interne** :
-- `GET /.well-known/agent.json` → retourne l'Agent Card
-- `POST /` avec `Content-Type: application/json` → dispatch JSON-RPC
+**Internal routing**:
+- `GET /.well-known/agent.json` → returns the Agent Card
+- `POST /` with `Content-Type: application/json` → JSON-RPC dispatch
 
-**Configuration du plugin** :
+**Plugin configuration**:
 ```json
 {
   "ref": "a2a-server_xxx"
 }
 ```
 
-**Logique de dispatch JSON-RPC** :
+**JSON-RPC dispatch logic**:
 
 ```
 method == "message/send"    → handleMessageSend(params)
@@ -324,14 +324,14 @@ method == "message/stream"  → handleMessageStream(params)
 method == "tasks/get"       → handleTaskGet(params)
 method == "tasks/cancel"    → handleTaskCancel(params)
 method == "tasks/list"      → handleTaskList(params)
-sinon                       → erreur -32601 (Method not found)
+otherwise                   → error -32601 (Method not found)
 ```
 
-#### Gestion des Tasks
+#### Task management
 
-**Stockage** : en Redis avec un TTL configurable (par défaut 24h). Clé : `{storageRoot}:extensions:{extId}:a2a-tasks:{taskId}`
+**Storage**: in Redis with a configurable TTL (default 24h). Key: `{storageRoot}:extensions:{extId}:a2a-tasks:{taskId}`
 
-**Structure Task en Redis** :
+**Task structure in Redis**:
 
 ```json
 {
@@ -352,40 +352,40 @@ sinon                       → erreur -32601 (Method not found)
 }
 ```
 
-**Question ouverte** : pour les tâches synchrones simples (l'agent répond en un seul appel), est-ce qu'on stocke quand même en Redis ? Ça permettrait le `tasks/get` après coup, mais c'est du overhead pour les cas simples. Option : stocker systématiquement mais avec un TTL court pour les tâches complétées.
+**Open question**: for simple synchronous tasks (agent responds in a single call), should we still store in Redis? It would allow `tasks/get` after the fact, but adds overhead for simple cases. Option: always store but with a short TTL for completed tasks.
 
-#### Flow `message/send`
+#### `message/send` flow
 
 ```
 1. Parse JSON-RPC request
-2. Extraire le message et la configuration
-3. Créer un Task avec état "submitted", stocker en Redis
-4. Mapper les Parts A2A vers des InputChatMessage :
-   - TextPart → contenu texte
-   - FilePart → InputImageContent ou InputFileContent selon le MIME type
-   - DataPart → sérialiser en JSON string
-5. Si taskId fourni dans le message → récupérer la Task existante et ajouter au contexte
-6. Si contextId fourni → récupérer l'historique du contexte
-7. Mettre à jour l'état de la Task à "working"
-8. Appeler l'agent/workflow avec l'input mappé
-9. Mapper la réponse vers des Parts A2A
-10. Mettre à jour la Task à "completed" (ou "failed" en cas d'erreur)
-11. Retourner la réponse JSON-RPC
+2. Extract message and configuration
+3. Create a Task with "submitted" state, store in Redis
+4. Map A2A Parts to InputChatMessage:
+   - TextPart → text content
+   - FilePart → InputImageContent or InputFileContent depending on MIME type
+   - DataPart → serialize as JSON string
+5. If taskId provided in the message → retrieve existing Task and add to context
+6. If contextId provided → retrieve context history
+7. Update Task state to "working"
+8. Call the agent/workflow with the mapped input
+9. Map the response to A2A Parts
+10. Update Task to "completed" (or "failed" on error)
+11. Return JSON-RPC response
 ```
 
-#### Flow `message/stream`
+#### `message/stream` flow
 
 ```
-1-7. Même chose que message/send
-8. Envoyer un SSE statusUpdate avec state="working"
-9. Appeler l'agent/workflow en mode streaming
-10. Pour chaque chunk de réponse, envoyer un SSE artifactUpdate
-11. Envoyer un SSE statusUpdate final avec state="completed"
+1-7. Same as message/send
+8. Send an SSE statusUpdate with state="working"
+9. Call the agent/workflow in streaming mode
+10. For each response chunk, send an SSE artifactUpdate
+11. Send a final SSE statusUpdate with state="completed"
 ```
 
-#### Mapping A2A ↔ ChatMessage
+#### A2A ↔ ChatMessage mapping
 
-**Entrée (A2A → ChatMessage)** :
+**Input (A2A → ChatMessage)**:
 
 ```scala
 // A2A Part → ChatMessage content
@@ -395,27 +395,27 @@ FilePart(bytes, "image/png")→ InputImageContent(base64 = bytes)
 DataPart({...})             → InputTextContent(json.stringify)
 ```
 
-**Sortie (ChatMessage → A2A)** :
+**Output (ChatMessage → A2A)**:
 
 ```scala
 // ChatMessage → A2A Part
 "response text"             → TextPart("response text")
-// Si la réponse contient du JSON structuré, on pourrait aussi générer un DataPart
+// If the response contains structured JSON, we could also generate a DataPart
 ```
 
 ---
 
-### Partie 2 : A2A Connector
+### Part 2: A2A Connector
 
-#### Nouvelle entité : `A2AConnector`
+#### New entity: `A2AConnector`
 
-Similaire à `McpConnector`. Stockée en Redis, permet de se connecter à un agent A2A distant.
+Similar to `McpConnector`. Stored in Redis, allows connecting to a remote A2A agent.
 
 ```json
 {
   "id": "a2a-connector_xxx",
-  "name": "Agent de planification distant",
-  "description": "Connecteur vers un agent A2A de planification",
+  "name": "Remote planning agent",
+  "description": "Connector to a remote A2A planning agent",
   "tags": [],
   "metadata": {},
 
@@ -440,22 +440,22 @@ Similaire à `McpConnector`. Stockée en Redis, permet de se connecter à un age
 }
 ```
 
-**Schémas d'authentification supportés** :
-- `none` : pas d'auth
-- `bearer` : `Authorization: Bearer <token>`
-- `apikey` : clé API dans un header, query param ou cookie configurable
-- `basic` : Basic auth
-- `oauth2_client_credentials` : OAuth2 client credentials flow
-- `custom_headers` : headers personnalisés (pour les cas exotiques)
+**Supported authentication schemes**:
+- `none`: no auth
+- `bearer`: `Authorization: Bearer <token>`
+- `apikey`: API key in a header, query param, or configurable cookie
+- `basic`: Basic auth
+- `oauth2_client_credentials`: OAuth2 client credentials flow
+- `custom_headers`: custom headers (for edge cases)
 
-#### Comment le connector expose les skills comme tools
+#### How the connector exposes skills as tools
 
-Quand un `A2AConnector` est configuré, au démarrage (ou au sync state), on :
-1. Fetch l'Agent Card du serveur distant
-2. Parse les skills
-3. Pour chaque skill, on génère une tool function
+When an `A2AConnector` is configured, on startup (or state sync), we:
+1. Fetch the remote server's Agent Card
+2. Parse the skills
+3. For each skill, generate a tool function
 
-**Mapping Skill → Tool Function** :
+**Skill → Tool Function mapping**:
 
 ```json
 {
@@ -477,15 +477,15 @@ Quand un `A2AConnector` est configuré, au démarrage (ou au sync state), on :
 }
 ```
 
-**Question ouverte** : est-ce qu'on veut un mapping plus sophistiqué des paramètres ? Par exemple, si le skill accepte des `inputModes` spécifiques comme `application/json`, on pourrait enrichir le schéma des paramètres. Pour commencer, un simple champ `message` (texte) semble suffisant.
+**Open question**: do we want more sophisticated parameter mapping? For example, if the skill accepts specific `inputModes` like `application/json`, we could enrich the parameter schema. To start, a simple `message` text field seems sufficient.
 
-#### Exécution d'un appel A2A distant
+#### Remote A2A call execution
 
-Quand un agent local appelle un tool A2A :
+When a local agent calls an A2A tool:
 
 ```
-1. Récupérer le connector et le skill correspondant
-2. Construire la requête JSON-RPC message/send :
+1. Retrieve the connector and corresponding skill
+2. Build the JSON-RPC message/send request:
    {
      "jsonrpc": "2.0",
      "id": 1,
@@ -494,25 +494,25 @@ Quand un agent local appelle un tool A2A :
        "message": {
          "messageId": "<uuid>",
          "role": "user",
-         "parts": [{"type": "text", "text": "<le message>"}]
+         "parts": [{"type": "text", "text": "<the message>"}]
        }
      }
    }
-3. Envoyer la requête HTTP POST vers l'URL du connector
-4. Parser la réponse JSON-RPC
-5. Extraire le texte des Parts de la réponse
-6. Retourner le résultat comme sortie du tool
+3. Send the HTTP POST request to the connector URL
+4. Parse the JSON-RPC response
+5. Extract text from the response Parts
+6. Return the result as tool output
 ```
 
-**Pour le streaming** : si `streaming: true` dans la config du connector, on utilise `message/stream` au lieu de `message/send`. Les SSE sont consommés et le résultat final est retourné.
+**For streaming**: if `streaming: true` in the connector config, we use `message/stream` instead of `message/send`. SSE events are consumed and the final result is returned.
 
-#### Intégration avec les agents
+#### Integration with agents
 
-Les A2A connectors seraient utilisables comme les MCP connectors dans un `AgentConfig` :
+A2A connectors would be usable just like MCP connectors in an `AgentConfig`:
 
 ```json
 {
-  "name": "Mon Agent",
+  "name": "My Agent",
   "provider": "provider_xxx",
   "instructions": ["..."],
   "mcp_connectors": ["mcp-connector_xxx"],
@@ -521,35 +521,35 @@ Les A2A connectors seraient utilisables comme les MCP connectors dans un `AgentC
 }
 ```
 
-Et dans le code de `AgentConfig`, on ajouterait la résolution des a2a_connectors de la même manière que les mcp_connectors.
+In the `AgentConfig` code, we would add A2A connector resolution in the same way as MCP connectors.
 
-#### Cache de l'Agent Card
+#### Agent Card caching
 
-L'Agent Card ne change pas souvent. On peut la cacher avec un TTL configurable (par défaut 5 min). Au sync state, on refresh les Agent Cards de tous les connectors actifs.
+The Agent Card doesn't change often. We can cache it with a configurable TTL (default 5 min). On state sync, we refresh the Agent Cards of all active connectors.
 
-**Question ouverte** : est-ce qu'on refresh l'Agent Card à chaque sync state (toutes les 30s par défaut dans Otoroshi) ? C'est peut-être trop fréquent. Un TTL de cache séparé serait plus adapté.
+**Open question**: should we refresh the Agent Card on every state sync (~30s by default in Otoroshi)? That might be too frequent. A separate cache TTL would be more appropriate.
 
 ---
 
-### Partie 3 : Entités et stockage
+### Part 3: Entities and storage
 
-#### Nouvelles entités à créer
+#### New entities to create
 
-| Entité | Prefix ID | Redis key | Description |
+| Entity | ID Prefix | Redis key | Description |
 |---|---|---|---|
-| `A2AServer` | `a2a-server_` | `...a2a-servers:{id}` | Configuration d'un serveur A2A |
-| `A2AConnector` | `a2a-connector_` | `...a2a-connectors:{id}` | Configuration d'un connecteur A2A |
+| `A2AServer` | `a2a-server_` | `...a2a-servers:{id}` | A2A server configuration |
+| `A2AConnector` | `a2a-connector_` | `...a2a-connectors:{id}` | A2A connector configuration |
 
-Les Tasks A2A ne sont **pas** des entités Otoroshi classiques (pas dans le state sync) car elles sont éphémères. Elles sont stockées directement en Redis avec TTL.
+A2A Tasks are **not** standard Otoroshi entities (not in state sync) as they are ephemeral. They are stored directly in Redis with TTL.
 
-#### Registration dans l'extension
+#### Registration in the extension
 
-Dans `extension.scala`, ajouter :
+In `extension.scala`, add:
 
 ```scala
 override def entities(): Seq[AdminExtensionEntity[EntityLocationSupport]] = {
   Seq(
-    // ... entités existantes ...
+    // ... existing entities ...
     AdminExtensionEntity(A2AServer.resource(env, datastores, states)),
     AdminExtensionEntity(A2AConnector.resource(env, datastores, states)),
   )
@@ -558,7 +558,7 @@ override def entities(): Seq[AdminExtensionEntity[EntityLocationSupport]] = {
 
 #### State management
 
-Dans `AiGatewayExtensionState`, ajouter :
+In `AiGatewayExtensionState`, add:
 
 ```scala
 private val _a2aServers = new UnboundedTrieMap[String, A2AServer]()
@@ -575,203 +575,203 @@ def updateA2AConnectors(values: Seq[A2AConnector]): Unit = { ... }
 
 ---
 
-### Partie 4 : Fichiers à créer/modifier
+### Part 4: Files to create/modify
 
-#### Nouveaux fichiers
+#### New files
 
-| Fichier | Contenu |
+| File | Content |
 |---|---|
-| `entities/a2a.scala` | Entités `A2AServer` et `A2AConnector` avec Format, DataStore, resource() |
-| `plugins/a2a.scala` | Plugin `A2AServerPlugin` (NgBackendCall) |
-| `a2a/a2a.scala` | Modèles A2A (Task, Message, Part, AgentCard, erreurs JSON-RPC) |
-| `a2a/client.scala` | Client HTTP A2A pour les connectors (envoi message/send, message/stream) |
+| `entities/a2a.scala` | `A2AServer` and `A2AConnector` entities with Format, DataStore, resource() |
+| `plugins/a2a.scala` | `A2AServerPlugin` plugin (NgBackendCall) |
+| `a2a/a2a.scala` | A2A models (Task, Message, Part, AgentCard, JSON-RPC errors) |
+| `a2a/client.scala` | A2A HTTP client for connectors (send message/send, message/stream) |
 
-#### Fichiers à modifier
+#### Files to modify
 
-| Fichier | Modification |
+| File | Modification |
 |---|---|
-| `extension.scala` | Ajouter les entités, datastores, state management |
-| `agents/agents.scala` | Ajouter `a2aConnectors` dans `AgentConfig`, résoudre les tools A2A |
-| `workflows.scala` | Enregistrer les nouvelles fonctions workflow si pertinent |
+| `extension.scala` | Add entities, datastores, state management |
+| `agents/agents.scala` | Add `a2aConnectors` to `AgentConfig`, resolve A2A tools |
+| `workflows.scala` | Register new workflow functions if relevant |
 
 ---
 
-### Partie 5 : Sécurité
+### Part 5: Security
 
-#### Côté serveur (A2A Server)
+#### Server side (A2A Server)
 
-La sécurité est gérée par Otoroshi au niveau de la route :
+Security is handled by Otoroshi at the route level:
 - API keys
 - JWT tokens
 - mTLS
 - etc.
 
-L'Agent Card déclare les `securitySchemes` correspondants à la configuration de la route. C'est informatif pour les clients A2A.
+The Agent Card declares `securitySchemes` matching the route configuration. This is informational for A2A clients.
 
-#### Côté connector (A2A Connector)
+#### Connector side (A2A Connector)
 
-Le connector gère l'authentification vers le serveur distant :
-- Le token/credentials sont stockés dans la config du connector
-- Ils sont injectés dans les requêtes HTTP sortantes
-- Support du secret vaulting d'Otoroshi pour ne pas stocker les secrets en clair
+The connector handles authentication to the remote server:
+- Token/credentials are stored in the connector config
+- They are injected into outgoing HTTP requests
+- Support for Otoroshi's secret vaulting to avoid storing secrets in plain text
 
 ---
 
-### Partie 6 : Plan d'implémentation
+### Part 6: Implementation plan
 
-#### Phase 1 : Fondations (MVP)
+#### Phase 1: Foundations (MVP)
 
-1. **Modèles A2A** (`a2a/a2a.scala`)
-   - Case classes pour Task, Message, Part, AgentCard, Status
-   - Sérialization/désérialization JSON
-   - Erreurs JSON-RPC A2A
+1. **A2A models** (`a2a/a2a.scala`)
+   - Case classes for Task, Message, Part, AgentCard, Status
+   - JSON serialization/deserialization
+   - A2A JSON-RPC errors
 
-2. **Entité A2AServer** (`entities/a2a.scala`)
+2. **A2AServer entity** (`entities/a2a.scala`)
    - Case class, Format, DataStore, resource()
-   - Registration dans l'extension
+   - Registration in the extension
 
-3. **Plugin A2AServerPlugin** (`plugins/a2a.scala`)
-   - Dispatch JSON-RPC
-   - `message/send` synchrone uniquement
-   - Mapping A2A ↔ ChatMessage basique (TextPart seulement)
-   - Endpoint Agent Card
-   - Stockage des Tasks en Redis
+3. **A2AServerPlugin** (`plugins/a2a.scala`)
+   - JSON-RPC dispatch
+   - Synchronous `message/send` only
+   - Basic A2A ↔ ChatMessage mapping (TextPart only)
+   - Agent Card endpoint
+   - Task storage in Redis
 
-4. **Tests unitaires** pour les modèles et le mapping
+4. **Unit tests** for models and mapping
 
-#### Phase 2 : Streaming et multi-modal
+#### Phase 2: Streaming and multi-modal
 
-5. **`message/stream`** avec SSE
-   - Réutiliser le mécanisme de streaming existant des providers
-   - Mapping vers les événements SSE A2A
+5. **`message/stream`** with SSE
+   - Reuse the existing streaming mechanism from providers
+   - Map to A2A SSE events
 
-6. **Support multi-modal**
+6. **Multi-modal support**
    - FilePart (images, documents)
-   - DataPart (données structurées)
+   - DataPart (structured data)
 
-7. **`tasks/get` et `tasks/cancel`**
+7. **`tasks/get` and `tasks/cancel`**
 
-#### Phase 3 : A2A Connector
+#### Phase 3: A2A Connector
 
-8. **Entité A2AConnector** (`entities/a2a.scala`)
+8. **A2AConnector entity** (`entities/a2a.scala`)
    - Case class, Format, DataStore, resource()
-   - Registration dans l'extension
+   - Registration in the extension
 
-9. **Client A2A** (`a2a/client.scala`)
+9. **A2A client** (`a2a/client.scala`)
    - Fetch Agent Card
-   - Appel `message/send`
-   - Cache de l'Agent Card
+   - Call `message/send`
+   - Agent Card caching
 
-10. **Intégration dans AgentConfig**
-    - Résolution des skills en tool functions
-    - Exécution des appels A2A distants
+10. **Integration into AgentConfig**
+    - Resolve skills as tool functions
+    - Execute remote A2A calls
 
-#### Phase 4 : Features avancées
+#### Phase 4: Advanced features
 
 11. **`tasks/list`**
 12. **`tasks/resubscribe`**
 13. **Push notifications** (webhooks)
-14. **A2A Connector en streaming** (`message/stream` côté client)
-15. **OAuth2 client credentials** pour les connectors
-16. **Multi-tenant** (préfixe `/{tenant}/` dans les URLs)
+14. **Streaming A2A Connector** (`message/stream` on client side)
+15. **OAuth2 client credentials** for connectors
+16. **Multi-tenant** (`/{tenant}/` URL prefix)
 
 ---
 
-### Partie 7 : Questions ouvertes (à trancher)
+### Part 7: Open questions (to decide)
 
-#### Q1 : Backend de l'A2A Server
+#### Q1: A2A Server backend
 
-**Options** :
-- **(A)** Agent inline uniquement (`AgentConfig` dans la config de l'A2AServer)
-- **(B)** Agent inline + référence workflow
-- **(C)** Agent inline + workflow + référence route existante
+**Options**:
+- **(A)** Inline agent only (`AgentConfig` in the A2AServer config)
+- **(B)** Inline agent + workflow reference
+- **(C)** Inline agent + workflow + existing route reference
 
-**Recommandation** : commencer avec **(B)** (agent inline + workflow). La référence route est plus complexe et moins utile au début.
+**Recommendation**: start with **(B)** (inline agent + workflow). Route reference is more complex and less useful initially.
 
-#### Q2 : Stockage des Tasks
+#### Q2: Task storage
 
-**Options** :
-- **(A)** Redis avec TTL (par défaut 24h), toutes les tâches
-- **(B)** Redis avec TTL court pour completed/failed (1h), long pour working/input_required (24h)
-- **(C)** En mémoire avec cache borné (ex: max 10000 tâches), pas de persistance
+**Options**:
+- **(A)** Redis with TTL (default 24h), all tasks
+- **(B)** Redis with short TTL for completed/failed (1h), long TTL for working/input_required (24h)
+- **(C)** In-memory with bounded cache (e.g., max 10000 tasks), no persistence
 
-**Recommandation** : **(B)** - Redis avec TTL différencié. Les tâches terminées n'ont pas besoin d'être gardées longtemps.
+**Recommendation**: **(B)** - Redis with differentiated TTL. Completed tasks don't need to be kept for long.
 
-#### Q3 : Mapping des skills en tools
+#### Q3: Skill-to-tool mapping
 
-**Options** :
-- **(A)** Un tool function par skill, avec un paramètre `message` texte
-- **(B)** Un tool function par skill, avec des paramètres extraits des inputModes/schema du skill
-- **(C)** Un seul tool function par connector avec un paramètre `skill_id` + `message`
+**Options**:
+- **(A)** One tool function per skill, with a `message` text parameter
+- **(B)** One tool function per skill, with parameters extracted from skill inputModes/schema
+- **(C)** One tool function per connector with `skill_id` + `message` parameters
 
-**Recommandation** : **(A)** pour commencer. Simple et fonctionnel. On peut enrichir plus tard.
+**Recommendation**: **(A)** to start. Simple and functional. Can be enriched later.
 
-#### Q4 : Refresh de l'Agent Card
+#### Q4: Agent Card refresh
 
-**Options** :
-- **(A)** À chaque sync state (toutes les ~30s)
-- **(B)** Cache avec TTL configurable (par défaut 5 min)
-- **(C)** Fetch uniquement au démarrage + endpoint pour forcer un refresh
+**Options**:
+- **(A)** On every state sync (~30s)
+- **(B)** Cache with configurable TTL (default 5 min)
+- **(C)** Fetch only on startup + endpoint to force refresh
 
-**Recommandation** : **(B)** - cache avec TTL. Bon compromis entre fraîcheur et performance.
+**Recommendation**: **(B)** - cache with TTL. Good balance between freshness and performance.
 
-#### Q5 : Gestion du multi-turn / contextId
+#### Q5: Multi-turn / contextId management
 
-Quand un client A2A envoie un `contextId`, il s'attend à ce que l'agent ait le contexte des échanges précédents.
+When an A2A client sends a `contextId`, it expects the agent to have context from previous exchanges.
 
-**Options** :
-- **(A)** Stocker l'historique des messages par contextId en Redis, les passer comme input à l'agent
-- **(B)** Utiliser le système de `PersistentMemory` existant, avec contextId comme sessionId
-- **(C)** Ne pas supporter le multi-turn dans un premier temps (chaque message est indépendant)
+**Options**:
+- **(A)** Store message history per contextId in Redis, pass as input to the agent
+- **(B)** Use the existing `PersistentMemory` system, with contextId as sessionId
+- **(C)** Don't support multi-turn initially (each message is independent)
 
-**Recommandation** : **(A)** pour le MVP - stocker l'historique en Redis associé au contextId. **(B)** serait bien à terme pour bénéficier de la mémoire sémantique.
+**Recommendation**: **(A)** for MVP - store history in Redis associated with contextId. **(B)** would be good long-term to benefit from semantic memory.
 
-#### Q6 : Nommage des tools A2A dans les agents locaux
+#### Q6: A2A tool naming in local agents
 
-Quand un A2A Connector expose des skills comme tools, comment les nommer ?
+When an A2A Connector exposes skills as tools, how to name them?
 
-**Options** :
-- **(A)** `a2a_{connector_name_slug}_{skill_id}` (ex: `a2a_route_planner_optimize_route`)
-- **(B)** `a2a_{connector_id}_{skill_id}` (ex: `a2a_a2a-connector_xxx_optimize_route`)
-- **(C)** Configurable dans le connector (mapping skill_id → tool_name)
+**Options**:
+- **(A)** `a2a_{connector_name_slug}_{skill_id}` (e.g., `a2a_route_planner_optimize_route`)
+- **(B)** `a2a_{connector_id}_{skill_id}` (e.g., `a2a_a2a-connector_xxx_optimize_route`)
+- **(C)** Configurable in the connector (skill_id → tool_name mapping)
 
-**Recommandation** : **(A)** avec possibilité de **(C)** via un champ optionnel de mapping.
+**Recommendation**: **(A)** with the option of **(C)** via an optional mapping field.
 
 ---
 
-### Partie 8 : Exemples d'utilisation
+### Part 8: Usage examples
 
-#### Exposer un agent math tutor en A2A
+#### Exposing a math tutor agent as A2A
 
-1. Créer un A2AServer :
+1. Create an A2AServer:
 ```json
 {
   "id": "a2a-server_math",
   "name": "Math Tutor A2A",
   "agent_card": {
     "version": "1.0.0",
-    "skills": [{"id": "math", "name": "Math Help", "description": "Aide en maths", "tags": ["math"]}]
+    "skills": [{"id": "math", "name": "Math Help", "description": "Help with math", "tags": ["math"]}]
   },
   "backend": {
     "kind": "agent",
     "agent": {
       "name": "Math Tutor",
-      "instructions": ["Tu aides avec les problèmes de maths..."],
+      "instructions": ["You help with math problems..."],
       "provider": "provider_xxx"
     }
   }
 }
 ```
 
-2. Créer une route Otoroshi pointant vers ce plugin avec la config `{"ref": "a2a-server_math"}`
+2. Create an Otoroshi route pointing to this plugin with config `{"ref": "a2a-server_math"}`
 
-3. Un client A2A externe peut maintenant :
-   - Découvrir l'agent via `GET https://my-otoroshi/math-tutor/.well-known/agent.json`
-   - Envoyer des messages via `POST https://my-otoroshi/math-tutor/` avec JSON-RPC
+3. An external A2A client can now:
+   - Discover the agent via `GET https://my-otoroshi/math-tutor/.well-known/agent.json`
+   - Send messages via `POST https://my-otoroshi/math-tutor/` with JSON-RPC
 
-#### Utiliser un agent A2A distant comme tool
+#### Using a remote A2A agent as a tool
 
-1. Créer un A2AConnector :
+1. Create an A2AConnector:
 ```json
 {
   "id": "a2a-connector_planner",
@@ -781,26 +781,26 @@ Quand un A2A Connector expose des skills comme tools, comment les nommer ?
 }
 ```
 
-2. Dans un AgentConfig, référencer le connector :
+2. In an AgentConfig, reference the connector:
 ```json
 {
   "name": "Travel Assistant",
-  "instructions": ["Tu aides à planifier des voyages..."],
+  "instructions": ["You help plan trips..."],
   "provider": "provider_xxx",
   "a2a_connectors": ["a2a-connector_planner"]
 }
 ```
 
-3. L'agent local pourra appeler les skills du Route Planner comme des tools.
+3. The local agent can now call the Route Planner's skills as tools.
 
-#### Combiner A2A Server + Connector pour le chaînage d'agents
+#### Combining A2A Server + Connector for agent chaining
 
-Un agent exposé en A2A peut lui-même utiliser des A2A Connectors pour déléguer du travail à d'autres agents A2A, créant ainsi un réseau d'agents interopérables.
+An agent exposed via A2A can itself use A2A Connectors to delegate work to other A2A agents, creating an interoperable agent network.
 
 ```
-Client A2A ──▶ Otoroshi (A2A Server: Travel Agent)
+A2A Client ──▶ Otoroshi (A2A Server: Travel Agent)
                     │
-                    ├──▶ A2A Connector → Agent Météo (externe)
-                    ├──▶ A2A Connector → Agent Réservation (externe)
-                    └──▶ MCP Connector → API Maps (local)
+                    ├──▶ A2A Connector → Weather Agent (external)
+                    ├──▶ A2A Connector → Booking Agent (external)
+                    └──▶ MCP Connector → Maps API (local)
 ```
