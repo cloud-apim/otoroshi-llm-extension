@@ -3,3 +3,62 @@ import Terminal from '@site/src/components/Terminal';
 # Semantic contains
 
 ![](/img/guardrails-semantic-contains.png)
+
+The **Semantic contains** guardrail checks whether the message content is semantically similar to specified values, using embedding-based similarity rather than exact text matching. This is more flexible than the [Text contains](/docs/guardrails/contains) guardrail because it can detect meaning even when the exact words differ.
+
+It can be applied **before** sending the prompt to the LLM and **after** to validate the LLM response.
+
+### How it works
+
+The guardrail uses the **AllMiniLmL6V2** embedding model (runs locally, no external API call) to compute semantic similarity between the message and the configured values. A similarity score threshold determines whether two texts are considered semantically equivalent.
+
+The matching logic supports the same operations as the [Text contains](/docs/guardrails/contains) guardrail:
+
+| Operation | Description |
+|-----------|-------------|
+| `contains_all` | The message must be semantically similar to **all** specified values (default) |
+| `contains_none` | The message must **not** be semantically similar to **any** of the specified values |
+| `contains_any` | The message must be semantically similar to **at least one** of the specified values |
+
+### Configuration
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": true,
+    "id": "semantic_contains",
+    "config": {
+      "operation": "contains_none",
+      "values": ["how to hack a system", "bypass security"],
+      "score": 0.8
+    }
+  }
+]
+```
+
+### Field explanations
+
+- **enabled**: `true` — The guardrail is active
+- **before**: `true` — The guardrail applies to user input before sending to the LLM
+- **after**: `true` — The guardrail applies to the LLM response
+
+#### Config section
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|:--------:|---------|-------------|
+| `operation` | string | No | `"contains_all"` | The matching operation: `contains_all`, `contains_none`, or `contains_any` |
+| `values` | array of strings | No | `[]` | The list of text values to compare semantically with the message content |
+| `score` | number | No | `0.8` | Minimum similarity score (0.0 to 1.0) for two texts to be considered semantically equivalent. A higher score requires closer semantic similarity. |
+
+### Guardrail example
+
+With `operation: "contains_none"` and `values: ["how to hack a system"]`:
+
+- `"Tell me how to break into a computer"` — **blocked** (semantically similar to hacking)
+- `"What's the weather today?"` — **passes** (not semantically related)
+
+### Performance
+
+This guardrail runs the embedding model locally using ONNX, so it does not make any external API calls. This means it is fast and cost-free, but it adds some CPU overhead for the embedding computation.
