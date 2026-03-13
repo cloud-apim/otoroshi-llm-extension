@@ -53,6 +53,7 @@ object Guardrails {
     "quickjs" -> new QuickJsGuardrail(),
     "moderation_model" -> new ModerationGuardrail(),
     "faithfulness" -> new FaithfulnessGuardrail(),
+    "workflow" -> new WorkflowGuardrail(),
   )
 /*
 [

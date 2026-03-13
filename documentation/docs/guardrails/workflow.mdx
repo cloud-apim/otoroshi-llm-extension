@@ -1,0 +1,97 @@
+import Terminal from '@site/src/components/Terminal';
+
+# Workflow
+
+The **Workflow** guardrail lets you use an Otoroshi workflow to validate messages. This is similar to the [WASM](/docs/guardrails/wasm) and [QuickJS](/docs/guardrails/quickjs) guardrails, but instead of writing code in a specific language, you define the validation logic as an Otoroshi workflow — a visual, composable pipeline of steps.
+
+This is ideal when your validation logic requires orchestrating multiple steps (e.g., calling an external API, then checking the result against a database, then applying business rules).
+
+It can be applied **before** sending the prompt to the LLM and **after** to validate the LLM response.
+
+## How it works
+
+1. The guardrail loads the workflow referenced by its ID from Otoroshi's workflow registry
+2. It executes the workflow with an input payload containing the messages, configuration, provider info, and request attributes
+3. The workflow must return a JSON object with a `pass` field (`true` or `false`) and an optional `reason` field explaining a denial
+
+## Configuration
+
+The following configuration has to be placed in your LLM provider entity in the `Guardrail Validation` section.
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": true,
+    "id": "workflow",
+    "config": {
+      "workflow_id": "workflow_xxxxxxxxx"
+    }
+  }
+]
+```
+
+### Field explanations
+
+- **enabled**: `true` — The guardrail is active
+- **before**: `true` — The guardrail applies to user input before sending to the LLM
+- **after**: `true` — The guardrail applies to the LLM response
+
+#### Config section
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|:--------:|---------|-------------|
+| `workflow_id` | string | Yes | — | Reference ID of the workflow to execute. Can also be specified as `workflow_ref`. |
+
+## Workflow input
+
+The workflow receives the following JSON object as input:
+
+```js
+{
+  "config": {
+    "workflow_id": "workflow_xxxxxxxxx"
+    // ... any additional config fields
+  },
+  "provider": { /* provider config or null */ },
+  "attrs": { /* request attributes */ },
+  "messages": [
+    { "role": "user", "content": "the user message" },
+    { "role": "assistant", "content": "the assistant response" }
+  ]
+}
+```
+
+## Expected workflow output
+
+The workflow must return a JSON object with the following structure:
+
+| Output | Result |
+|--------|--------|
+| `{"pass": true}` | Message passes |
+| `{"pass": false, "reason": "explanation"}` | Message is denied with a custom reason |
+
+If the workflow returns `{"pass": false}` without a `reason`, the default denial message is:
+
+```
+message blocked by workflow guardrail
+```
+
+If the workflow fails with an error, the guardrail returns an error result with the workflow error details.
+
+## Use cases
+
+- **Multi-step validation** — Chain multiple checks (regex, API calls, database lookups) in a single guardrail
+- **Business rules** — Implement complex, organization-specific policies that go beyond simple pattern matching
+- **External integrations** — Call external services (compliance APIs, content moderation services) as part of the validation
+- **Conditional logic** — Apply different validation rules based on message metadata, user context, or other dynamic factors
+
+## When to use this vs WASM/QuickJS
+
+| | Workflow | WASM | QuickJS |
+|--|:--|:--|:--|
+| **Complexity** | Visual pipeline, no code | Compiled code (Rust, Go, etc.) | JavaScript code |
+| **Best for** | Multi-step orchestration | High-performance validation | Simple scripted validation |
+| **External calls** | Native support | Requires WASI networking | Limited |
+| **Reusability** | Workflows are reusable entities | Plugins are reusable | Scripts via URL |

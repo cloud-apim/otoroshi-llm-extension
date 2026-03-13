@@ -167,6 +167,7 @@ class AgentFunction extends WorkflowFunction {
               Json.obj("label" -> "Semantic contains", "value" -> "semantic_contains"),
               Json.obj("label" -> "QuickJS", "value" -> "quickjs"),
               Json.obj("label" -> "Wasm", "value" -> "wasm"),
+              Json.obj("label" -> "Workflow", "value" -> "workflow"),
             )
           )
         ),
