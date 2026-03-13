@@ -6,47 +6,72 @@ import Terminal from '@site/src/components/Terminal';
 
 # Overview
 
-Otoroshi LLM Extension is set of Otoroshi plugins and resources to interact with LLMs, let's discover it !
+Otoroshi LLM Extension is a set of Otoroshi plugins and resources to interact with LLMs, let's discover it!
 
-**Connect, setup, secure and seamlessly manage LLM models using an Universal/OpenAI compatible API**
+**Connect, setup, secure and seamlessly manage LLM models using a Universal/OpenAI compatible API**
 
-  - [**Unified interface**](/docs/llm-gateway/philosophy): Simplify interactions and minimize integration hassles
-  - [**Use multiple providers**](/docs/llm-gateway/providers): 50+ LLM providers supported right now, a lot more coming
+### LLM Gateway
+
+  - [**Unified interface**](/docs/llm-gateway/philosophy): Simplify interactions and minimize integration hassles with a single, consistent API across all providers
+  - [**50+ LLM providers**](/docs/llm-gateway/providers): Connect to OpenAI, Anthropic, Mistral, Gemini, Azure, Ollama, and many more with a unified configuration
   - [**Load balancing**](/docs/llm-gateway/resilience): Ensure optimal performance by distributing workloads across multiple providers
-  - [**Fallbacks**](/docs/llm-gateway/resilience#provider-fallback): Automatically switch LLMs during failures to deliver uninterrupted & accurate performance
-  - [**Automatic retries**](/docs/llm-gateway/resilience): LLM APIs often have inexplicable failures. You can rescue a substantial number of your requests with our in-built automatic retries feature.
-  - [**Semantic cache**](/docs/cost-optimizations/semantic-cache): Speed up repeated queries, enhance response times, and reduce costs
-  - [**Custom quotas**](/docs/cost-optimizations/quotas): Manage LLM tokens quotas per consumer and optimise costs
-  - [**Key vault**](/docs/llm-gateway/secrets): securely store your LLM API keys in Otoroshi vault or any other secret vault supported by Otoroshi.
-  - **[Observability](/docs/llm-gateway/observability-reporting) and [reporting](/docs/reporting/)**: every LLM request is audited with details about the consumer, the LLM provider and usage. All those audit events are exportable using multiple methods for further reporting
-  - [**Fine grained authorizations**](/docs/llm-gateway/secure-provider): Use Otoroshi advanced fine grained authorizations capabilities to constrains model usage based on whatever you want: user identity, apikey, consumer metadata, request details, etc
-  - [**Prompt engineering**](/docs/prompt-engineering/overview): enhance your experience by providing contextual information to your prompts, storing them in a library for reusability, and using prompt templates for increased efficiency
-  - [**Guardrails**](/docs/guardrails/overview): Validate your prompts and prompts responses to avoid sensitive or personal informations leakage, irrelevant or unhelpful responses, gibberish content, etc
-  - [**Cost Tracking**](/docs/cost-optimizations/cost-tracking)
-  - [**MCP (Model Context protocol)**](/docs/mcp/overview)
-  - [**MCP Connectors**](/docs/mcp/mcp-connectors)
-    - [**💸 Stripe**](/docs/mcp/mcp-connectors-examples/stripe-mcp)
-    - [**Slack**](/docs/mcp/mcp-connectors-examples/slack-mcp)
-    - [**Make**](/docs/mcp/mcp-connectors-examples/make-mcp)
-    - [**ScreenshotOne**](/docs/mcp/mcp-connectors-examples/screenshotone-mcp)
-    - [**Redis**](/docs/mcp/mcp-connectors-examples/redis-mcp)
-    - [**Perplexity Ask**](/docs/mcp/mcp-connectors-examples/perplexity-mcp)
-    - [**Mailgun**](/docs/mcp/mcp-connectors-examples/mailgun-mcp)
-    - [**Grafana**](/docs/mcp/mcp-connectors-examples/grafana-mcp)
-    - [**Gitlab**](/docs/mcp/mcp-connectors-examples/gitlab-mcp)
-    - [**Firecrawl**](/docs/mcp/mcp-connectors-examples/firecrawl-mcp)
-    - [**Brave Search**](/docs/mcp/mcp-connectors-examples/brave-api-mcp)
-    - [**AWS KB Retrieval**](/docs/mcp/mcp-connectors-examples/aws-mcp)
-    - [**EverART**](/docs/mcp/mcp-connectors-examples/everart-mcp)
-    - [**Puppeteer**](/docs/mcp/mcp-connectors-examples/puppeteer-mcp)
-    - [**Google Maps**](/docs/mcp/mcp-connectors-examples/google-maps-mcp)
+  - [**Fallbacks**](/docs/llm-gateway/resilience#provider-fallback): Automatically switch LLMs during failures to deliver uninterrupted and accurate performance
+  - [**Automatic retries**](/docs/llm-gateway/resilience): LLM APIs often have inexplicable failures. Rescue a substantial number of your requests with built-in automatic retries
+  - [**Key vault**](/docs/llm-gateway/secrets): Securely store your LLM API keys in Otoroshi vault or any other secret vault supported by Otoroshi
+  - [**Fine grained authorizations**](/docs/llm-gateway/secure-provider): Constrain model usage based on user identity, apikey, consumer metadata, request details, and more
 
-  - [**MCP Server exposition**](/docs/mcp/mcp-plugins)
-  - [**Wasm functions (tool calls)**](/docs/function-calling/function-wasm-calling)
-  - [**Http functions (tool calls)**](/docs/function-calling/http-functions)
-  - [**Embeddings models**](/docs/embeddings/overview)
-  - [**Workflows**](/docs/workflows/overview): Use AI-powered workflow functions for LLM calls, audio, image/video generation, embeddings, vector stores, memory, guardrails, and more
-  - [**AI Agents**](/docs/agents/overview): Build agentic workflows with tool calling, agent handoffs, persistent memory, and LLM-based routing
+### Cost optimization
+
+  - [**Cost tracking**](/docs/cost-optimizations/cost-tracking): Track per-model costs in real time with automatic pricing from LiteLLM
+  - [**Budgets**](/docs/cost-optimizations/budgets): Set spending limits per provider with configurable durations, scopes, and alert modes
+  - [**Token quotas**](/docs/cost-optimizations/quotas): Manage LLM token rate limits per consumer and per time window to optimise costs
+  - [**Simple cache**](/docs/cost-optimizations/simple-cache): Exact-match caching based on SHA-512 hashing to avoid duplicate LLM calls
+  - [**Semantic cache**](/docs/cost-optimizations/semantic-cache): Speed up repeated queries using embedding-based similarity matching to enhance response times and reduce costs
+
+### Observability and reporting
+
+  - [**Observability**](/docs/llm-gateway/observability-reporting): Every LLM request is audited with details about the consumer, the LLM provider, and usage
+  - [**Reporting**](/docs/reporting/): Export audit events using multiple methods for dashboards and analytics
+  - [**Ecological impacts**](/docs/reporting/ecological): Track the environmental footprint of your LLM usage with electricity mix zones and impact metrics
+
+### Guardrails
+
+  - [**Guardrails**](/docs/guardrails/overview): Validate prompts and responses to prevent sensitive data leakage, prompt injection, toxic language, bias, gibberish content, and more with 20+ built-in validation rules
+
+### Prompt engineering
+
+  - [**Prompt engineering**](/docs/prompt-engineering/overview): Enhance your experience by providing contextual information to your prompts, storing them in a library for reusability, and using prompt templates for increased efficiency
+
+### Function calling
+
+  - [**Function calling (tool calls)**](/docs/function-calling/overview): Extend LLM capabilities with tool calling using 5 backend kinds: QuickJS (JavaScript), WASM plugins, HTTP endpoints, Workflows, and Routes
+
+### MCP (Model Context Protocol)
+
+  - [**MCP**](/docs/mcp/overview): Connect to external MCP servers for tools, resources, and prompts, and expose your own MCP servers via HTTP, SSE, or WebSocket
+
+### Embeddings
+
+  - [**Embeddings models**](/docs/embeddings/overview): Compute text embeddings with an OpenAI-compatible API, supporting 16+ providers including a local AllMiniLM L6 V2 model
+
+### Multi-modal models
+
+  - [**Audio models**](/docs/audio-gen/introduction): Text-to-speech, speech-to-text, and audio translation capabilities
+  - [**Image models**](/docs/image-gen/intro): Image generation and editing with multiple providers
+  - [**Video models**](/docs/video-gen/intro): Video generation capabilities
+
+### Moderation
+
+  - [**Moderation models**](/docs/moderation/overview): Content moderation with dedicated models and plugins to filter inappropriate content
+
+### Workflows and AI Agents
+
+  - [**Workflows**](/docs/workflows/overview): Build complex multi-step AI pipelines with 17+ built-in functions for LLM calls, audio, image/video generation, embeddings, vector stores, memory, guardrails, and more
+  - [**AI Agents**](/docs/agents/overview): Build agentic workflows with tool calling, agent handoffs, persistent memory, LLM-based routing, and MCP integration
+
+### HTTP + LLM Plugins
+
+  - [**HTTP + LLM Plugins**](/docs/http-plugins/http-request-body-modifier): Use LLMs to modify HTTP request/response bodies, validate requests, generate responses, and more
 
 ## Supported LLM providers
 
