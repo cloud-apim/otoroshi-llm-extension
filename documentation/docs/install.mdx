@@ -18,12 +18,13 @@ curl -L -o otoroshi.jar 'https://github.com/MAIF/otoroshi/releases/download/v17.
 
 ## Download the LLM Extension
 
-[ ![Download the latest release of the Otoroshi LLM Extension](https://img.shields.io/github/release/cloud-apim/otoroshi-llm-extension.svg) ](https://github.com/cloud-apim/otoroshi-llm-extension/releases/download/0.0.43/otoroshi-llm-extension_2.12-0.0.43.jar)
+[ ![Download the latest release of the Otoroshi LLM Extension](https://img.shields.io/github/release/cloud-apim/otoroshi-llm-extension.svg) ](https://github.com/cloud-apim/otoroshi-llm-extension/releases/download/0.0.73/otoroshi-llm-extension_2.12-0.0.73.jar)
 
 Download the latest release of the `Otoroshi LLM Extension` from [here](https://github.com/cloud-apim/otoroshi-llm-extension/releases/latest).
 
 ```sh
-curl -L -o otoroshi-llm-extension.jar 'https://github.com/cloud-apim/otoroshi-llm-extension/releases/download/0.0.43/otoroshi-llm-extension_2.12-0.0.73.jar'
+curl -L -o otoroshi-llm-extension.jar \
+  'https://github.com/cloud-apim/otoroshi-llm-extension/releases/download/0.0.73/otoroshi-llm-extension_2.12-0.0.73.jar'
 ```
 
 ## Run Otoroshi with the LLM Extension
@@ -33,7 +34,31 @@ curl -L -o otoroshi-llm-extension.jar 'https://github.com/cloud-apim/otoroshi-ll
 Run Otoroshi with the LLM extension by executing the following command :
 
 ```sh
-java -cp "./otoroshi-llm-extension.jar:./otoroshi.jar" -Dotoroshi.adminLogin=admin -Dotoroshi.adminPassword=password -Dotoroshi.storage=file play.core.server.ProdServerStart
+java -cp "./otoroshi-llm-extension.jar:./otoroshi.jar" \
+  -Dotoroshi.adminLogin=admin \
+  -Dotoroshi.adminPassword=password \
+  -Dotoroshi.storage=file \
+  play.core.server.ProdServerStart
+```
+
+This will start the Otoroshi API Gateway.
+
+You can access the Otoroshi UI by opening [http://otoroshi.oto.tools:8080/](http://otoroshi.oto.tools:8080/) in your browser.
+
+If you want to know more about Otoroshi configuration, just take a look at [the documentation](https://maif.github.io/otoroshi/manual/install/setup-otoroshi.html)
+
+## Use Docker
+
+alternatively you can use Docker instead of downloading otoroshi
+
+```sh
+docker run \
+  -p 8080:8080 \
+  -e APP_STORAGE=file \
+  -e OTOROSHI_PLUGINS_DIR_PATH=/usr/app/plugins \
+  -v "$(pwd)/otoroshi-llm-extension.jar:/usr/app/plugins/llm.jar" \
+  -v "$(pwd)/otoroshi.db:/usr/app/filedb/state.ndjson" \
+  maif/otoroshi:latest
 ```
 
 This will start the Otoroshi API Gateway.
