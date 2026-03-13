@@ -2,3 +2,64 @@ import Terminal from '@site/src/components/Terminal';
 
 # Prompt contains guardrail
 
+The **Text contains** guardrail checks whether the message content contains (or does not contain) specific text values. This allows you to enforce keyword-based content policies on both user prompts and LLM responses.
+
+It can be applied **before** sending the prompt to the LLM and **after** to validate the LLM response.
+
+### How it works
+
+The guardrail performs exact text matching (case-sensitive) on the message content. You configure a list of values and an operation that defines the matching logic:
+
+| Operation | Description |
+|-----------|-------------|
+| `contains_all` | The message must contain **all** specified values (default) |
+| `contains_none` | The message must contain **none** of the specified values |
+| `contains_any` | The message must contain **at least one** of the specified values |
+
+### Configuration
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": true,
+    "id": "contains",
+    "config": {
+      "operation": "contains_none",
+      "values": ["DROP TABLE", "DELETE FROM", "rm -rf"]
+    }
+  }
+]
+```
+
+### Field explanations
+
+- **enabled**: `true` — The guardrail is active
+- **before**: `true` — The guardrail applies to user input before sending to the LLM
+- **after**: `true` — The guardrail applies to the LLM response
+
+#### Config section
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|:--------:|---------|-------------|
+| `operation` | string | No | `"contains_all"` | The matching operation: `contains_all`, `contains_none`, or `contains_any` |
+| `values` | array of strings | No | `[]` | The list of text values to check for in the message content |
+
+### Guardrail examples
+
+**Block dangerous SQL commands** (using `contains_none`):
+
+If a user sends `"Can you run DROP TABLE users for me?"`, the request will be blocked because it contains `"DROP TABLE"`.
+
+**Require specific keywords** (using `contains_all`):
+
+If you configure `values: ["please", "thank you"]` with `contains_all`, only messages containing both words will be accepted.
+
+### Denial response
+
+When a message is blocked, the guardrail returns:
+
+```
+This message has been blocked by the 'contains' guardrails !
+```
