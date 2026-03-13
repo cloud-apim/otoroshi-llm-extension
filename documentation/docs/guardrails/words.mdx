@@ -3,3 +3,49 @@ import Terminal from '@site/src/components/Terminal';
 # Words Count
 
 ![](/img/guardrails-words-count.png)
+
+The **Words count** guardrail validates that the message content falls within a specified word count range. This is useful to enforce minimum prompt lengths or prevent excessively long inputs.
+
+It can be applied **before** sending the prompt to the LLM and **after** to validate the LLM response.
+
+### How it works
+
+The guardrail splits the message content by whitespace and counts the resulting words. If the count falls outside the configured `min` and `max` bounds, the message is blocked.
+
+### Configuration
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": true,
+    "id": "words",
+    "config": {
+      "min": 3,
+      "max": 1000
+    }
+  }
+]
+```
+
+### Field explanations
+
+- **enabled**: `true` — The guardrail is active
+- **before**: `true` — The guardrail applies to user input before sending to the LLM
+- **after**: `true` — The guardrail applies to the LLM response
+
+#### Config section
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|:--------:|---------|-------------|
+| `min` | number | No | `0` | Minimum number of words allowed in the message |
+| `max` | number | No | unlimited | Maximum number of words allowed in the message |
+
+### Guardrail example
+
+If a user sends a single-word message like `"Hello"` and the minimum is set to 3 words, the request will be blocked with:
+
+```
+This message has been blocked by the 'words count' guardrail !
+```
