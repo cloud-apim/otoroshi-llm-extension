@@ -4,6 +4,22 @@ import Terminal from '@site/src/components/Terminal';
 
 ![](/img/guardrails-no-toxic-language.png)
 
+The **Toxic language** guardrail detects and blocks messages containing toxic or harmful language. It uses a dedicated LLM provider with a hardcoded prompt to identify hate speech, insults, threats, harassment, and other forms of toxic content.
+
+It can be applied **before** sending the prompt to the LLM (blocking toxic prompts) and **after** to filter toxic responses.
+
+### How it works
+
+The guardrail sends messages to a validation LLM with a specialized system prompt that instructs it to detect:
+
+- **Hate speech** — Offensive or derogatory language targeting a specific group based on race, gender, ethnicity, religion, disability, or sexual orientation
+- **Insults** — Personal attacks or name-calling intended to demean or belittle someone
+- **Threats** — Statements that suggest harm, violence, or intimidation
+- **Obscenity** — Excessive profanity or sexually explicit remarks
+- **Harassment** — Repeated or persistent language meant to annoy, provoke, or distress
+- **Discriminatory language** — Language that suggests prejudice or exclusion based on identity
+- **Gaslighting or manipulation** — Language that undermines someone's experiences, emotions, or sense of reality
+
 ### Configuration
 
 ```js
@@ -14,8 +30,27 @@ import Terminal from '@site/src/components/Terminal';
     "after": true,
     "id": "toxic_language",
     "config": {
-      "provider": null
+      "provider": "provider_xxxxxxxxx"
     }
   }
 ]
 ```
+
+### Field explanations
+
+- **enabled**: `true` — The guardrail is active
+- **before**: `true` — The guardrail applies to user input before sending to the LLM
+- **after**: `true` — The guardrail applies to the LLM response
+
+#### Config section
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|:--------:|---------|-------------|
+| `provider` | string | Yes | — | Reference ID of the LLM provider used to evaluate messages for toxic language. Must be different from the main provider. |
+| `err_msg` | string | No | `"This message has been blocked by the 'toxic-language' guardrail !"` | Custom error message returned when a message is blocked. |
+
+### Guardrail example
+
+If a user sends an insulting or threatening message, the guardrail will block it before reaching the LLM.
+
+If the LLM generates a response containing hate speech, it will be blocked before reaching the user.
