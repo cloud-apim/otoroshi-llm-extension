@@ -3,3 +3,78 @@ import Terminal from '@site/src/components/Terminal';
 # Webhook
 
 ![](/img/guardrails-webhook.png)
+
+The **Webhook** guardrail delegates content validation to an external HTTP service. This allows you to implement custom validation logic in any language or framework by exposing a simple HTTP endpoint.
+
+This guardrail can only be applied **before** sending the prompt to the LLM (not after).
+
+### How it works
+
+1. The guardrail sends a `POST` request to the configured URL with the messages array as the JSON body
+2. If the response status is `200` and the response body contains `{"result": true}`, the message passes
+3. Any non-200 status or `{"result": false}` causes the message to be denied
+4. Results are **cached** with a configurable TTL to avoid calling the webhook for duplicate messages
+
+### Configuration
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": false,
+    "id": "webhook",
+    "config": {
+      "url": "https://my-validation-service.example.com/validate",
+      "headers": {
+        "Authorization": "Bearer my-secret-token"
+      },
+      "ttl": 60000
+    }
+  }
+]
+```
+
+### Field explanations
+
+- **enabled**: `true` — The guardrail is active
+- **before**: `true` — The guardrail applies to user input before sending to the LLM
+- **after**: `false` — This guardrail only works on incoming requests (before phase)
+
+#### Config section
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|:--------:|---------|-------------|
+| `url` | string | Yes | — | The URL of the external validation service |
+| `headers` | object | No | `{}` | HTTP headers to include in the webhook request (e.g. for authentication) |
+| `ttl` | number | No | — | Cache duration in milliseconds for validation results. Identical messages will use cached results within this window. |
+
+### Webhook request format
+
+The guardrail sends a `POST` request with a JSON array of messages:
+
+```js
+[
+  {
+    "role": "user",
+    "content": "the user message"
+  }
+]
+```
+
+### Expected webhook response
+
+The webhook must return a `200` status code with a JSON body:
+
+```js
+{
+  "result": true
+}
+```
+
+- `{"result": true}` — the message passes
+- `{"result": false}` or any non-200 status — the message is denied
+
+### Caching
+
+Validation results are cached based on a SHA-512 hash of the messages. This means identical message sequences will not trigger a new webhook call within the TTL window, reducing latency and load on the external service. The cache holds up to 5000 entries.
