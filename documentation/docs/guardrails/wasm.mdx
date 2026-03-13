@@ -3,3 +3,86 @@ import Terminal from '@site/src/components/Terminal';
 # WASM
 
 ![](/img/guardrails-wasm.png)
+
+The **WASM** guardrail lets you write custom validation logic in any language that compiles to WebAssembly (Rust, Go, AssemblyScript, etc.). The WASM plugin is executed locally within Otoroshi, providing high performance without external network calls.
+
+It can be applied **before** sending the prompt to the LLM and **after** to validate the LLM response.
+
+### How it works
+
+1. The guardrail loads the configured WASM plugin from Otoroshi's plugin registry
+2. It calls the plugin's entry function (default: `guardrail_call`) with a JSON payload containing the messages, config, provider info, and request attributes
+3. The plugin returns a result indicating whether the message should pass or be denied
+
+### Configuration
+
+```js
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": true,
+    "id": "wasm",
+    "config": {
+      "wasmPlugin": "wasm_plugin_xxxxxxxxx"
+    }
+  }
+]
+```
+
+### Field explanations
+
+- **enabled**: `true` — The guardrail is active
+- **before**: `true` — The guardrail applies to user input before sending to the LLM
+- **after**: `true` — The guardrail applies to the LLM response
+
+#### Config section
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|:--------:|---------|-------------|
+| `wasmPlugin` | string | Yes | — | Reference ID of a WASM plugin configured in Otoroshi. Can also be specified as `plugin_ref`. |
+
+### Plugin input format
+
+The WASM function receives a JSON object with the following structure:
+
+```js
+{
+  "config": { /* guardrail config */ },
+  "provider": { /* provider config or null */ },
+  "attrs": { /* request attributes */ },
+  "messages": [
+    { "role": "user", "content": "the message" }
+  ]
+}
+```
+
+### Expected plugin output
+
+The WASM function must return one of the following:
+
+| Output | Result |
+|--------|--------|
+| `"pass"` or `"true"` | Message passes |
+| `"deny"` or `"false"` | Message is denied |
+| `{"pass": true}` | Message passes |
+| `{"pass": false, "reason": "explanation"}` | Message is denied with a custom reason |
+| `{"error": "message"}` | Guardrail error |
+
+### Example WASM plugin (Rust-like pseudocode)
+
+```rust
+fn guardrail_call(input: &str) -> String {
+    let data: Value = serde_json::from_str(input).unwrap();
+    let messages = data["messages"].as_array().unwrap();
+
+    for msg in messages {
+        let content = msg["content"].as_str().unwrap();
+        if content.contains("forbidden_word") {
+            return r#"{"pass": false, "reason": "Message contains forbidden content"}"#.to_string();
+        }
+    }
+
+    r#"{"pass": true}"#.to_string()
+}
+```
