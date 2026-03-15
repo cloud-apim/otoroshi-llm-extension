@@ -128,6 +128,6 @@ And 37 more including Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Ch
 
 ## Requirements
 
-**Run it on JDK17+**
+**You have to run it on JDK17+**
 
 
