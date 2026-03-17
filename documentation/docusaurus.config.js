@@ -9,7 +9,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'Otoroshi LLM Extension',
-  tagline: 'A set of Otoroshi plugins to interact with LLMs',
+  tagline: 'The Open Source AI Gateway — Route, Secure, and Optimize Your LLM Traffic',
   favicon: 'img/otoroshi-llm-extension-logo-no-bg-no-text.png',
 
   // Set the production url of your site here
@@ -23,8 +23,16 @@ const config = {
   organizationName: 'cloud-apim', // Usually your GitHub org/user name.
   projectName: 'Otoroshi LLM Extension', // Usually your repo name.
 
-  onBrokenLinks: 'throw',
+  onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
+
+  markdown: {
+    format: 'detect',
+    hooks: {
+      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownImages: 'warn',
+    },
+  },
 
   // Even if you don't use internationalization, you can use this field to set
   // useful metadata like html lang. For example, if your site is Chinese, you
@@ -67,6 +75,11 @@ const config = {
     ({
       // Replace with your project's social card
       image: 'img/otoroshi-llm-extension-logo.png',
+      colorMode: {
+        defaultMode: 'light',
+        disableSwitch: false,
+        respectPrefersColorScheme: true,
+      },
       navbar: {
         title: 'Otoroshi LLM Extension',
         logo: {
@@ -92,8 +105,13 @@ const config = {
           },
           {
             href: 'https://blog.cloud-apim.com',
-            label: 'Cloud APIM Blog', 
+            label: 'Cloud APIM Blog',
             position: 'right'
+          },
+          {
+            href: 'https://maif.github.io/otoroshi/next/',
+            label: 'Otoroshi',
+            position: 'right',
           },
         ],
       },
@@ -140,6 +158,15 @@ const config = {
               {
                 label: 'GitHub',
                 href: 'https://github.com/cloud-apim/otoroshi-llm-extension',
+              },
+            ],
+          },
+          {
+            title: 'Ecosystem',
+            items: [
+              {
+                label: 'Otoroshi',
+                href: 'https://maif.github.io/otoroshi/next/',
               },
             ],
           },

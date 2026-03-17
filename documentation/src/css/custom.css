@@ -15,16 +15,30 @@
   --ifm-color-primary-lightest: #6475f2;
   --ifm-code-font-size: 95%;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+  --homepage-bg-gradient: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  --card-bg: #ffffff;
+  --card-border: #e8eaed;
+  --card-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  --card-shadow-hover: 0 8px 30px rgba(63, 82, 227, 0.15);
+  --section-bg-alt: #f8f9fc;
+  --text-muted: #5f6368;
+  --stat-gradient: linear-gradient(135deg, #3f52e3 0%, #7c3aed 100%);
 }
 
 /* For readability concerns, you should choose a lighter palette in dark mode. */
 [data-theme='dark'] {
-  --ifm-color-primary: #3f52e3;
-  --ifm-color-primary-dark: #394acf;
-  --ifm-color-primary-darker: #3343b7;
-  --ifm-color-primary-darkest: #273495;
-  --ifm-color-primary-light: #495cea;
-  --ifm-color-primary-lighter: #5163eb;
-  --ifm-color-primary-lightest: #6475f2;
+  --ifm-color-primary: #6475f2;
+  --ifm-color-primary-dark: #4d5fef;
+  --ifm-color-primary-darker: #3f52e3;
+  --ifm-color-primary-darkest: #3343b7;
+  --ifm-color-primary-light: #7b8af5;
+  --ifm-color-primary-lighter: #929ff7;
+  --ifm-color-primary-lightest: #b0b9fa;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+  --card-bg: #1e1e2e;
+  --card-border: #2e2e3e;
+  --card-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  --card-shadow-hover: 0 8px 30px rgba(100, 117, 242, 0.2);
+  --section-bg-alt: #181825;
+  --text-muted: #a0a0b0;
 }
