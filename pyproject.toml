@@ -6,7 +6,9 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "ecologits>=0.9.3",
-    "litellm>=1.82.0",
+    # litellm 1.82.7 and 1.82.8 contain a malicious .pth file that steals credentials
+    # https://github.com/BerriAI/litellm/issues/24512
+    "litellm<=1.82.6",
 ]
 
 [tool.uv.workspace]
