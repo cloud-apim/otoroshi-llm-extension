@@ -96,32 +96,11 @@ object OpenAICompatEmbeddingConfig {
   }
 }
 
-class OpenAICompatEmbedding extends NgBackendCall {
-
-  override def name: String = "Cloud APIM - LLM OpenAI Compat. Embeddings"
-  override def description: Option[String] = "Delegates call to a LLM provider to generate embeddings".some
-  override def core: Boolean = false
-  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
-  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
-  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
-  override def useDelegates: Boolean = false
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatEmbeddingConfig.default)
-  override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = OpenAICompatEmbeddingConfig.configFlow
-  override def configSchema: Option[JsObject] = OpenAICompatEmbeddingConfig.configSchema
-
-  override def start(env: Env): Future[Unit] = {
-    env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'LLM OpenAI Compat. Embeddings' plugin is available !")
-    }
-    ().vfuture
-  }
-
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+object OpenAICompatEmbedding {
+  def handleRequest(config: OpenAICompatEmbeddingConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
       val _jsonBody = bodyRaw.utf8String.parseJson
-      val config = ctx.cachedConfig(internalName)(OpenAICompatEmbeddingConfig.format).getOrElse(OpenAICompatEmbeddingConfig.default)
       val jsonBody: JsObject = OpenAICompatEmbeddingConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
       val provider: Option[EmbeddingModel] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
         ext.states.embeddingModel(r)
@@ -148,5 +127,32 @@ class OpenAICompatEmbedding extends NgBackendCall {
         }
       }
     }
+  }
+}
+
+class OpenAICompatEmbedding extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - LLM OpenAI Compat. Embeddings"
+  override def description: Option[String] = "Delegates call to a LLM provider to generate embeddings".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatEmbeddingConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = OpenAICompatEmbeddingConfig.configFlow
+  override def configSchema: Option[JsObject] = OpenAICompatEmbeddingConfig.configSchema
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'LLM OpenAI Compat. Embeddings' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(OpenAICompatEmbeddingConfig.format).getOrElse(OpenAICompatEmbeddingConfig.default)
+    OpenAICompatEmbedding.handleRequest(config, ctx)
   }
 }
