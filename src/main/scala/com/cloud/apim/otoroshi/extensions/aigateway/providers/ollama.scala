@@ -300,6 +300,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsTools: Boolean = api.supportsTools
   override def supportsCompletion: Boolean = api.supportsCompletion
+  override def supportsResponses: Boolean = true
 
   override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/api/tags", None).map { resp =>
