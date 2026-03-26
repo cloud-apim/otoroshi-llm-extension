@@ -96,32 +96,11 @@ object OpenAICompatModerationConfig {
   }
 }
 
-class OpenAICompatModeration extends NgBackendCall {
-
-  override def name: String = "Cloud APIM - Text moderation backend"
-  override def description: Option[String] = "Delegates call to a LLM provider to moderate text".some
-  override def core: Boolean = false
-  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
-  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
-  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
-  override def useDelegates: Boolean = false
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatModerationConfig.default)
-  override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = OpenAICompatModerationConfig.configFlow
-  override def configSchema: Option[JsObject] = OpenAICompatModerationConfig.configSchema
-
-  override def start(env: Env): Future[Unit] = {
-    env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'Text moderation backend' plugin is available !")
-    }
-    ().vfuture
-  }
-
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+object OpenAICompatModeration {
+  def handleRequest(config: OpenAICompatModerationConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
       val _jsonBody = bodyRaw.utf8String.parseJson
-      val config = ctx.cachedConfig(internalName)(OpenAICompatModerationConfig.format).getOrElse(OpenAICompatModerationConfig.default)
       val jsonBody: JsObject = OpenAICompatModerationConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
       val provider: Option[ModerationModel] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
         ext.states.moderationModel(r)
@@ -148,5 +127,32 @@ class OpenAICompatModeration extends NgBackendCall {
         }
       }
     }
+  }
+}
+
+class OpenAICompatModeration extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - Text moderation backend"
+  override def description: Option[String] = "Delegates call to a LLM provider to moderate text".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatModerationConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = OpenAICompatModerationConfig.configFlow
+  override def configSchema: Option[JsObject] = OpenAICompatModerationConfig.configSchema
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'Text moderation backend' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(OpenAICompatModerationConfig.format).getOrElse(OpenAICompatModerationConfig.default)
+    OpenAICompatModeration.handleRequest(config, ctx)
   }
 }
