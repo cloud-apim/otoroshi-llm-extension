@@ -282,6 +282,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
   override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
+  override def supportsResponses: Boolean = true
 
   override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/openai/v1/models", None).map { resp =>
