@@ -187,7 +187,7 @@ class OpenAiCompatApi extends NgBackendCall {
         .filter(c => config.contextRefs.contains(c.id))
         .map(c => Json.obj("id" -> c.id, "name" -> c.name))
       Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(JsArray(contexts))), None)).vfuture
-      
+
     } else if (method == "GET" && path.endsWith("/models")) {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
       OpenAiCompatProvidersWithModels.handleRequest(providerConfig, ctx)
