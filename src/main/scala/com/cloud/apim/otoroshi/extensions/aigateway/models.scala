@@ -1716,6 +1716,7 @@ trait ChatClient {
   def supportsStreaming: Boolean = false
   def supportsTools: Boolean = false
   def supportsCompletion: Boolean = false
+  def supportsResponses: Boolean = false
 
   def computeModel(payload: JsValue): Option[String]
 
@@ -1729,11 +1730,19 @@ trait ChatClient {
     Left(Json.obj("error" -> "completion not supported")).vfuture
   }
 
+  def response(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    Left(Json.obj("error" -> "completion not supported")).vfuture
+  }
+
   def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     Left(Json.obj("error" -> "streaming not supported")).future
   }
 
   def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    Left(Json.obj("error" -> "streaming not supported")).future
+  }
+
+  def responseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     Left(Json.obj("error" -> "streaming not supported")).future
   }
 
@@ -1765,6 +1774,27 @@ trait ChatClient {
       completion(prompt, attrs, cleanBody).map {
         case Left(err) => Left(err)
         case Right(resp) => Right(resp.toSource(computeModel(originalBody).getOrElse("none")))
+      }
+    }
+  }
+
+  def tryResponse(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    if (supportsResponses) {
+      response(prompt, attrs, originalBody)
+    } else {
+      val cleanBody = originalBody.asObject - "prompt" - "suffix"
+      call(prompt, attrs, cleanBody)
+    }
+  }
+
+  final def tryResponseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    if (supportsStreaming) {
+      responseStream(prompt, attrs, originalBody)
+    } else {
+      val cleanBody = originalBody.asObject - "prompt" - "suffix"
+      response(prompt, attrs, cleanBody).map {
+        case Left(err) => Left(err)
+        case Right(resp) => Right(resp.toResponseSource(computeModel(originalBody).getOrElse("none")))
       }
     }
   }
