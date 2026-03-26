@@ -19,6 +19,7 @@ case class OpenAiCompatApiConfig(
   imageModelRefs: Seq[String],
   embeddingModelRefs: Seq[String],
   moderationModelRefs: Seq[String],
+  contextRefs: Seq[String],
   maxSizeUpload: Long,
   decodeImages: Boolean
 ) extends NgPluginConfig {
@@ -27,7 +28,7 @@ case class OpenAiCompatApiConfig(
 
 object OpenAiCompatApiConfig {
 
-  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "embedding_model_refs", "moderation_model_refs", "max_size_upload", "decode_images")
+  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "embedding_model_refs", "moderation_model_refs", "context_refs", "max_size_upload", "decode_images")
 
   def configSchema: Option[JsObject] = Some(Json.obj(
     "language_model_refs" -> Json.obj(
@@ -90,6 +91,18 @@ object OpenAiCompatApiConfig {
         ),
       ),
     ),
+    "context_refs" -> Json.obj(
+      "type" -> "select",
+      "array" -> true,
+      "label" -> "Prompt contexts",
+      "props" -> Json.obj(
+        "optionsFrom" -> "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/prompt-contexts",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      ),
+    ),
     "max_size_upload" -> Json.obj(
       "type" -> "number",
       "label" -> "Max file upload size (bytes)"
@@ -110,6 +123,7 @@ object OpenAiCompatApiConfig {
     imageModelRefs = Seq.empty,
     embeddingModelRefs = Seq.empty,
     moderationModelRefs = Seq.empty,
+    contextRefs = Seq.empty,
     maxSizeUpload = 100 * 1024 * 1024,
     decodeImages = false
   )
@@ -121,6 +135,7 @@ object OpenAiCompatApiConfig {
       "image_model_refs" -> o.imageModelRefs,
       "embedding_model_refs" -> o.embeddingModelRefs,
       "moderation_model_refs" -> o.moderationModelRefs,
+      "context_refs" -> o.contextRefs,
       "max_size_upload" -> o.maxSizeUpload,
       "decode_images" -> o.decodeImages,
     )
@@ -131,6 +146,7 @@ object OpenAiCompatApiConfig {
         imageModelRefs = json.select("image_model_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
         embeddingModelRefs = json.select("embedding_model_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
         moderationModelRefs = json.select("moderation_model_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
+        contextRefs = json.select("context_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
         maxSizeUpload = json.select("max_size_upload").asOpt[Long].getOrElse(default.maxSizeUpload),
         decodeImages = json.select("decode_images").asOpt[Boolean].getOrElse(false),
       )
@@ -166,8 +182,13 @@ class OpenAiCompatApi extends NgBackendCall {
     val config = ctx.cachedConfig(internalName)(OpenAiCompatApiConfig.format).getOrElse(OpenAiCompatApiConfig.default)
     val path = ctx.request.path
     val method = ctx.request.method.toUpperCase()
-
-    if (method == "GET" && path.endsWith("/models")) {
+    if (method == "GET" && path.endsWith("/contexts")) {
+      val contexts = env.adminExtensions.extension[AiExtension].map(_.states.allContexts()).getOrElse(Seq.empty)
+        .filter(c => config.contextRefs.contains(c.id))
+        .map(c => Json.obj("id" -> c.id, "name" -> c.name))
+      Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(JsArray(contexts))), None)).vfuture
+      
+    } else if (method == "GET" && path.endsWith("/models")) {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
       OpenAiCompatProvidersWithModels.handleRequest(providerConfig, ctx)
 
