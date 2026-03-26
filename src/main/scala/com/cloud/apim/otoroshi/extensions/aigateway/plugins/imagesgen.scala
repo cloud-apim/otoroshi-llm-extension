@@ -112,40 +112,9 @@ object OpenAiCompatImagesGenConfig {
   }
 }
 
-class OpenAICompatImagesGen extends NgBackendCall {
-
-  override def name: String = "Cloud APIM - Image generation backend"
-
-  override def description: Option[String] = "Delegates call to a LLM provider to generate images".some
-
-  override def core: Boolean = false
-
-  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
-
-  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
-
-  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
-
-  override def useDelegates: Boolean = false
-
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAiCompatImagesGenConfig.default)
-
-  override def noJsForm: Boolean = true
-
-  override def configFlow: Seq[String] = OpenAiCompatImagesGenConfig.configFlow
-
-  override def configSchema: Option[JsObject] = OpenAiCompatImagesGenConfig.configSchema
-
-  override def start(env: Env): Future[Unit] = {
-    env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'Image generation backend' plugin is available !")
-    }
-    ().vfuture
-  }
-
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+object OpenAICompatImagesGen {
+  def handleRequest(config: OpenAiCompatImagesGenConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    val config = ctx.cachedConfig(internalName)(OpenAiCompatImagesGenConfig.format).getOrElse(OpenAiCompatImagesGenConfig.default)
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
       val _jsonBody = bodyRaw.utf8String.parseJson
       val jsonBody: JsObject = OpenAiCompatImagesGenConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
@@ -181,6 +150,33 @@ class OpenAICompatImagesGen extends NgBackendCall {
         }
       }
     }
+  }
+}
+
+class OpenAICompatImagesGen extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - Image generation backend"
+  override def description: Option[String] = "Delegates call to a LLM provider to generate images".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAiCompatImagesGenConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = OpenAiCompatImagesGenConfig.configFlow
+  override def configSchema: Option[JsObject] = OpenAiCompatImagesGenConfig.configSchema
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'Image generation backend' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(OpenAiCompatImagesGenConfig.format).getOrElse(OpenAiCompatImagesGenConfig.default)
+    OpenAICompatImagesGen.handleRequest(config, ctx)
   }
 }
 
@@ -272,40 +268,9 @@ object OpenAICompatImagesEditConfig {
 }
 
 
-class OpenAICompatImagesEdit extends NgBackendCall {
-
-  override def name: String = "Cloud APIM - Image edition backend"
-
-  override def description: Option[String] = "Delegates call to a LLM provider to edit images".some
-
-  override def core: Boolean = false
-
-  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
-
-  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
-
-  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
-
-  override def useDelegates: Boolean = false
-
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAiCompatImagesGenConfig.default)
-
-  override def noJsForm: Boolean = true
-
-  override def configFlow: Seq[String] = OpenAiCompatImagesGenConfig.configFlow
-
-  override def configSchema: Option[JsObject] = OpenAiCompatImagesGenConfig.configSchema
-
-  override def start(env: Env): Future[Unit] = {
-    env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'Image edition backend' plugin is available !")
-    }
-    ().vfuture
-  }
-
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+object OpenAICompatImagesEdit {
+  def handleRequest(config: OpenAICompatImagesEditConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    val config = ctx.cachedConfig(internalName)(OpenAICompatImagesEditConfig.format).getOrElse(OpenAICompatImagesEditConfig.default)
     Multipart.multipartParser(
       config.maxSizeUpload,
       allowEmptyFiles = false,
@@ -365,5 +330,32 @@ class OpenAICompatImagesEdit extends NgBackendCall {
         }
       }
     }
+  }
+}
+
+class OpenAICompatImagesEdit extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - Image edition backend"
+  override def description: Option[String] = "Delegates call to a LLM provider to edit images".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAiCompatImagesGenConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = OpenAiCompatImagesGenConfig.configFlow
+  override def configSchema: Option[JsObject] = OpenAiCompatImagesGenConfig.configSchema
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'Image edition backend' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(OpenAICompatImagesEditConfig.format).getOrElse(OpenAICompatImagesEditConfig.default)
+    OpenAICompatImagesEdit.handleRequest(config, ctx)
   }
 }
