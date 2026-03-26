@@ -580,6 +580,71 @@ case class ChatResponse(
       case (o, budget) => o ++ Json.obj("budget" -> budget._1.jsonWithRemaining(budget._2))
     }
   }
+  def openaiResponseJson(model: String, env: Env): JsValue = {
+    val finalModel = raw.select("model").asOpt[String].getOrElse(model)
+    val outputItems = generations.flatMap { gen =>
+      var items = Seq.empty[JsValue]
+      val textContent = gen.message.content
+      val messageId = s"msg_${IdGenerator.token(32)}"
+      if (!gen.message.has_tool_calls || (textContent != null && textContent.nonEmpty && !textContent.trim.isEmpty)) {
+        items = items :+ Json.obj(
+          "type" -> "message",
+          "id" -> messageId,
+          "status" -> "completed",
+          "role" -> gen.message.role,
+          "content" -> JsArray(Seq(Json.obj(
+            "type" -> "output_text",
+            "text" -> textContent,
+            "annotations" -> JsArray()
+          )))
+        )
+      }
+      if (gen.message.has_tool_calls) {
+        items = items ++ gen.message.tool_calls.getOrElse(Seq.empty).map { tc =>
+          val tcObj = tc.asObject
+          val callId: String = tcObj.select("id").asOptString.getOrElse(s"call_${IdGenerator.token(16)}")
+          val funcName: String = tcObj.select("function").select("name").asOptString.orElse(tcObj.select("name").asOptString).getOrElse("")
+          val funcArgs: String = tcObj.select("function").select("arguments").asOptString.orElse(tcObj.select("arguments").asOptString).getOrElse("{}")
+          Json.obj(
+            "type" -> "function_call",
+            "id" -> s"fc_${IdGenerator.token(32)}",
+            "call_id" -> callId,
+            "name" -> funcName,
+            "arguments" -> funcArgs
+          )
+        }
+      }
+      if (items.isEmpty) {
+        items = Seq(Json.obj(
+          "type" -> "message",
+          "id" -> messageId,
+          "status" -> "completed",
+          "role" -> "assistant",
+          "content" -> JsArray(Seq(Json.obj(
+            "type" -> "output_text",
+            "text" -> "",
+            "annotations" -> JsArray()
+          )))
+        ))
+      }
+      items
+    }
+    Json.obj(
+      "id" -> s"resp_${IdGenerator.token(32)}",
+      "object" -> "response",
+      "created_at" -> (System.currentTimeMillis() / 1000).toLong,
+      "model" -> finalModel,
+      "status" -> "completed",
+      "output" -> JsArray(outputItems),
+      "usage" -> metadata.usage.openaiResponsesJson,
+    ).applyOnWithOpt(metadata.impacts) {
+      case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+    }.applyOnWithOpt(metadata.costs) {
+      case (o, costs) => o ++ Json.obj("costs" -> costs.json)
+    }.applyOnWithOpt(metadata.budget) {
+      case (o, budget) => o ++ Json.obj("budget" -> budget._1.jsonWithRemaining(budget._2))
+    }
+  }
   def toSource(model: String): Source[ChatResponseChunk, _] = {
     val id = s"chatgen-${IdGenerator.token(32)}"
     val finalModel = raw.select("model").asOpt[String].getOrElse(model)
@@ -594,6 +659,7 @@ case class ChatResponse(
         ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(None, None), Some("stop"))))
       ))
   }
+  def toResponseSource(model: String): Source[ChatResponseChunk, _] = toSource(model)
 }
 sealed trait ChatResponseCacheStatus {
   def name: String
@@ -691,6 +757,14 @@ case class ChatResponseMetadataUsage(promptTokens: Long, generationTokens: Long,
   def anthropicJson: JsValue = Json.obj(
     "input_tokens" -> promptTokens,
     "output_tokens" -> generationTokens,
+  )
+  def openaiResponsesJson: JsValue = Json.obj(
+    "input_tokens" -> promptTokens,
+    "output_tokens" -> generationTokens,
+    "total_tokens" -> (promptTokens + generationTokens),
+    "output_tokens_details" -> Json.obj(
+      "reasoning_tokens" -> reasoningTokens
+    )
   )
 }
 
@@ -1731,7 +1805,12 @@ trait ChatClient {
   }
 
   def response(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    Left(Json.obj("error" -> "completion not supported")).vfuture
+    val cleanBody = originalBody.asObject - "input" - "instructions" - "previous_response_id" - "store" - "truncation" - "text" - "reasoning" - "metadata"
+    val bodyWithMaxTokens = cleanBody.select("max_output_tokens").asOpt[Int] match {
+      case Some(maxTokens) => (cleanBody - "max_output_tokens") ++ Json.obj("max_tokens" -> maxTokens)
+      case None => cleanBody
+    }
+    call(prompt, attrs, bodyWithMaxTokens)
   }
 
   def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
@@ -1743,7 +1822,12 @@ trait ChatClient {
   }
 
   def responseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    Left(Json.obj("error" -> "streaming not supported")).future
+    val cleanBody = originalBody.asObject - "input" - "instructions" - "previous_response_id" - "store" - "truncation" - "text" - "reasoning" - "metadata"
+    val bodyWithMaxTokens = cleanBody.select("max_output_tokens").asOpt[Int] match {
+      case Some(maxTokens) => (cleanBody - "max_output_tokens") ++ Json.obj("max_tokens" -> maxTokens)
+      case None => cleanBody
+    }
+    stream(prompt, attrs, bodyWithMaxTokens)
   }
 
   final def tryStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
