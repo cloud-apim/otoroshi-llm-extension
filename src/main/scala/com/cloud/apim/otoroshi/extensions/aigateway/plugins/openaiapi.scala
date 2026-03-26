@@ -207,6 +207,10 @@ class OpenAiCompatApi extends NgBackendCall {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
       OpenAiCompatProxy.handleRequest(providerConfig, ctx)
 
+    } else if (method == "POST" && path.endsWith("/messages")) {
+      val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
+      AnthropicCompatProxy.handleRequest(providerConfig, ctx)
+
     } else {
       Left(NgProxyEngineError.NgResultProxyEngineError(Results.NotFound(Json.obj("error" -> "not_found", "error_details" -> s"no handler found for ${method} ${path}")))).vfuture
     }
