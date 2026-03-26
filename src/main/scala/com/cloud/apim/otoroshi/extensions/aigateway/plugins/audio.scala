@@ -100,32 +100,11 @@ object OpenAICompatTextToSpeechConfig {
   }
 }
 
-class OpenAICompatTextToSpeech extends NgBackendCall {
-
-  override def name: String = "Cloud APIM - Text to speech backend"
-  override def description: Option[String] = "Delegates call to a provider to generate audio files from text".some
-  override def core: Boolean = false
-  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
-  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
-  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
-  override def useDelegates: Boolean = false
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatTextToSpeechConfig.default)
-  override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = OpenAICompatTextToSpeechConfig.configFlow
-  override def configSchema: Option[JsObject] = OpenAICompatTextToSpeechConfig.configSchema
-
-  override def start(env: Env): Future[Unit] = {
-    env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'Text to speech backend' plugin is available !")
-    }
-    ().vfuture
-  }
-
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+object OpenAICompatTextToSpeech {
+  def handleRequest(config: OpenAICompatTextToSpeechConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
       val _jsonBody = bodyRaw.utf8String.parseJson
-      val config = ctx.cachedConfig(internalName)(OpenAICompatTextToSpeechConfig.format).getOrElse(OpenAICompatTextToSpeechConfig.default)
       val jsonBody: JsObject = OpenAICompatTextToSpeechConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
       val provider: Option[AudioModel] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
         ext.states.audioModel(r)
@@ -154,6 +133,33 @@ class OpenAICompatTextToSpeech extends NgBackendCall {
         }
       }
     }
+  }
+}
+
+class OpenAICompatTextToSpeech extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - Text to speech backend"
+  override def description: Option[String] = "Delegates call to a provider to generate audio files from text".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatTextToSpeechConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = OpenAICompatTextToSpeechConfig.configFlow
+  override def configSchema: Option[JsObject] = OpenAICompatTextToSpeechConfig.configSchema
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'Text to speech backend' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(OpenAICompatTextToSpeechConfig.format).getOrElse(OpenAICompatTextToSpeechConfig.default)
+    OpenAICompatTextToSpeech.handleRequest(config, ctx)
   }
 }
 
@@ -243,30 +249,9 @@ object OpenAICompatSpeechToTextConfig {
   }
 }
 
-class OpenAICompatSpeechToText extends NgBackendCall {
-
-  override def name: String = "Cloud APIM - Speech to text backend"
-  override def description: Option[String] = "Delegates call to a provider to generate text from audio files".some
-  override def core: Boolean = false
-  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
-  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
-  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
-  override def useDelegates: Boolean = false
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatSpeechToTextConfig.default)
-  override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = OpenAICompatSpeechToTextConfig.configFlow
-  override def configSchema: Option[JsObject] = OpenAICompatSpeechToTextConfig.configSchema
-
-  override def start(env: Env): Future[Unit] = {
-    env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'Speech to text backend' plugin is available !")
-    }
-    ().vfuture
-  }
-
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+object OpenAICompatSpeechToText {
+  def handleRequest(config: OpenAICompatSpeechToTextConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    val config = ctx.cachedConfig(internalName)(OpenAICompatSpeechToTextConfig.format).getOrElse(OpenAICompatSpeechToTextConfig.default)
     Multipart.multipartParser(
       config.maxSizeUpload,
       allowEmptyFiles = false,
@@ -339,10 +324,10 @@ class OpenAICompatSpeechToText extends NgBackendCall {
   }
 }
 
-class OpenAICompatTranslation extends NgBackendCall {
+class OpenAICompatSpeechToText extends NgBackendCall {
 
-  override def name: String = "Cloud APIM - Audio translation backend"
-  override def description: Option[String] = "Delegates call to a provider to generate english text from audio files".some
+  override def name: String = "Cloud APIM - Speech to text backend"
+  override def description: Option[String] = "Delegates call to a provider to generate text from audio files".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
@@ -355,14 +340,20 @@ class OpenAICompatTranslation extends NgBackendCall {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'Audio translation backend' plugin is available !")
+      ext.logger.info("the 'Speech to text backend' plugin is available !")
     }
     ().vfuture
   }
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val ext = env.adminExtensions.extension[AiExtension].get
     val config = ctx.cachedConfig(internalName)(OpenAICompatSpeechToTextConfig.format).getOrElse(OpenAICompatSpeechToTextConfig.default)
+    OpenAICompatSpeechToText.handleRequest(config, ctx)
+  }
+}
+
+object OpenAICompatTranslation {
+  def handleRequest(config: OpenAICompatSpeechToTextConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
     Multipart.multipartParser(
       config.maxSizeUpload,
       allowEmptyFiles = false,
@@ -432,5 +423,32 @@ class OpenAICompatTranslation extends NgBackendCall {
         }
       }
     }
+  }
+}
+
+class OpenAICompatTranslation extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - Audio translation backend"
+  override def description: Option[String] = "Delegates call to a provider to generate english text from audio files".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(OpenAICompatSpeechToTextConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = OpenAICompatSpeechToTextConfig.configFlow
+  override def configSchema: Option[JsObject] = OpenAICompatSpeechToTextConfig.configSchema
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'Audio translation backend' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(OpenAICompatSpeechToTextConfig.format).getOrElse(OpenAICompatSpeechToTextConfig.default)
+    OpenAICompatTranslation.handleRequest(config, ctx)
   }
 }
