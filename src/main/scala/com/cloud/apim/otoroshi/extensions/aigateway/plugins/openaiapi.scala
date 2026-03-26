@@ -200,8 +200,8 @@ class OpenAiCompatApi extends NgBackendCall {
       OpenAICompatModeration.handleRequest(moderationConfig, ctx)
 
     } else if (method == "POST" && path.endsWith("/responses")) {
-      // TODO: implement responses API
-      Left(NgProxyEngineError.NgResultProxyEngineError(Results.NotImplemented(Json.obj("error" -> "not_implemented", "error_details" -> "responses API is not yet implemented")))).vfuture
+      val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
+      OpenAiResponsesProxy.handleRequest(providerConfig, ctx)
 
     } else if (method == "POST" && path.endsWith("/chat/completions")) {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
