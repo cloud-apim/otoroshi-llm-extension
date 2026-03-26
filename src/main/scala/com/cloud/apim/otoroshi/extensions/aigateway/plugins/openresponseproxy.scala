@@ -18,6 +18,25 @@ import play.api.mvc.Results
 import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
 import scala.concurrent.{ExecutionContext, Future}
 
+object OpenResponseCompatProxy {
+
+  def handleRequest(config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    if (ctx.request.hasBody) {
+      ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
+        try {
+          val jsonBody = bodyRaw.utf8String.parseJson
+          new OpenResponseCompatProxy().call(jsonBody, config, ctx)
+        } catch {
+          case e: Throwable =>
+            NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> e.getMessage))).leftf
+        }
+      }
+    } else {
+      new OpenResponseCompatProxy().call(Json.obj(), config, ctx)
+    }
+  }
+}
+
 class OpenResponseCompatProxy extends NgBackendCall {
 
   override def name: String = "Cloud APIM - LLM OpenResponse Proxy"
