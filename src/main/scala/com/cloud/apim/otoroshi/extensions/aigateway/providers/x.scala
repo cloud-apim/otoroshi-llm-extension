@@ -275,6 +275,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = true
+  override def supportsResponses: Boolean = true
 
   override def transformOpenAIInputBodyToProviderInputBody(inputBody: JsObject): JsObject = {
     val model = inputBody.select("model").asOptString.orElse(computeModel(inputBody)).getOrElse("--")
