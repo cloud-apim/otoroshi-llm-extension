@@ -80,29 +80,8 @@ class OpenAiCompatModels extends NgBackendCall {
   }
 }
 
-class OpenAiCompatProvidersWithModels extends NgBackendCall {
-
-  override def name: String = "Cloud APIM - LLM OpenAI Compat. Provider with Models list"
-  override def description: Option[String] = "Delegates call to LLM providers to retrieve supported models".some
-  override def core: Boolean = false
-  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
-  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
-  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
-  override def useDelegates: Boolean = false
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefsConfig.default)
-  override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow
-  override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers")
-
-  override def start(env: Env): Future[Unit] = {
-    env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'LLM OpenAI Compat. Models list' plugin is available !")
-    }
-    ().vfuture
-  }
-
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
+object OpenAiCompatProvidersWithModels {
+  def handleRequest(config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val now: Long = System.currentTimeMillis() / 1000
     Source(config.refs.toList)
@@ -148,6 +127,33 @@ class OpenAiCompatProvidersWithModels extends NgBackendCall {
           ))
         ), None))
       }
+  }
+}
+
+class OpenAiCompatProvidersWithModels extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - LLM OpenAI Compat. Provider with Models list"
+  override def description: Option[String] = "Delegates call to LLM providers to retrieve supported models".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefsConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow
+  override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers")
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'LLM OpenAI Compat. Models list' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
+    OpenAiCompatProvidersWithModels.handleRequest(config, ctx)
   }
 }
 
