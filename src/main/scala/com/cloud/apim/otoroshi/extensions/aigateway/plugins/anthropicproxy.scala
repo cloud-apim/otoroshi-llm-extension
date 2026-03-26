@@ -34,38 +34,22 @@ case class AnthropicStreamResponseState(
   toolCallsDone: AtomicBoolean = new AtomicBoolean(false),
 )
 
-/*
-export ANTHROPIC_AUTH_TOKEN=otoroshi
-export ANTHROPIC_API_KEY=""
-export ANTHROPIC_BASE_URL=http://anthropic.oto.tools:9999
-claude --model gpt-5.2
- */
-class AnthropicCompatProxy extends NgBackendCall {
+object AnthropicCompatProxy {
 
-  override def name: String = "Cloud APIM - LLM Anthropic messages Proxy"
-  override def description: Option[String] = "Delegates call to a LLM provider but with an Anthropic like API".some
-
-  override def core: Boolean = false
-  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
-  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
-  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
-  override def useDelegates: Boolean = false
-  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefsConfig.default)
-
-  override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow ++ Seq("override_model")
-  override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers").map(o => o ++ Json.obj(
-    "override_model" -> Json.obj(
-      "type" -> "string",
-      "label" -> s"Override model",
-    )
-  ))
-
-  override def start(env: Env): Future[Unit] = {
-    env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'LLM Anthropic messages Proxy' plugin is available !")
+  def validate(messages: Seq[JsObject], ctx: NgbBackendCallContext): Boolean = {
+    ctx.attrs.get(AiPluginsKeys.PromptValidatorsKey) match {
+      case None => true
+      case Some(seq) => {
+        val contents = messages.flatMap { msg =>
+          msg.select("content").asOpt[String].orElse(
+            msg.select("content").asOpt[Seq[JsObject]].map { blocks =>
+              blocks.flatMap(_.select("text").asOpt[String]).mkString(" ")
+            }
+          )
+        }
+        contents.forall(content => seq.forall(_.validate(content)))
+      }
     }
-    ().vfuture
   }
 
   private def anthropicMessageStart(model: String, messageId: String): ByteString = {
@@ -128,10 +112,6 @@ class AnthropicCompatProxy extends NgBackendCall {
   }
 
   private def fixBody(_jsonBody: JsObject, client: ChatClient, reqId: Long): JsObject = {
-    //val tools = _jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-    //val system = _jsonBody.select("system").asOpt[JsObject].orElse(_jsonBody.select("system").asOpt[JsString]).isDefined
-    //val debugBody = _jsonBody ++ Json.obj("tools" -> Json.obj("registered" -> tools.size), "system" -> system)
-    //println(s"receiving JSON body: ${debugBody.prettify}")
     if (client.isAnthropic) {
       _jsonBody - "system"
     } else if (client.isCohere) {
@@ -189,13 +169,6 @@ class AnthropicCompatProxy extends NgBackendCall {
           val thinkingBudget = budget.get
           val effort = _jsonBody.select("max_tokens").asOptLong.map { maxBudget =>
             val ratio = thinkingBudget.toDouble / maxBudget.toDouble
-            //ratio match {
-            //  case r if r <= 0.10 => "minimal"
-            //  case r if r <= 0.25 => "low"
-            //  case r if r <= 0.50 => "medium"
-            //  case r if r <= 0.80 => "high"
-            //  case _              => "xhigh"
-            //}
             ratio match {
               case r if r <= 0.25 => "minimal"
               case r if r <= 0.50 => "low"
@@ -260,23 +233,6 @@ class AnthropicCompatProxy extends NgBackendCall {
     }
   }
 
-  // private val dateFormatter      = DateTimeFormatter.ofPattern("yyyy-MM-dd")
-  // private def logDir: String =
-  //   sys.env.get(ChatClientWithRequestResponseLogging.dirEnvVar)
-  //     .orElse(sys.props.get(ChatClientWithRequestResponseLogging.dirEnvVar))
-  //     .getOrElse("/tmp/llm-logs")
-  // private def sanitize(s: String): String = s.replaceAll("[^a-zA-Z0-9_-]", "_")
-  // private def resolveLogFile(originalProvider: AiProvider, attrs: TypedMap): java.nio.file.Path = {
-  //   val date         = LocalDateTime.now().format(dateFormatter)
-  //   val providerId   = sanitize(originalProvider.id)
-  //   val providerName = sanitize(originalProvider.name)
-  //   val llmName      = sanitize(originalProvider.provider)
-  //   val dir          = Paths.get(logDir)
-  //   val reqId        = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).getOrElse(ULID.random().toString)
-  //   if (!Files.exists(dir)) Files.createDirectories(dir)
-  //   dir.resolve(s"${providerId}_${providerName}_${llmName}_${date}_${reqId}.json")
-  // }
-
   def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val reqId = System.currentTimeMillis
     val jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config)
@@ -302,7 +258,6 @@ class AnthropicCompatProxy extends NgBackendCall {
         val stream = ctx.request.queryParam("stream").contains("true") || ctx.request.header("x-stream").contains("true") || jsonBody.select("stream").asOpt[Boolean].contains(true)
         val finalJsonBody = fixBody(jsonBody.asObject, client, reqId)
 
-        // Extract system message from Anthropic format (top-level "system" field)
         val systemMessage: Option[JsObject] = jsonBody.select("system").asOpt[String].map { sys =>
           Json.obj("role" -> "system", "content" -> sys)
         }.orElse(jsonBody.select("system").asOpt[Seq[JsObject]].map { sysBlocks =>
@@ -352,32 +307,12 @@ class AnthropicCompatProxy extends NgBackendCall {
                 ))))
               case Right(source) => {
                 val state = AnthropicStreamResponseState()
-                //var parts = List.empty[ByteString]
                 val finalSource = Source.single(anthropicMessageStart(model, messageId))
                   .concat(Source.single(anthropicContentBlockStart(0)))
                   .concat(source.flatMapConcat(_.anthropicContentBlockDeltaEventSource(env, state)))
                   .concat(Source.single(anthropicContentBlockStop(0)))
                   .concat(Source.single(anthropicMessageDelta(if (state.toolCallsStarted.get()) "tool_use" else "end_turn", 0)))
                   .concat(Source.single(anthropicMessageStop()))
-                  //.map { bs =>
-                  //  parts = parts :+ bs
-                  //  bs
-                  //}
-                  //.alsoTo(Sink.onComplete {
-                  //  case _ => {
-                  //    try {
-                  //      val line = jsonBody.prettify + "\n\n\n" + parts.map(_.utf8String).mkString("\n")
-                  //      Files.write(
-                  //        resolveLogFile(provider.get, ctx.attrs),
-                  //        line.getBytes(StandardCharsets.UTF_8),
-                  //        StandardOpenOption.CREATE,
-                  //        StandardOpenOption.APPEND,
-                  //      )
-                  //    } catch {
-                  //      case _: Exception => // silently ignore write errors to avoid impacting the request
-                  //    }
-                  //  }
-                  //})
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
               }
             }
@@ -409,28 +344,11 @@ class AnthropicCompatProxy extends NgBackendCall {
     }
   }
 
-  def validate(messages: Seq[JsObject], ctx: NgbBackendCallContext): Boolean = {
-    ctx.attrs.get(AiPluginsKeys.PromptValidatorsKey) match {
-      case None => true
-      case Some(seq) => {
-        val contents = messages.flatMap { msg =>
-          msg.select("content").asOpt[String].orElse(
-            msg.select("content").asOpt[Seq[JsObject]].map { blocks =>
-              blocks.flatMap(_.select("text").asOpt[String]).mkString(" ")
-            }
-          )
-        }
-        contents.forall(content => seq.forall(_.validate(content)))
-      }
-    }
-  }
-
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     if (ctx.request.hasBody) {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         try {
           val jsonBody = bodyRaw.utf8String.parseJson
-          val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
           call(jsonBody, config, ctx)
         } catch {
           case e: Throwable =>
@@ -445,8 +363,47 @@ class AnthropicCompatProxy extends NgBackendCall {
         }
       }
     } else {
-      val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
       call(Json.obj(), config, ctx)
     }
+  }
+}
+
+/*
+export ANTHROPIC_AUTH_TOKEN=otoroshi
+export ANTHROPIC_API_KEY=""
+export ANTHROPIC_BASE_URL=http://anthropic.oto.tools:9999
+claude --model gpt-5.2
+ */
+class AnthropicCompatProxy extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - LLM Anthropic messages Proxy"
+  override def description: Option[String] = "Delegates call to a LLM provider but with an Anthropic like API".some
+
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefsConfig.default)
+
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow ++ Seq("override_model")
+  override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers").map(o => o ++ Json.obj(
+    "override_model" -> Json.obj(
+      "type" -> "string",
+      "label" -> s"Override model",
+    )
+  ))
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'LLM Anthropic messages Proxy' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
+    AnthropicCompatProxy.handleRequest(config, ctx)
   }
 }
