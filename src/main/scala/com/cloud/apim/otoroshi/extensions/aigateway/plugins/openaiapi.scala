@@ -21,14 +21,15 @@ case class OpenAiCompatApiConfig(
   moderationModelRefs: Seq[String],
   contextRefs: Seq[String],
   maxSizeUpload: Long,
-  decodeImages: Boolean
+  decodeImages: Boolean,
+  useOpenResponseForResponses: Boolean
 ) extends NgPluginConfig {
   def json: JsValue = OpenAiCompatApiConfig.format.writes(this)
 }
 
 object OpenAiCompatApiConfig {
 
-  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "embedding_model_refs", "moderation_model_refs", "context_refs", "max_size_upload", "decode_images")
+  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "embedding_model_refs", "moderation_model_refs", "context_refs", "max_size_upload", "decode_images", "use_open_response_for_responses")
 
   def configSchema: Option[JsObject] = Some(Json.obj(
     "language_model_refs" -> Json.obj(
@@ -115,6 +116,11 @@ object OpenAiCompatApiConfig {
         "help" -> "Only work for single image results base64 encoded",
       )
     ),
+    "use_open_response_for_responses" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Use OpenResponse proxy for /responses",
+      "help" -> "Use the OpenResponse proxy instead of the default OpenAI Responses proxy for the /responses endpoint",
+    ),
   ))
 
   val default = OpenAiCompatApiConfig(
@@ -125,7 +131,8 @@ object OpenAiCompatApiConfig {
     moderationModelRefs = Seq.empty,
     contextRefs = Seq.empty,
     maxSizeUpload = 100 * 1024 * 1024,
-    decodeImages = false
+    decodeImages = false,
+    useOpenResponseForResponses = false
   )
 
   val format = new Format[OpenAiCompatApiConfig] {
@@ -138,6 +145,7 @@ object OpenAiCompatApiConfig {
       "context_refs" -> o.contextRefs,
       "max_size_upload" -> o.maxSizeUpload,
       "decode_images" -> o.decodeImages,
+      "use_open_response_for_responses" -> o.useOpenResponseForResponses,
     )
     override def reads(json: JsValue): JsResult[OpenAiCompatApiConfig] = Try {
       OpenAiCompatApiConfig(
@@ -149,6 +157,7 @@ object OpenAiCompatApiConfig {
         contextRefs = json.select("context_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
         maxSizeUpload = json.select("max_size_upload").asOpt[Long].getOrElse(default.maxSizeUpload),
         decodeImages = json.select("decode_images").asOpt[Boolean].getOrElse(false),
+        useOpenResponseForResponses = json.select("use_open_response_for_responses").asOpt[Boolean].getOrElse(false),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -222,7 +231,15 @@ class OpenAiCompatApi extends NgBackendCall {
 
     } else if (method == "POST" && path.endsWith("/responses")) {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
-      OpenAiResponsesProxy.handleRequest(providerConfig, ctx)
+      if (config.useOpenResponseForResponses) {
+        OpenResponseCompatProxy.handleRequest(providerConfig, ctx)
+      } else {
+        OpenAiResponsesProxy.handleRequest(providerConfig, ctx)
+      }
+
+    } else if (method == "POST" && path.endsWith("/open-responses")) {
+      val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
+      OpenResponseCompatProxy.handleRequest(providerConfig, ctx)
 
     } else if (method == "POST" && path.endsWith("/chat/completions")) {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
