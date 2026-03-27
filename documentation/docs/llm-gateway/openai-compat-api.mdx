@@ -83,7 +83,7 @@ This makes it the ideal choice when you want to expose a single, coherent API su
   "id": "route_unified_ai_api",
   "name": "Unified AI API",
   "frontend": {
-    "domains": ["ai-api.your-domain.com/v1"],
+    "domains": ["api.domain.tld/v1"],
     "strip_path": true,
     "exact": false
   },
@@ -126,7 +126,7 @@ This makes it the ideal choice when you want to expose a single, coherent API su
 Lists all models available from the configured language model providers. Compatible with the [OpenAI Models API](https://platform.openai.com/docs/api-reference/models).
 
 ```sh
-curl https://ai-api.your-domain.com/v1/models \
+curl https://api.domain.tld/v1/models \
   -H "Authorization: Bearer $OTOROSHI_BEARER"
 ```
 
@@ -137,7 +137,7 @@ When multiple providers are configured, model IDs are prefixed with the provider
 Returns the list of prompt contexts configured for this plugin. Each context includes its `id` and `name`.
 
 ```sh
-curl https://ai-api.your-domain.com/v1/contexts \
+curl https://api.domain.tld/v1/contexts \
   -H "Authorization: Bearer $OTOROSHI_BEARER"
 ```
 
@@ -155,7 +155,7 @@ Response:
 Standard [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat/create) endpoint. Supports streaming, tool calling, and model routing.
 
 ```sh
-curl https://ai-api.your-domain.com/v1/chat/completions \
+curl https://api.domain.tld/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
@@ -187,7 +187,7 @@ Streaming is activated when any of the following is true:
 [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses/create) endpoint. This is the newer OpenAI API format that uses `input` and `instructions` instead of `messages`.
 
 ```sh
-curl https://ai-api.your-domain.com/v1/responses \
+curl https://api.domain.tld/v1/responses \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
@@ -305,7 +305,7 @@ Regardless of this flag, the dedicated endpoints are always available:
 [Anthropic Messages API](https://docs.anthropic.com/en/api/messages) endpoint. This allows any Anthropic API client (including **Claude Code**) to use any LLM provider managed by Otoroshi.
 
 ```sh
-curl https://ai-api.your-domain.com/v1/messages \
+curl https://api.domain.tld/v1/messages \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -H "anthropic-version: 2023-06-01" \
@@ -355,7 +355,7 @@ You can use Claude Code with this plugin by setting:
 ```sh
 export ANTHROPIC_AUTH_TOKEN=your-otoroshi-api-key
 export ANTHROPIC_API_KEY=""
-export ANTHROPIC_BASE_URL=https://ai-api.your-domain.com
+export ANTHROPIC_BASE_URL=https://api.domain.tld
 claude --model gpt-4o
 ```
 
@@ -364,7 +364,7 @@ claude --model gpt-4o
 [OpenAI Embeddings API](https://platform.openai.com/docs/api-reference/embeddings) endpoint.
 
 ```sh
-curl https://ai-api.your-domain.com/v1/embeddings \
+curl https://api.domain.tld/v1/embeddings \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
@@ -378,7 +378,7 @@ curl https://ai-api.your-domain.com/v1/embeddings \
 [OpenAI Image Generation API](https://platform.openai.com/docs/api-reference/images/create) endpoint.
 
 ```sh
-curl https://ai-api.your-domain.com/v1/images/generations \
+curl https://api.domain.tld/v1/images/generations \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
@@ -400,7 +400,7 @@ When `decode_images` is enabled, base64-encoded image results are decoded and re
 [OpenAI Text-to-Speech API](https://platform.openai.com/docs/api-reference/audio/createSpeech) endpoint.
 
 ```sh
-curl https://ai-api.your-domain.com/v1/audio/speech \
+curl https://api.domain.tld/v1/audio/speech \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
@@ -423,7 +423,7 @@ curl https://ai-api.your-domain.com/v1/audio/speech \
 [OpenAI Moderation API](https://platform.openai.com/docs/api-reference/moderations) endpoint.
 
 ```sh
-curl https://ai-api.your-domain.com/v1/moderations \
+curl https://api.domain.tld/v1/moderations \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
@@ -466,7 +466,7 @@ Add the `ApikeyCalls` plugin to your route:
 Clients can then authenticate with a Bearer token:
 
 ```sh
-curl https://ai-api.your-domain.com/v1/chat/completions \
+curl https://api.domain.tld/v1/chat/completions \
   -H "Authorization: Bearer your-otoroshi-apikey" \
   -H "Content-Type: application/json" \
   -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello!"}]}'
@@ -513,7 +513,7 @@ Add the `BiscuitUserExtractor` plugin:
 Clients send their biscuit token in the Authorization header:
 
 ```sh
-curl https://ai-api.your-domain.com/v1/chat/completions \
+curl https://api.domain.tld/v1/chat/completions \
   -H "Authorization: biscuit_token_here" \
   -H "Content-Type: application/json" \
   -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello!"}]}'
@@ -549,7 +549,7 @@ TOKEN=$(curl -s -X POST https://keycloak.your-domain.com/realms/your-realm/proto
   -d "client_secret=your-client-secret" | jq -r '.access_token')
 
 # Then call the AI API
-curl https://ai-api.your-domain.com/v1/chat/completions \
+curl https://api.domain.tld/v1/chat/completions \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello!"}]}'
