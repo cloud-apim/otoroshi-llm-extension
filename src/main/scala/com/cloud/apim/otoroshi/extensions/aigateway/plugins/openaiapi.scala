@@ -241,6 +241,10 @@ class OpenAiCompatApi extends NgBackendCall {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
       OpenResponseCompatProxy.handleRequest(providerConfig, ctx)
 
+    } else if (method == "POST" && path.endsWith("/oai-responses")) {
+      val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
+      OpenAiResponsesProxy.handleRequest(providerConfig, ctx)
+
     } else if (method == "POST" && path.endsWith("/chat/completions")) {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
       OpenAiCompatProxy.handleRequest(providerConfig, ctx)
