@@ -1,0 +1,447 @@
+---
+sidebar_position: 6
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# OpenAI Compatible API (unified)
+
+The **LLM OpenAI Compatible API** plugin is a unified backend plugin that exposes a single Otoroshi route as a full-featured, multi-endpoint AI API. Instead of configuring separate plugins for chat completions, audio, images, embeddings, moderation, and responses, this single plugin handles all of them with a consistent configuration.
+
+```
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatApi
+```
+
+## Why use this plugin?
+
+When building an AI gateway, you typically need to expose several API endpoints: chat completions, embeddings, image generation, audio transcription, moderation, etc. With the individual plugins, you would need to configure each one separately on the same route, mapping each to a specific path.
+
+The **OpenAI Compatible API** plugin simplifies this by providing a single plugin that routes requests based on the URL path to the appropriate handler. It also goes beyond the standard OpenAI API by supporting additional endpoints:
+
+- **Anthropic Messages API** (`/messages`) for clients like Claude Code
+- **OpenAI Responses API** (`/responses`) for the newer responses format
+- **Open Responses** (`/open-responses`) for the [Open Responses](https://www.openresponses.org/) specification
+- **Prompt contexts** (`/contexts`) for listing available prompt contexts
+
+This makes it the ideal choice when you want to expose a single, coherent API surface that supports multiple AI client ecosystems.
+
+## Supported endpoints
+
+| Method | Path | Description | Config field |
+|--------|------|-------------|--------------|
+| `GET` | `/models` | List available models from all configured providers | `language_model_refs` |
+| `GET` | `/contexts` | List available prompt contexts | `context_refs` |
+| `POST` | `/chat/completions` | OpenAI Chat Completions API | `language_model_refs` |
+| `POST` | `/responses` | OpenAI Responses API (or Open Responses if configured) | `language_model_refs` |
+| `POST` | `/open-responses` | Open Responses API (always available) | `language_model_refs` |
+| `POST` | `/oai-responses` | OpenAI Responses API (always available) | `language_model_refs` |
+| `POST` | `/messages` | Anthropic Messages API | `language_model_refs` |
+| `POST` | `/embeddings` | OpenAI Embeddings API | `embedding_model_refs` |
+| `POST` | `/images/generations` | OpenAI Image Generation API | `image_model_refs` |
+| `POST` | `/images/edits` | OpenAI Image Edit API | `image_model_refs` |
+| `POST` | `/audio/speech` | OpenAI Text-to-Speech API | `audio_model_refs` |
+| `POST` | `/audio/transcriptions` | OpenAI Speech-to-Text API | `audio_model_refs` |
+| `POST` | `/audio/translations` | OpenAI Audio Translation API | `audio_model_refs` |
+| `POST` | `/moderations` | OpenAI Moderation API | `moderation_model_refs` |
+
+## Plugin configuration
+
+```js
+{
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatApi",
+  "enabled": true,
+  "config": {
+    "language_model_refs": ["provider_openai_1", "provider_mistral_1"],
+    "audio_model_refs": ["audio_model_1"],
+    "image_model_refs": ["image_model_1"],
+    "embedding_model_refs": ["embedding_model_1"],
+    "moderation_model_refs": ["moderation_model_1"],
+    "context_refs": ["context_1", "context_2"],
+    "max_size_upload": 104857600,
+    "decode_images": false,
+    "use_open_response_for_responses": false
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `language_model_refs` | array of strings | `[]` | References to LLM provider entities used for chat completions, responses, and messages endpoints |
+| `audio_model_refs` | array of strings | `[]` | References to audio model entities used for speech and transcription endpoints |
+| `image_model_refs` | array of strings | `[]` | References to image model entities used for image generation and editing |
+| `embedding_model_refs` | array of strings | `[]` | References to embedding model entities used for the embeddings endpoint |
+| `moderation_model_refs` | array of strings | `[]` | References to moderation model entities used for the moderations endpoint |
+| `context_refs` | array of strings | `[]` | References to prompt context entities returned by the `/contexts` endpoint |
+| `max_size_upload` | number | `104857600` (100MB) | Maximum file upload size in bytes for audio and image endpoints |
+| `decode_images` | boolean | `false` | When enabled, decodes base64-encoded image results into binary responses |
+| `use_open_response_for_responses` | boolean | `false` | When enabled, the `/responses` endpoint uses the Open Responses proxy instead of the default OpenAI Responses proxy |
+
+## Route configuration example
+
+```js
+{
+  "id": "route_unified_ai_api",
+  "name": "Unified AI API",
+  "frontend": {
+    "domains": ["ai-api.your-domain.com"],
+    "strip_path": true,
+    "exact": false
+  },
+  "backend": {
+    "targets": [
+      {
+        "id": "target_1",
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "config": {}
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatApi",
+      "config": {
+        "language_model_refs": ["provider_openai_1", "provider_mistral_1"],
+        "embedding_model_refs": ["embedding_model_1"],
+        "image_model_refs": ["image_model_1"],
+        "audio_model_refs": ["audio_model_1"],
+        "context_refs": ["context_project_a"],
+        "use_open_response_for_responses": false
+      }
+    }
+  ]
+}
+```
+
+## Endpoint details
+
+### GET /models
+
+Lists all models available from the configured language model providers. Compatible with the [OpenAI Models API](https://platform.openai.com/docs/api-reference/models).
+
+```sh
+curl https://ai-api.your-domain.com/v1/models \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY"
+```
+
+When multiple providers are configured, model IDs are prefixed with the provider slug name (e.g., `my_openai/gpt-4o`). Use `?raw=true` to get raw model identifiers without prefixes.
+
+### GET /contexts
+
+Returns the list of prompt contexts configured for this plugin. Each context includes its `id` and `name`.
+
+```sh
+curl https://ai-api.your-domain.com/v1/contexts \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY"
+```
+
+Response:
+
+```js
+[
+  { "id": "context_project_a", "name": "Project A context" },
+  { "id": "context_support", "name": "Support context" }
+]
+```
+
+### POST /chat/completions
+
+Standard [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat/create) endpoint. Supports streaming, tool calling, and model routing.
+
+```sh
+curl https://ai-api.your-domain.com/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "messages": [
+      { "role": "user", "content": "Hello!" }
+    ]
+  }'
+```
+
+#### Model routing
+
+When multiple providers are configured, you can target a specific provider using the `model` field:
+
+- **Slash syntax**: `providerName/modelName` (e.g., `my_openai/gpt-4o`)
+- **Hash syntax**: `providerId###modelName` (e.g., `provider_xxx###gpt-4o`)
+
+If no provider prefix is specified, the first configured provider is used.
+
+#### Streaming
+
+Streaming is activated when any of the following is true:
+- The request body contains `"stream": true`
+- The query parameter `?stream=true` is present
+- The header `x-stream: true` is present
+
+### POST /responses
+
+[OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses/create) endpoint. This is the newer OpenAI API format that uses `input` and `instructions` instead of `messages`.
+
+```sh
+curl https://ai-api.your-domain.com/v1/responses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "instructions": "You are a helpful assistant.",
+    "input": "What is the capital of France?"
+  }'
+```
+
+Response:
+
+```js
+{
+  "id": "resp_xxxxx",
+  "object": "response",
+  "created_at": 1711569952,
+  "model": "gpt-4o",
+  "status": "completed",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_xxxxx",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "The capital of France is Paris.",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 25,
+    "output_tokens": 8,
+    "total_tokens": 33
+  }
+}
+```
+
+#### Input format
+
+The `input` field accepts multiple formats:
+
+- **String**: a simple text message treated as a user message
+  ```js
+  { "input": "Hello!" }
+  ```
+
+- **Array of messages**: standard role-based messages
+  ```js
+  {
+    "input": [
+      { "type": "message", "role": "user", "content": "Hello!" }
+    ]
+  }
+  ```
+
+- **Multipart content**: messages with mixed content types
+  ```js
+  {
+    "input": [
+      {
+        "type": "message",
+        "role": "user",
+        "content": [
+          { "type": "input_text", "text": "What's in this image?" },
+          { "type": "input_image", "image_url": "https://example.com/image.png" }
+        ]
+      }
+    ]
+  }
+  ```
+
+- **Function call outputs**: tool result messages
+  ```js
+  {
+    "input": [
+      { "type": "function_call_output", "call_id": "call_123", "output": "Paris, 15 degrees" }
+    ]
+  }
+  ```
+
+#### Streaming
+
+When streaming is enabled, the response uses Server-Sent Events with the Responses API event protocol:
+
+```
+event: response.created
+data: {"type":"response.created","response":{...}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_xxx","output_index":0,"content_index":0,"delta":"The capital"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_xxx","output_index":0,"content_index":0,"delta":" of France is Paris."}
+
+event: response.completed
+data: {"type":"response.completed","response":{...}}
+```
+
+The full lifecycle events are emitted: `response.created`, `response.in_progress`, `response.output_item.added`, `response.content_part.added`, `response.output_text.delta`, `response.output_text.done`, `response.content_part.done`, `response.output_item.done`, `response.completed`.
+
+#### Using Open Responses instead
+
+When `use_open_response_for_responses` is set to `true`, the `/responses` endpoint uses the [Open Responses](https://www.openresponses.org/) proxy implementation instead of the default one. The Open Responses proxy provides a richer implementation with native support for function calling, reasoning events, and more streaming events.
+
+Regardless of this flag, the dedicated endpoints are always available:
+- `/open-responses` always uses the Open Responses proxy
+- `/oai-responses` always uses the default OpenAI Responses proxy
+
+### POST /messages
+
+[Anthropic Messages API](https://docs.anthropic.com/en/api/messages) endpoint. This allows any Anthropic API client (including **Claude Code**) to use any LLM provider managed by Otoroshi.
+
+```sh
+curl https://ai-api.your-domain.com/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "gpt-4o",
+    "max_tokens": 1024,
+    "messages": [
+      { "role": "user", "content": "Hello!" }
+    ]
+  }'
+```
+
+Response (Anthropic format):
+
+```js
+{
+  "id": "msg_xxxxx",
+  "type": "message",
+  "role": "assistant",
+  "model": "gpt-4o",
+  "content": [
+    {
+      "type": "text",
+      "text": "Hello! How can I assist you today?"
+    }
+  ],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 12,
+    "output_tokens": 10
+  }
+}
+```
+
+The plugin handles all format translation automatically:
+- Anthropic-format tools (`input_schema`) are converted to OpenAI-format tools (`parameters`)
+- `tool_use` / `tool_result` messages are translated bidirectionally
+- Top-level `system` field is converted to a system message
+- `thinking` parameters are mapped to `reasoning_effort`
+- `max_tokens` is mapped to `max_completion_tokens`
+- Streaming uses the full Anthropic SSE protocol
+
+#### Using Claude Code
+
+You can use Claude Code with this plugin by setting:
+
+```sh
+export ANTHROPIC_AUTH_TOKEN=your-otoroshi-api-key
+export ANTHROPIC_API_KEY=""
+export ANTHROPIC_BASE_URL=https://ai-api.your-domain.com
+claude --model gpt-4o
+```
+
+### POST /embeddings
+
+[OpenAI Embeddings API](https://platform.openai.com/docs/api-reference/embeddings) endpoint.
+
+```sh
+curl https://ai-api.your-domain.com/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "text-embedding-3-small",
+    "input": "The quick brown fox jumps over the lazy dog"
+  }'
+```
+
+### POST /images/generations
+
+[OpenAI Image Generation API](https://platform.openai.com/docs/api-reference/images/create) endpoint.
+
+```sh
+curl https://ai-api.your-domain.com/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "dall-e-3",
+    "prompt": "A white cat sitting on a windowsill",
+    "n": 1,
+    "size": "1024x1024"
+  }'
+```
+
+When `decode_images` is enabled, base64-encoded image results are decoded and returned as binary image data.
+
+### POST /images/edits
+
+[OpenAI Image Edit API](https://platform.openai.com/docs/api-reference/images/createEdit) endpoint. Accepts multipart/form-data uploads.
+
+### POST /audio/speech
+
+[OpenAI Text-to-Speech API](https://platform.openai.com/docs/api-reference/audio/createSpeech) endpoint.
+
+```sh
+curl https://ai-api.your-domain.com/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "tts-1",
+    "input": "Hello, how are you?",
+    "voice": "alloy"
+  }' --output speech.mp3
+```
+
+### POST /audio/transcriptions
+
+[OpenAI Speech-to-Text API](https://platform.openai.com/docs/api-reference/audio/createTranscription) endpoint. Accepts multipart/form-data audio file uploads up to the configured `max_size_upload` limit.
+
+### POST /audio/translations
+
+[OpenAI Audio Translation API](https://platform.openai.com/docs/api-reference/audio/createTranslation) endpoint. Translates audio into English text.
+
+### POST /moderations
+
+[OpenAI Moderation API](https://platform.openai.com/docs/api-reference/moderations) endpoint.
+
+```sh
+curl https://ai-api.your-domain.com/v1/moderations \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "input": "Some text to check for moderation"
+  }'
+```
+
+## Comparison with individual plugins
+
+| Feature | Individual plugins | OpenAI Compatible API |
+|---------|-------------------|----------------------|
+| Setup complexity | One plugin per endpoint | Single plugin for everything |
+| Path-based routing | Manual with `includes` filters | Automatic based on URL path |
+| Anthropic Messages support | Separate `AnthropicCompatProxy` plugin | Built-in via `/messages` |
+| Responses API support | Separate `OpenAiResponsesProxy` plugin | Built-in via `/responses` |
+| Open Responses support | Separate `OpenResponseCompatProxy` plugin | Built-in via `/open-responses` |
+| Prompt contexts | Not available | Built-in via `/contexts` |
+| Model-specific config | Same refs for all endpoints | Separate refs per capability (language, audio, image, embedding, moderation) |
+| Flexibility | Fine-grained control per endpoint | Unified but less granular |
+
+The individual plugins are still useful when you need fine-grained control per endpoint (e.g., different provider refs for different paths, or different plugin chains per endpoint). The unified plugin is ideal when you want a quick, coherent API surface with minimal configuration.
