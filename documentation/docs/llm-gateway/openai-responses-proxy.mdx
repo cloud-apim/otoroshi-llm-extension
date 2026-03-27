@@ -1,0 +1,403 @@
+---
+sidebar_position: 7
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# OpenAI Responses API Proxy
+
+The **LLM OpenAI Responses Proxy** plugin exposes any LLM provider managed by Otoroshi through an [OpenAI Responses API](https://platform.openai.com/docs/api-reference/responses)-compatible endpoint. This is a lightweight proxy that converts the Responses API format to the standard chat completions format internally, making it compatible with any provider supported by Otoroshi.
+
+```
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiResponsesProxy
+```
+
+## Why use this plugin?
+
+The OpenAI Responses API is a newer API format introduced by OpenAI that replaces the chat completions API for certain use cases. It uses `input` and `instructions` instead of `messages`, and returns structured `output` items instead of `choices`. Many modern AI tools and SDKs are adopting this format.
+
+This plugin allows you to expose **any** LLM provider (OpenAI, Anthropic, Mistral, Ollama, Azure, Groq, and 50+ others) through the Responses API format, even if the underlying provider only supports the chat completions API. The plugin handles all format translation transparently.
+
+### OpenAI Responses vs Open Responses
+
+This plugin implements the **OpenAI Responses API** format. A separate plugin, [Open Responses Proxy](/docs/llm-gateway/open-response-proxy), implements the [Open Responses](https://www.openresponses.org/) specification, which is a community-driven open standard inspired by the OpenAI Responses API but with its own differences.
+
+Key differences:
+- **OpenAI Responses Proxy** (this plugin): lightweight, converts to chat completions internally, simpler response format
+- **Open Responses Proxy**: richer implementation with native function calling support, more detailed response fields (`completed_at`, `previous_response_id`, `reasoning`, etc.), and `sequence_number` on streaming events
+
+Both are available in the [unified OpenAI Compatible API](/docs/llm-gateway/openai-compat-api) plugin via the `use_open_response_for_responses` flag.
+
+## Plugin configuration
+
+```js
+{
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiResponsesProxy",
+  "enabled": true,
+  "config": {
+    "refs": [
+      "provider_xxxxx"
+    ]
+  }
+}
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `refs` | array of strings | References to the LLM provider(s) to use. The first provider in the list is used by default |
+
+### Provider selection
+
+The plugin supports multiple providers through the `refs` array. The provider is selected in the following order:
+
+1. If the request body contains a `provider` field matching one of the `refs`, that provider is used
+2. If the `model` field uses the slash syntax (`providerName/modelName`), the matching provider is selected
+3. Otherwise, the first provider in the `refs` array is used
+
+## Route configuration example
+
+```js
+{
+  "id": "route_responses_proxy",
+  "name": "OpenAI Responses Proxy",
+  "frontend": {
+    "domains": ["responses-api.your-domain.com"],
+    "strip_path": true,
+    "exact": false
+  },
+  "backend": {
+    "targets": [
+      {
+        "id": "target_1",
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "config": {}
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiResponsesProxy",
+      "config": {
+        "refs": ["provider_openai_1", "provider_ollama_1"]
+      }
+    }
+  ]
+}
+```
+
+## Input format
+
+The `input` field accepts multiple formats:
+
+### Simple text
+
+A plain string is treated as a single user message:
+
+```js
+{
+  "model": "gpt-4o",
+  "input": "What is the capital of France?"
+}
+```
+
+### Array of messages
+
+Standard role-based messages with the `type: "message"` wrapper:
+
+```js
+{
+  "model": "gpt-4o",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": "What is the capital of France?"
+    }
+  ]
+}
+```
+
+### Multipart content
+
+Messages can contain mixed content types (`input_text`, `input_image`, `input_audio`):
+
+```js
+{
+  "model": "gpt-4o",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        { "type": "input_text", "text": "What's in this image?" },
+        { "type": "input_image", "image_url": "https://example.com/photo.jpg" }
+      ]
+    }
+  ]
+}
+```
+
+Content types are translated to the OpenAI chat completions format automatically:
+- `input_text` becomes `text`
+- `input_image` becomes `image_url`
+- `input_audio` becomes `input_audio`
+
+### Function call outputs
+
+Tool results from previous function calls:
+
+```js
+{
+  "model": "gpt-4o",
+  "input": [
+    {
+      "type": "function_call_output",
+      "call_id": "call_xxxxx",
+      "output": "{\"temperature\": 18, \"condition\": \"sunny\"}"
+    }
+  ]
+}
+```
+
+These are translated to `tool` role messages in the chat completions format.
+
+### System instructions
+
+The `instructions` field is converted to a system message prepended to the conversation:
+
+```js
+{
+  "model": "gpt-4o",
+  "instructions": "You are a helpful assistant that always responds in French.",
+  "input": "What is the capital of Japan?"
+}
+```
+
+## Supported request parameters
+
+| Parameter | Type | Description | Handling |
+|-----------|------|-------------|----------|
+| `model` | string | Model identifier | Passed through to the provider |
+| `input` | string or array | Input content | Converted to chat messages |
+| `instructions` | string | System instructions | Converted to system message |
+| `stream` | boolean | Enable streaming | Activates SSE response |
+| `temperature` | number | Sampling temperature | Passed through |
+| `top_p` | number | Nucleus sampling | Passed through |
+| `max_output_tokens` | number | Max tokens to generate | Mapped to `max_tokens` |
+| `tools` | array | Tool definitions | Passed through |
+| `tool_choice` | string or object | Tool selection strategy | Passed through |
+
+Parameters specific to the Responses API that have no chat completions equivalent (`previous_response_id`, `store`, `truncation`, `text`, `reasoning`, `metadata`) are stripped from the request before forwarding to the provider.
+
+## Response format
+
+### Non-streaming
+
+```js
+{
+  "id": "resp_xxxxx",
+  "object": "response",
+  "created_at": 1711569952,
+  "model": "gpt-4o",
+  "status": "completed",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_xxxxx",
+      "status": "completed",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "The capital of France is Paris.",
+          "annotations": []
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 15,
+    "output_tokens": 8,
+    "total_tokens": 23,
+    "output_tokens_details": {
+      "reasoning_tokens": 0
+    }
+  }
+}
+```
+
+When the model calls tools, `function_call` items are added to the output:
+
+```js
+{
+  "id": "resp_xxxxx",
+  "object": "response",
+  "status": "completed",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_xxxxx",
+      "status": "completed",
+      "role": "assistant",
+      "content": [{ "type": "output_text", "text": "", "annotations": [] }]
+    },
+    {
+      "type": "function_call",
+      "id": "fc_xxxxx",
+      "call_id": "call_xxxxx",
+      "name": "get_weather",
+      "arguments": "{\"location\":\"Paris\"}"
+    }
+  ]
+}
+```
+
+### Streaming
+
+When streaming is enabled, the response uses Server-Sent Events with the following lifecycle:
+
+```
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_xxx","object":"response","status":"in_progress",...}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{...}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_xxx","status":"in_progress","role":"assistant","content":[]}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","item_id":"msg_xxx","output_index":0,"content_index":0,"part":{"type":"output_text","text":"","annotations":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_xxx","output_index":0,"content_index":0,"delta":"The capital"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_xxx","output_index":0,"content_index":0,"delta":" of France is Paris."}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","item_id":"msg_xxx","output_index":0,"content_index":0,"text":"The capital of France is Paris."}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","item_id":"msg_xxx","output_index":0,"content_index":0,"part":{"type":"output_text","text":"The capital of France is Paris.","annotations":[]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"message","id":"msg_xxx","status":"completed","role":"assistant","content":[...]}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_xxx","status":"completed","output":[...],"usage":{...}}}
+```
+
+Streaming is activated when any of the following is true:
+- The request body contains `"stream": true`
+- The query parameter `?stream=true` is present
+- The header `x-stream: true` is present
+
+## Calling the API
+
+### Simple request
+
+```sh
+curl https://responses-api.your-domain.com/v1/responses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "input": "Hello, how are you?"
+  }'
+```
+
+### With instructions
+
+```sh
+curl https://responses-api.your-domain.com/v1/responses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "instructions": "You always respond in haiku format.",
+    "input": "Tell me about the ocean."
+  }'
+```
+
+### Streaming
+
+```sh
+curl https://responses-api.your-domain.com/v1/responses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "stream": true,
+    "input": "Write a short poem about coding."
+  }'
+```
+
+### With tools
+
+```sh
+curl https://responses-api.your-domain.com/v1/responses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "input": "What is the weather in Tokyo?",
+    "tools": [
+      {
+        "type": "function",
+        "name": "get_weather",
+        "description": "Get the current weather",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": { "type": "string" }
+          },
+          "required": ["location"]
+        }
+      }
+    ]
+  }'
+```
+
+### Multi-turn with tool results
+
+```sh
+curl https://responses-api.your-domain.com/v1/responses \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "input": [
+      {
+        "type": "message",
+        "role": "user",
+        "content": "What is the weather in Tokyo?"
+      },
+      {
+        "type": "function_call_output",
+        "call_id": "call_xxxxx",
+        "output": "{\"temperature\": 22, \"condition\": \"cloudy\"}"
+      }
+    ]
+  }'
+```
+
+## How it works
+
+The plugin acts as a translation layer between the OpenAI Responses API format and the standard chat completions format:
+
+1. **Input parsing**: the `input` field is parsed and converted to a standard `messages` array (string becomes a user message, `type: "message"` items are converted, `function_call_output` items become tool messages)
+2. **Instructions**: the `instructions` field is prepended as a system message
+3. **Body cleaning**: Responses-specific fields (`input`, `instructions`, `previous_response_id`, `store`, `truncation`, `text`, `reasoning`, `metadata`) are removed; `max_output_tokens` is mapped to `max_tokens`
+4. **Provider call**: the cleaned request is forwarded to the underlying provider via the standard chat completions path
+5. **Response formatting**: the provider's response is converted to the Responses API format with `output` items, proper IDs, and usage details
+6. **Stream translation**: for streaming, chat completion chunks are wrapped into Responses API lifecycle events with text deltas and proper start/done events
+
+This means the plugin works with **any** LLM provider supported by Otoroshi, regardless of whether that provider natively supports the Responses API or not.
