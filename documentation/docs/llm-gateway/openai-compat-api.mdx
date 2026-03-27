@@ -127,7 +127,7 @@ Lists all models available from the configured language model providers. Compati
 
 ```sh
 curl https://ai-api.your-domain.com/v1/models \
-  -H "Authorization: Bearer $OTOROSHI_API_KEY"
+  -H "Authorization: Bearer $OTOROSHI_BEARER"
 ```
 
 When multiple providers are configured, model IDs are prefixed with the provider slug name (e.g., `my_openai/gpt-4o`). Use `?raw=true` to get raw model identifiers without prefixes.
@@ -138,7 +138,7 @@ Returns the list of prompt contexts configured for this plugin. Each context inc
 
 ```sh
 curl https://ai-api.your-domain.com/v1/contexts \
-  -H "Authorization: Bearer $OTOROSHI_API_KEY"
+  -H "Authorization: Bearer $OTOROSHI_BEARER"
 ```
 
 Response:
@@ -157,7 +157,7 @@ Standard [OpenAI Chat Completions API](https://platform.openai.com/docs/api-refe
 ```sh
 curl https://ai-api.your-domain.com/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
     "model": "gpt-4o",
     "messages": [
@@ -189,7 +189,7 @@ Streaming is activated when any of the following is true:
 ```sh
 curl https://ai-api.your-domain.com/v1/responses \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
     "model": "gpt-4o",
     "instructions": "You are a helpful assistant.",
@@ -307,7 +307,7 @@ Regardless of this flag, the dedicated endpoints are always available:
 ```sh
 curl https://ai-api.your-domain.com/v1/messages \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -H "anthropic-version: 2023-06-01" \
   -d '{
     "model": "gpt-4o",
@@ -366,7 +366,7 @@ claude --model gpt-4o
 ```sh
 curl https://ai-api.your-domain.com/v1/embeddings \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
     "model": "text-embedding-3-small",
     "input": "The quick brown fox jumps over the lazy dog"
@@ -380,7 +380,7 @@ curl https://ai-api.your-domain.com/v1/embeddings \
 ```sh
 curl https://ai-api.your-domain.com/v1/images/generations \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
     "model": "dall-e-3",
     "prompt": "A white cat sitting on a windowsill",
@@ -402,7 +402,7 @@ When `decode_images` is enabled, base64-encoded image results are decoded and re
 ```sh
 curl https://ai-api.your-domain.com/v1/audio/speech \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
     "model": "tts-1",
     "input": "Hello, how are you?",
@@ -425,7 +425,7 @@ curl https://ai-api.your-domain.com/v1/audio/speech \
 ```sh
 curl https://ai-api.your-domain.com/v1/moderations \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
   -d '{
     "input": "Some text to check for moderation"
   }'
