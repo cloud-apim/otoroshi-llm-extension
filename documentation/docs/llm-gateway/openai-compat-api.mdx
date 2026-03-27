@@ -431,6 +431,200 @@ curl https://ai-api.your-domain.com/v1/moderations \
   }'
 ```
 
+## Securing the API
+
+Since this plugin exposes a powerful multi-endpoint AI API, you will want to secure it properly. Otoroshi provides several authentication mechanisms that can be combined on the same route. The key idea is that all security plugins run **before** the backend call, so you can stack multiple authentication methods and let the first valid one through.
+
+Below are three common approaches, from simplest to most enterprise-ready. They can be used individually or combined on the same route.
+
+### API Keys
+
+The simplest approach. Otoroshi API keys support multiple extraction methods (header, query param, Basic auth, Bearer token, JWT) and come with built-in quotas and rate limiting.
+
+Add the `ApikeyCalls` plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi.next.plugins.ApikeyCalls",
+  "config": {
+    "extractors": {
+      "basic": { "enabled": true },
+      "custom_headers": { "enabled": true },
+      "client_id": { "enabled": true },
+      "jwt": { "enabled": true, "secret_signed": true, "keypair_signed": true },
+      "oto_bearer": { "enabled": true }
+    },
+    "validate": true,
+    "mandatory": true,
+    "wipe_backend_request": true,
+    "update_quotas": true
+  }
+}
+```
+
+Clients can then authenticate with a Bearer token:
+
+```sh
+curl https://ai-api.your-domain.com/v1/chat/completions \
+  -H "Authorization: Bearer your-otoroshi-apikey" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+Or with Basic auth, client ID/secret headers, or JWT tokens signed with the API key secret.
+
+You can further restrict access using **mandatory tags** to ensure only API keys with specific tags can access this route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi.next.plugins.NgApikeyMandatoryTags",
+  "config": {
+    "tags": ["endpoint_ai-api"]
+  }
+}
+```
+
+### Biscuit tokens
+
+[Biscuit](https://www.biscuitsec.org/) tokens provide fine-grained, decentralized authorization with attenuation capabilities. This is ideal for distributing scoped tokens to different teams or applications.
+
+Add the `BiscuitUserExtractor` plugin:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.biscuit.plugins.BiscuitUserExtractor",
+  "config": {
+    "keypair_ref": "biscuit-keypair_your-keypair-id",
+    "enforce": true,
+    "extractor_type": "header",
+    "extractor_name": "Authorization",
+    "validations": {
+      "policies": [
+        "allow if endpoint(\"ai-api\")"
+      ]
+    }
+  }
+}
+```
+
+Clients send their biscuit token in the Authorization header:
+
+```sh
+curl https://ai-api.your-domain.com/v1/chat/completions \
+  -H "Authorization: biscuit_token_here" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+The biscuit policy `allow if endpoint("ai-api")` ensures the token was explicitly granted access to this endpoint. You can create attenuated tokens with additional restrictions (time limits, IP ranges, specific models, etc.).
+
+### OIDC / JWT (Keycloak, Auth0, etc.)
+
+For enterprise environments with an existing identity provider, you can validate JWT tokens issued by any OIDC-compliant provider (Keycloak, Auth0, Okta, Azure AD, etc.).
+
+Add the `OIDCJwtVerifier` plugin:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi.next.plugins.OIDCJwtVerifier",
+  "config": {
+    "ref": "auth_mod_your-oidc-verifier-id",
+    "mandatory": true,
+    "user": true
+  }
+}
+```
+
+The `ref` points to an Otoroshi JWT verifier entity configured with your OIDC provider's JWKS URL and issuer. Clients send their JWT token as a Bearer token:
+
+```sh
+# First, get a token from your OIDC provider
+TOKEN=$(curl -s -X POST https://keycloak.your-domain.com/realms/your-realm/protocol/openid-connect/token \
+  -d "grant_type=client_credentials" \
+  -d "client_id=ai-api-client" \
+  -d "client_secret=your-client-secret" | jq -r '.access_token')
+
+# Then call the AI API
+curl https://ai-api.your-domain.com/v1/chat/completions \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello!"}]}'
+```
+
+### Combining multiple authentication methods
+
+The real power of Otoroshi is the ability to combine these methods on the same route. By setting `mandatory: false` on each auth plugin and adding the `NgExpectedConsumer` plugin, you can accept **any** of the configured authentication methods:
+
+```js
+{
+  "plugins": [
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatApi",
+      "config": {
+        "language_model_refs": ["provider_openai_1"],
+        "embedding_model_refs": ["embedding_model_1"]
+      }
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi.next.plugins.ApikeyCalls",
+      "config": {
+        "extractors": {
+          "basic": { "enabled": true },
+          "custom_headers": { "enabled": true },
+          "jwt": { "enabled": true, "secret_signed": true, "keypair_signed": true },
+          "oto_bearer": { "enabled": true }
+        },
+        "validate": true,
+        "mandatory": false,
+        "wipe_backend_request": true,
+        "update_quotas": true
+      }
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.biscuit.plugins.BiscuitUserExtractor",
+      "config": {
+        "keypair_ref": "biscuit-keypair_your-keypair-id",
+        "enforce": false,
+        "extractor_type": "header",
+        "extractor_name": "Authorization",
+        "validations": {
+          "policies": ["allow if endpoint(\"ai-api\")"]
+        }
+      }
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi.next.plugins.OIDCJwtVerifier",
+      "config": {
+        "ref": "auth_mod_your-oidc-verifier-id",
+        "mandatory": false,
+        "user": true
+      }
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi.next.plugins.NgExpectedConsumer",
+      "config": {}
+    }
+  ]
+}
+```
+
+With this setup:
+- A developer can use a simple **API key** for quick prototyping
+- An automated pipeline can use a scoped **biscuit token** with fine-grained permissions
+- A web application can use a **JWT token** from your corporate Keycloak/Auth0
+- The `NgExpectedConsumer` plugin ensures that **at least one** authentication method succeeded
+
+All three methods work on the same route, on the same API surface, without any change to the AI plugin configuration.
+
 ## Comparison with individual plugins
 
 | Feature | Individual plugins | OpenAI Compatible API |
