@@ -564,7 +564,7 @@ object BuiltInToolsFactory {
                 wfr
               ).map {
                 case Left(err) => Json.obj("ok" -> false, "error" -> err).stringify
-                case Right(result) => Json.obj("ok" -> true, "result" -> result).stringify
+                case Right(output) => Json.obj("ok" -> true, "result" -> output.wholeTextContent).stringify
               }
           }
         }
@@ -680,7 +680,7 @@ object BuiltInToolsFactory {
             wfr
           ).map {
             case Left(err) => Json.obj("ok" -> false, "error" -> err).stringify
-            case Right(result) => Json.obj("ok" -> true, "agent" -> subAgent.name, "result" -> result).stringify
+            case Right(output) => Json.obj("ok" -> true, "agent" -> subAgent.name, "result" -> output.wholeTextContent).stringify
           }
         }
       )

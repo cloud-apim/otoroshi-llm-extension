@@ -196,9 +196,9 @@ case class AgentConfig(
   builtInTools: AgentBuiltInTools = AgentBuiltInTools.empty,
 ) {
   def runStr(input: String, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(implicit env: Env):  Future[Either[JsValue, String]] = {
-    run(AgentInput.from(input), rcfg, attrs, wfr)
+    run(AgentInput.from(input), rcfg, attrs, wfr).map(_.map(_.wholeTextContent))(env.otoroshiExecutionContext)
   }
-  def run(input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(implicit env: Env):  Future[Either[JsValue, String]] = {
+  def run(input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(implicit env: Env):  Future[Either[JsValue, AgentOutput]] = {
     new AgentRunner(env).run(this, input, rcfg, attrs, wfr)
   }
   def toHandoff(): Handoff = {
@@ -321,6 +321,17 @@ case class AgentRunConfig(provider: Option[String] = None, model: Option[String]
 
 case class AgentContext(iteration: Int = 0)
 
+case class AgentOutput(response: ChatResponse) {
+  def wholeTextContent: String = response.generations.headOption.map(_.message.wholeTextContent).getOrElse("")
+  def firstTextContent: String = wholeTextContent
+  def generation: Option[ChatGeneration] = response.generations.headOption
+  def message: Option[OutputChatMessage] = generation.map(_.message)
+  def metadata: ChatResponseMetadata = response.metadata
+  def usage: ChatResponseMetadataUsage = response.metadata.usage
+  def raw: JsValue = response.raw
+  override def toString: String = wholeTextContent
+}
+
 case class AgentInput(messages: Seq[InputChatMessage])
 
 object AgentInput {
@@ -336,11 +347,11 @@ class AgentRunner(env: Env) {
 
   lazy val ext = env.adminExtensions.extension[AiExtension].get
 
-  def run(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, String]] = {
+  def run(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, AgentOutput]] = {
     internalRun(agent, input, rcfg, AgentContext(1), attrs, wfr)
   }
 
-  private def internalRun(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), ctx: AgentContext = AgentContext(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, String]] = {
+  private def internalRun(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), ctx: AgentContext = AgentContext(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, AgentOutput]] = {
     if (ctx.iteration > rcfg.maxTurns) {
       Json.obj("error" -> "Max turns reached").leftf
     } else {
@@ -447,7 +458,7 @@ class AgentRunner(env: Env) {
                           } else if (gen.message.has_tool_calls && hasHandoff) {
                             Json.obj("error" -> "pending tool_call").leftf
                           } else {
-                            gen.message.wholeTextContent.rightf
+                            AgentOutput(resp).rightf
                           }
                         }
                       }
@@ -923,7 +934,7 @@ class AiAgentNode(val json: JsObject) extends Node {
         .getOrElse(AgentInput.empty)
       agent.run(input, rcfg, wfr.attrs, wfr.some).map {
         case Left(error) => Left(WorkflowError(s"Error executing workflow", error.asObject.some))
-        case Right(resp) => resp.json.right
+        case Right(output) => output.wholeTextContent.json.right
       }
     }
   }
