@@ -10,6 +10,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedKey
 
+import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Try
 
@@ -22,6 +23,120 @@ case class InlineFunctionDeclaration(name: String, description: String = "", str
 case class InlineFunction(declaration: InlineFunctionDeclaration, call: Function4[String, TypedMap, Env, ExecutionContext, Future[String]])
 
 case class ToolRef(kind: String, ref: Option[String], node: Option[JsValue])
+
+// Scratchpad data model for agent working memory
+case class ScratchpadTask(id: String, title: String, description: String = "", status: String = "todo")
+case class ScratchpadPlanStep(id: String, title: String, status: String = "todo")
+case class ScratchpadPlan(goal: String, steps: Seq[ScratchpadPlanStep] = Seq.empty)
+
+case class AgentScratchpad(
+  tasks: Seq[ScratchpadTask] = Seq.empty,
+  plan: Option[ScratchpadPlan] = None,
+  notes: Map[String, JsValue] = Map.empty
+) {
+  def toPromptSection: String = {
+    val sb = new StringBuilder
+    sb.append("\n\n## Agent Working State\n\n")
+    sb.append("### Current Tasks\n")
+    if (tasks.isEmpty) sb.append("No tasks yet.\n")
+    else tasks.foreach(t => sb.append(s"- [${t.status}] ${t.id}: ${t.title}\n"))
+    sb.append("\n### Current Plan\n")
+    plan match {
+      case None => sb.append("No plan set.\n")
+      case Some(p) =>
+        sb.append(s"Goal: ${p.goal}\n")
+        p.steps.foreach(s => sb.append(s"  ${s.id}. [${s.status}] ${s.title}\n"))
+    }
+    sb.append("\n### Notes\n")
+    if (notes.isEmpty) sb.append("No notes yet.\n")
+    else notes.foreach { case (k, v) => sb.append(s"- $k: ${Json.stringify(v)}\n") }
+    sb.toString()
+  }
+}
+
+// Sub-agent profile for spawn_agent tool
+case class SubAgentProfile(
+  name: String,
+  description: String = "",
+  instructions: Seq[String] = Seq.empty,
+  provider: Option[String] = None,
+  model: Option[String] = None,
+  modelOptions: Option[JsObject] = None,
+  builtInTools: Option[AgentBuiltInTools] = None,
+)
+
+object SubAgentProfile {
+  def from(json: JsValue): SubAgentProfile = {
+    SubAgentProfile(
+      name = json.select("name").asString,
+      description = json.select("description").asOptString.getOrElse(""),
+      instructions = json.select("instructions").asOpt[Seq[String]].orElse(json.select("instructions").asOptString.map(s => Seq(s))).getOrElse(Seq.empty),
+      provider = json.select("provider").asOpt[String],
+      model = json.select("model").asOpt[String],
+      modelOptions = json.select("model_options").asOpt[JsObject],
+      builtInTools = json.select("built_in_tools").asOpt[JsObject].map(AgentBuiltInTools.from),
+    )
+  }
+}
+
+// Built-in tools configuration
+case class AgentBuiltInTools(
+  all: Boolean = false,
+  workspace: Boolean = false,
+  shell: Boolean = false,
+  tasks: Boolean = false,
+  plan: Boolean = false,
+  memory: Boolean = false,
+  agent: Boolean = false,
+  control: Boolean = false,
+  include: Seq[String] = Seq.empty,
+  exclude: Seq[String] = Seq.empty,
+  allowedPaths: Seq[String] = Seq.empty,
+  commandTimeout: Int = 30000,
+  subAgents: Seq[SubAgentProfile] = Seq.empty,
+) {
+  def isEnabled(tool: String): Boolean = {
+    if (exclude.contains(tool)) false
+    else if (include.contains(tool)) true
+    else if (all) true
+    else tool match {
+      case "list_files" | "read_file" | "write_file" | "append_file" | "search_in_files" => workspace
+      case "run_command" => shell
+      case "task_create" | "task_update" | "task_get" | "task_list" => tasks
+      case "plan_set" | "plan_get" => plan
+      case "memory_set" | "memory_get" | "memory_list" => memory
+      case "delegate" => agent
+      case "spawn_agent" => subAgents.nonEmpty
+      case "final_answer" => control
+      case _ => false
+    }
+  }
+  def hasAnyEnabled: Boolean = all || workspace || shell || tasks || plan || memory || agent || control || include.nonEmpty || subAgents.nonEmpty
+  def hasScratchpadTools: Boolean = isEnabled("task_create") || isEnabled("plan_set") || isEnabled("memory_set")
+  // Strip sub_agents to prevent recursive spawning
+  def withoutSubAgents: AgentBuiltInTools = copy(subAgents = Seq.empty)
+}
+
+object AgentBuiltInTools {
+  val empty: AgentBuiltInTools = AgentBuiltInTools()
+  def from(json: JsValue): AgentBuiltInTools = {
+    AgentBuiltInTools(
+      all = json.select("all").asOpt[Boolean].getOrElse(false),
+      workspace = json.select("workspace").asOpt[Boolean].getOrElse(false),
+      shell = json.select("shell").asOpt[Boolean].getOrElse(false),
+      tasks = json.select("tasks").asOpt[Boolean].getOrElse(false),
+      plan = json.select("plan").asOpt[Boolean].getOrElse(false),
+      memory = json.select("memory").asOpt[Boolean].getOrElse(false),
+      agent = json.select("agent").asOpt[Boolean].getOrElse(false),
+      control = json.select("control").asOpt[Boolean].getOrElse(false),
+      include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty),
+      exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty),
+      allowedPaths = json.select("allowed_paths").asOpt[Seq[String]].getOrElse(Seq.empty),
+      commandTimeout = json.select("command_timeout").asOpt[Int].getOrElse(30000),
+      subAgents = json.select("sub_agents").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(SubAgentProfile.from),
+    )
+  }
+}
 
 case class Handoff(
   agent: AgentConfig,
@@ -75,6 +190,7 @@ case class AgentConfig(
   handoffs: Seq[Handoff] = Seq.empty,
   memory: Option[String] = None,
   guardrails: Guardrails = Guardrails(Seq.empty),
+  builtInTools: AgentBuiltInTools = AgentBuiltInTools.empty,
 ) {
   def runStr(input: String, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(implicit env: Env):  Future[Either[JsValue, String]] = {
     run(AgentInput.from(input), rcfg, attrs, wfr)
@@ -182,6 +298,7 @@ object AgentConfig {
       handoffs = json.select("handoffs").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(o => Handoff.from(o)),
       memory = json.select("memory").asOptString,
       guardrails = json.select("guardrails").asOpt[JsArray].flatMap(seq => Guardrails.format.reads(seq).asOpt).getOrElse(Guardrails.empty),
+      builtInTools = json.select("built_in_tools").asOpt[JsObject].map(AgentBuiltInTools.from).getOrElse(AgentBuiltInTools.empty),
     )
   }
 }
@@ -239,6 +356,13 @@ class AgentRunner(env: Env) {
               if (agent.tools.nonEmpty) {
                 additionToolFunctions = additionToolFunctions ++ agent.tools
               }
+              // Built-in tools: create scratchpad and inject tools
+              val scratchpadRef = new AtomicReference[AgentScratchpad](AgentScratchpad())
+              if (agent.builtInTools.hasAnyEnabled) {
+                val builtIns = BuiltInToolsFactory.createBuiltInTools(agent.builtInTools, scratchpadRef, agent, rcfg, env, wfr)
+                additionToolFunctions = additionToolFunctions ++ builtIns.map("__inline_" + _.declaration.name)
+                inlineFunctions = inlineFunctions ++ builtIns.map(v => ("__inline_" + v.declaration.name, v)).toMap
+              }
               val over = Json.obj()
                 .applyOnWithOpt(agent.modelOptions.orElse(rcfg.modelOptions)) {
                   case (obj, options) => obj.deepMerge(options)
@@ -255,7 +379,7 @@ class AgentRunner(env: Env) {
                 .applyOnIf(agent.mcpConnectors.nonEmpty && agent.handoffs.isEmpty) { obj =>
                   obj ++ Json.obj("mcp_connectors" -> agent.mcpConnectors)
                 }
-              val hasHandoff = agent.handoffs.exists(_.enabled)
+              val hasHandoff = agent.handoffs.exists(_.enabled) && !agent.builtInTools.hasAnyEnabled
               val body = Json.obj()
                 .applyOnIf(hasHandoff) { obj =>
                   val tools = agent.handoffs.filter(_.enabled).map(_.toFunction)
@@ -277,9 +401,15 @@ class AgentRunner(env: Env) {
               ).getChatClient() match {
                 case None => Json.obj("error" -> "no client").leftf
                 case Some(client) => {
+                  val systemPrompt = if (agent.builtInTools.hasScratchpadTools) {
+                    agent.instructions.mkString(" ") + scratchpadRef.get().toPromptSection +
+                    "\n\nUse the available tools to track your progress. When your work is complete, provide your final response."
+                  } else {
+                    agent.instructions.mkString(" ")
+                  }
                   client.call(
                     ChatPrompt(Seq(
-                      ChatMessage.input("system", agent.instructions.mkString(" "), prefix = None, Json.obj()),
+                      ChatMessage.input("system", systemPrompt, prefix = None, Json.obj()),
                     ) ++ input.messages),
                     attrs,
                     body
