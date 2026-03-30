@@ -29,12 +29,16 @@ object AgentProxyConfig {
       "type" -> "any",
       "label" -> "Agent configuration",
       "props" -> Json.obj(
+        "language" -> "json",
+        "mode" -> "jsonOrPlaintext",
         "height" -> "400px",
         "description" -> "The agent configuration (name, instructions, provider, built_in_tools, handoffs, etc.)"
       )
     ),
     "run_config" -> Json.obj(
       "type" -> "any",
+      "language" -> "json",
+      "mode" -> "jsonOrPlaintext",
       "label" -> "Run configuration",
       "props" -> Json.obj(
         "height" -> "200px",
@@ -46,8 +50,8 @@ object AgentProxyConfig {
     override def writes(o: AgentProxyConfig): JsValue = o.json
     override def reads(json: JsValue): JsResult[AgentProxyConfig] = Try {
       AgentProxyConfig(
-        agent = json.select("agent").asOpt[JsObject].getOrElse(Json.obj()),
-        runConfig = json.select("run_config").asOpt[JsObject].getOrElse(Json.obj()),
+        agent = json.select("agent").asOpt[JsObject].orElse(json.select("agent").asOptString.map(_.parseJson.asObject)).getOrElse(Json.obj()),
+        runConfig = json.select("run_config").asOpt[JsObject].orElse(json.select("run_config").asOptString.map(_.parseJson.asObject)).getOrElse(Json.obj()),
       )
     } match {
       case Failure(e) => JsError(e.getMessage)
@@ -88,6 +92,7 @@ class AgentProxy extends NgBackendCall {
           call(jsonBody, config, ctx)
         } catch {
           case e: Throwable =>
+            e.printStackTrace()
             NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> e.getMessage))).leftf
         }
       }
@@ -97,6 +102,7 @@ class AgentProxy extends NgBackendCall {
   }
 
   private def call(jsonBody: JsValue, config: AgentProxyConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    println(config.agent.prettify)
     val agent = AgentConfig.from(config.agent)
     val rcfg = AgentRunConfig.from(config.runConfig)
 
