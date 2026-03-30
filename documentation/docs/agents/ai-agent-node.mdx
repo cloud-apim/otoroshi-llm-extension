@@ -125,6 +125,157 @@ When the LLM decides to call an inline tool, the arguments are stored in the wor
 
 You can set `response_json_parse: true` (or `input_json_parse: true`) on an inline tool to parse the tool arguments as JSON before storing them in `tool_input`.
 
+## Built-in tools
+
+Agents can be equipped with a library of built-in tools that require no external configuration. These tools are enabled per-agent via the `built_in_tools` configuration and cover the core capabilities an autonomous agent typically needs: filesystem access, shell commands, HTTP calls, task tracking, planning, working memory, and agent delegation.
+
+### Configuration
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `all` | boolean | Enable all tool categories at once (default: `false`) |
+| `workspace` | boolean | Enable file tools: `list_files`, `read_file`, `write_file`, `append_file`, `search_in_files` |
+| `shell` | boolean | Enable `run_command` tool |
+| `http` | boolean | Enable `http_call` tool |
+| `tasks` | boolean | Enable `task_create`, `task_update`, `task_get`, `task_list` |
+| `plan` | boolean | Enable `plan_set`, `plan_get` |
+| `memory` | boolean | Enable `memory_set`, `memory_get`, `memory_list` |
+| `agent` | boolean | Enable `delegate` tool (delegates to handoff agents) |
+| `control` | boolean | Enable `final_answer` tool |
+| `include` | array | Enable specific tools by name (overrides category flags) |
+| `exclude` | array | Disable specific tools by name (overrides everything) |
+| `allowed_paths` | array | Whitelist of filesystem paths the agent can access (required for workspace/shell tools) |
+| `command_timeout` | integer | Shell command timeout in milliseconds (default: `30000`) |
+| `sub_agents` | array | Sub-agent profiles for the `spawn_agent` tool (see below) |
+
+### Example: autonomous coding agent
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+  "name": "coder",
+  "provider": "provider_xxxxx",
+  "description": "An autonomous coding agent",
+  "instructions": [
+    "You are an autonomous coding agent.",
+    "Use the available tools to explore the codebase, understand it, and make changes.",
+    "Always read files before modifying them."
+  ],
+  "input": "${input.question}",
+  "built_in_tools": {
+    "workspace": true,
+    "shell": true,
+    "tasks": true,
+    "plan": true,
+    "memory": true,
+    "allowed_paths": ["/workspace/my-project"],
+    "command_timeout": 30000
+  },
+  "run_config": {
+    "max_turns": 20
+  },
+  "result": "agent_response"
+}
+```
+
+### Example: read-only analyzer with HTTP access
+
+```json
+{
+  "built_in_tools": {
+    "workspace": true,
+    "http": true,
+    "tasks": true,
+    "memory": true,
+    "allowed_paths": ["/workspace/my-project"],
+    "exclude": ["write_file", "append_file"]
+  }
+}
+```
+
+### Example: fine-grained tool selection
+
+```json
+{
+  "built_in_tools": {
+    "include": ["read_file", "search_in_files", "http_call", "final_answer"],
+    "allowed_paths": ["/workspace/my-project"]
+  }
+}
+```
+
+### Built-in tool reference
+
+| Category | Tool | Description |
+|----------|------|-------------|
+| **Workspace** | `list_files` | List files and directories at a given path |
+| **Workspace** | `read_file` | Read a text file content |
+| **Workspace** | `write_file` | Write content to a file (creates parent dirs) |
+| **Workspace** | `append_file` | Append content to a file |
+| **Workspace** | `search_in_files` | Search for a text pattern across files |
+| **Shell** | `run_command` | Run a shell command in the workspace |
+| **HTTP** | `http_call` | Make an HTTP request (GET, POST, PUT, DELETE, etc.) |
+| **Tasks** | `task_create` | Create a task to track work |
+| **Tasks** | `task_update` | Update a task's status or fields |
+| **Tasks** | `task_get` | Get a task by id |
+| **Tasks** | `task_list` | List all tasks |
+| **Plan** | `plan_set` | Set or replace the current working plan |
+| **Plan** | `plan_get` | Get the current plan |
+| **Memory** | `memory_set` | Store a key-value pair in working memory |
+| **Memory** | `memory_get` | Read a value from working memory |
+| **Memory** | `memory_list` | List all working memory entries |
+| **Agent** | `delegate` | Delegate a subtask to a handoff agent |
+| **Agent** | `spawn_agent` | Spawn a sub-agent from a pre-configured profile |
+| **Control** | `final_answer` | Signal that the objective is complete |
+
+### Workspace sandboxing
+
+All file and shell operations are sandboxed to the paths listed in `allowed_paths`. Any attempt to access a path outside these directories is denied. Paths can be absolute or relative to the first allowed path.
+
+### Working memory (scratchpad)
+
+When task, plan, or memory tools are enabled, the agent gets a **scratchpad** — a structured working memory injected into its system prompt. The scratchpad tracks:
+- **Tasks**: a list of sub-tasks with status (`todo`, `in_progress`, `done`, `blocked`)
+- **Plan**: a goal with ordered steps
+- **Notes**: key-value store for observations and intermediate results
+
+The LLM uses these tools to organize multi-step work and track its own progress.
+
+### Sub-agent spawning
+
+The `spawn_agent` tool lets the LLM create sub-agents on the fly. Unlike `delegate` (which routes to a pre-configured handoff agent), `spawn_agent` lets the LLM write the instructions at call time. Sub-agent profiles define the capabilities (tools, provider, model), and the LLM provides the instructions and objective.
+
+```json
+{
+  "built_in_tools": {
+    "all": true,
+    "allowed_paths": ["/workspace"],
+    "sub_agents": [
+      {
+        "name": "researcher",
+        "description": "Agent for code analysis and research",
+        "built_in_tools": {
+          "workspace": true,
+          "memory": true,
+          "allowed_paths": ["/workspace"]
+        }
+      },
+      {
+        "name": "implementer",
+        "description": "Agent for writing and modifying code",
+        "built_in_tools": {
+          "workspace": true,
+          "shell": true,
+          "allowed_paths": ["/workspace"]
+        }
+      }
+    ]
+  }
+}
+```
+
+The LLM calls the tool with `objective`, `instructions` (the system prompt it writes), and optionally `agent_profile` (which profile to use). Sub-agents inherit the parent's provider/model if the profile doesn't specify one. Sub-agents cannot spawn further sub-agents (no recursive spawning).
+
 ## Agent handoffs
 
 Handoffs allow an agent to transfer the conversation to another specialized agent. The triage agent sees each possible handoff as a tool it can call.

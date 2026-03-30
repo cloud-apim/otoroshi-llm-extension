@@ -21,11 +21,15 @@ This loop allows agents to perform complex multi-step tasks autonomously.
 ## Key features
 
 - **Tool calling**: Agents can use tool functions, MCP connectors, and inline tools defined as workflow nodes
+- **Built-in tools**: Agents come with a library of ready-to-use tools (filesystem, shell, HTTP, tasks, plan, memory, agent delegation) that can be enabled per agent without any external configuration
 - **Agent handoffs**: An agent can transfer the conversation to another specialized agent
+- **Agent spawning**: Agents can spawn sub-agents on the fly with custom instructions provided by the LLM at runtime
 - **Persistent memory**: Agents can remember previous conversations across sessions
+- **Working memory (scratchpad)**: Agents can track tasks, plans, and key-value notes during execution via built-in tools
 - **Guardrails**: Input and output validation to ensure safe and compliant responses
 - **Configurable turns**: Set a maximum number of reasoning loops to control execution
 - **LLM-based routing**: Use an LLM to intelligently route requests to different workflow paths
+- **OpenAI-compatible endpoint**: Expose any agent as a standard `chat/completions` API via the Agent Proxy plugin
 
 ## Agent components
 
@@ -38,6 +42,12 @@ The extension provides three workflow nodes for building agentic workflows:
 | [AI Agent](./ai-agent-node) | The main agent node - executes an agent with tools, handoffs, memory, and guardrails |
 | [AI Agent Router](./router-node) | Uses an LLM to choose which workflow path to follow |
 | [MCP Tools](./mcp-tools-node) | Helper node to attach an MCP connector to an agent |
+
+### HTTP plugin
+
+| Plugin | Description |
+|--------|-------------|
+| [Agent Proxy](./agent-proxy) | Exposes an agent as an OpenAI-compatible `chat/completions` endpoint |
 
 ## Architecture
 

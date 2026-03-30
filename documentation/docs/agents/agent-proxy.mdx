@@ -1,0 +1,167 @@
+---
+sidebar_position: 4
+---
+
+# Agent Proxy Plugin
+
+The Agent Proxy plugin exposes an AI agent as a standard OpenAI-compatible `chat/completions` HTTP endpoint. Any OpenAI SDK or HTTP client can interact with it — the agent runs autonomously under the hood with its full tool-calling loop.
+
+- **Plugin class**: `cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AgentProxy`
+
+## Configuration
+
+The plugin takes two configuration fields:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `agent` | object | yes | The full agent configuration (same structure as the [AI Agent Node](./ai-agent-node)) |
+| `run_config` | object | no | Runtime configuration (`max_turns`, provider/model overrides) |
+
+The `agent` object supports all the same fields as the AI Agent Node: `name`, `instructions`, `provider`, `model`, `tools`, `mcp_connectors`, `inline_tools`, `handoffs`, `memory`, `guardrails`, and `built_in_tools`.
+
+## Route setup
+
+Here is a complete Otoroshi route configuration that exposes an autonomous coding agent as a `chat/completions` endpoint:
+
+```json
+{
+  "id": "route_agent_proxy",
+  "name": "Agent Proxy - Code Assistant",
+  "enabled": true,
+  "frontend": {
+    "domains": ["agent.oto.tools/v1/chat/completions"],
+    "strip_path": false
+  },
+  "backend": {
+    "targets": [
+      {
+        "hostname": "mirror.otoroshi.io",
+        "port": 443,
+        "tls": true
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AgentProxy",
+      "config": {
+        "agent": {
+          "name": "Code Assistant",
+          "description": "An autonomous coding agent",
+          "provider": "provider_xxxxx",
+          "instructions": [
+            "You are an autonomous coding agent working on a Node.js project.",
+            "Use the available tools to explore the codebase and answer questions.",
+            "Always read files before suggesting modifications."
+          ],
+          "built_in_tools": {
+            "workspace": true,
+            "shell": true,
+            "tasks": true,
+            "plan": true,
+            "memory": true,
+            "control": true,
+            "allowed_paths": ["/workspace/my-project"],
+            "command_timeout": 30000
+          }
+        },
+        "run_config": {
+          "max_turns": 20
+        }
+      }
+    }
+  ]
+}
+```
+
+## Usage
+
+### curl
+
+```bash
+curl -X POST 'http://agent.oto.tools:8080/v1/chat/completions' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "messages": [
+    {
+      "role": "user",
+      "content": "Read all the files in the project and give me a summary of what it does."
+    }
+  ]
+}'
+```
+
+The response follows the standard OpenAI `chat.completion` format:
+
+```json
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1743368000,
+  "model": "gpt-4o",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Here is a summary of the project..."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 1234,
+    "completion_tokens": 567,
+    "total_tokens": 1801
+  }
+}
+```
+
+### OpenAI Python SDK
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://agent.oto.tools:8080/v1",
+    api_key="not-needed"
+)
+
+response = client.chat.completions.create(
+    model="anything",
+    messages=[
+        {"role": "user", "content": "List all the files and explain the project structure"}
+    ]
+)
+print(response.choices[0].message.content)
+```
+
+### OpenAI Node.js SDK
+
+```javascript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://agent.oto.tools:8080/v1',
+  apiKey: 'not-needed',
+});
+
+const response = await client.chat.completions.create({
+  model: 'anything',
+  messages: [
+    { role: 'user', content: 'Read server.js and explain what it does' }
+  ],
+});
+console.log(response.choices[0].message.content);
+```
+
+## How it works
+
+1. The plugin receives a standard OpenAI `chat/completions` request
+2. Messages are extracted from the request body and converted to an `AgentInput`
+3. The agent is instantiated from the plugin configuration (instructions, tools, provider, etc.)
+4. The agent runs its tool-calling loop: the LLM reasons, calls tools (read files, run commands, etc.), observes results, and repeats until it produces a final answer
+5. The `ChatResponse` is formatted as an OpenAI-compatible JSON response with usage metadata
+
+The agent is stateless between requests — each call creates a fresh scratchpad and tool context. Use the `memory` field to enable persistent conversation history across calls.
