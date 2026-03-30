@@ -571,6 +571,62 @@ object BuiltInToolsFactory {
       )
     }
 
+    // ======== HTTP call tool ========
+
+    if (config.isEnabled("http_call")) {
+      tools += InlineFunction(
+        InlineFunctionDeclaration(
+          name = "http_call",
+          description = "Make an HTTP request to a URL and return the response",
+          strict = false,
+          parameters = Json.obj(
+            "url" -> Json.obj("type" -> "string", "description" -> "The URL to call"),
+            "method" -> Json.obj("type" -> "string", "description" -> "HTTP method (default: GET)", "enum" -> Json.arr("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")),
+            "headers" -> Json.obj("type" -> "object", "description" -> "Request headers as key-value pairs"),
+            "body" -> Json.obj("description" -> "Request body (string or JSON object)"),
+            "timeout" -> Json.obj("type" -> "integer", "description" -> "Timeout in ms (default: 30000)")
+          ),
+          required = Seq("url")
+        ),
+        call = (args, _, innerEnv, innerEc) => {
+          implicit val implEc: ExecutionContext = innerEc
+          val json = Try(Json.parse(args)).getOrElse(Json.obj())
+          val url = json.select("url").asOptString.getOrElse("")
+          val method = json.select("method").asOptString.getOrElse("GET").toUpperCase
+          val headers = json.select("headers").asOpt[JsObject].getOrElse(Json.obj())
+          val bodyOpt = json.select("body").asOpt[JsValue]
+          val timeout = json.select("timeout").asOpt[Int].getOrElse(30000)
+
+          try {
+            val headerSeq = headers.fields.map { case (k, v) => (k, v.asOpt[String].getOrElse(v.toString())) }
+            var req = innerEnv.Ws
+              .url(url)
+              .withRequestTimeout(scala.concurrent.duration.Duration(timeout.toLong, "millis"))
+              .withHttpHeaders(headerSeq: _*)
+              .withFollowRedirects(true)
+            req = bodyOpt match {
+              case Some(JsString(s)) => req.withBody(s)
+              case Some(obj: JsObject) => req.addHttpHeaders("Content-Type" -> "application/json").withBody(obj)
+              case Some(arr: JsArray) => req.addHttpHeaders("Content-Type" -> "application/json").withBody(arr)
+              case _ => req
+            }
+            req.execute(method).map { resp =>
+              val respHeaders = resp.headers.map { case (k, v) => k -> JsString(v.mkString(", ")) }
+              Json.obj(
+                "status" -> resp.status,
+                "headers" -> JsObject(respHeaders.toSeq),
+                "body" -> truncate(resp.body, 40000)
+              ).stringify
+            }.recover {
+              case e: Exception => Json.obj("error" -> e.getMessage).stringify
+            }
+          } catch {
+            case e: Exception => Future.successful(Json.obj("error" -> e.getMessage).stringify)
+          }
+        }
+      )
+    }
+
     // ======== Spawn agent tool ========
 
     if (config.isEnabled("spawn_agent")) {
