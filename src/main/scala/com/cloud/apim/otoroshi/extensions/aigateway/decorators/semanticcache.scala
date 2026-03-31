@@ -13,7 +13,8 @@ import io.lettuce.core.protocol.{CommandArgs, ProtocolKeyword}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
-import play.api.libs.json.JsValue
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
+import play.api.libs.json.{JsValue, Json, JsObject}
 
 import java.nio.charset.StandardCharsets
 import java.nio.{ByteBuffer, ByteOrder}
@@ -27,7 +28,7 @@ import scala.jdk.CollectionConverters._
 // ---------------------------------------------------------------------------
 object ChatClientWithSemanticCache {
 
-  lazy val embeddingModel = new dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel()
+  lazy val localEmbeddingModel = new dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel()
 
   def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
     if (tuple._1.cache.strategy.contains("semantic")) {
@@ -37,6 +38,33 @@ object ChatClientWithSemanticCache {
       }
     } else {
       tuple._2
+    }
+  }
+
+  /**
+   * Generate an embedding vector for the given text.
+   * If embeddingRef is set and points to a valid EmbeddingModel entity, use it.
+   * Otherwise, fall back to the local AllMiniLmL6V2 model.
+   */
+  def embedText(text: String, embeddingRef: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Array[Float]] = {
+    embeddingRef.flatMap { ref =>
+      env.adminExtensions.extension[AiExtension]
+        .flatMap(_.states.embeddingModel(ref))
+        .flatMap(_.getEmbeddingModelClient()(env))
+    } match {
+      case Some(client) =>
+        client.embed(
+          EmbeddingClientInputOptions(input = Seq(text)),
+          Json.obj(),
+          TypedMap.empty
+        ).map {
+          case Right(response) if response.embeddings.nonEmpty => response.embeddings.head.vector
+          case _ => localEmbeddingModel.embed(text).content().vector() // fallback on error
+        }.recover {
+          case _ => localEmbeddingModel.embed(text).content().vector() // fallback on exception
+        }
+      case None =>
+        Future.successful(localEmbeddingModel.embed(text).content().vector())
     }
   }
 }
@@ -78,34 +106,36 @@ object ChatClientWithSemanticCacheMemory {
 class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
   private val ttl = originalProvider.cache.ttl
+  private val embeddingRef = originalProvider.cache.embeddingRef
+
+  private def getStore = ChatClientWithSemanticCacheMemory.embeddingStores.getOrUpdate(originalProvider.id) {
+    new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
+  }
 
   private def notInCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, completion: Boolean)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val embeddingModel = ChatClientWithSemanticCache.embeddingModel
-    val embeddingStore = ChatClientWithSemanticCacheMemory.embeddingStores.getOrUpdate(originalProvider.id) {
-      new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
-    }
+    val embeddingStore = getStore
     val r = if (completion) chatClient.completion(originalPrompt, attrs, originalBody) else chatClient.call(originalPrompt, attrs, originalBody)
-    r.map {
-      case Left(err) => err.left
+    r.flatMap {
+      case Left(err) => err.leftf
       case Right(resp) =>
-        val segment = TextSegment.from(originalPrompt.messages.map(_.content).mkString(". "))
-        val embedding = embeddingModel.embed(segment).content()
-        embeddingStore.add(key, embedding, segment)
-        ChatClientWithSemanticCacheMemory.cache.put(key, (ttl, resp, System.currentTimeMillis()))
-        ChatClientWithSemanticCacheMemory.cacheEmbeddingCleanup.put(key, (ttl, (key) => {
-          embeddingStore.remove(key)
-        }))
-        resp.copy(metadata = resp.metadata.copy(
-          cache = Some(ChatResponseCache(ChatResponseCacheStatus.Miss, key, ttl, 0.millis))
-        )).right
+        val text = originalPrompt.messages.map(_.content).mkString(". ")
+        ChatClientWithSemanticCache.embedText(text, embeddingRef).map { vector =>
+          val segment = TextSegment.from(text)
+          val embedding = new dev.langchain4j.data.embedding.Embedding(vector)
+          embeddingStore.add(key, embedding, segment)
+          ChatClientWithSemanticCacheMemory.cache.put(key, (ttl, resp, System.currentTimeMillis()))
+          ChatClientWithSemanticCacheMemory.cacheEmbeddingCleanup.put(key, (ttl, (key) => {
+            embeddingStore.remove(key)
+          }))
+          resp.copy(metadata = resp.metadata.copy(
+            cache = Some(ChatResponseCache(ChatResponseCacheStatus.Miss, key, ttl, 0.millis))
+          )).right
+        }
     }
   }
 
   private def notInCacheStream(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, completion: Boolean)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val embeddingModel = ChatClientWithSemanticCache.embeddingModel
-    val embeddingStore = ChatClientWithSemanticCacheMemory.embeddingStores.getOrUpdate(originalProvider.id) {
-      new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
-    }
+    val embeddingStore = getStore
     val r = if (completion) chatClient.completionStream(originalPrompt, attrs, originalBody) else chatClient.stream(originalPrompt, attrs, originalBody)
     r.map {
       case Left(err) => err.left
@@ -114,13 +144,16 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
         resp
           .alsoTo(Sink.foreach { chunk => chunks = chunks :+ chunk })
           .alsoTo(Sink.onComplete { _ =>
-            val segment = TextSegment.from(originalPrompt.messages.map(_.content).mkString(". "))
-            val embedding = embeddingModel.embed(segment).content()
-            embeddingStore.add(key, embedding, segment)
-            ChatClientWithSemanticCacheMemory.stream_cache.put(key, (ttl, chunks, System.currentTimeMillis()))
-            ChatClientWithSemanticCacheMemory.cacheEmbeddingCleanup.put(key, (ttl, (key) => {
-              embeddingStore.remove(key)
-            }))
+            val text = originalPrompt.messages.map(_.content).mkString(". ")
+            ChatClientWithSemanticCache.embedText(text, embeddingRef).foreach { vector =>
+              val segment = TextSegment.from(text)
+              val embedding = new dev.langchain4j.data.embedding.Embedding(vector)
+              embeddingStore.add(key, embedding, segment)
+              ChatClientWithSemanticCacheMemory.stream_cache.put(key, (ttl, chunks, System.currentTimeMillis()))
+              ChatClientWithSemanticCacheMemory.cacheEmbeddingCleanup.put(key, (ttl, (key) => {
+                embeddingStore.remove(key)
+              }))
+            }
           }).right
     }
   }
@@ -135,25 +168,24 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
           cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, (System.currentTimeMillis() - at).millis))
         )).rightf
       case None =>
-        val embeddingModel = ChatClientWithSemanticCache.embeddingModel
-        val embeddingStore = ChatClientWithSemanticCacheMemory.embeddingStores.getOrUpdate(originalProvider.id) {
-          new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
-        }
-        val queryEmbedding = embeddingModel.embed(query).content()
-        val relevant = embeddingStore.search(dev.langchain4j.store.embedding.EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding).maxResults(1).minScore(originalProvider.cache.score).build())
-        val matches = relevant.matches().asScala
-        if (matches.nonEmpty) {
-          val id = matches.head.embeddingId()
-          ChatClientWithSemanticCacheMemory.cache.getIfPresent(id) match {
-            case None => notInCache(key, originalPrompt, attrs, originalBody, completion)
-            case Some(cached) =>
-              cached._2.copy(metadata = cached._2.metadata.copy(
-                usage = ChatResponseMetadataUsage.empty,
-                cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, (System.currentTimeMillis() - cached._3).millis))
-              )).rightf
+        val embeddingStore = getStore
+        ChatClientWithSemanticCache.embedText(query, embeddingRef).flatMap { vector =>
+          val queryEmbedding = new dev.langchain4j.data.embedding.Embedding(vector)
+          val relevant = embeddingStore.search(dev.langchain4j.store.embedding.EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding).maxResults(1).minScore(originalProvider.cache.score).build())
+          val matches = relevant.matches().asScala
+          if (matches.nonEmpty) {
+            val id = matches.head.embeddingId()
+            ChatClientWithSemanticCacheMemory.cache.getIfPresent(id) match {
+              case None => notInCache(key, originalPrompt, attrs, originalBody, completion)
+              case Some(cached) =>
+                cached._2.copy(metadata = cached._2.metadata.copy(
+                  usage = ChatResponseMetadataUsage.empty,
+                  cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, (System.currentTimeMillis() - cached._3).millis))
+                )).rightf
+            }
+          } else {
+            notInCache(key, originalPrompt, attrs, originalBody, completion)
           }
-        } else {
-          notInCache(key, originalPrompt, attrs, originalBody, completion)
         }
     }
   }
@@ -164,21 +196,20 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
     ChatClientWithSemanticCacheMemory.stream_cache.getIfPresent(key) match {
       case Some((_, response, _)) => Source(response.toList).rightf
       case None =>
-        val embeddingModel = ChatClientWithSemanticCache.embeddingModel
-        val embeddingStore = ChatClientWithSemanticCacheMemory.embeddingStores.getOrUpdate(originalProvider.id) {
-          new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
-        }
-        val queryEmbedding = embeddingModel.embed(query).content()
-        val relevant = embeddingStore.search(dev.langchain4j.store.embedding.EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding).maxResults(1).minScore(originalProvider.cache.score).build())
-        val matches = relevant.matches().asScala
-        if (matches.nonEmpty) {
-          val id = matches.head.embeddingId()
-          ChatClientWithSemanticCacheMemory.stream_cache.getIfPresent(id) match {
-            case None => notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
-            case Some(cached) => Source(cached._2.toList).rightf
+        val embeddingStore = getStore
+        ChatClientWithSemanticCache.embedText(query, embeddingRef).flatMap { vector =>
+          val queryEmbedding = new dev.langchain4j.data.embedding.Embedding(vector)
+          val relevant = embeddingStore.search(dev.langchain4j.store.embedding.EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding).maxResults(1).minScore(originalProvider.cache.score).build())
+          val matches = relevant.matches().asScala
+          if (matches.nonEmpty) {
+            val id = matches.head.embeddingId()
+            ChatClientWithSemanticCacheMemory.stream_cache.getIfPresent(id) match {
+              case None => notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
+              case Some(cached) => Source(cached._2.toList).rightf
+            }
+          } else {
+            notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
           }
-        } else {
-          notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
         }
     }
   }
@@ -203,9 +234,8 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
 // ---------------------------------------------------------------------------
 object ChatClientWithSemanticCacheRedis {
 
-  private val DIMS = 384 // AllMiniLmL6V2 output dimension
-
-  private val verifiedIndices = new TrieMap[String, Boolean]()
+  // index name → dims used at creation time
+  private val verifiedIndices = new TrieMap[String, Int]()
   def resetVerifiedIndex(indexName: String): Unit = verifiedIndices.remove(indexName)
 
   private def cmd(name: String): ProtocolKeyword = new ProtocolKeyword {
@@ -225,6 +255,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
 
   private val ttl = originalProvider.cache.ttl
   private val minScore = originalProvider.cache.score
+  private val embeddingRef = originalProvider.cache.embeddingRef
   private val providerId = originalProvider.id
   private val indexName = s"sem-cache:$providerId:idx"
   private val embKeyPrefix = s"sem-cache:$providerId:"
@@ -252,7 +283,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
 
   // --- index lifecycle ---
 
-  private def ensureIndex()(implicit ec: ExecutionContext): Future[Unit] = {
+  private def ensureIndex(dims: Int)(implicit ec: ExecutionContext): Future[Unit] = {
     if (verifiedIndices.contains(indexName)) {
       Future.successful(())
     } else {
@@ -266,14 +297,14 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
         .add("embedding").add("VECTOR").add("FLAT")
         .add("6")
         .add("TYPE").add("FLOAT32")
-        .add("DIM").add(DIMS.toString)
+        .add("DIM").add(dims.toString)
         .add("DISTANCE_METRIC").add("COSINE")
 
       toFuture(conn.async().dispatch(FT_CREATE, new StatusOutput[String, String](StringCodec.UTF8), args))
-        .map { _ => verifiedIndices.put(indexName, true); () }
+        .map { _ => verifiedIndices.put(indexName, dims); () }
         .recover {
           case e: Throwable if e.getMessage != null && e.getMessage.contains("Index already exists") =>
-            verifiedIndices.put(indexName, true); ()
+            verifiedIndices.put(indexName, dims); ()
         }
     }
   }
@@ -365,17 +396,17 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
       case Left(err) => err.leftf
       case Right(resp) =>
         val query = originalPrompt.messages.map(_.content).mkString(". ")
-        val embedding = ChatClientWithSemanticCache.embeddingModel.embed(query).content()
-        val vectorBytes = floatsToBytes(embedding.vector())
-        ensureIndex().flatMap { _ =>
-          storeEmbedding(key, query, vectorBytes).map { _ =>
-            redisPutResponse(key, resp)
-            resp.copy(metadata = resp.metadata.copy(
-              cache = Some(ChatResponseCache(ChatResponseCacheStatus.Miss, key, ttl, 0.millis))
-            )).right
+        ChatClientWithSemanticCache.embedText(query, embeddingRef).flatMap { vector =>
+          val vectorBytes = floatsToBytes(vector)
+          ensureIndex(vector.length).flatMap { _ =>
+            storeEmbedding(key, query, vectorBytes).map { _ =>
+              redisPutResponse(key, resp)
+              resp.copy(metadata = resp.metadata.copy(
+                cache = Some(ChatResponseCache(ChatResponseCacheStatus.Miss, key, ttl, 0.millis))
+              )).right
+            }
           }
         }.recover { case _ =>
-          // if Redis fails, still return the response
           resp.copy(metadata = resp.metadata.copy(
             cache = Some(ChatResponseCache(ChatResponseCacheStatus.Miss, key, ttl, 0.millis))
           )).right
@@ -393,10 +424,11 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
           .alsoTo(Sink.foreach { chunk => chunks = chunks :+ chunk })
           .alsoTo(Sink.onComplete { _ =>
             val query = originalPrompt.messages.map(_.content).mkString(". ")
-            val embedding = ChatClientWithSemanticCache.embeddingModel.embed(query).content()
-            val vectorBytes = floatsToBytes(embedding.vector())
-            ensureIndex().flatMap(_ => storeEmbedding(key, query, vectorBytes)).foreach { _ =>
-              redisPutChunks(key, chunks)
+            ChatClientWithSemanticCache.embedText(query, embeddingRef).foreach { vector =>
+              val vectorBytes = floatsToBytes(vector)
+              ensureIndex(vector.length).flatMap(_ => storeEmbedding(key, query, vectorBytes)).foreach { _ =>
+                redisPutChunks(key, chunks)
+              }
             }
           }).right
     }
@@ -416,20 +448,21 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
         )).rightf
       case None =>
         // 2. semantic similarity search
-        ensureIndex().flatMap { _ =>
-          val embedding = ChatClientWithSemanticCache.embeddingModel.embed(query).content()
-          val vectorBytes = floatsToBytes(embedding.vector())
-          searchSimilar(vectorBytes).flatMap {
-            case Some((matchedId, _)) =>
-              redisGetResponse(matchedId).flatMap {
-                case Some((cachedResp, at)) =>
-                  cachedResp.copy(metadata = cachedResp.metadata.copy(
-                    usage = ChatResponseMetadataUsage.empty,
-                    cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, (System.currentTimeMillis() - at).millis))
-                  )).rightf
-                case None => notInCache(key, originalPrompt, attrs, originalBody, completion)
-              }
-            case None => notInCache(key, originalPrompt, attrs, originalBody, completion)
+        ChatClientWithSemanticCache.embedText(query, embeddingRef).flatMap { vector =>
+          val vectorBytes = floatsToBytes(vector)
+          ensureIndex(vector.length).flatMap { _ =>
+            searchSimilar(vectorBytes).flatMap {
+              case Some((matchedId, _)) =>
+                redisGetResponse(matchedId).flatMap {
+                  case Some((cachedResp, at)) =>
+                    cachedResp.copy(metadata = cachedResp.metadata.copy(
+                      usage = ChatResponseMetadataUsage.empty,
+                      cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, (System.currentTimeMillis() - at).millis))
+                    )).rightf
+                  case None => notInCache(key, originalPrompt, attrs, originalBody, completion)
+                }
+              case None => notInCache(key, originalPrompt, attrs, originalBody, completion)
+            }
           }
         }.recoverWith { case _ => notInCache(key, originalPrompt, attrs, originalBody, completion) }
     }
@@ -443,16 +476,17 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
       case Some((chunks, _)) => Source(chunks.toList).rightf
       case None =>
         // 2. semantic similarity search
-        ensureIndex().flatMap { _ =>
-          val embedding = ChatClientWithSemanticCache.embeddingModel.embed(query).content()
-          val vectorBytes = floatsToBytes(embedding.vector())
-          searchSimilar(vectorBytes).flatMap {
-            case Some((matchedId, _)) =>
-              redisGetChunks(matchedId).flatMap {
-                case Some((cachedChunks, _)) => Source(cachedChunks.toList).rightf
-                case None => notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
-              }
-            case None => notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
+        ChatClientWithSemanticCache.embedText(query, embeddingRef).flatMap { vector =>
+          val vectorBytes = floatsToBytes(vector)
+          ensureIndex(vector.length).flatMap { _ =>
+            searchSimilar(vectorBytes).flatMap {
+              case Some((matchedId, _)) =>
+                redisGetChunks(matchedId).flatMap {
+                  case Some((cachedChunks, _)) => Source(cachedChunks.toList).rightf
+                  case None => notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
+                }
+              case None => notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
+            }
           }
         }.recoverWith { case _ => notInCacheStream(key, originalPrompt, attrs, originalBody, completion) }
     }
