@@ -37,6 +37,7 @@ case class PersistentMemory(
       case "opensearch" => new OpenSearchPersistentMemoryClient(config, id).some
       case "redis" => new RedisPersistentMemoryClient(config, id).some
       case "http" => new HttpPersistentMemoryClient(config, id).some
+      case "postgresql" | "postgres" | "pg" => new PostgresqlPersistentMemoryClient(config, id).some
       case _ => None
     }
   }
