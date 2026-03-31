@@ -91,6 +91,9 @@ case class AgentBuiltInTools(
   http: Boolean = false,
   contentToMarkdown: Boolean = false,
   control: Boolean = false,
+  persistentKv: Boolean = false,
+  persistentKvUri: Option[String] = None,
+  persistentKvNamespace: Option[String] = None,
   include: Seq[String] = Seq.empty,
   exclude: Seq[String] = Seq.empty,
   allowedPaths: Seq[String] = Seq.empty,
@@ -107,6 +110,7 @@ case class AgentBuiltInTools(
       case "task_create" | "task_update" | "task_get" | "task_list" => tasks
       case "plan_set" | "plan_get" => plan
       case "memory_set" | "memory_get" | "memory_list" => memory
+      case "persistent_kv_set" | "persistent_kv_get" | "persistent_kv_delete" | "persistent_kv_list" => persistentKv && persistentKvUri.isDefined
       case "delegate" => agent
       case "spawn_agent" => subAgents.nonEmpty
       case "http_call" => http
@@ -115,7 +119,7 @@ case class AgentBuiltInTools(
       case _ => false
     }
   }
-  def hasAnyEnabled: Boolean = all || workspace || shell || tasks || plan || memory || agent || http || contentToMarkdown || control || include.nonEmpty || subAgents.nonEmpty
+  def hasAnyEnabled: Boolean = all || workspace || shell || tasks || plan || memory || agent || http || contentToMarkdown || control || persistentKv || include.nonEmpty || subAgents.nonEmpty
   def hasScratchpadTools: Boolean = isEnabled("task_create") || isEnabled("plan_set") || isEnabled("memory_set")
   // Strip sub_agents to prevent recursive spawning
   def withoutSubAgents: AgentBuiltInTools = copy(subAgents = Seq.empty)
@@ -135,6 +139,9 @@ object AgentBuiltInTools {
       http = json.select("http").asOpt[Boolean].getOrElse(false),
       contentToMarkdown = json.select("content_to_markdown").asOpt[Boolean].getOrElse(false),
       control = json.select("control").asOpt[Boolean].getOrElse(false),
+      persistentKv = json.select("persistent_kv").asOpt[Boolean].getOrElse(false),
+      persistentKvUri = json.select("persistent_kv_uri").asOpt[String].filter(_.nonEmpty),
+      persistentKvNamespace = json.select("persistent_kv_namespace").asOpt[String].filter(_.nonEmpty),
       include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty),
       exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty),
       allowedPaths = json.select("allowed_paths").asOpt[Seq[String]].getOrElse(Seq.empty),
@@ -376,7 +383,7 @@ class AgentRunner(env: Env) {
               // Built-in tools: create scratchpad and inject tools
               val scratchpadRef = new AtomicReference[AgentScratchpad](AgentScratchpad())
               if (agent.builtInTools.hasAnyEnabled) {
-                val builtIns = BuiltInToolsFactory.createBuiltInTools(agent.builtInTools, scratchpadRef, agent, rcfg, env, wfr)
+                val builtIns = BuiltInToolsFactory.createBuiltInTools(agent.builtInTools, scratchpadRef, agent, rcfg, env, wfr, attrs)
                 additionToolFunctions = additionToolFunctions ++ builtIns.map("__inline_" + _.declaration.name)
                 inlineFunctions = inlineFunctions ++ builtIns.map(v => ("__inline_" + v.declaration.name, v)).toMap
               }
