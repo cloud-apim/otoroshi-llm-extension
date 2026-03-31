@@ -41,6 +41,7 @@ case class EmbeddingStore(
       case "weaviate" => new WeaviateEmbeddingStoreClient(config, id).some
       case "pinecone" => new PineconeEmbeddingStoreClient(config, id).some
       case "opensearch" => new OpenSearchEmbeddingStoreClient(config, id).some
+      case "redis" => new RedisEmbeddingStoreClient(config, id).some
       case _ => None
     }
   }
