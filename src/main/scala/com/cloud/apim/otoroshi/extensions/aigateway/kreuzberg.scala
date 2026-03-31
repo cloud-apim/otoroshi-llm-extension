@@ -12,7 +12,7 @@ object KreuzbergHelper {
   private lazy val defaultConfig: ExtractionConfig =
     ExtractionConfig.builder()
       .outputFormat("markdown")
-      .ocr(OcrConfig.builder().backend("none").build())
+      .ocr(OcrConfig.builder().backend("tesseract").build())
       .forceOcr(false)
       .useCache(false)
       .build()
