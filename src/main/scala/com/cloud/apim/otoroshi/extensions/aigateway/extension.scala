@@ -222,6 +222,7 @@ class AiExtension(val env: Env) extends AdminExtension {
 
   override def stop(): Unit = {
     AiBudgetClusterAgent.stop()
+    LettuceRedisClientManager.shutdownAll()
   }
 
   override def frontendExtensions(): Seq[AdminExtensionFrontendExtension] = Seq(
