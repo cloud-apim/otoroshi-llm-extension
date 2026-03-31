@@ -1596,6 +1596,8 @@ class ContentToMarkdownFunction extends WorkflowFunction {
     "type"       -> "object",
     "properties" -> Json.obj(
       "url"          -> Json.obj("type" -> "string", "description" -> "URL of the document to fetch and convert"),
+      "method"       -> Json.obj("type" -> "string", "description" -> "HTTP method to use when fetching the URL (default: GET)", "enum" -> Json.arr("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")),
+      "headers"      -> Json.obj("type" -> "object", "description" -> "HTTP headers to send when fetching the URL (key-value pairs)"),
       "content"      -> Json.obj("type" -> "string", "description" -> "Base64-encoded document content (alternative to url)"),
       "content_type" -> Json.obj("type" -> "string", "description" -> "MIME type of the content (required when using content)")
     )
@@ -1606,6 +1608,21 @@ class ContentToMarkdownFunction extends WorkflowFunction {
       "label" -> "URL",
       "props" -> Json.obj(
         "description" -> "URL of the document to fetch and convert"
+      )
+    ),
+    "method" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "HTTP Method",
+      "props" -> Json.obj(
+        "description" -> "HTTP method (default: GET)"
+      )
+    ),
+    "headers" -> Json.obj(
+      "type"  -> "any",
+      "label" -> "HTTP Headers",
+      "props" -> Json.obj(
+        "description" -> "HTTP headers as key-value pairs",
+        "height" -> "100px"
       )
     ),
     "content" -> Json.obj(
@@ -1635,17 +1652,23 @@ class ContentToMarkdownFunction extends WorkflowFunction {
     "kind" -> "call",
     "function" -> "extensions.com.cloud-apim.llm-extension.content_to_markdown",
     "args" -> Json.obj(
-      "url" -> "https://example.com/document.pdf"
+      "url" -> "https://example.com/document.pdf",
+      "method" -> "GET",
+      "headers" -> Json.obj(
+        "Authorization" -> "Bearer xxx"
+      )
     )
   ))
 
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val urlOpt = args.select("url").asOpt[String]
+    val method = args.select("method").asOpt[String].getOrElse("GET").toUpperCase
+    val headers = args.select("headers").asOpt[JsObject].map(_.fields.map { case (k, v) => k -> v.asOpt[String].getOrElse(v.toString()) }.toMap).getOrElse(Map.empty)
     val contentOpt = args.select("content").asOpt[String]
     val contentTypeOpt = args.select("content_type").asOpt[String]
     (urlOpt, contentOpt, contentTypeOpt) match {
       case (Some(url), _, _) =>
-        KreuzbergHelper.extractFromUrl(url).map { case (markdown, sourceType) =>
+        KreuzbergHelper.extractFromUrl(url, method, headers).map { case (markdown, sourceType) =>
           Json.obj(
             "content"     -> markdown,
             "source_type" -> sourceType,

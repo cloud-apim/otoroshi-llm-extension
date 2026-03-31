@@ -35,16 +35,16 @@ object KreuzbergHelper {
     }
   }
 
-  def extractFromUrl(url: String)(implicit env: Env, ec: ExecutionContext): Future[(String, String)] = {
-    env.Ws
+  def extractFromUrl(url: String, method: String = "GET", headers: Map[String, String] = Map.empty)(implicit env: Env, ec: ExecutionContext): Future[(String, String)] = {
+    val req = env.Ws
       .url(url)
       .withFollowRedirects(true)
       .withRequestTimeout(scala.concurrent.duration.Duration(30000L, "millis"))
-      .get()
-      .flatMap { resp =>
-        val contentType = resp.header("Content-Type").getOrElse("application/octet-stream")
-        val mimeType = contentType.split(";").head.trim
-        extractFromBytes(resp.bodyAsBytes.toArray, mimeType).map(md => (md, mimeType))
-      }
+      .withHttpHeaders(headers.toSeq: _*)
+    req.execute(method).flatMap { resp =>
+      val contentType = resp.header("Content-Type").getOrElse("application/octet-stream")
+      val mimeType = contentType.split(";").head.trim
+      extractFromBytes(resp.bodyAsBytes.toArray, mimeType).map(md => (md, mimeType))
+    }
   }
 }
