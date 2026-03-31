@@ -21,11 +21,13 @@ This loop allows agents to perform complex multi-step tasks autonomously.
 ## Key features
 
 - **Tool calling**: Agents can use tool functions, MCP connectors, and inline tools defined as workflow nodes
-- **Built-in tools**: Agents come with a library of ready-to-use tools (filesystem, shell, HTTP, tasks, plan, memory, agent delegation) that can be enabled per agent without any external configuration
+- **Built-in tools**: Agents come with a library of ready-to-use tools (filesystem, shell, HTTP, document conversion, tasks, plan, memory, persistent KV, agent delegation) that can be enabled per agent without any external configuration
 - **Agent handoffs**: An agent can transfer the conversation to another specialized agent
 - **Agent spawning**: Agents can spawn sub-agents on the fly with custom instructions provided by the LLM at runtime
 - **Persistent memory**: Agents can remember previous conversations across sessions
 - **Working memory (scratchpad)**: Agents can track tasks, plans, and key-value notes during execution via built-in tools
+- **Persistent KV memory**: Agents can store and retrieve key-value data that persists across sessions, backed by Redis or PostgreSQL
+- **Document conversion**: Agents can convert documents (PDF, DOCX, HTML, images) to markdown text via Kreuzberg
 - **Guardrails**: Input and output validation to ensure safe and compliant responses
 - **Configurable turns**: Set a maximum number of reasoning loops to control execution
 - **LLM-based routing**: Use an LLM to intelligently route requests to different workflow paths
