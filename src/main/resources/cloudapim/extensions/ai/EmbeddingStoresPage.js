@@ -34,6 +34,7 @@ class EmbeddingStoresPage extends Component {
           { label: 'Weaviate', value: "weaviate" },
           { label: 'Pinecone', value: "pinecone" },
           { label: 'Redis (Redis Stack)', value: "redis" },
+          { label: 'PostgreSQL (pgvector)', value: "postgresql" },
       ], i => i.label) }
     },
     config: {
@@ -110,6 +111,8 @@ class EmbeddingStoresPage extends Component {
               update({ ...base, config: { connection: { url: 'https://index-xxxxx.svc.environment.pinecone.io', api_key: '' }, options: defaultOptions } });
             } else if (state.provider === 'redis') {
               update({ ...base, config: { connection: { url: 'redis://localhost:6379', prefix: 'otoroshi:ai:emb', dims: 384, distance_metric: 'COSINE' }, options: defaultOptions } });
+            } else if (state.provider === 'postgresql') {
+              update({ ...base, config: { connection: { uri: 'postgresql://otoroshi:otoroshi@localhost:5432/otoroshi', table: 'otoroshi_ai_embeddings', dims: 384 }, options: defaultOptions } });
             }
           }
         },
