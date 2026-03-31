@@ -26,7 +26,11 @@ class MemoriesPage extends Component {
       'type': 'select',
       props: {
         label: 'Provider', possibleValues: _.sortBy([
-          {label: 'Local', value: "local"}
+          {label: 'Local', value: "local"},
+          {label: 'Elasticsearch', value: "elasticsearch"},
+          {label: 'OpenSearch', value: "opensearch"},
+          {label: 'Redis', value: "redis"},
+          {label: 'HTTP (Generic)', value: "http"},
         ], i => i.label)
       }
     },
@@ -85,22 +89,18 @@ class MemoriesPage extends Component {
           this.setState(state)
           if (!_.isEqual(state.provider, oldState.provider)) {
             console.log("set default value", state.provider)
+            const base = { id: state.id, name: state.name, description: state.description, tags: state.tags, metadata: state.metadata, provider: state.provider };
+            const defaultOptions = { session_id: '${consumer.id || apikey.id || user.email || token.sub || req.ip :: default}', strategy: 'message_window', max_messages: 10 };
             if (state.provider === 'local') {
-              update({
-                id: state.id,
-                name: state.name,
-                description: state.description,
-                tags: state.tags,
-                metadata: state.metadata,
-                provider: 'local',
-                config: {
-                  options: {
-                    session_id: '${consumer.id || apikey.id || user.email || token.sub || req.ip :: default}',
-                    strategy: 'message_window',
-                    max_messages: 10
-                  }
-                },
-              });
+              update({ ...base, config: { options: defaultOptions } });
+            } else if (state.provider === 'elasticsearch') {
+              update({ ...base, config: { connection: { url: 'http://localhost:9200', index: 'persistent-memories' }, options: defaultOptions } });
+            } else if (state.provider === 'opensearch') {
+              update({ ...base, config: { connection: { url: 'http://localhost:9200', index: 'persistent-memories' }, options: defaultOptions } });
+            } else if (state.provider === 'redis') {
+              update({ ...base, config: { connection: { url: 'redis://localhost:6379', prefix: 'otoroshi:ai:memory' }, options: defaultOptions } });
+            } else if (state.provider === 'http') {
+              update({ ...base, config: { connection: { url: 'http://localhost:8080/memories' }, options: defaultOptions } });
             }
           }
         },
