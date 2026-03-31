@@ -36,7 +36,6 @@ case class PersistentMemory(
       case "elasticsearch" | "elastic" => new ElasticsearchPersistentMemoryClient(config, id).some
       case "opensearch" => new OpenSearchPersistentMemoryClient(config, id).some
       case "http" => new HttpPersistentMemoryClient(config, id).some
-      case "s3" => new S3PersistentMemoryClient(config, id).some
       case _ => None
     }
   }
