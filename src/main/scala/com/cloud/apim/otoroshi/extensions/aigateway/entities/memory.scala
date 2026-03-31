@@ -35,6 +35,7 @@ case class PersistentMemory(
       case "local" => new LocalPersistentMemoryClient(config, id).some
       case "elasticsearch" | "elastic" => new ElasticsearchPersistentMemoryClient(config, id).some
       case "opensearch" => new OpenSearchPersistentMemoryClient(config, id).some
+      case "redis" => new RedisPersistentMemoryClient(config, id).some
       case "http" => new HttpPersistentMemoryClient(config, id).some
       case _ => None
     }
