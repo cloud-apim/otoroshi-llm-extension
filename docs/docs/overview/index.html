@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.9.2">
 <title data-rh="true">Overview | Otoroshi LLM Extension</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://cloud-apim.github.io/otoroshi-llm-extension/img/otoroshi-llm-extension-logo.png"><meta data-rh="true" name="twitter:image" content="https://cloud-apim.github.io/otoroshi-llm-extension/img/otoroshi-llm-extension-logo.png"><meta data-rh="true" property="og:url" content="https://cloud-apim.github.io/otoroshi-llm-extension/docs/overview"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="Overview | Otoroshi LLM Extension"><meta data-rh="true" name="description" content="Otoroshi LLM Extension is a set of Otoroshi plugins and resources to interact with LLMs, let&#x27;s discover it!"><meta data-rh="true" property="og:description" content="Otoroshi LLM Extension is a set of Otoroshi plugins and resources to interact with LLMs, let&#x27;s discover it!"><link data-rh="true" rel="icon" href="/otoroshi-llm-extension/img/otoroshi-llm-extension-logo-no-bg-no-text.png"><link data-rh="true" rel="canonical" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/overview"><link data-rh="true" rel="alternate" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/overview" hreflang="en"><link data-rh="true" rel="alternate" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/overview" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Overview","item":"https://cloud-apim.github.io/otoroshi-llm-extension/docs/overview"}]}</script><link rel="stylesheet" href="/otoroshi-llm-extension/assets/css/styles.72c2a4ca.css">
-<script src="/otoroshi-llm-extension/assets/js/runtime~main.93cfb65b.js" defer="defer"></script>
+<script src="/otoroshi-llm-extension/assets/js/runtime~main.cac341ee.js" defer="defer"></script>
 <script src="/otoroshi-llm-extension/assets/js/main.5b9f0200.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -29,8 +29,8 @@
 <li class=""><a class="" href="/otoroshi-llm-extension/docs/cost-optimizations/cost-tracking"><strong>Cost tracking</strong></a>: Track per-model costs in real time with automatic pricing from LiteLLM</li>
 <li class=""><a class="" href="/otoroshi-llm-extension/docs/cost-optimizations/budgets"><strong>Budgets</strong></a>: Set spending limits per provider with configurable durations, scopes, and alert modes</li>
 <li class=""><a class="" href="/otoroshi-llm-extension/docs/cost-optimizations/quotas"><strong>Token quotas</strong></a>: Manage LLM token rate limits per consumer and per time window to optimise costs</li>
-<li class=""><a class="" href="/otoroshi-llm-extension/docs/cost-optimizations/simple-cache"><strong>Simple cache</strong></a>: Exact-match caching based on SHA-512 hashing to avoid duplicate LLM calls</li>
-<li class=""><a class="" href="/otoroshi-llm-extension/docs/cost-optimizations/semantic-cache"><strong>Semantic cache</strong></a>: Speed up repeated queries using embedding-based similarity matching to enhance response times and reduce costs</li>
+<li class=""><a class="" href="/otoroshi-llm-extension/docs/cost-optimizations/simple-cache"><strong>Simple cache</strong></a>: Exact-match caching based on SHA-512 hashing to avoid duplicate LLM calls, with optional Redis backend for cluster-wide sharing</li>
+<li class=""><a class="" href="/otoroshi-llm-extension/docs/cost-optimizations/semantic-cache"><strong>Semantic cache</strong></a>: Speed up repeated queries using embedding-based similarity matching, with optional custom embedding models and Redis Stack backend</li>
 </ul>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="observability-and-reporting">Observability and reporting<a href="#observability-and-reporting" class="hash-link" aria-label="Direct link to Observability and reporting" title="Direct link to Observability and reporting" translate="no">​</a></h3>
 <ul>
@@ -57,6 +57,7 @@
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="embeddings">Embeddings<a href="#embeddings" class="hash-link" aria-label="Direct link to Embeddings" title="Direct link to Embeddings" translate="no">​</a></h3>
 <ul>
 <li class=""><a class="" href="/otoroshi-llm-extension/docs/embeddings/overview"><strong>Embeddings models</strong></a>: Compute text embeddings with an OpenAI-compatible API, supporting 16+ providers including a local AllMiniLM L6 V2 model</li>
+<li class=""><a class="" href="/otoroshi-llm-extension/docs/embeddings/overview#embedding-stores"><strong>Embedding stores</strong></a>: Store and search embedding vectors with 9 backends: local, ChromaDB, Elasticsearch, OpenSearch, Qdrant, Weaviate, Pinecone, Redis Stack, and PostgreSQL (pgvector)</li>
 </ul>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="multi-modal-models">Multi-modal models<a href="#multi-modal-models" class="hash-link" aria-label="Direct link to Multi-modal models" title="Direct link to Multi-modal models" translate="no">​</a></h3>
 <ul>
@@ -71,7 +72,7 @@
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="workflows-and-ai-agents">Workflows and AI Agents<a href="#workflows-and-ai-agents" class="hash-link" aria-label="Direct link to Workflows and AI Agents" title="Direct link to Workflows and AI Agents" translate="no">​</a></h3>
 <ul>
 <li class=""><a class="" href="/otoroshi-llm-extension/docs/workflows/overview"><strong>Workflows</strong></a>: Build complex multi-step AI pipelines with 17+ built-in functions for LLM calls, audio, image/video generation, embeddings, vector stores, memory, guardrails, and more</li>
-<li class=""><a class="" href="/otoroshi-llm-extension/docs/agents/overview"><strong>AI Agents</strong></a>: Build agentic workflows with tool calling, agent handoffs, persistent memory, LLM-based routing, and MCP integration</li>
+<li class=""><a class="" href="/otoroshi-llm-extension/docs/agents/overview"><strong>AI Agents</strong></a>: Build agentic workflows with tool calling, agent handoffs, persistent memory, LLM-based routing, MCP integration, document conversion (Kreuzberg), and autonomous persistent KV memory backed by Redis or PostgreSQL</li>
 </ul>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="http--llm-plugins">HTTP + LLM Plugins<a href="#http--llm-plugins" class="hash-link" aria-label="Direct link to HTTP + LLM Plugins" title="Direct link to HTTP + LLM Plugins" translate="no">​</a></h3>
 <ul>
