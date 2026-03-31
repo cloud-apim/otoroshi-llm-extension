@@ -43,6 +43,8 @@ The cache is configured on the **LLM Provider entity** in the `cache` section:
 | `strategy` | string | `"none"` | Set to `"semantic"` to enable semantic cache |
 | `ttl` | number (ms) | `86400000` (24h) | Time-to-live for cached entries in milliseconds |
 | `score` | number (0-1) | `0.8` | Minimum cosine similarity score for a semantic match. Higher values require closer matches. |
+| `embedding_ref` | string | — | Optional reference to an Embedding Model entity to use instead of the built-in AllMiniLmL6V2 |
+| `redis_url` | string | — | Optional Redis URL to use Redis Stack as cache and vector search backend |
 
 ### Score tuning
 
@@ -55,21 +57,62 @@ The cache is configured on the **LLM Provider entity** in the `cache` section:
 
 ## Embedding model
 
-The semantic cache uses the **AllMiniLmL6V2** sentence transformer model, which runs **locally** via ONNX runtime. This means:
+By default, the semantic cache uses the **AllMiniLmL6V2** sentence transformer model (384 dimensions), which runs **locally** via ONNX runtime. This means:
 
 - No external API call is needed for embedding computation
 - No additional cost per cache lookup
 - Low latency (typically < 10ms for embedding)
 - The model is included in the extension — no separate setup required
 
+### Custom embedding model
+
+You can use any embedding model registered in the extension instead of the built-in AllMiniLmL6V2. Set `embedding_ref` to the id of an Embedding Model entity:
+
+```js
+{
+  "cache": {
+    "strategy": "semantic",
+    "ttl": 300000,
+    "score": 0.85,
+    "embedding_ref": "embedding-model_xxxxx"
+  }
+}
+```
+
+This lets you use a higher-quality model (OpenAI, Mistral, Cohere, etc.) for cache matching. If the referenced model is unavailable or returns an error, the cache falls back to the built-in AllMiniLmL6V2 automatically.
+
 Only messages with role `"user"` are used for semantic matching.
+
+## Redis-backed semantic cache
+
+By default, the semantic cache uses **in-memory** storage (Caffeine + LangChain4j InMemoryEmbeddingStore). To share the cache across a cluster, set `redis_url` to a Redis Stack URI:
+
+```js
+{
+  "cache": {
+    "strategy": "semantic",
+    "ttl": 300000,
+    "score": 0.85,
+    "redis_url": "redis://localhost:6379"
+  }
+}
+```
+
+When Redis is configured:
+- Embeddings are stored as binary vectors in Redis HASH keys and indexed with **RediSearch** for KNN similarity search
+- Cached responses are stored as JSON strings with automatic TTL expiration
+- Embedding HASH keys also expire via `PEXPIRE`, automatically removing them from the search index
+- The RediSearch index is created automatically on first use with the correct vector dimensions
+- Redis connections are pooled and shared across providers
+
+Requires **Redis Stack** (the `redis-stack` or `redis-stack-server` Docker image) for the RediSearch vector search module.
 
 ## Cache behavior
 
-- Maximum **5000 entries** per provider (in-memory)
+- **In-memory mode**: Maximum **5000 entries** per provider. When a cached entry expires, its embedding is automatically cleaned up from the vector store.
+- **Redis mode**: No entry limit (limited by Redis memory). TTL is managed by Redis natively.
 - Cached responses return **zero token usage** (no cost incurred)
 - Both blocking and streaming responses are cached
-- When a cached entry expires, its embedding is automatically cleaned up from the vector store
 
 ## Response headers and metadata
 
