@@ -5,6 +5,8 @@ import java.nio.file.{Files, StandardOpenOption}
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import com.cloud.apim.otoroshi.extensions.aigateway.KreuzbergHelper
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.{LettuceRedisClientManager, PgPoolManager}
+import otoroshi.el.GlobalExpressionLanguage
 import otoroshi.env.Env
 import otoroshi.next.workflow.WorkflowRun
 import otoroshi.utils.TypedMap
@@ -12,10 +14,46 @@ import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
 
 import scala.collection.JavaConverters._
-import scala.concurrent.{ExecutionContext, Future}
+import scala.collection.concurrent.TrieMap
+import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.Try
 
 object BuiltInToolsFactory {
+
+  private val verifiedPgKvTables = new TrieMap[String, Boolean]()
+
+  private def toScalaFuture[T](stage: java.util.concurrent.CompletionStage[T]): Future[T] = {
+    val promise = Promise[T]()
+    stage.whenComplete(new java.util.function.BiConsumer[T, Throwable] {
+      override def accept(result: T, error: Throwable): Unit = {
+        if (error != null) promise.failure(error)
+        else promise.success(result)
+      }
+    })
+    promise.future
+  }
+
+  private def ensurePgKvTable(pool: io.vertx.pgclient.PgPool)(implicit ec: ExecutionContext): Future[Unit] = {
+    val key = pool.toString
+    if (verifiedPgKvTables.contains(key)) {
+      Future.successful(())
+    } else {
+      PgPoolManager.exec(pool,
+        """CREATE TABLE IF NOT EXISTS otoroshi_agent_kv (
+          namespace TEXT NOT NULL,
+          key TEXT NOT NULL,
+          value TEXT NOT NULL,
+          PRIMARY KEY (namespace, key)
+        )"""
+      ).map { _ =>
+        verifiedPgKvTables.put(key, true)
+        ()
+      }.recover { case _ =>
+        verifiedPgKvTables.put(key, true)
+        ()
+      }
+    }
+  }
 
   private def truncate(s: String, maxLen: Int): String = {
     if (s.length <= maxLen) s else s.take(maxLen) + s"\n... (truncated, ${s.length - maxLen} chars omitted)"
@@ -42,7 +80,8 @@ object BuiltInToolsFactory {
     agent: AgentConfig,
     rcfg: AgentRunConfig,
     env: Env,
-    wfr: Option[WorkflowRun]
+    wfr: Option[WorkflowRun],
+    attrs: TypedMap = TypedMap.empty
   ): Seq[InlineFunction] = {
     val tools = Seq.newBuilder[InlineFunction]
     val allowedPaths = config.allowedPaths
@@ -746,6 +785,145 @@ object BuiltInToolsFactory {
           ).map {
             case Left(err) => Json.obj("ok" -> false, "error" -> err).stringify
             case Right(output) => Json.obj("ok" -> true, "agent" -> subAgent.name, "result" -> output.wholeTextContent).stringify
+          }
+        }
+      )
+    }
+
+    // ======== Persistent KV tools ========
+
+    if (config.isEnabled("persistent_kv_set")) {
+      val kvUri = config.persistentKvUri.get
+      val rawNamespace = config.persistentKvNamespace.getOrElse(s"agent-kv:${agent.name}:default")
+      val namespace = if (rawNamespace.contains("${")) rawNamespace.evaluateEl(attrs)(env) else rawNamespace
+      val isRedis = kvUri.startsWith("redis://") || kvUri.startsWith("rediss://")
+
+      tools += InlineFunction(
+        InlineFunctionDeclaration(
+          name = "persistent_kv_set",
+          description = "Store a key-value pair in the agent's persistent memory (survives across sessions)",
+          strict = false,
+          parameters = Json.obj(
+            "key" -> Json.obj("type" -> "string", "description" -> "The key to store"),
+            "value" -> Json.obj("type" -> "string", "description" -> "The value to store (as string)")
+          ),
+          required = Seq("key", "value")
+        ),
+        call = (args, _, _, innerEc) => {
+          implicit val ec: ExecutionContext = innerEc
+          val json = Try(Json.parse(args)).getOrElse(Json.obj())
+          val key = json.select("key").asOptString.getOrElse("_")
+          val value = json.select("value").asOpt[JsValue].map(Json.stringify).getOrElse(json.select("value").asOptString.getOrElse(""))
+          if (isRedis) {
+            val conn = LettuceRedisClientManager.getConnection(kvUri)
+            toScalaFuture(conn.async().hset(namespace, key, value))
+              .map(_ => Json.obj("ok" -> true, "key" -> key).stringify)
+              .recover { case e: Throwable => Json.obj("error" -> e.getMessage).stringify }
+          } else {
+            val pool = PgPoolManager.getPool(kvUri)
+            ensurePgKvTable(pool).flatMap { _ =>
+              PgPoolManager.exec(pool,
+                "INSERT INTO otoroshi_agent_kv (namespace, key, value) VALUES ($1, $2, $3) ON CONFLICT (namespace, key) DO UPDATE SET value = EXCLUDED.value",
+                Seq(namespace, key, value)
+              ).map(_ => Json.obj("ok" -> true, "key" -> key).stringify)
+            }.recover { case e: Throwable => Json.obj("error" -> e.getMessage).stringify }
+          }
+        }
+      )
+
+      tools += InlineFunction(
+        InlineFunctionDeclaration(
+          name = "persistent_kv_get",
+          description = "Read a value from the agent's persistent memory by key",
+          strict = false,
+          parameters = Json.obj(
+            "key" -> Json.obj("type" -> "string", "description" -> "The key to read")
+          ),
+          required = Seq("key")
+        ),
+        call = (args, _, _, innerEc) => {
+          implicit val ec: ExecutionContext = innerEc
+          val json = Try(Json.parse(args)).getOrElse(Json.obj())
+          val key = json.select("key").asOptString.getOrElse("_")
+          if (isRedis) {
+            val conn = LettuceRedisClientManager.getConnection(kvUri)
+            toScalaFuture(conn.async().hget(namespace, key))
+              .map {
+                case null => Json.obj("key" -> key, "found" -> false).stringify
+                case v    => Json.obj("key" -> key, "found" -> true, "value" -> v).stringify
+              }
+              .recover { case e: Throwable => Json.obj("error" -> e.getMessage).stringify }
+          } else {
+            val pool = PgPoolManager.getPool(kvUri)
+            PgPoolManager.query(pool,
+              "SELECT value FROM otoroshi_agent_kv WHERE namespace = $1 AND key = $2",
+              Seq(namespace, key)
+            ).map { rows =>
+              rows.headOption match {
+                case Some(row) => Json.obj("key" -> key, "found" -> true, "value" -> row.getString("value")).stringify
+                case None      => Json.obj("key" -> key, "found" -> false).stringify
+              }
+            }.recover { case e: Throwable => Json.obj("error" -> e.getMessage).stringify }
+          }
+        }
+      )
+
+      tools += InlineFunction(
+        InlineFunctionDeclaration(
+          name = "persistent_kv_delete",
+          description = "Delete a key from the agent's persistent memory",
+          strict = false,
+          parameters = Json.obj(
+            "key" -> Json.obj("type" -> "string", "description" -> "The key to delete")
+          ),
+          required = Seq("key")
+        ),
+        call = (args, _, _, innerEc) => {
+          implicit val ec: ExecutionContext = innerEc
+          val json = Try(Json.parse(args)).getOrElse(Json.obj())
+          val key = json.select("key").asOptString.getOrElse("_")
+          if (isRedis) {
+            val conn = LettuceRedisClientManager.getConnection(kvUri)
+            toScalaFuture(conn.async().hdel(namespace, key))
+              .map(_ => Json.obj("ok" -> true, "key" -> key).stringify)
+              .recover { case e: Throwable => Json.obj("error" -> e.getMessage).stringify }
+          } else {
+            val pool = PgPoolManager.getPool(kvUri)
+            PgPoolManager.exec(pool,
+              "DELETE FROM otoroshi_agent_kv WHERE namespace = $1 AND key = $2",
+              Seq(namespace, key)
+            ).map(_ => Json.obj("ok" -> true, "key" -> key).stringify)
+              .recover { case e: Throwable => Json.obj("error" -> e.getMessage).stringify }
+          }
+        }
+      )
+
+      tools += InlineFunction(
+        InlineFunctionDeclaration(
+          name = "persistent_kv_list",
+          description = "List all entries in the agent's persistent memory",
+          strict = false,
+          parameters = Json.obj()
+        ),
+        call = (args, _, _, innerEc) => {
+          implicit val ec: ExecutionContext = innerEc
+          if (isRedis) {
+            val conn = LettuceRedisClientManager.getConnection(kvUri)
+            toScalaFuture(conn.async().hgetall(namespace))
+              .map { map =>
+                val entries = map.asScala.map { case (k, v) => Json.obj("key" -> k, "value" -> v) }.toSeq
+                Json.obj("entries" -> entries).stringify
+              }
+              .recover { case e: Throwable => Json.obj("error" -> e.getMessage).stringify }
+          } else {
+            val pool = PgPoolManager.getPool(kvUri)
+            PgPoolManager.query(pool,
+              "SELECT key, value FROM otoroshi_agent_kv WHERE namespace = $1",
+              Seq(namespace)
+            ).map { rows =>
+              val entries = rows.map(row => Json.obj("key" -> row.getString("key"), "value" -> row.getString("value")))
+              Json.obj("entries" -> entries).stringify
+            }.recover { case e: Throwable => Json.obj("error" -> e.getMessage).stringify }
           }
         }
       )
