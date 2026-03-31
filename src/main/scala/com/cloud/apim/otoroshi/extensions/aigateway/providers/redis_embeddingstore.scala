@@ -39,7 +39,7 @@ object RedisEmbeddingStoreClient {
   val HSET: ProtocolKeyword = cmd("HSET")
 }
 
-class RedisEmbeddingStoreClient(val config: JsObject, _storeId: String) extends EmbeddingStoreClient {
+class RedisEmbeddingStoreClient (val config: JsObject, _storeId: String) extends EmbeddingStoreClient {
 
   import RedisEmbeddingStoreClient._
 
