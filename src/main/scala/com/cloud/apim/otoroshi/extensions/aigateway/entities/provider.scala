@@ -83,7 +83,8 @@ case class CacheSettings(
   strategy: String = "none",
   ttl: FiniteDuration = 24.hours,
   score: Double = 0.8,
-  redisUrl: Option[String] = None
+  redisUrl: Option[String] = None,
+  embeddingRef: Option[String] = None
 )
 
 case class ContextSettings(default: Option[String] = None, contexts: Seq[String] = Seq.empty) {
@@ -379,10 +380,11 @@ object AiProvider {
       "guardrails"        -> o.guardrails.json,
       "guardrails_fail_on_deny" -> o.guardrailsFailOnDeny,
       "cache" -> Json.obj(
-        "strategy"  -> o.cache.strategy,
-        "ttl"       -> o.cache.ttl.toMillis,
-        "score"     -> o.cache.score,
-        "redis_url" -> o.cache.redisUrl.map(JsString.apply).getOrElse(JsNull).asValue
+        "strategy"      -> o.cache.strategy,
+        "ttl"           -> o.cache.ttl.toMillis,
+        "score"         -> o.cache.score,
+        "redis_url"     -> o.cache.redisUrl.map(JsString.apply).getOrElse(JsNull).asValue,
+        "embedding_ref" -> o.cache.embeddingRef.map(JsString.apply).getOrElse(JsNull).asValue
       )
     )
     override def reads(json: JsValue): JsResult[AiProvider] = Try {
@@ -407,6 +409,7 @@ object AiProvider {
           ttl = (json \ "cache" \ "ttl").asOpt[Long].map(v => FiniteDuration(v, TimeUnit.MILLISECONDS)).getOrElse(24.hours),
           score = (json \ "cache" \ "score").asOpt[Double].getOrElse(0.8),
           redisUrl = (json \ "cache" \ "redis_url").asOpt[String].filter(_.nonEmpty),
+          embeddingRef = (json \ "cache" \ "embedding_ref").asOpt[String].filter(_.nonEmpty),
         )
       )
     } match {
