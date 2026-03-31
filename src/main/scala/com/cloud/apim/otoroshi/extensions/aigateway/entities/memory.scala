@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.PersistentMemoryClient
-import com.cloud.apim.otoroshi.extensions.aigateway.providers.LocalPersistentMemoryClient
+import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api._
 import otoroshi.env.Env
 import otoroshi.models._
@@ -33,6 +33,10 @@ case class PersistentMemory(
   def getPersistentMemoryClient()(implicit env: Env): Option[PersistentMemoryClient] = {
     provider.toLowerCase() match {
       case "local" => new LocalPersistentMemoryClient(config, id).some
+      case "elasticsearch" | "elastic" => new ElasticsearchPersistentMemoryClient(config, id).some
+      case "opensearch" => new OpenSearchPersistentMemoryClient(config, id).some
+      case "http" => new HttpPersistentMemoryClient(config, id).some
+      case "s3" => new S3PersistentMemoryClient(config, id).some
       case _ => None
     }
   }
