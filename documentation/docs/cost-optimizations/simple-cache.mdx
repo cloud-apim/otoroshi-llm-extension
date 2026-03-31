@@ -36,8 +36,31 @@ The cache is configured on the **LLM Provider entity** in the `cache` section:
 |-----------|------|---------|-------------|
 | `strategy` | string | `"none"` | Set to `"simple"` to enable simple cache |
 | `ttl` | number (ms) | `86400000` (24h) | Time-to-live for cached entries in milliseconds |
+| `redis_url` | string | — | Optional Redis URL to use Redis as cache backend instead of in-memory |
 
 Set `strategy` to `"none"` to disable caching entirely.
+
+## Redis-backed cache
+
+By default, the simple cache uses an **in-memory Caffeine cache** (max 5000 entries). This works well for single-instance deployments but the cache is not shared across Otoroshi instances.
+
+To share the cache across a cluster, set `redis_url` to a Redis connection URI:
+
+```js
+{
+  "cache": {
+    "strategy": "simple",
+    "ttl": 300000,
+    "redis_url": "redis://localhost:6379"
+  }
+}
+```
+
+When Redis is configured:
+- Cache entries are stored in Redis with automatic TTL expiration via `PSETEX`
+- The cache is shared across all Otoroshi instances connected to the same Redis
+- Redis connections are pooled and shared — if multiple providers use the same Redis URL, they share the same connection
+- Responses and streaming chunks are serialized to JSON for storage
 
 ## Response headers
 
