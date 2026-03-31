@@ -25,9 +25,16 @@ class EmbeddingStoresPage extends Component {
     },
     provider: {
       'type': 'select',
-      props: { label: 'Provider', possibleValues: [
+      props: { label: 'Provider', possibleValues: _.sortBy([
           { label: 'Local store (embedded)', value: "local" },
-      ] }
+          { label: 'ChromaDB', value: "chromadb" },
+          { label: 'Elasticsearch', value: "elasticsearch" },
+          { label: 'OpenSearch', value: "opensearch" },
+          { label: 'Qdrant', value: "qdrant" },
+          { label: 'Weaviate', value: "weaviate" },
+          { label: 'Pinecone', value: "pinecone" },
+          { label: 'Redis (Redis Stack)', value: "redis" },
+      ], i => i.label) }
     },
     config: {
       type: "jsonobjectcode",
@@ -82,6 +89,30 @@ class EmbeddingStoresPage extends Component {
             }
           }
         }),
+        onStateChange: (state, oldState, update) => {
+          this.setState(state)
+          if (!_.isEqual(state.provider, oldState.provider)) {
+            const base = { id: state.id, name: state.name, description: state.description, tags: state.tags, metadata: state.metadata, provider: state.provider };
+            const defaultOptions = { max_results: 3, min_score: 0.7 };
+            if (state.provider === 'local') {
+              update({ ...base, config: { connection: { name: 'local' }, options: defaultOptions } });
+            } else if (state.provider === 'chromadb') {
+              update({ ...base, config: { connection: { url: 'http://localhost:8000', collection: 'default' }, options: defaultOptions } });
+            } else if (state.provider === 'elasticsearch') {
+              update({ ...base, config: { connection: { url: 'http://localhost:9200', index: 'embeddings', dims: 384, similarity: 'cosine' }, options: defaultOptions } });
+            } else if (state.provider === 'opensearch') {
+              update({ ...base, config: { connection: { url: 'http://localhost:9200', index: 'embeddings', dims: 384, engine: 'lucene', space_type: 'cosinesimil' }, options: defaultOptions } });
+            } else if (state.provider === 'qdrant') {
+              update({ ...base, config: { connection: { url: 'http://localhost:6333', collection: 'default', dims: 384, distance: 'Cosine' }, options: defaultOptions } });
+            } else if (state.provider === 'weaviate') {
+              update({ ...base, config: { connection: { url: 'http://localhost:8080', class_name: 'Embedding' }, options: defaultOptions } });
+            } else if (state.provider === 'pinecone') {
+              update({ ...base, config: { connection: { url: 'https://index-xxxxx.svc.environment.pinecone.io', api_key: '' }, options: defaultOptions } });
+            } else if (state.provider === 'redis') {
+              update({ ...base, config: { connection: { url: 'redis://localhost:6379', prefix: 'otoroshi:ai:emb', dims: 384, distance_metric: 'COSINE' }, options: defaultOptions } });
+            }
+          }
+        },
         itemName: "Embedding Store",
         formSchema: this.formSchema,
         formFlow: this.formFlow,
