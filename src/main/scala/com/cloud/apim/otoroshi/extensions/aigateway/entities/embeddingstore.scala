@@ -42,6 +42,7 @@ case class EmbeddingStore(
       case "pinecone" => new PineconeEmbeddingStoreClient(config, id).some
       case "opensearch" => new OpenSearchEmbeddingStoreClient(config, id).some
       case "redis" => new RedisEmbeddingStoreClient(config, id).some
+      case "postgresql" | "postgres" | "pg" => new PostgresqlEmbeddingStoreClient(config, id).some
       case _ => None
     }
   }
