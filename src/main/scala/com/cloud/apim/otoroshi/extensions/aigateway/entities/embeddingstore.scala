@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.EmbeddingStoreClient
-import com.cloud.apim.otoroshi.extensions.aigateway.providers.LocalEmbeddingStoreClient
+import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api._
 import otoroshi.env.Env
 import otoroshi.models._
@@ -35,6 +35,12 @@ case class EmbeddingStore(
   def getEmbeddingStoreClient()(implicit env: Env): Option[EmbeddingStoreClient] = {
     provider.toLowerCase() match {
       case "local" => new LocalEmbeddingStoreClient(config, id).some
+      case "chromadb" | "chroma" => new ChromaDbEmbeddingStoreClient(config, id).some
+      case "elasticsearch" | "elastic" => new ElasticsearchEmbeddingStoreClient(config, id).some
+      case "qdrant" => new QdrantEmbeddingStoreClient(config, id).some
+      case "weaviate" => new WeaviateEmbeddingStoreClient(config, id).some
+      case "pinecone" => new PineconeEmbeddingStoreClient(config, id).some
+      case "opensearch" => new OpenSearchEmbeddingStoreClient(config, id).some
       case _ => None
     }
   }
