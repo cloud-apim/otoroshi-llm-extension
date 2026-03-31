@@ -79,14 +79,28 @@ With `"encoding_format": "base64"`, each embedding is returned as a base64-encod
 
 ## Embedding stores
 
-The extension also provides **embedding stores** for storing and searching embedding vectors locally. Currently only a local in-memory store is supported, backed by langchain4j's `InMemoryEmbeddingStore`.
+The extension provides **embedding stores** for storing and searching embedding vectors. Multiple backends are supported, from a local in-memory store to production-grade vector databases.
 
 Embedding stores are used internally by the [semantic cache](/docs/cost-optimizations/semantic-cache) and can be used in [workflows](/docs/workflows/overview) via dedicated functions:
 - `vector_store_add` — add a document with its embedding to a store
 - `vector_store_remove` — remove a document by ID
 - `vector_store_search` — search by embedding vector similarity
 
-### Store configuration
+### Supported providers
+
+| Provider | Value | Description |
+|----------|-------|-------------|
+| **Local (in-memory)** | `local` | LangChain4j `InMemoryEmbeddingStore`, no external dependency |
+| **ChromaDB** | `chromadb` | Open-source vector database via HTTP API |
+| **Elasticsearch** | `elasticsearch` | kNN vector search on dense_vector fields |
+| **OpenSearch** | `opensearch` | kNN vector search with HNSW |
+| **Qdrant** | `qdrant` | Purpose-built vector database via REST API |
+| **Weaviate** | `weaviate` | Vector database with GraphQL search |
+| **Pinecone** | `pinecone` | Cloud-native vector database |
+| **Redis Stack** | `redis` | RediSearch module with vector similarity (requires Redis Stack) |
+| **PostgreSQL** | `postgresql` | pgvector extension for cosine similarity search |
+
+### Local store configuration
 
 ```js
 {
@@ -112,3 +126,137 @@ Embedding stores are used internally by the [semantic cache](/docs/cost-optimiza
 | `connection.init_content` | string | — | URL to initial content (HTTP/HTTPS, `file://`, or `s3://`) |
 | `options.max_results` | integer | `3` | Maximum number of results returned by search |
 | `options.min_score` | number | `0.7` | Minimum cosine similarity score for search matches |
+
+### ChromaDB configuration
+
+```js
+{
+  "provider": "chromadb",
+  "config": {
+    "connection": {
+      "url": "http://localhost:8000",
+      "collection": "my-collection",
+      "api_key": "optional-api-key",
+      "tenant": "default_tenant",
+      "database": "default_database"
+    }
+  }
+}
+```
+
+### Elasticsearch / OpenSearch configuration
+
+```js
+{
+  "provider": "elasticsearch",
+  "config": {
+    "connection": {
+      "url": "http://localhost:9200",
+      "index": "embeddings",
+      "username": "elastic",
+      "password": "changeme",
+      "dims": 384,
+      "similarity": "cosine"
+    }
+  }
+}
+```
+
+Authentication supports `username`/`password` (Basic), `api_key` (ApiKey header), or no auth. The index and mapping are created automatically on first use.
+
+For OpenSearch, use `"provider": "opensearch"` with additional options `engine` (default `lucene`) and `space_type` (default `cosinesimil`).
+
+### Qdrant configuration
+
+```js
+{
+  "provider": "qdrant",
+  "config": {
+    "connection": {
+      "url": "http://localhost:6333",
+      "collection": "my-collection",
+      "api_key": "optional-api-key",
+      "dims": 384,
+      "distance": "Cosine"
+    }
+  }
+}
+```
+
+### Weaviate configuration
+
+```js
+{
+  "provider": "weaviate",
+  "config": {
+    "connection": {
+      "url": "http://localhost:8080",
+      "class_name": "Embedding",
+      "api_key": "optional-api-key"
+    }
+  }
+}
+```
+
+### Pinecone configuration
+
+```js
+{
+  "provider": "pinecone",
+  "config": {
+    "connection": {
+      "url": "https://index-xxxxx.svc.environment.pinecone.io",
+      "api_key": "your-api-key",
+      "namespace": ""
+    }
+  }
+}
+```
+
+### Redis Stack configuration
+
+Requires Redis with the **Search** module (redis-stack). Embeddings are stored as binary vectors in HASH keys and indexed with RediSearch for KNN similarity search.
+
+```js
+{
+  "provider": "redis",
+  "config": {
+    "connection": {
+      "url": "redis://localhost:6379",
+      "prefix": "otoroshi:ai:emb",
+      "dims": 384,
+      "distance_metric": "COSINE"
+    }
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `url` | string | `redis://localhost:6379` | Redis connection URI |
+| `prefix` | string | `otoroshi:ai:emb` | Key prefix for hash keys and index |
+| `dims` | integer | `384` | Vector dimensions |
+| `distance_metric` | string | `COSINE` | Distance metric (`COSINE`, `L2`, `IP`) |
+
+### PostgreSQL (pgvector) configuration
+
+Requires PostgreSQL with the **pgvector** extension. The extension and table are created automatically on first use.
+
+```js
+{
+  "provider": "postgresql",
+  "config": {
+    "connection": {
+      "uri": "postgresql://user:password@localhost:5432/mydb",
+      "table": "otoroshi_ai_embeddings",
+      "dims": 384
+    }
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `uri` | string | `postgresql://otoroshi:otoroshi@localhost:5432/otoroshi` | PostgreSQL connection URI |
+| `table` | string | `otoroshi_ai_embeddings` | Table name |
+| `dims` | integer | `384` | Vector dimensions |
