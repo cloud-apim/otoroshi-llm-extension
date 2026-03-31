@@ -1,0 +1,153 @@
+---
+sidebar_position: 9
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Content to Markdown (Kreuzberg)
+
+The **Content to Markdown** plugin converts documents into markdown text using [Kreuzberg](https://github.com/Filimoa/kreuzberg), a Java library for document extraction. It supports a wide range of formats including PDF, DOCX, HTML, images (with OCR), PPTX, XLSX, and more.
+
+:::warning Java 25 required
+Kreuzberg requires **Java 25** (or later) to run. If Otoroshi is running on an earlier JDK, Kreuzberg extraction will fail at runtime. Make sure your Otoroshi instance uses JDK 25+.
+:::
+
+## How it works
+
+Kreuzberg extracts text content from documents and converts it to **markdown** format. For images and scanned PDFs, it uses **Tesseract OCR** as the OCR backend.
+
+The plugin can process documents from three sources:
+- **URL** — fetches the document from a remote URL and converts it
+- **JSON body** — accepts `url`, `content` (base64), or raw document bytes
+- **Raw body** — sends the document directly as the request body
+
+## Plugin configuration
+
+- **Plugin name**: `Cloud APIM - Content to Markdown`
+- **Step**: Backend call
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `maxBodySize` | number | `10485760` (10MB) | Maximum request body size in bytes |
+
+## Usage
+
+### Via URL query parameter
+
+```sh
+curl "http://myroute.oto.tools:8080?url=https://example.com/document.pdf"
+```
+
+The response is the markdown content with `Content-Type: text/markdown`:
+
+```
+HTTP/1.1 200 OK
+Content-Type: text/markdown; charset=utf-8
+X-Source-Content-Type: application/pdf
+
+# Document Title
+
+This is the extracted content...
+```
+
+### Via JSON body
+
+```sh
+curl -X POST http://myroute.oto.tools:8080 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/document.pdf",
+    "method": "GET",
+    "headers": {
+      "Authorization": "Bearer xxx"
+    }
+  }'
+```
+
+Or with base64-encoded content:
+
+```sh
+curl -X POST http://myroute.oto.tools:8080 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content": "JVBERi0xLjQK...",
+    "content_type": "application/pdf"
+  }'
+```
+
+### Via raw body
+
+```sh
+curl -X POST http://myroute.oto.tools:8080 \
+  -H "Content-Type: application/pdf" \
+  --data-binary @document.pdf
+```
+
+## Supported formats
+
+Kreuzberg supports all formats handled by the underlying Java libraries:
+
+| Format | MIME type | Notes |
+|--------|-----------|-------|
+| PDF | `application/pdf` | Text extraction + OCR for scanned pages |
+| DOCX | `application/vnd.openxmlformats-officedocument.wordprocessingml.document` | |
+| PPTX | `application/vnd.openxmlformats-officedocument.presentationml.presentation` | |
+| XLSX | `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` | |
+| HTML | `text/html` | Converts to clean markdown |
+| Plain text | `text/plain` | Passed through |
+| Images | `image/png`, `image/jpeg`, `image/tiff`, etc. | OCR via Tesseract |
+| And more... | Various | Any format supported by Kreuzberg |
+
+## Workflow function
+
+Kreuzberg is also available as a **workflow function** for use in Otoroshi workflows:
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.content_to_markdown`
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.content_to_markdown",
+  "args": {
+    "url": "https://example.com/document.pdf",
+    "method": "GET",
+    "headers": {
+      "Authorization": "Bearer xxx"
+    }
+  },
+  "result": "markdown_content"
+}
+```
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `url` | string | URL of the document to fetch and convert |
+| `method` | string | HTTP method for fetching (default: `GET`) |
+| `headers` | object | HTTP headers as key-value pairs |
+| `content` | string | Base64-encoded document content (alternative to `url`) |
+| `content_type` | string | MIME type of the content (required when using `content`) |
+
+### Output
+
+```json
+{
+  "content": "# Document Title\n\nExtracted markdown content...",
+  "source_type": "application/pdf"
+}
+```
+
+## Agent built-in tool
+
+Kreuzberg is also available as an agent built-in tool called `content_to_markdown`. Enable it in the agent's `built_in_tools` configuration:
+
+```json
+{
+  "built_in_tools": {
+    "content_to_markdown": true
+  }
+}
+```
+
+The agent can then call the tool with either a `url` or `content` + `content_type` parameters. See the [AI Agent node documentation](/docs/agents/ai-agent-node#content-to-markdown-kreuzberg) for details.
