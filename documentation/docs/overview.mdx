@@ -25,8 +25,8 @@ Otoroshi LLM Extension is a set of Otoroshi plugins and resources to interact wi
   - [**Cost tracking**](/docs/cost-optimizations/cost-tracking): Track per-model costs in real time with automatic pricing from LiteLLM
   - [**Budgets**](/docs/cost-optimizations/budgets): Set spending limits per provider with configurable durations, scopes, and alert modes
   - [**Token quotas**](/docs/cost-optimizations/quotas): Manage LLM token rate limits per consumer and per time window to optimise costs
-  - [**Simple cache**](/docs/cost-optimizations/simple-cache): Exact-match caching based on SHA-512 hashing to avoid duplicate LLM calls
-  - [**Semantic cache**](/docs/cost-optimizations/semantic-cache): Speed up repeated queries using embedding-based similarity matching to enhance response times and reduce costs
+  - [**Simple cache**](/docs/cost-optimizations/simple-cache): Exact-match caching based on SHA-512 hashing to avoid duplicate LLM calls, with optional Redis backend for cluster-wide sharing
+  - [**Semantic cache**](/docs/cost-optimizations/semantic-cache): Speed up repeated queries using embedding-based similarity matching, with optional custom embedding models and Redis Stack backend
 
 ### Observability and reporting
 
@@ -53,6 +53,7 @@ Otoroshi LLM Extension is a set of Otoroshi plugins and resources to interact wi
 ### Embeddings
 
   - [**Embeddings models**](/docs/embeddings/overview): Compute text embeddings with an OpenAI-compatible API, supporting 16+ providers including a local AllMiniLM L6 V2 model
+  - [**Embedding stores**](/docs/embeddings/overview#embedding-stores): Store and search embedding vectors with 9 backends: local, ChromaDB, Elasticsearch, OpenSearch, Qdrant, Weaviate, Pinecone, Redis Stack, and PostgreSQL (pgvector)
 
 ### Multi-modal models
 
@@ -67,7 +68,7 @@ Otoroshi LLM Extension is a set of Otoroshi plugins and resources to interact wi
 ### Workflows and AI Agents
 
   - [**Workflows**](/docs/workflows/overview): Build complex multi-step AI pipelines with 17+ built-in functions for LLM calls, audio, image/video generation, embeddings, vector stores, memory, guardrails, and more
-  - [**AI Agents**](/docs/agents/overview): Build agentic workflows with tool calling, agent handoffs, persistent memory, LLM-based routing, and MCP integration
+  - [**AI Agents**](/docs/agents/overview): Build agentic workflows with tool calling, agent handoffs, persistent memory, LLM-based routing, MCP integration, document conversion (Kreuzberg), and autonomous persistent KV memory backed by Redis or PostgreSQL
 
 ### HTTP + LLM Plugins
 
