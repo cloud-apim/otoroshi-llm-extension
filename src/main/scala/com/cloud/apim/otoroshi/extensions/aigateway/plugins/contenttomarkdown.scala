@@ -93,12 +93,14 @@ class ContentToMarkdownPlugin extends NgBackendCall {
             Try(bodyRaw.utf8String.parseJson) match {
               case scala.util.Success(json) =>
                 val bodyUrl = json.select("url").asOpt[String]
+                val method = json.select("method").asOpt[String].getOrElse("GET").toUpperCase
+                val headers = json.select("headers").asOpt[JsObject].map(_.fields.map { case (k, v) => k -> v.asOpt[String].getOrElse(v.toString()) }.toMap).getOrElse(Map.empty)
                 val content = json.select("content").asOpt[String]
                 val contentType = json.select("content_type").asOpt[String]
 
                 (bodyUrl, content, contentType) match {
                   case (Some(url), _, _) =>
-                    KreuzbergHelper.extractFromUrl(url).map { case (markdown, sourceType) =>
+                    KreuzbergHelper.extractFromUrl(url, method, headers).map { case (markdown, sourceType) =>
                       Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
                         Results.Ok(markdown).as("text/markdown; charset=utf-8")
                           .withHeaders("X-Source-Content-Type" -> sourceType)
