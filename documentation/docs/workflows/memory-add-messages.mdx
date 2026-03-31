@@ -8,6 +8,19 @@ The `memory_add_messages` function adds messages to a persistent memory store fo
 
 - **Function name**: `extensions.com.cloud-apim.llm-extension.memory_add_messages`
 
+## Supported providers
+
+| Provider | Value | Description |
+|----------|-------|-------------|
+| **Local (in-memory)** | `local` | In-memory storage, no persistence across restarts |
+| **Elasticsearch** | `elasticsearch` | One document per session |
+| **OpenSearch** | `opensearch` | One document per session |
+| **Redis** | `redis` | JSON-serialized messages per session |
+| **HTTP (Generic)** | `http` | Custom REST API backend |
+| **PostgreSQL** | `postgresql` | One row per session in a PostgreSQL table |
+
+Provider-specific connection parameters are configured in the persistent memory entity's `config.connection` object (e.g., `url`, `index`, `uri`, `table`, `prefix`).
+
 ## Parameters
 
 | Parameter | Type | Required | Description |
