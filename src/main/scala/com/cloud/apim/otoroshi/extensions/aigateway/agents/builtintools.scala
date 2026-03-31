@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.{Files, StandardOpenOption}
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import com.cloud.apim.otoroshi.extensions.aigateway.KreuzbergHelper
 import otoroshi.env.Env
 import otoroshi.next.workflow.WorkflowRun
 import otoroshi.utils.TypedMap
@@ -584,7 +585,8 @@ object BuiltInToolsFactory {
             "method" -> Json.obj("type" -> "string", "description" -> "HTTP method (default: GET)", "enum" -> Json.arr("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")),
             "headers" -> Json.obj("type" -> "object", "description" -> "Request headers as key-value pairs"),
             "body" -> Json.obj("description" -> "Request body (string or JSON object)"),
-            "timeout" -> Json.obj("type" -> "integer", "description" -> "Timeout in ms (default: 30000)")
+            "timeout" -> Json.obj("type" -> "integer", "description" -> "Timeout in ms (default: 30000)"),
+            "convert_to_markdown" -> Json.obj("type" -> "boolean", "description" -> "If true, convert the response body to markdown using Kreuzberg (default: false)")
           ),
           required = Seq("url")
         ),
@@ -596,6 +598,7 @@ object BuiltInToolsFactory {
           val headers = json.select("headers").asOpt[JsObject].getOrElse(Json.obj())
           val bodyOpt = json.select("body").asOpt[JsValue]
           val timeout = json.select("timeout").asOpt[Int].getOrElse(30000)
+          val convertToMarkdown = json.select("convert_to_markdown").asOpt[Boolean].getOrElse(false)
 
           try {
             val headerSeq = headers.fields.map { case (k, v) => (k, v.asOpt[String].getOrElse(v.toString())) }
@@ -610,18 +613,80 @@ object BuiltInToolsFactory {
               case Some(arr: JsArray) => req.addHttpHeaders("Content-Type" -> "application/json").withBody(arr)
               case _ => req
             }
-            req.execute(method).map { resp =>
+            req.execute(method).flatMap { resp =>
               val respHeaders = resp.headers.map { case (k, v) => k -> JsString(v.mkString(", ")) }
-              Json.obj(
-                "status" -> resp.status,
-                "headers" -> JsObject(respHeaders.toSeq),
-                "body" -> truncate(resp.body, 40000)
-              ).stringify
+              if (convertToMarkdown) {
+                val contentType = resp.header("Content-Type").getOrElse("application/octet-stream").split(";").head.trim
+                KreuzbergHelper.extractFromBytes(resp.bodyAsBytes.toArray, contentType).map { markdown =>
+                  Json.obj(
+                    "status" -> resp.status,
+                    "headers" -> JsObject(respHeaders.toSeq),
+                    "body" -> truncate(markdown, 40000),
+                    "converted_to_markdown" -> true
+                  ).stringify
+                }.recover {
+                  case e: Exception =>
+                    Json.obj(
+                      "status" -> resp.status,
+                      "headers" -> JsObject(respHeaders.toSeq),
+                      "body" -> truncate(resp.body, 40000),
+                      "convert_to_markdown_error" -> e.getMessage
+                    ).stringify
+                }
+              } else {
+                Future.successful(Json.obj(
+                  "status" -> resp.status,
+                  "headers" -> JsObject(respHeaders.toSeq),
+                  "body" -> truncate(resp.body, 40000)
+                ).stringify)
+              }
             }.recover {
               case e: Exception => Json.obj("error" -> e.getMessage).stringify
             }
           } catch {
             case e: Exception => Future.successful(Json.obj("error" -> e.getMessage).stringify)
+          }
+        }
+      )
+    }
+
+    // ======== Content to Markdown tool ========
+
+    if (config.isEnabled("content_to_markdown")) {
+      tools += InlineFunction(
+        InlineFunctionDeclaration(
+          name = "content_to_markdown",
+          description = "Convert a document (PDF, DOCX, HTML, etc.) from a URL or raw bytes to markdown text",
+          strict = false,
+          parameters = Json.obj(
+            "url" -> Json.obj("type" -> "string", "description" -> "URL of the document to convert"),
+            "content" -> Json.obj("type" -> "string", "description" -> "Base64-encoded document bytes (alternative to url)"),
+            "content_type" -> Json.obj("type" -> "string", "description" -> "MIME type of the content (required when using content)")
+          )
+        ),
+        call = (args, _, innerEnv, innerEc) => {
+          implicit val implEc: ExecutionContext = innerEc
+          implicit val implEnv: Env = innerEnv
+          val json = Try(Json.parse(args)).getOrElse(Json.obj())
+          val urlOpt = json.select("url").asOptString
+          val contentOpt = json.select("content").asOptString
+          val contentTypeOpt = json.select("content_type").asOptString
+
+          val result: Future[String] = (urlOpt, contentOpt, contentTypeOpt) match {
+            case (Some(url), _, _) =>
+              KreuzbergHelper.extractFromUrl(url).map { case (md, srcType) =>
+                Json.obj("content" -> truncate(md, 40000), "source_type" -> srcType).stringify
+              }
+            case (_, Some(b64), Some(ct)) =>
+              val bytes = java.util.Base64.getDecoder.decode(b64)
+              KreuzbergHelper.extractFromBytes(bytes, ct).map { md =>
+                Json.obj("content" -> truncate(md, 40000), "source_type" -> ct).stringify
+              }
+            case _ =>
+              Future.successful(Json.obj("error" -> "provide 'url' or 'content' + 'content_type'").stringify)
+          }
+          result.recover {
+            case e: Exception => Json.obj("error" -> e.getMessage).stringify
           }
         }
       )

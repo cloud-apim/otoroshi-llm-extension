@@ -62,6 +62,8 @@ lazy val root = (project in file("."))
       //"com.github.tjake" % "jlama-native" % jlamaVersion classifier "linux-x86_64" classifier "osx-x86_64" classifier "osx-aarch_64" excludeAll(all: _*),
       "com.github.tjake" % "jlama-native" % jlamaVersion classifier "linux-x86_64" classifier "osx-aarch_64" excludeAll(all: _*),
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      "dev.kreuzberg" % "kreuzberg" % "4.6.3" excludeAll(jackson: _*),
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       "io.netty" % "netty-transport-native-kqueue" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       "io.netty" % "netty-transport-native-epoll" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       munit % Test

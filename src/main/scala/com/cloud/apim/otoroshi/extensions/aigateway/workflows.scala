@@ -33,6 +33,7 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.memory_get_messages", new MemoryGetMessagesFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.memory_clear_messages", new MemoryClearMessagesFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.agent", new AgentFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.content_to_markdown", new ContentToMarkdownFunction())
     Node.registerNode("extensions.com.cloud-apim.llm-extension.router", json => new RouterNode(json))
     Node.registerNode("extensions.com.cloud-apim.llm-extension.ai_agent", json => new AiAgentNode(json))
     Node.registerNode("extensions.com.cloud-apim.llm-extension.ai_agent_mcp_tools", json => new AiAgentMcpToolsNode(json))
@@ -1581,6 +1582,89 @@ class AudioSttFunction extends WorkflowFunction {
           }
         }
       }
+    }
+  }
+}
+
+class ContentToMarkdownFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.content_to_markdown"
+  override def documentationDisplayName: String            = "Content to Markdown"
+  override def documentationIcon: String                   = "fas fa-file-alt"
+  override def documentationDescription: String            = "Converts document content (PDF, DOCX, HTML, etc.) to markdown using Kreuzberg"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "properties" -> Json.obj(
+      "url"          -> Json.obj("type" -> "string", "description" -> "URL of the document to fetch and convert"),
+      "content"      -> Json.obj("type" -> "string", "description" -> "Base64-encoded document content (alternative to url)"),
+      "content_type" -> Json.obj("type" -> "string", "description" -> "MIME type of the content (required when using content)")
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "url" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "URL",
+      "props" -> Json.obj(
+        "description" -> "URL of the document to fetch and convert"
+      )
+    ),
+    "content" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Content (Base64)",
+      "props" -> Json.obj(
+        "description" -> "Base64-encoded document content"
+      )
+    ),
+    "content_type" -> Json.obj(
+      "type"  -> "string",
+      "label" -> "Content type",
+      "props" -> Json.obj(
+        "description" -> "MIME type of the content"
+      )
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "object",
+    "properties" -> Json.obj(
+      "content"     -> Json.obj("type" -> "string", "description" -> "The extracted markdown content"),
+      "source_type" -> Json.obj("type" -> "string", "description" -> "The original MIME type of the source"),
+    )
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.content_to_markdown",
+    "args" -> Json.obj(
+      "url" -> "https://example.com/document.pdf"
+    )
+  ))
+
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    val urlOpt = args.select("url").asOpt[String]
+    val contentOpt = args.select("content").asOpt[String]
+    val contentTypeOpt = args.select("content_type").asOpt[String]
+    (urlOpt, contentOpt, contentTypeOpt) match {
+      case (Some(url), _, _) =>
+        KreuzbergHelper.extractFromUrl(url).map { case (markdown, sourceType) =>
+          Json.obj(
+            "content"     -> markdown,
+            "source_type" -> sourceType,
+          ).right
+        }.recover {
+          case e: Exception => WorkflowError(s"error converting content to markdown: ${e.getMessage}", None, None).left
+        }
+      case (_, Some(base64Content), Some(contentType)) =>
+        val bytes = java.util.Base64.getDecoder.decode(base64Content)
+        KreuzbergHelper.extractFromBytes(bytes, contentType).map { markdown =>
+          Json.obj(
+            "content"     -> markdown,
+            "source_type" -> contentType,
+          ).right
+        }.recover {
+          case e: Exception => WorkflowError(s"error converting content to markdown: ${e.getMessage}", None, None).left
+        }
+      case _ =>
+        WorkflowError("either 'url' or both 'content' and 'content_type' must be provided", None, None).leftf
     }
   }
 }

@@ -89,6 +89,7 @@ case class AgentBuiltInTools(
   memory: Boolean = false,
   agent: Boolean = false,
   http: Boolean = false,
+  contentToMarkdown: Boolean = false,
   control: Boolean = false,
   include: Seq[String] = Seq.empty,
   exclude: Seq[String] = Seq.empty,
@@ -109,11 +110,12 @@ case class AgentBuiltInTools(
       case "delegate" => agent
       case "spawn_agent" => subAgents.nonEmpty
       case "http_call" => http
+      case "content_to_markdown" => contentToMarkdown
       case "final_answer" => control
       case _ => false
     }
   }
-  def hasAnyEnabled: Boolean = all || workspace || shell || tasks || plan || memory || agent || http || control || include.nonEmpty || subAgents.nonEmpty
+  def hasAnyEnabled: Boolean = all || workspace || shell || tasks || plan || memory || agent || http || contentToMarkdown || control || include.nonEmpty || subAgents.nonEmpty
   def hasScratchpadTools: Boolean = isEnabled("task_create") || isEnabled("plan_set") || isEnabled("memory_set")
   // Strip sub_agents to prevent recursive spawning
   def withoutSubAgents: AgentBuiltInTools = copy(subAgents = Seq.empty)
@@ -131,6 +133,7 @@ object AgentBuiltInTools {
       memory = json.select("memory").asOpt[Boolean].getOrElse(false),
       agent = json.select("agent").asOpt[Boolean].getOrElse(false),
       http = json.select("http").asOpt[Boolean].getOrElse(false),
+      contentToMarkdown = json.select("content_to_markdown").asOpt[Boolean].getOrElse(false),
       control = json.select("control").asOpt[Boolean].getOrElse(false),
       include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty),
       exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty),
