@@ -31,6 +31,7 @@ class MemoriesPage extends Component {
           {label: 'OpenSearch', value: "opensearch"},
           {label: 'Redis', value: "redis"},
           {label: 'HTTP (Generic)', value: "http"},
+          {label: 'PostgreSQL', value: "postgresql"},
         ], i => i.label)
       }
     },
@@ -101,6 +102,8 @@ class MemoriesPage extends Component {
               update({ ...base, config: { connection: { url: 'redis://localhost:6379', prefix: 'otoroshi:ai:memory' }, options: defaultOptions } });
             } else if (state.provider === 'http') {
               update({ ...base, config: { connection: { url: 'http://localhost:8080/memories' }, options: defaultOptions } });
+            } else if (state.provider === 'postgresql') {
+              update({ ...base, config: { connection: { uri: 'postgresql://otoroshi:otoroshi@localhost:5432/otoroshi', table: 'otoroshi_ai_memories' }, options: defaultOptions } });
             }
           }
         },
