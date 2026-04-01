@@ -1591,7 +1591,7 @@ class ContentToMarkdownFunction extends WorkflowFunction {
   override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.content_to_markdown"
   override def documentationDisplayName: String            = "Content to Markdown"
   override def documentationIcon: String                   = "fas fa-file-alt"
-  override def documentationDescription: String            = "Converts document content (PDF, DOCX, HTML, etc.) to markdown using Kreuzberg"
+  override def documentationDescription: String            = "Converts document content (PDF, DOCX, HTML, etc.) to markdown using Kreuzberg (requires JDK 25+)"
   override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
     "type"       -> "object",
     "properties" -> Json.obj(
@@ -1661,6 +1661,9 @@ class ContentToMarkdownFunction extends WorkflowFunction {
   ))
 
   override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    if (!KreuzbergHelper.canExecuteKreuzberg) {
+      return WorkflowError(KreuzbergHelper.errorMsg, None, None).leftf
+    }
     val urlOpt = args.select("url").asOpt[String]
     val method = args.select("method").asOpt[String].getOrElse("GET").toUpperCase
     val headers = args.select("headers").asOpt[JsObject].map(_.fields.map { case (k, v) => k -> v.asOpt[String].getOrElse(v.toString()) }.toMap).getOrElse(Map.empty)

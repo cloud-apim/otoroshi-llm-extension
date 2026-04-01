@@ -49,7 +49,7 @@ object ContentToMarkdownConfig {
 class ContentToMarkdownPlugin extends NgBackendCall {
 
   override def name: String = "Cloud APIM - Content to Markdown"
-  override def description: Option[String] = "Converts document content (from URL or body) to markdown using Kreuzberg".some
+  override def description: Option[String] = "Converts document content (from URL or body) to markdown using Kreuzberg (requires JDK 25+)".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
@@ -66,6 +66,11 @@ class ContentToMarkdownPlugin extends NgBackendCall {
   }
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    if (!KreuzbergHelper.canExecuteKreuzberg) {
+      return Left(NgProxyEngineError.NgResultProxyEngineError(
+        Results.InternalServerError(Json.obj("error" -> KreuzbergHelper.errorMsg))
+      )).vfuture
+    }
     val config = ctx.cachedConfig(internalName)(ContentToMarkdownConfig.format).getOrElse(ContentToMarkdownConfig.default)
     val urlOpt = ctx.request.queryParam("url")
 

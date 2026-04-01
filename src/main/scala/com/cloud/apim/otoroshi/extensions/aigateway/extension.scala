@@ -6,7 +6,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsTracking, C
 import com.cloud.apim.otoroshi.extensions.aigateway.entities._
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHardcodedItems
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage, WorkflowFunctionsInitializer}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage, KreuzbergHelper, WorkflowFunctionsInitializer}
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
 import otoroshi.models._
@@ -203,6 +203,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   override def start(): Unit = {
     logger.info("the 'AI - LLM Extension' is enabled !")
     JlamaChatClient.computeCanExecuteJlama(logger.some)
+    KreuzbergHelper.computeCanExecuteKreuzberg(logger.some)
     implicit val ev = env
     implicit val ec = env.otoroshiExecutionContext
     WorkflowFunctionsInitializer.initDefaults()

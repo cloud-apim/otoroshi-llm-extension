@@ -3,11 +3,35 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 import dev.kreuzberg.Kreuzberg
 import dev.kreuzberg.config.{ExtractionConfig, OcrConfig}
 import otoroshi.env.Env
+import play.api.Logger
 
 import java.nio.file.Path
+import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.{ExecutionContext, Future, blocking}
 
 object KreuzbergHelper {
+
+  lazy val errorMsg: String = "Kreuzberg cannot run in this environment. Make sure you're using JDK 25 or above"
+
+  private val canExecute = new AtomicBoolean(false)
+  private val computed = new AtomicBoolean(false)
+
+  def canExecuteKreuzberg: Boolean = {
+    if (!computed.get()) {
+      computeCanExecuteKreuzberg(None)
+    }
+    canExecute.get()
+  }
+
+  def computeCanExecuteKreuzberg(logger: Option[Logger]): Unit = {
+    val javaVersion = Runtime.version().feature()
+    val isAtLeastJava25 = javaVersion >= 25
+    canExecute.set(isAtLeastJava25)
+    computed.compareAndSet(false, true)
+    if (!canExecute.get()) {
+      logger.foreach(_.warn(errorMsg))
+    }
+  }
 
   private lazy val defaultConfig: ExtractionConfig =
     ExtractionConfig.builder()
@@ -18,6 +42,7 @@ object KreuzbergHelper {
       .build()
 
   def extractFromBytes(bytes: Array[Byte], mimeType: String)(implicit ec: ExecutionContext): Future[String] = {
+    if (!canExecuteKreuzberg) return Future.failed(new RuntimeException(errorMsg))
     Future {
       blocking {
         val result = Kreuzberg.extractBytes(bytes, mimeType, defaultConfig)
@@ -27,6 +52,7 @@ object KreuzbergHelper {
   }
 
   def extractFromFile(path: Path)(implicit ec: ExecutionContext): Future[String] = {
+    if (!canExecuteKreuzberg) return Future.failed(new RuntimeException(errorMsg))
     Future {
       blocking {
         val result = Kreuzberg.extractFile(path, defaultConfig)
@@ -36,6 +62,7 @@ object KreuzbergHelper {
   }
 
   def extractFromUrl(url: String, method: String = "GET", headers: Map[String, String] = Map.empty)(implicit env: Env, ec: ExecutionContext): Future[(String, String)] = {
+    if (!canExecuteKreuzberg) return Future.failed(new RuntimeException(errorMsg))
     val req = env.Ws
       .url(url)
       .withFollowRedirects(true)
