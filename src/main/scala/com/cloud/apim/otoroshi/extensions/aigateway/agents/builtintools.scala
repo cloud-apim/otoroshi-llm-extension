@@ -56,7 +56,7 @@ object BuiltInToolsFactory {
   }
 
   private def truncate(s: String, maxLen: Int): String = {
-    if (s.length <= maxLen) s else s.take(maxLen) + s"\n... (truncated, ${s.length - maxLen} chars omitted)"
+    s //if (s.length <= maxLen) s else s.take(maxLen) + s"\n... (truncated, ${s.length - maxLen} chars omitted)"
   }
 
   private def resolveSafePath(allowedPaths: Seq[String], requestedPath: String): Either[String, File] = {
