@@ -3,11 +3,12 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 import dev.kreuzberg.Kreuzberg
 import dev.kreuzberg.config.{ExtractionConfig, OcrConfig}
 import otoroshi.env.Env
+import otoroshi.utils.syntax.implicits._
 import play.api.Logger
 
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicBoolean
-import scala.concurrent.{ExecutionContext, Future, blocking}
+import scala.concurrent.{ExecutionContext, Future}
 
 object KreuzbergHelper {
 
@@ -41,24 +42,18 @@ object KreuzbergHelper {
       .useCache(false)
       .build()
 
-  def extractFromBytes(bytes: Array[Byte], mimeType: String)(implicit ec: ExecutionContext): Future[String] = {
+  def extractFromBytes(bytes: Array[Byte], mimeType: String)(implicit env: Env, ec: ExecutionContext): Future[String] = {
     if (!canExecuteKreuzberg) return Future.failed(new RuntimeException(errorMsg))
-    Future {
-      blocking {
-        val result = Kreuzberg.extractBytes(bytes, mimeType, defaultConfig)
-        result.getContent
-      }
+    env.metrics.withTimer("kreuzberg.extractFromBytes", display = true) {
+      val result = Kreuzberg.extractBytes(bytes, mimeType, defaultConfig)
+      result.getContent.vfuture
     }
   }
 
   def extractFromFile(path: Path)(implicit ec: ExecutionContext): Future[String] = {
     if (!canExecuteKreuzberg) return Future.failed(new RuntimeException(errorMsg))
-    Future {
-      blocking {
-        val result = Kreuzberg.extractFile(path, defaultConfig)
-        result.getContent
-      }
-    }
+      val result = Kreuzberg.extractFile(path, defaultConfig)
+      result.getContent.vfuture
   }
 
   def extractFromUrl(url: String, method: String = "GET", headers: Map[String, String] = Map.empty)(implicit env: Env, ec: ExecutionContext): Future[(String, String)] = {

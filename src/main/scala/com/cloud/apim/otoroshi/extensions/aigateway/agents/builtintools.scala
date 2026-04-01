@@ -656,7 +656,7 @@ object BuiltInToolsFactory {
               val respHeaders = resp.headers.map { case (k, v) => k -> JsString(v.mkString(", ")) }
               if (convertToMarkdown) {
                 val contentType = resp.header("Content-Type").getOrElse("application/octet-stream").split(";").head.trim
-                KreuzbergHelper.extractFromBytes(resp.bodyAsBytes.toArray, contentType).map { markdown =>
+                KreuzbergHelper.extractFromBytes(resp.bodyAsBytes.toArray, contentType)(env, implEc).map { markdown =>
                   Json.obj(
                     "status" -> resp.status,
                     "headers" -> JsObject(respHeaders.toSeq),
