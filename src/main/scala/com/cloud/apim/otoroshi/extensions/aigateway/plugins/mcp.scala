@@ -12,6 +12,7 @@ import dev.langchain4j.mcp.client.{McpBlobResourceContents, McpResourceContents,
 import dev.langchain4j.model.chat.request.json.JsonSchemaElement
 import otoroshi.auth.OAuth2ModuleConfig
 import otoroshi.env.Env
+import otoroshi.events.AuditEvent
 import otoroshi.models.{InHeader, InQueryParam, JWKSAlgoSettings, JwtTokenLocation, LocalJwtVerifier}
 import otoroshi.next.plugins.{OIDCAuthToken, OIDCAuthTokenConfig, OIDCJwtVerifierConfig}
 import otoroshi.next.plugins.api._
@@ -125,6 +126,7 @@ case class McpProxyEndpointConfig(
   authPrmUrl: Option[String] = None,
   functionRefs: Seq[String],
   mcpRefs: Seq[String],
+  emitAuditEvents: Boolean = false,
   includeFunctions: Seq[String] = Seq.empty,
   excludeFunctions: Seq[String] = Seq.empty,
   includeResources: Seq[String] = Seq.empty,
@@ -178,6 +180,7 @@ object McpProxyEndpointConfig {
     "enforce_oauth",
     "auth_module_ref",
     "auth_prm_url",
+    "emit_audit_events",
     "include_functions", "exclude_functions",
     "include_resources", "exclude_resources",
     "include_resource_templates", "exclude_resource_templates",
@@ -197,6 +200,10 @@ object McpProxyEndpointConfig {
     "enforce_oauth" -> Json.obj(
       "type" -> "bool",
       "label" -> "Enforce OAuth"
+    ),
+    "emit_audit_events" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Emit audit events"
     ),
     "auth_prm_url" -> Json.obj(
       "type" -> "string",
@@ -311,6 +318,7 @@ object McpProxyEndpointConfig {
       "auth_prm_url" -> o.authPrmUrl.map(_.json).getOrElse(JsNull).asValue,
       "refs" -> o.functionRefs,
       "mcp_refs" -> o.mcpRefs,
+      "emit_audit_events" -> o.emitAuditEvents,
       "include_functions" -> o.includeFunctions,
       "exclude_functions" -> o.excludeFunctions,
       "include_resources" -> o.includeResources,
@@ -336,6 +344,7 @@ object McpProxyEndpointConfig {
         authPrmUrl = json.select("auth_prm_url").asOptString,
         functionRefs = allRefs,
         mcpRefs = json.select("mcp_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
+        emitAuditEvents = json.select("emit_audit_events").asOptBoolean.getOrElse(false),
         includeFunctions = json.select("include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
         excludeFunctions = json.select("exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
         includeResources = json.select("include_resources").asOpt[Seq[String]].getOrElse(Seq.empty),
@@ -353,6 +362,38 @@ object McpProxyEndpointConfig {
       case Failure(exception) => JsError(exception.getMessage)
       case Success(value) => JsSuccess(value)
     }
+  }
+}
+
+object McpAuditHelper {
+  def emit(
+    method: String,
+    id: Long,
+    requestPayload: JsValue,
+    duration: Long,
+    transport: String,
+    error: Option[String],
+    attrs: TypedMap,
+    response: JsValue = JsNull
+  )(implicit env: Env): Unit = {
+    val user = attrs.get(otoroshi.plugins.Keys.UserKey)
+    val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
+    val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
+    AuditEvent.generic("McpAudit") {
+      Json.obj(
+        "mcp_method" -> method,
+        "mcp_id" -> id,
+        "mcp_request_payload" -> requestPayload,
+        "mcp_response" -> response,
+        "transport" -> transport,
+        "duration" -> duration,
+        "status" -> (if (error.isEmpty) "success" else "error"),
+        "error" -> error.map(_.json).getOrElse(JsNull).asValue,
+        "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+        "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+        "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+      )
+    }.toAnalytics()
   }
 }
 
@@ -820,46 +861,58 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
                   case Failure(e) => error(400,"error while parsing json-rpc payload")
                   case Success(json) => {
                     val id = json.select("id").asOpt[Long].getOrElse(0L)
-                    json.select("method").asOpt[String] match {
-                      case Some("initialize") => initialize(id, session, config)
-                      case Some("shutdown") => {
+                    val method = json.select("method").asOpt[String].getOrElse("--")
+                    val start = System.currentTimeMillis()
+                    val result: Future[Either[NgProxyEngineError, BackendCallResponse]] = method match {
+                      case "initialize" => initialize(id, session, config)
+                      case "shutdown" => {
                         session.finished.set(true)
                         session.send(id, Json.obj())
                         emptyResp(id)
                       }
-                      case Some("exit") => {
+                      case "exit" => {
                         session.finished.set(true)
                         session.send(id, Json.obj())
                         emptyResp(id)
                       }
-                      case Some("ping") => {
+                      case "ping" => {
                         session.send(id, Json.obj())
                         jsonRpcResponse(id, Json.obj())
                       }
-                      case Some("cancelled") => {
+                      case "cancelled" => {
                         session.canceledRequests.put(id, ())
                         emptyResp(id)
                       }
-                      case Some("notifications/cancelled") => {
+                      case "notifications/cancelled" => {
                         session.canceledRequests.put(id, ())
                         emptyResp(id)
                       }
-                      case Some("notifications/initialized") => {
+                      case "notifications/initialized" => {
                         session.ready.set(true)
                         emptyResp(id)
                       }
-                      case Some("tools/list") if session.ready.get() => getToolList(id, session, config, ctx.attrs)
-                      case Some("resources/list") if session.ready.get() => getResourcesList(id, session, config, ctx.attrs)
-                      case Some("resources/read") if session.ready.get() => readResource(id, json, session, config, ctx.attrs)
-                      case Some("resources/templates/list") if session.ready.get() => getTemplatesList(id, session, config, ctx.attrs)
-                      case Some("prompts/list") if session.ready.get() => getPromptsList(id, session, config, ctx.attrs)
-                      case Some("prompts/get") if session.ready.get() => getPromptHandler(id, json, session, config, ctx.attrs)
-                      case Some("tools/call") if session.ready.get() => toolsCall(id, session, json, config, ctx.attrs)
+                      case "tools/list" if session.ready.get() => getToolList(id, session, config, ctx.attrs)
+                      case "resources/list" if session.ready.get() => getResourcesList(id, session, config, ctx.attrs)
+                      case "resources/read" if session.ready.get() => readResource(id, json, session, config, ctx.attrs)
+                      case "resources/templates/list" if session.ready.get() => getTemplatesList(id, session, config, ctx.attrs)
+                      case "prompts/list" if session.ready.get() => getPromptsList(id, session, config, ctx.attrs)
+                      case "prompts/get" if session.ready.get() => getPromptHandler(id, json, session, config, ctx.attrs)
+                      case "tools/call" if session.ready.get() => toolsCall(id, session, json, config, ctx.attrs)
                       case _ => {
-                        val method = json.select("method").asOpt[String].getOrElse("--")
                         jsonRpcResponse(id, Json.obj("error" -> "method unsupported", "error_details" -> Json.obj("method" -> method, "ready" -> session.ready.get())))
                       }
                     }
+                    if (config.emitAuditEvents) {
+                      result.onComplete {
+                        case Success(Right(_)) =>
+                          McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "sse", None, ctx.attrs)
+                        case Success(Left(_)) =>
+                          McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "sse", Some("proxy_engine_error"), ctx.attrs)
+                        case Failure(ex) =>
+                          McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "sse", Some(ex.getMessage), ctx.attrs)
+                      }
+                    }
+                    result
                   }
                 }
               }
@@ -1138,39 +1191,48 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
       case Failure(e) => send(jsonRpcError(0, 400, "error while parsing json-rpc payload", Json.obj()))
       case Success(json) => {
         val id = json.select("id").asOpt[Long].getOrElse(0L)
-        val resp: Future[JsValue] = json.select("method").asOpt[String] match {
-          case Some("initialize") => initialize(id).vfuture
-          case Some("shutdown") => {
+        val method = json.select("method").asOpt[String].getOrElse("--")
+        val start = System.currentTimeMillis()
+        val resp: Future[JsValue] = method match {
+          case "initialize" => initialize(id).vfuture
+          case "shutdown" => {
             self ! PoisonPill
             emptyResp(id).vfuture
           }
-          case Some("exit") => {
+          case "exit" => {
             self ! PoisonPill
             emptyResp(id).vfuture
           }
-          case Some("ping") => jsonRpcResponse(id, Json.obj()).vfuture
-          case Some("cancelled") => {
+          case "ping" => jsonRpcResponse(id, Json.obj()).vfuture
+          case "cancelled" => {
             canceledRequests.put(id, ())
             emptyResp(id).vfuture
           }
-          case Some("notifications/cancelled") => {
+          case "notifications/cancelled" => {
             canceledRequests.put(id, ())
             emptyResp(id).vfuture
           }
-          case Some("notifications/initialized") => {
+          case "notifications/initialized" => {
             ready.set(true)
             emptyResp(id).vfuture
           }
-          case Some("tools/list") if ready.get() => getToolList(id, config, attrs).vfuture
-          case Some("resources/list") if ready.get() => getResourcesList(id, attrs)
-          case Some("resources/read") if ready.get() => readResource(id, json, attrs)
-          case Some("resources/templates/list") if ready.get() => getTemplatesList(id, attrs)
-          case Some("prompts/list") if ready.get() => getPromptsList(id, attrs)
-          case Some("prompts/get") if ready.get() => getPromptHandler(id, json, attrs)
-          case Some("tools/call") if ready.get() => toolsCall(id, json, config, attrs)
+          case "tools/list" if ready.get() => getToolList(id, config, attrs).vfuture
+          case "resources/list" if ready.get() => getResourcesList(id, attrs)
+          case "resources/read" if ready.get() => readResource(id, json, attrs)
+          case "resources/templates/list" if ready.get() => getTemplatesList(id, attrs)
+          case "prompts/list" if ready.get() => getPromptsList(id, attrs)
+          case "prompts/get" if ready.get() => getPromptHandler(id, json, attrs)
+          case "tools/call" if ready.get() => toolsCall(id, json, config, attrs)
           case _ => {
-            val method = json.select("method").asOpt[String].getOrElse("--")
             jsonRpcResponse(id, Json.obj("error" -> "method unsupported", "error_details" -> Json.obj("method" -> method, "ready" -> ready.get()))).vfuture
+          }
+        }
+        if (config.emitAuditEvents) {
+          resp.onComplete {
+            case Success(response) =>
+              McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "websocket", None, attrs, response)(env)
+            case Failure(ex) =>
+              McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "websocket", Some(ex.getMessage), attrs)(env)
           }
         }
         resp.map(r => send(r))(env.otoroshiExecutionContext)
@@ -1432,26 +1494,38 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
           case Success(json) => {
             // println(s"mcp in >>> ${json.prettify}")
             val id = json.select("id").asOpt[Long].getOrElse(0L)
-            json.select("method").asOpt[String] match {
-              case Some("initialize") => initialize(id, config)
-              case Some("shutdown") => emptyResp(id)
-              case Some("exit") => emptyResp(id)
-              case Some("ping") => jsonRpcResponse(id, Json.obj())
-              case Some("cancelled") => emptyResp(id)
-              case Some("notifications/cancelled") => emptyResp(id)
-              case Some("notifications/initialized") => emptyResp(id)
-              case Some("tools/list") => getToolList(id, config, ctx.attrs)
-              case Some("resources/list") => getResourcesList(id, config, ctx.attrs)
-              case Some("resources/read") => readResource(id, json, config, ctx.attrs)
-              case Some("resources/templates/list") => getTemplatesList(id, config, ctx.attrs)
-              case Some("prompts/list") => getPromptsList(id, config, ctx.attrs)
-              case Some("prompts/get") => getPromptHandler(id, json, config, ctx.attrs)
-              case Some("tools/call") => toolsCall(id, json, config, ctx.attrs)
+            val method = json.select("method").asOpt[String].getOrElse("--")
+            val start = System.currentTimeMillis()
+            val result: Future[Either[NgProxyEngineError, BackendCallResponse]] = method match {
+              case "initialize" => initialize(id, config)
+              case "shutdown" => emptyResp(id)
+              case "exit" => emptyResp(id)
+              case "ping" => jsonRpcResponse(id, Json.obj())
+              case "cancelled" => emptyResp(id)
+              case "notifications/cancelled" => emptyResp(id)
+              case "notifications/initialized" => emptyResp(id)
+              case "tools/list" => getToolList(id, config, ctx.attrs)
+              case "resources/list" => getResourcesList(id, config, ctx.attrs)
+              case "resources/read" => readResource(id, json, config, ctx.attrs)
+              case "resources/templates/list" => getTemplatesList(id, config, ctx.attrs)
+              case "prompts/list" => getPromptsList(id, config, ctx.attrs)
+              case "prompts/get" => getPromptHandler(id, json, config, ctx.attrs)
+              case "tools/call" => toolsCall(id, json, config, ctx.attrs)
               case _ => {
-                val method = json.select("method").asOpt[String].getOrElse("--")
                 jsonRpcResponse(id, Json.obj("error" -> "method unsupported", "error_details" -> Json.obj("method" -> method)))
               }
             }
+            if (config.emitAuditEvents) {
+              result.onComplete {
+                case Success(Right(_)) =>
+                  McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "http", None, ctx.attrs)
+                case Success(Left(_)) =>
+                  McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "http", Some("proxy_engine_error"), ctx.attrs)
+                case Failure(ex) =>
+                  McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "http", Some(ex.getMessage), ctx.attrs)
+              }
+            }
+            result
           }
         }
       }
