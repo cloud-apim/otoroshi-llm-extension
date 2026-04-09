@@ -168,7 +168,7 @@ class AiResponseGenerator extends NgBackendCall {
           client.call(ChatPrompt(config.preChatMessages ++ Seq(ChatMessage.input("user", config.prompt, None, Json.obj())) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
             case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> err)))) // TODO: rewrite error
             case Right(resp) if config.isResponse => {
-              val response = Json.parse(resp.generations.head.message.content)
+              val response = Json.parse(resp.headGeneration.message.content)
               val body = BodyHelper.extractBodyFrom(response)
               val status = response.select("status").asOpt[Int].getOrElse(200)
               val headers = response
@@ -185,7 +185,7 @@ class AiResponseGenerator extends NgBackendCall {
               val headers = config.headers
               val contentType = headers.getIgnoreCase("Content-Type").orElse(headers.get("content-type")).getOrElse("application/json")
               Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
-                Results.Status(status)(resp.generations.head.message.content.byteString).withHeaders(headers.toSeq: _*).as(contentType)
+                Results.Status(status)(resp.headGeneration.message.content.byteString).withHeaders(headers.toSeq: _*).as(contentType)
               ), None))
             }
           }

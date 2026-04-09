@@ -172,7 +172,7 @@ class AiResponseBodyModifier extends NgRequestTransformer {
               case Right(resp) => {
                 config.extractor match {
                   case None if config.isResponse => {
-                    val response = Json.parse(resp.generations.head.message.content)
+                    val response = Json.parse(resp.headGeneration.message.content)
                     val body = BodyHelper.extractBodyFrom(response)
                     ctx.otoroshiResponse.copy(
                       status = response.select("status").asOpt[Int].getOrElse(200),
@@ -184,7 +184,7 @@ class AiResponseBodyModifier extends NgRequestTransformer {
                     ).rightf
                   }
                   case None if !config.isResponse => {
-                    val content = resp.generations.head.message.content
+                    val content = resp.headGeneration.message.content
                     ctx.otoroshiResponse.copy(
                       headers = ctx.otoroshiResponse.headers - "Content-Length" - "content-length" ++ Map("Content-Length" -> content.length.toString),
                       body = content.byteString.chunks(32 * 1024)
@@ -192,7 +192,7 @@ class AiResponseBodyModifier extends NgRequestTransformer {
                   }
                   case Some(regex) => {
                     val pattern: Pattern = Pattern.compile(regex, CASE_INSENSITIVE)
-                    val matcher: Matcher = pattern.matcher(resp.generations.head.message.content)
+                    val matcher: Matcher = pattern.matcher(resp.headGeneration.message.content)
                     if (matcher.find()) {
                       val matchResult: MatchResult = matcher.toMatchResult
                       val expression: String       = matchResult.group()
@@ -215,7 +215,7 @@ class AiResponseBodyModifier extends NgRequestTransformer {
                       }
                     } else {
                       if (config.isResponse) {
-                        val response = Json.parse(resp.generations.head.message.content)
+                        val response = Json.parse(resp.headGeneration.message.content)
                         val body = BodyHelper.extractBodyFrom(response)
                         ctx.otoroshiResponse.copy(
                           status = response.select("status").asOpt[Int].getOrElse(200),
@@ -228,7 +228,7 @@ class AiResponseBodyModifier extends NgRequestTransformer {
                       } else {
                         ctx.otoroshiResponse.copy(
                           headers = ctx.otoroshiResponse.headers - "Content-Length" - "content-length" ++ Map("Transfer-Encoding" -> "chunked"),
-                          body = resp.generations.head.message.content.byteString.chunks(32 * 1024)
+                          body = resp.headGeneration.message.content.byteString.chunks(32 * 1024)
                         ).rightf
                       }
                     }

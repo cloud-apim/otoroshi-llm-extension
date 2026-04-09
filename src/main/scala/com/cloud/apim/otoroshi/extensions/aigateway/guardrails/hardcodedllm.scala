@@ -273,7 +273,7 @@ abstract class HardCodedLLMGuardrail extends Guardrail {
             ) ++ messages), attrs, Json.obj()).flatMap {
               case Left(err) => GuardrailResult.GuardrailDenied(err.stringify).vfuture
               case Right(resp) => {
-                val content = resp.generations.head.message.content.toLowerCase().trim.replace("\n", " ").trim
+                val content = resp.headGeneration.message.content.toLowerCase().trim.replace("\n", " ").trim
                 // println(s"content: '${content}'")
                 if (NumberUtils.isDigits(content)) {
                   val score = content.toInt

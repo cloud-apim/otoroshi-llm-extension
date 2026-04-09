@@ -45,14 +45,14 @@ class AiContextValidator extends NgAccessValidator {
           ) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
             case Left(err) => false // TODO: log it
             case Right(resp) => {
-              val content = resp.generations.head.message.content
+              val content = resp.headGeneration.message.content
               config.extractor match {
                 case None if content == "true" => true
                 case None if content == "false" => false
                 case None => Json.parse(content).select("result").asOpt[Boolean].getOrElse(false)
                 case Some(regex) => {
                   val pattern: Pattern = Pattern.compile(regex, CASE_INSENSITIVE)
-                  val matcher: Matcher = pattern.matcher(resp.generations.head.message.content)
+                  val matcher: Matcher = pattern.matcher(resp.headGeneration.message.content)
                   if (matcher.find()) {
                     val matchResult: MatchResult = matcher.toMatchResult
                     matchResult.group() match {

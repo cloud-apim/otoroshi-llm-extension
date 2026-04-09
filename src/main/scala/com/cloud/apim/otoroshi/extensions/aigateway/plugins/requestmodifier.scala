@@ -58,16 +58,16 @@ class AiRequestBodyModifier extends NgRequestTransformer {
                 case Left(err) => promise.trySuccess(Source.single(err.stringify.byteString))
                 case Right(resp) => {
                   config.extractor match {
-                    case None => promise.trySuccess(resp.generations.head.message.content.byteString.chunks(32 * 1024))
+                    case None => promise.trySuccess(resp.headGeneration.message.content.byteString.chunks(32 * 1024))
                     case Some(regex) => {
                       val pattern: Pattern = Pattern.compile(regex, CASE_INSENSITIVE)
-                      val matcher: Matcher = pattern.matcher(resp.generations.head.message.content)
+                      val matcher: Matcher = pattern.matcher(resp.headGeneration.message.content)
                       if (matcher.find()) {
                         val matchResult: MatchResult = matcher.toMatchResult
                         val expression: String       = matchResult.group()
                         promise.trySuccess(expression.byteString.chunks(32 * 1024))
                       } else {
-                        promise.trySuccess(resp.generations.head.message.content.byteString.chunks(32 * 1024))
+                        promise.trySuccess(resp.headGeneration.message.content.byteString.chunks(32 * 1024))
                       }
                     }
                   }

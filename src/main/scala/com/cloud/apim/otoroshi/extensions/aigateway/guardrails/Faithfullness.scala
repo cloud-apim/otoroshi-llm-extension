@@ -39,7 +39,7 @@ class FaithfulnessGuardrail extends Guardrail {
         )), attrs, Json.obj()).flatMap {
           case Left(err) => Future.failed(new RuntimeException(err.stringify))
           case Right(resp) => {
-            val content = resp.generations.head.message.content
+            val content = resp.headGeneration.message.content
             // println("createStatements raw response: " + content)
             val cleanup = content.replace("```json", "").replace("```", "").trim
             val res = Json.parse(cleanup).asOpt[Seq[String]].getOrElse(Seq.empty)
@@ -74,7 +74,7 @@ class FaithfulnessGuardrail extends Guardrail {
         )), attrs, Json.obj()).flatMap {
           case Left(err) => Future.failed(new RuntimeException(err.stringify))
           case Right(resp) => {
-            val content = resp.generations.head.message.content
+            val content = resp.headGeneration.message.content
             // println("createVerdicts raw response: " + content)
             val cleanup = content.replace("```json", "").replace("```", "").trim
             val res = Json.parse(cleanup).asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(o => FaithfulnessOutput(

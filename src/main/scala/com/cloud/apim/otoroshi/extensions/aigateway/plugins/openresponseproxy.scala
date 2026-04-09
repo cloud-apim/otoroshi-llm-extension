@@ -257,7 +257,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
 
     // If we have tool calls, also emit the assistant message (without tool_calls) before the function_call items
     val output: Seq[JsObject] = if (toolCallOutputs.nonEmpty) {
-      val message = response.generations.head
+      val message = response.headGeneration
       val assistantMsg = Json.obj(
         "type" -> "message",
         "id" -> msgId,

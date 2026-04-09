@@ -467,6 +467,9 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
     copy(content = f(content))
   }
 }
+object ChatGeneration {
+  val empty: ChatGeneration = ChatGeneration(OutputChatMessage("assistant", "", None, Json.obj("role" -> "assistant", "content" -> "")))
+}
 
 case class ChatGeneration(message: OutputChatMessage) {
   def json: JsValue = Json.obj(
@@ -501,6 +504,7 @@ case class ChatResponse(
   metadata: ChatResponseMetadata,
   raw: JsValue,
 ) {
+  def headGeneration: ChatGeneration = generations.headOption.getOrElse(ChatGeneration.empty)
   def json(env: Env): JsValue = Json.obj(
     "generations" -> JsArray(generations.map(_.json)),
     "metadata" -> metadata.json(env),

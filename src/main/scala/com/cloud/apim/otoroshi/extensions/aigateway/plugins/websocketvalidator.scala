@@ -53,7 +53,7 @@ class AiWebsocketMessageValidator extends NgWebsocketValidatorPlugin {
               ) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
                 case Left(err) => Left(NgWebsocketError(CloseCodes.UnexpectedCondition, s"error: ${err.stringify}"))
                 case Right(resp) => {
-                  val content = resp.generations.head.message.content
+                  val content = resp.headGeneration.message.content
                   if (content.trim.isBlank || content.trim.isEmpty) {
                     message.right
                   } else {
@@ -65,7 +65,7 @@ class AiWebsocketMessageValidator extends NgWebsocketValidatorPlugin {
                       }
                       case Some(regex) => {
                         val pattern: Pattern = Pattern.compile(regex, CASE_INSENSITIVE)
-                        val matcher: Matcher = pattern.matcher(resp.generations.head.message.content)
+                        val matcher: Matcher = pattern.matcher(resp.headGeneration.message.content)
                         if (matcher.find()) {
                           val matchResult: MatchResult = matcher.toMatchResult
                           matchResult.group() match {

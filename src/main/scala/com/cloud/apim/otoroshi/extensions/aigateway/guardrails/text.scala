@@ -24,7 +24,7 @@ class ContainsGuardrail extends Guardrail {
     val matchAllConversation = false //config.select("match_all_conversation").asOpt[Boolean].getOrElse(false)
     val operation = config.select("operation").asOpt[String].getOrElse("contains_all")
     val values = config.select("values").asOpt[Seq[String]].getOrElse(Seq.empty)
-    val message = if (matchAllConversation) messages.filter(_.role.toLowerCase().trim == "user").map(_.wholeTextContent).mkString(". ") else messages.head.wholeTextContent
+    val message = if (matchAllConversation) messages.filter(_.role.toLowerCase().trim == "user").map(_.wholeTextContent).mkString(". ") else messages.headOption.map(_.wholeTextContent).getOrElse("")
     operation match {
       case "contains_all" if values.forall(value => message.contains(value)) => GuardrailResult.GuardrailPass.vfuture
       case "contains_none" if values.forall(value => !message.contains(value)) => GuardrailResult.GuardrailPass.vfuture
