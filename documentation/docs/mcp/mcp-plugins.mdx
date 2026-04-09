@@ -72,6 +72,7 @@ All MCP server exposition plugins (HTTP, SSE, WebSocket) support filtering which
 | `exclude_prompts` | array of strings | Hide prompts matching these patterns |
 | `allow_rules` | object | Advanced JsonPath-based allow rules (see [MCP Connectors - Advanced rules](/docs/mcp/mcp-connectors#advanced-rules)) |
 | `disallow_rules` | object | Advanced JsonPath-based disallow rules |
+| `emit_audit_events` | boolean | Emit audit events for every MCP method call (default: `false`) |
 
 ### Example plugin configuration with filters
 
@@ -91,6 +92,87 @@ All MCP server exposition plugins (HTTP, SSE, WebSocket) support filtering which
 ```
 
 These plugin-level filters are merged with the filters defined on each MCP connector. This means you can have broad access on the connector itself and restrict it further at the exposition level, or vice versa.
+
+## Audit events
+
+All MCP server exposition plugins (HTTP, SSE, WebSocket) can emit audit events for every MCP method call. This is useful for monitoring, debugging, and auditing MCP usage across your infrastructure.
+
+### Enabling audit events
+
+Set `emit_audit_events` to `true` in the plugin configuration:
+
+```js
+{
+  "name": "my-mcp-server",
+  "version": "1.0.0",
+  "refs": ["tool-function_xxxxx"],
+  "mcp_refs": ["mcp-connector_xxxxx"],
+  "emit_audit_events": true
+}
+```
+
+By default, this option is **disabled** (`false`).
+
+### Audit event payload
+
+Each MCP method call will produce an `AuditEvent` with the audit type `McpAudit`. The event contains the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `mcp_method` | string | The MCP JSON-RPC method called (e.g. `tools/call`, `resources/list`, `initialize`) |
+| `mcp_id` | number | The JSON-RPC request id |
+| `mcp_request_payload` | object | The full JSON-RPC request payload |
+| `mcp_response` | object | The JSON-RPC response (available for WebSocket transport, `null` for HTTP and SSE) |
+| `transport` | string | The transport protocol used: `http`, `sse`, or `websocket` |
+| `duration` | number | The request duration in milliseconds |
+| `status` | string | `success` or `error` |
+| `error` | string | Error message if the request failed, `null` otherwise |
+| `user` | object | The authenticated user information (if available) |
+| `apikey` | object | The API key used for the request (if available) |
+| `route` | object | The Otoroshi route that handled the request |
+
+### Example audit event
+
+```json
+{
+  "@type": "AuditEvent",
+  "audit": "McpAudit",
+  "mcp_method": "tools/call",
+  "mcp_id": 3,
+  "mcp_request_payload": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "get_weather",
+      "arguments": { "city": "Paris" }
+    }
+  },
+  "mcp_response": null,
+  "transport": "http",
+  "duration": 142,
+  "status": "success",
+  "error": null,
+  "user": null,
+  "apikey": { "clientId": "xxx", "clientName": "my-api-key" },
+  "route": { "id": "route_xxx", "name": "mcp-server" }
+}
+```
+
+### Filtering audit events in data exporters
+
+You can use Otoroshi's data exporter filtering to collect only MCP audit events:
+
+```json
+{
+  "include": [
+    {
+      "@type": "AuditEvent",
+      "audit": "McpAudit"
+    }
+  ]
+}
+```
 
 ## MCP Http Plugin
 
