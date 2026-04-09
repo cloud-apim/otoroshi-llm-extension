@@ -325,7 +325,9 @@ case class AiProvider(
         new CohereAiChatClient(api, opts, id).some
       }
       case "anthropic" => {
-        val api = new AnthropicApi(baseUrl.getOrElse(AnthropicApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val version = connection.select("version").asOpt[String].getOrElse("2023-06-01")
+        val beta = connection.select("beta").asOpt[String]
+        val api = new AnthropicApi(baseUrl.getOrElse(AnthropicApi.baseUrl), token, version, beta, timeout.getOrElse(3.minutes), env = env)
         val opts = AnthropicChatClientOptions.fromJson(options)
         new AnthropicChatClient(api, opts, id).some
       }

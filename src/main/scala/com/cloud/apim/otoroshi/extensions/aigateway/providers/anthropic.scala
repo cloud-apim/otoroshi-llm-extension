@@ -79,7 +79,7 @@ object AnthropicModels {
 object AnthropicApi {
   val baseUrl = "https://api.anthropic.com"
 }
-class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[AnthropicApiResponse, AnthropicApiResponseChunk] {
+class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthropicVersion: String = "2023-06-01", anthropicBeta: Option[String], timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[AnthropicApiResponse, AnthropicApiResponseChunk] {
 
   val providerName = "anthropic"
   override def supportsTools: Boolean = true
@@ -93,9 +93,13 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
       .url(url)
       .withHttpHeaders(
         s"x-api-key" -> token,
-        "anthropic-version" -> "2023-06-01",
+        "anthropic-version" -> anthropicVersion,
         "Accept" -> "application/json",
-      ).applyOnWithOpt(body) {
+      )
+      .applyOnWithOpt(anthropicBeta) {
+        case (builder, beta) => builder.addHttpHeaders("anthropic-beta" -> beta)
+      }
+      .applyOnWithOpt(body) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
           .withBody(body)
@@ -121,9 +125,13 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, timeou
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
         s"x-api-key" -> token,
-        "anthropic-version" -> "2023-06-01",
+        "anthropic-version" -> anthropicVersion,
         "Accept" -> "application/json",
-      ).applyOnWithOpt(body) {
+      )
+      .applyOnWithOpt(anthropicBeta) {
+        case (builder, beta) => builder.addHttpHeaders("anthropic-beta" -> beta)
+      }
+      .applyOnWithOpt(body) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
           .withBody(body.asObject ++ Json.obj(
