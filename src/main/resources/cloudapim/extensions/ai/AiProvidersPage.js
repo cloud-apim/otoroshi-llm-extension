@@ -590,6 +590,14 @@ class AiProvidersPage extends Component {
       type: 'string',
       props: { label: 'Model name' },
     },
+    'connection.version': {
+      type: 'string',
+      props: { label: 'Anthropic API Version' },
+    },
+    'connection.beta': {
+      type: 'string',
+      props: { label: 'Anthropic Beta Version' },
+    },
     'connection.account_id': {
       type: 'string',
       props: { label: 'Account ID' },
@@ -1251,6 +1259,8 @@ class AiProvidersPage extends Component {
         'connection.base_url',
         'connection.token',
         'connection.timeout',
+        'connection.version',
+        'connection.beta',
         '>>>API Connection raw',
         'connection',
         '<<<Connection options',
