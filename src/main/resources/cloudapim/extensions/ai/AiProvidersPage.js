@@ -1840,6 +1840,8 @@ class AiProvidersPage extends Component {
                   base_url: BaseUrls.anthropic,
                   token: "xxx",
                   timeout: 180000,
+                  beta: null,
+                  version: "2023-06-01"
                 },
                 options: ClientOptions.anthropic,
               });
