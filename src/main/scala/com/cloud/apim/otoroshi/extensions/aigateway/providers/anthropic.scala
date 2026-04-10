@@ -400,9 +400,16 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     }
   }
 
+  override def transformOpenAIInputBodyToProviderInputBody(inputBody: JsObject): JsObject = {
+    inputBody.select("max_completion_tokens").asOpt[Long] match {
+      case None => inputBody
+      case Some(value) => inputBody - "max_completion_tokens" ++ Json.obj("max_tokens" -> value)
+    }
+  }
+
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
     val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
@@ -462,7 +469,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
     val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
