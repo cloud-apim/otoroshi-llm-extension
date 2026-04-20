@@ -186,7 +186,7 @@ class AiResponseBodyModifier extends NgRequestTransformer {
                   case None if !config.isResponse => {
                     val content = resp.headGeneration.message.content
                     ctx.otoroshiResponse.copy(
-                      headers = ctx.otoroshiResponse.headers - "Content-Length" - "content-length" ++ Map("Content-Length" -> content.length.toString),
+                      headers = ctx.otoroshiResponse.headers ++ Map("Transfer-Encoding" -> s"chunked") - "Content-Length" - "content-length",
                       body = content.byteString.chunks(32 * 1024)
                     ).rightf
                   }
