@@ -209,7 +209,7 @@ class AiResponseBodyModifier extends NgRequestTransformer {
                         ).rightf
                       } else {
                         ctx.otoroshiResponse.copy(
-                          headers = ctx.otoroshiResponse.headers - "Content-Length" - "content-length" ++ Map("Content-Length" -> expression.length.toString),
+                          headers = ctx.otoroshiResponse.headers ++ Map("Transfer-Encoding" -> s"chunked") - "Content-Length" - "content-length",
                           body = expression.byteString.chunks(32 * 1024)
                         ).rightf
                       }
@@ -227,7 +227,7 @@ class AiResponseBodyModifier extends NgRequestTransformer {
                         ).rightf
                       } else {
                         ctx.otoroshiResponse.copy(
-                          headers = ctx.otoroshiResponse.headers - "Content-Length" - "content-length" ++ Map("Transfer-Encoding" -> "chunked"),
+                          headers = ctx.otoroshiResponse.headers ++ Map("Transfer-Encoding" -> s"chunked") - "Content-Length" - "content-length",
                           body = resp.headGeneration.message.content.byteString.chunks(32 * 1024)
                         ).rightf
                       }
