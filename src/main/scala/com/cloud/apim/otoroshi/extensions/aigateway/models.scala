@@ -433,6 +433,7 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
   lazy val audio = raw.select("message").select("audio").asOpt[JsObject]
   lazy val tool_calls = raw.select("message").select("tool_calls").asOpt[Seq[JsObject]]
   lazy val has_tool_calls = tool_calls.isDefined
+  lazy val images = raw.select("message").select("images").asOpt[Seq[JsObject]].map(_.map(o => ChatMessageContent.fromJson(o)))
 
   /// Anthropic responses
   lazy val is_server_tool_use = raw.select("type").asOpt[String].contains("server_tool_use")
@@ -458,6 +459,8 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
       case (obj, audio) => obj ++ Json.obj("audio" -> audio)
     }.applyOnWithOpt(tool_calls) {
       case (obj, tool_calls) => obj ++ Json.obj("tool_calls" -> tool_calls)
+    }.applyOnWithOpt(images) {
+      case (obj, images) => obj ++ Json.obj("images" -> images.map(_.json(ChatMessageContentFlavor.OpenAi)))
     }
   }
 
