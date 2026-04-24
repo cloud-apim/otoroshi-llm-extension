@@ -301,9 +301,9 @@ object OpenAiResponsesProxy {
     systemMessage ++ inputMessages
   }
 
-  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config)
-    val provider: Option[AiProvider] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
+  def call(_jsb: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val _jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsb, config)
+    val provider: Option[AiProvider] = _jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
     }.orElse(
       config.refs.headOption.flatMap { r =>
@@ -313,8 +313,9 @@ object OpenAiResponsesProxy {
     provider.flatMap(_.getChatClient()) match {
       case None => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "provider not found")))).vfuture
       case Some(client) => {
-        val stream = ctx.request.queryParam("stream").contains("true") || ctx.request.header("x-stream").contains("true") || jsonBody.select("stream").asOpt[Boolean].contains(true)
-        val requestMessages = convertInputToMessages(jsonBody)
+        val stream = ctx.request.queryParam("stream").contains("true") || ctx.request.header("x-stream").contains("true") || _jsonBody.select("stream").asOpt[Boolean].contains(true)
+        val requestMessages = convertInputToMessages(_jsonBody)
+        val jsonBody = _jsonBody.asObject - "input"
 
         if (OpenAiCompatProxy.validate(requestMessages, ctx)) {
           val (preContextMessages, postContextMessages) = ctx.attrs.get(AiPluginsKeys.PromptContextKey).getOrElse((Seq.empty, Seq.empty))
@@ -438,7 +439,7 @@ object OpenAiResponsesProxy {
               }
             }
           } else {
-            client.response(ChatPrompt(messages), ctx.attrs, jsonBody).map {
+            client.tryResponse(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiResponseJson(client.computeModel(jsonBody).getOrElse("none"), env))
                 .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
