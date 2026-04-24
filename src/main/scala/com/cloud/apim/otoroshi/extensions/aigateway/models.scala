@@ -606,6 +606,23 @@ case class ChatResponse(
           )))
         )
       }
+      if (gen.message.images.isDefined) {
+        items = items ++ gen.message.images.map { images =>
+          images.map { image =>
+            val img = image.asInstanceOf[ChatMessageContent.ImageContent]
+            Json.obj(
+              "type" -> "image_generation_call",
+              "id" -> s"gen_${IdGenerator.token(32)}",
+              "status" -> "completed",
+              "result" -> (img match {
+                case _ if img.data.isDefined => s"data:${img.mediaType};base64,${img.data.get.encodeBase64.utf8String}".json
+                case _ if img.url.isDefined => img.url.get.json
+                case _ => "".json
+              })
+            )
+          }
+        }.toSeq.flatten
+      }
       if (gen.message.has_tool_calls) {
         items = items ++ gen.message.tool_calls.getOrElse(Seq.empty).map { tc =>
           val tcObj = tc.asObject
