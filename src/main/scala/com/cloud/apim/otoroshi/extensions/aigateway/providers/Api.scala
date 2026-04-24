@@ -58,6 +58,7 @@ object ProviderHelpers {
       val msg = s"calling provider '${from}' - ${method} - ${url} - ${opts} - ${body.map(_.prettify).getOrElse("")}"
       if (env.isDev) {
         AiExtension.logger.info(msg)
+        // java.nio.file.Files.writeString(new java.io.File(s"req-${System.currentTimeMillis()}.json").toPath, body.map(_.prettify).getOrElse(""), java.nio.charset.StandardCharsets.UTF_8)
       } else if (AiExtension.logger.isDebugEnabled) {
         AiExtension.logger.debug(msg)
       }
@@ -68,6 +69,7 @@ object ProviderHelpers {
       val msg = s"stream provider '${from}' - ${method} - ${url} - ${opts} - ${body.map(_.prettify).getOrElse("")}"
       if (env.isDev) {
         AiExtension.logger.info(msg)
+        // java.nio.file.Files.writeString(new java.io.File(s"req-stream-${System.currentTimeMillis()}.json").toPath, body.map(_.prettify).getOrElse(""), java.nio.charset.StandardCharsets.UTF_8)
       } else if (AiExtension.logger.isDebugEnabled) {
         AiExtension.logger.debug(msg)
       }
@@ -78,6 +80,7 @@ object ProviderHelpers {
       val msg = s"provider response '${from}' - ${resp.status} - ${resp.body}"
       if (env.isDev) {
         AiExtension.logger.info(msg)
+        //java.nio.file.Files.writeString(new java.io.File(s"resp-${System.currentTimeMillis()}.json").toPath, resp.body.parseJson.prettify, java.nio.charset.StandardCharsets.UTF_8)
       } else if (AiExtension.logger.isDebugEnabled) {
         AiExtension.logger.debug(msg)
       }
@@ -94,6 +97,7 @@ object ProviderHelpers {
       val msg = s"provider stream response '${from}' - ${resp.status} - ${if (resp.status != 200) resp.body else "stream"}"
       if (env.isDev) {
         AiExtension.logger.info(msg)
+        // java.nio.file.Files.writeString(new java.io.File(s"resp-stream-${System.currentTimeMillis()}.json").toPath, resp.body.parseJson.prettify, java.nio.charset.StandardCharsets.UTF_8)
       } else if (AiExtension.logger.isDebugEnabled) {
         AiExtension.logger.debug(msg)
       }
