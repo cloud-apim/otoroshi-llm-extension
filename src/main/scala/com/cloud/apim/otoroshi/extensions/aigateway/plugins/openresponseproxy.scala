@@ -5,7 +5,7 @@ import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, ChatResponse, ChatResponseMetadataUsage, InputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatMessageContent, ChatPrompt, ChatResponse, ChatResponseMetadataUsage, InputChatMessage}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
@@ -80,7 +80,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
               case None => JsArray(item.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).flatMap { contentItem =>
                 contentItem.select("type").asOptString match {
                   case Some("input_image") =>
-                    val image_url = contentItem.select("image_url").asOptString
+                    val image_url = contentItem.select("image_url").asOptString.orElse(contentItem.select("image_url").select("url").asOptString)
                     val detail = contentItem.select("detail").asOptString
                     Json.obj(
                       "type" -> "image_url",
@@ -255,6 +255,24 @@ class OpenResponseCompatProxy extends NgBackendCall {
       }
     }
 
+    val imageOutputs: Seq[JsObject] = response.generations.flatMap { gen =>
+      gen.message.images.map { images =>
+        images.map { image =>
+          val img = image.asInstanceOf[ChatMessageContent.ImageContent]
+          Json.obj(
+            "type" -> "image_generation_call",
+            "id" -> s"gen_${IdGenerator.token(32)}",
+            "status" -> "completed",
+            "result" -> (img match {
+              case _ if img.data.isDefined => s"data:${img.mediaType};base64,${img.data.get.encodeBase64.utf8String}".json
+              case _ if img.url.isDefined => img.url.get.json
+              case _ => "".json
+            })
+          )
+        }
+      }.toSeq.flatten
+    }
+
     // If we have tool calls, also emit the assistant message (without tool_calls) before the function_call items
     val output: Seq[JsObject] = if (toolCallOutputs.nonEmpty) {
       val message = response.headGeneration
@@ -272,9 +290,9 @@ class OpenResponseCompatProxy extends NgBackendCall {
           )
         )
       )
-      Seq(assistantMsg) ++ toolCallOutputs
+      Seq(assistantMsg) ++ imageOutputs ++ toolCallOutputs
     } else {
-      textOutputs
+      textOutputs ++ imageOutputs
     }
 
     val usage = Json.obj(
