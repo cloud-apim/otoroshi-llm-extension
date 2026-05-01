@@ -104,7 +104,7 @@ class OtoroshiAssistant extends Component {
   }
 
   componentDidMount() {
-    if (typeof showdown !== 'undefined' && !OtoroshiAssistantMessage.converter) {
+    if (!OtoroshiAssistantMessage.converter) {
       OtoroshiAssistantMessage.converter = new showdown.Converter({
         omitExtraWLInCodeBlocks: true,
         ghCompatibleHeaderId: true,
@@ -183,6 +183,7 @@ class OtoroshiAssistant extends Component {
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
+        'X-Otoroshi-Assistant-Current-Url': window.location.href,
       },
       body: JSON.stringify({
         messages: apiMessages,
