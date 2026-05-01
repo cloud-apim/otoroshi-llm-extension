@@ -37,11 +37,11 @@ class OtoroshiAssistantMessage extends Component {
       fontSize: 14,
       lineHeight: 1.45,
       wordWrap: 'break-word',
-      whiteSpace: 'pre-wrap',
       boxShadow: '0 1px 2px rgba(0,0,0,0.15)',
     };
+    const useMarkdown = !isUser && !isError && OtoroshiAssistantMessage.converter;
     const variant = isError ? errorBubble : (isUser ? userBubble : assistantBubble);
-    const bubbleStyle = Object.assign({}, baseBubble, variant);
+    const bubbleStyle = Object.assign({}, baseBubble, variant, useMarkdown ? {} : { whiteSpace: 'pre-wrap' });
     const rowStyle = {
       display: 'flex',
       flexDirection: 'row',
@@ -49,7 +49,6 @@ class OtoroshiAssistantMessage extends Component {
       marginBottom: 8,
       width: '100%',
     };
-    const useMarkdown = !isUser && !isError && OtoroshiAssistantMessage.converter;
     return React.createElement('div', { ref: (r) => this.ref = r, style: rowStyle },
       useMarkdown
         ? React.createElement('div', {
@@ -131,7 +130,10 @@ class OtoroshiAssistant extends Component {
         '  from { opacity: 0; transform: translateY(10px); }',
         '  to   { opacity: 1; transform: translateY(0); }',
         '}',
+        '.otoroshi-assistant-message-md { white-space: normal; }',
+        '.otoroshi-assistant-message-md > *:last-child { margin-bottom: 0 !important; }',
         '.otoroshi-assistant-message-md p { margin: 0 0 6px 0; }',
+        '.otoroshi-assistant-message-md pre { height: auto !important; }',
         '.otoroshi-assistant-message-md p:last-child { margin-bottom: 0; }',
         '.otoroshi-assistant-message-md pre { background: var(--bg-color_level1); padding: 8px; border-radius: 6px; overflow-x: auto; margin: 6px 0; border: 1px solid var(--border-color); }',
         '.otoroshi-assistant-message-md code { background: var(--bg-color_level1); padding: 1px 4px; border-radius: 3px; font-size: 12px; }',
