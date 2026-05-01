@@ -16,7 +16,7 @@ import play.api.mvc._
 import scala.concurrent.Future
 
 object OtoroshiAssistant {
-  val systemPrompt: String =
+  private val basePrompt: String =
     """You are the Otoroshi Assistant, an expert AI helper embedded in the Otoroshi admin UI.
       |
       |## About Otoroshi
@@ -54,6 +54,25 @@ object OtoroshiAssistant {
       |- If a request is unrelated to Otoroshi, APIs, web infrastructure, or development, politely steer the conversation back to the platform.
       |- If a question requires data you do not have access to (live cluster state, current entities), say so and suggest where in the UI or via which admin API endpoint the user can find it.
       |""".stripMargin
+
+  def systemPrompt(user: Option[BackOfficeUser], currentUrl: Option[String], now: java.time.ZonedDateTime): String = {
+    val userName  = user.map(_.name).filter(_.nonEmpty).getOrElse("unknown")
+    val userEmail = user.map(_.email).filter(_.nonEmpty).getOrElse("unknown")
+    val time      = now.format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
+    val url       = currentUrl.filter(_.nonEmpty).getOrElse("unknown")
+    val contextBlock =
+      s"""
+         |## Current session context
+         |Use this only when relevant to the user's question. Do not echo it back unless asked.
+         |- Current date/time: $time
+         |- Backoffice user name: $userName
+         |- Backoffice user email: $userEmail
+         |- Page the user is currently viewing (URL): $url
+         |
+         |When the user asks something that depends on what they are currently looking at ("this route", "this provider", "here", ...), interpret it relative to the page URL above. The path segment after `/bo/dashboard/` typically identifies the section (e.g. `/bo/dashboard/routes/<id>` is the route editor for `<id>`, `/bo/dashboard/apikeys/<id>` for an API key, etc.).
+         |""".stripMargin
+    basePrompt + contextBlock
+  }
 }
 
 class OtoroshiAssistant(env: Env, ext: AiExtension) {
@@ -76,9 +95,11 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
             case Some(client) => {
               val bodyJson = bodyRaw.parseJson
               val incoming = bodyJson.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj => InputChatMessage.fromJson(obj) }
+              val currentUrl = req.headers.get("X-Otoroshi-Assistant-Current-Url")
+              val now = java.time.ZonedDateTime.now()
               val systemMessage = InputChatMessage.fromJson(Json.obj(
                 "role" -> "system",
-                "content" -> OtoroshiAssistant.systemPrompt,
+                "content" -> OtoroshiAssistant.systemPrompt(user, currentUrl, now),
               ))
               val withoutClientSystem = incoming.filterNot(_.role == "system")
               val messages = systemMessage +: withoutClientSystem
