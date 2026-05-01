@@ -97,6 +97,7 @@ class OtoroshiAssistantTyping extends Component {
 class OtoroshiAssistant extends Component {
   state = {
     display: false,
+    expanded: false,
     calling: false,
     input: '',
     messages: [],
@@ -166,6 +167,10 @@ class OtoroshiAssistant extends Component {
 
   toggle = () => {
     this.setState({ display: !this.state.display });
+  }
+
+  toggleExpanded = () => {
+    this.setState({ expanded: !this.state.expanded });
   }
 
   clear = () => {
@@ -295,6 +300,13 @@ class OtoroshiAssistant extends Component {
       }, React.createElement('i', { className: 'fas fa-broom' })),
       React.createElement('button', {
         type: 'button',
+        title: this.state.expanded ? 'Shrink window' : 'Expand window',
+        onClick: this.toggleExpanded,
+        className: 'otoroshi-assistant-icon-btn',
+        style: { marginRight: 4, fontSize: 14 },
+      }, React.createElement('i', { className: this.state.expanded ? 'fas fa-compress' : 'fas fa-expand' })),
+      React.createElement('button', {
+        type: 'button',
         title: 'Close',
         onClick: this.toggle,
         className: 'otoroshi-assistant-icon-btn',
@@ -369,11 +381,11 @@ class OtoroshiAssistant extends Component {
         onChange: (e) => this.setState({ input: e.target.value }),
         onKeyDown: this.keydown,
         placeholder: 'Type a message…',
-        rows: 1,
+        rows: this.state.expanded ? 4 : 1,
         style: {
           flex: 1,
           resize: 'none',
-          maxHeight: 120,
+          maxHeight: this.state.expanded ? 320 : 120,
           minHeight: 36,
           padding: '8px 10px',
           borderRadius: 8,
@@ -409,17 +421,16 @@ class OtoroshiAssistant extends Component {
   }
 
   renderChatBox() {
+    const expanded = this.state.expanded;
+    const sizeStyle = expanded
+      ? { width: 'min(900px, calc(100vw - 40px))', height: 'calc(100vh - 40px)', maxHeight: 'none', minHeight: 0 }
+      : { width: 380, maxWidth: 'calc(100vw - 40px)', height: '70vh', maxHeight: 700, minHeight: 420 };
     return React.createElement('div', {
       className: 'otoroshi-assistant-chatbox',
-      style: {
+      style: Object.assign({
         position: 'fixed',
         bottom: 20,
         right: 20,
-        width: 380,
-        maxWidth: 'calc(100vw - 40px)',
-        height: '70vh',
-        maxHeight: 700,
-        minHeight: 420,
         display: 'flex',
         flexDirection: 'column',
         backgroundColor: 'var(--bg-color_level2)',
@@ -429,7 +440,8 @@ class OtoroshiAssistant extends Component {
         zIndex: 99999,
         animation: 'otoroshi-assistant-fadein 0.18s ease-out',
         overflow: 'hidden',
-      }
+        transition: 'width 0.18s ease, height 0.18s ease',
+      }, sizeStyle),
     },
       this.renderHeader(),
       this.renderMessages(),
