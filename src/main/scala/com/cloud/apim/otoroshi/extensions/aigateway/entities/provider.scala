@@ -177,6 +177,7 @@ case class AiProvider(
   override def theDescription: String           = description
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
+  lazy val isOtoroshiAssistant: Boolean = metadata.get("otoroshi_assistant").contains("true")
   def computedName: String = metadata.getOrElse("endpoint_name", name)
   def slugName: String = metadata.getOrElse("endpoint_name", name).slugifyWithSlash.replaceAll("-+", "_")
   def getChatClient()(implicit env: Env): Option[ChatClient] = {
