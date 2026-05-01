@@ -2,6 +2,7 @@ package otoroshi_plugins.com.cloud.apim.extensions.aigateway
 
 import akka.stream.scaladsl.{Source, StreamConverters}
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.assistant.OtoroshiAssistant
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsTracking, CostsTrackingSettings, LLMImpacts, LLMImpactsSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities._
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHardcodedItems
@@ -189,6 +190,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     .expireAfterWrite(1.hour)
     .build[String, Seq[String]]()
 
+  lazy val assistant = new OtoroshiAssistant(env, this)
   lazy val budgetsEnabled = configuration.getOptional[Boolean]("budgets.enabled").getOrElse(true)
   lazy val embedBudgetsInResponses = budgetsEnabled && configuration.getOptional[Boolean]("budgets.embed-budgets-in-responses").getOrElse(true)
 
@@ -254,6 +256,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val videoModelsPage = getResourceCode("cloudapim/extensions/ai/VideoModelsPage.js")
   lazy val memoriesPage = getResourceCode("cloudapim/extensions/ai/MemoriesPage.js")
   lazy val budgetsPage = getResourceCode("cloudapim/extensions/ai/BudgetsPage.js")
+  lazy val assistantPage = getResourceCode("cloudapim/extensions/ai/AssistantPage.js")
   lazy val workflowNodeSwitchFile = getResourceCode("cloudapim/extensions/ai/WorkflowNodes.js")
   lazy val imgCode = getResourceCode("cloudapim/extensions/ai/undraw_visionary_technology_re_jfp7.svg")
 
@@ -752,6 +755,12 @@ class AiExtension(val env: Env) extends AdminExtension {
   override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = Seq(
     AdminExtensionBackofficeAuthRoute(
       method = "POST",
+      path = "/extensions/cloud-apim/extensions/ai-extension/assistant/chat/completions",
+      wantsBody = true,
+      handle = assistant.handleAssistantCompletion
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
       path = "/extensions/cloud-apim/extensions/ai-extension/providers/_test",
       wantsBody = true,
       handle = handleProviderTest
@@ -893,6 +902,15 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    ${memoriesPage}
             |    ${budgetsPage}
             |    ${workflowNodeSwitchFile}
+            |    ${assistantPage}
+            |
+            |    ${if (assistant.isEnabled) {
+                  s"""const container = document.createElement("div");
+                     |container.id = "otoroshi-assistant-root";
+                     |document.body.appendChild(container);
+                     |dependencies['react-dom'].render(React.createElement(OtoroshiAssistant, {}), container);
+                     |""".stripMargin
+                } else ""}
             |
             |    return {
             |      id: extensionId,
