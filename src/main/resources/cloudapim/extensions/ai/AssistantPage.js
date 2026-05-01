@@ -1,16 +1,51 @@
 class OtoroshiAssistantMessage extends Component {
+  state = { copied: false }
   componentDidMount() {
     if (this.ref && this.props.scrollOnMount) {
       this.ref.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
   }
+  componentWillUnmount() {
+    if (this.copiedTimer) clearTimeout(this.copiedTimer);
+  }
+  copy = () => {
+    const text = this.getRawContent();
+    const done = () => {
+      this.setState({ copied: true });
+      if (this.copiedTimer) clearTimeout(this.copiedTimer);
+      this.copiedTimer = setTimeout(() => this.setState({ copied: false }), 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => this.fallbackCopy(text, done));
+    } else {
+      this.fallbackCopy(text, done);
+    }
+  }
+  fallbackCopy = (text, done) => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      done();
+    } catch (e) {}
+  }
+  getRawContent = () => {
+    let c = this.props.message.content;
+    if (!(typeof c === 'string' || c instanceof String)) c = JSON.stringify(c);
+    return c;
+  }
+  retry = () => {
+    if (this.props.onRetry) this.props.onRetry();
+  }
   render() {
     const isUser = this.props.message.role === 'user';
     const isError = this.props.message.error === true;
-    let content = this.props.message.content;
-    if (!(typeof content === 'string' || content instanceof String)) {
-      content = JSON.stringify(content);
-    }
+    const content = this.getRawContent();
     const userBubble = {
       backgroundColor: 'var(--color-primary)',
       color: '#1a1a1a',
@@ -44,19 +79,42 @@ class OtoroshiAssistantMessage extends Component {
     const bubbleStyle = Object.assign({}, baseBubble, variant, useMarkdown ? {} : { whiteSpace: 'pre-wrap' });
     const rowStyle = {
       display: 'flex',
-      flexDirection: 'row',
-      justifyContent: isUser ? 'flex-end' : 'flex-start',
+      flexDirection: 'column',
+      alignItems: isUser ? 'flex-end' : 'flex-start',
       marginBottom: 8,
       width: '100%',
     };
+    const showActions = !isUser && !isError && content && content.length > 0;
+    const bubble = useMarkdown
+      ? React.createElement('div', {
+          className: 'otoroshi-assistant-message-md',
+          style: bubbleStyle,
+          dangerouslySetInnerHTML: { __html: OtoroshiAssistantMessage.converter.makeHtml(content) }
+        })
+      : React.createElement('div', { style: bubbleStyle }, content);
+    const actions = showActions ? React.createElement('div', {
+      className: 'otoroshi-assistant-message-actions',
+      style: { display: 'flex', flexDirection: 'row', gap: 4, marginTop: 4, marginLeft: 4 }
+    },
+      React.createElement('button', {
+        type: 'button',
+        title: this.state.copied ? 'Copied!' : 'Copy',
+        onClick: this.copy,
+        className: 'otoroshi-assistant-icon-btn',
+        style: { fontSize: 12, padding: '2px 6px' },
+      }, React.createElement('i', { className: this.state.copied ? 'fas fa-check' : 'fas fa-copy' })),
+      this.props.onRetry ? React.createElement('button', {
+        type: 'button',
+        title: 'Retry',
+        onClick: this.retry,
+        disabled: this.props.retryDisabled,
+        className: 'otoroshi-assistant-icon-btn',
+        style: { fontSize: 12, padding: '2px 6px' },
+      }, React.createElement('i', { className: 'fas fa-rotate-right' })) : null,
+    ) : null;
     return React.createElement('div', { ref: (r) => this.ref = r, style: rowStyle },
-      useMarkdown
-        ? React.createElement('div', {
-            className: 'otoroshi-assistant-message-md',
-            style: bubbleStyle,
-            dangerouslySetInnerHTML: { __html: OtoroshiAssistantMessage.converter.makeHtml(content) }
-          })
-        : React.createElement('div', { style: bubbleStyle }, content),
+      bubble,
+      actions,
     );
   }
 }
@@ -177,13 +235,11 @@ class OtoroshiAssistant extends Component {
     this.setState({ messages: [] });
   }
 
-  send = () => {
-    const input = (this.state.input || '').trim();
-    if (!input || this.state.calling) return;
-    const newUserMessage = { role: 'user', content: input, date: Date.now() };
-    const messages = this.state.messages.concat([newUserMessage]);
-    this.setState({ messages, input: '', calling: true });
-    const apiMessages = messages.map(m => ({ role: m.role, content: m.content }));
+  callApi = (messages) => {
+    this.setState({ calling: true });
+    const apiMessages = messages
+      .filter(m => !m.error)
+      .map(m => ({ role: m.role, content: m.content }));
     fetch('/extensions/cloud-apim/extensions/ai-extension/assistant/chat/completions', {
       method: 'POST',
       credentials: 'include',
@@ -228,6 +284,21 @@ class OtoroshiAssistant extends Component {
         if (this.inputRef) this.inputRef.focus();
       });
     });
+  }
+
+  send = () => {
+    const input = (this.state.input || '').trim();
+    if (!input || this.state.calling) return;
+    const newUserMessage = { role: 'user', content: input, date: Date.now() };
+    const messages = this.state.messages.concat([newUserMessage]);
+    this.setState({ messages, input: '' }, () => this.callApi(messages));
+  }
+
+  retryAt = (idx) => {
+    if (this.state.calling) return;
+    const truncated = this.state.messages.slice(0, idx);
+    if (truncated.length === 0) return;
+    this.setState({ messages: truncated }, () => this.callApi(truncated));
   }
 
   keydown = (event) => {
@@ -352,9 +423,11 @@ class OtoroshiAssistant extends Component {
     },
       this.state.messages.length === 0 && !this.state.calling
         ? this.renderEmptyState()
-        : this.state.messages.map((m) => React.createElement(OtoroshiAssistantMessage, {
-            key: m.date + '-' + m.role,
+        : this.state.messages.map((m, idx) => React.createElement(OtoroshiAssistantMessage, {
+            key: m.date + '-' + m.role + '-' + idx,
             message: m,
+            onRetry: m.role === 'assistant' && !m.error ? () => this.retryAt(idx) : undefined,
+            retryDisabled: this.state.calling,
           })),
       this.state.calling ? React.createElement(OtoroshiAssistantTyping, { key: 'typing' }) : null,
     );
