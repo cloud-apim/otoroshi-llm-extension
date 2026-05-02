@@ -78,7 +78,7 @@ object OtoroshiAssistant {
 
 class OtoroshiAssistant(env: Env, ext: AiExtension) {
 
-  private val MaxToolCallIterations: Int = 8
+  private val maxToolCallIterations: Int = 20
 
   def assistantProvider: Option[AiProvider] = ext.states.allProviders().find(_.isOtoroshiAssistant)
 
@@ -136,8 +136,8 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
     iteration: Int,
   )(implicit ec: ExecutionContext): Future[Either[JsValue, ChatResponse]] = {
     implicit val ev: Env = env
-    if (iteration >= MaxToolCallIterations) {
-      Left[JsValue, ChatResponse](JsString(s"Max tool-call iterations reached ($MaxToolCallIterations).")).vfuture
+    if (iteration >= maxToolCallIterations) {
+      Left[JsValue, ChatResponse](JsString(s"Max tool-call iterations reached ($maxToolCallIterations).")).vfuture
     } else {
       client.call(ChatPrompt(messages, None), TypedMap.empty, baseBody).flatMap {
         case Left(err) => Left[JsValue, ChatResponse](err).vfuture
