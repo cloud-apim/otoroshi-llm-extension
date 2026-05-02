@@ -175,6 +175,7 @@ class OtoroshiAssistant extends Component {
         emoji: true,
         ghMentionsLink: '/{u}',
         flavor: 'github',
+        openLinksInNewWindow: true
       });
     }
     if (!document.getElementById('otoroshi-assistant-styles')) {
