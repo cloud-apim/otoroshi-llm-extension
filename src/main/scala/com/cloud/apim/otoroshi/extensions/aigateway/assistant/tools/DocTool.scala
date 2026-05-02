@@ -37,6 +37,8 @@ class DocTool extends AssistantTool {
     val topic = arguments.select("topic").asOpt[String].map(_.trim).filter(_.nonEmpty)
     val url = arguments.select("url").asOpt[String].map(_.trim).filter(_.nonEmpty)
 
+    println(s"call tool 'doc': ${url} - ${topic}")
+
     if (topic.isDefined && url.isDefined) Future.successful("Error: provide either 'topic' or 'url', not both.")
     else url match {
       case Some(u) => fetchUrl(u)(ec, ctx.env)
