@@ -18,12 +18,12 @@ case class AdminCredentials(baseUrl: String, clientId: String, clientSecret: Str
 
 object AdminCredentials {
 
-  val MetadataKey: String = "otoroshi_assistant_admin_apikey_id"
+  val metadataKey: String = "otoroshi_assistant_admin_apikey_id"
 
   def fetch(env: Env, ext: AiExtension, user: Option[BackOfficeUser]): Option[AdminCredentials] = {
     for {
       provider <- ext.states.allProviders().find(_.isOtoroshiAssistant)
-      apikeyId <- provider.metadata.get(MetadataKey).map(_.trim).filter(_.nonEmpty)
+      apikeyId <- provider.metadata.get(metadataKey).map(_.trim).filter(_.nonEmpty)
       apikey <- env.proxyState.apikey(apikeyId)
     } yield AdminCredentials(
       baseUrl = s"${env.exposedRootScheme}://${env.adminApiExposedHost}${env.bestExposedPort}",
@@ -37,9 +37,9 @@ case class AdminResponse(status: Int, ok: Boolean, headers: Map[String, String],
 
 object AdminClient {
 
-  private val ForbiddenRequestHeaders: Set[String] = Set("authorization", "cookie", "host", "proxy-authorization")
-  private val SensitiveResponseHeaders: Set[String] = Set("authorization", "proxy-authorization", "set-cookie", "www-authenticate", "proxy-authenticate")
-  private val DefaultRequestTimeout: FiniteDuration = 30.seconds
+  private val forbiddenRequestHeaders: Set[String] = Set("authorization", "cookie", "host", "proxy-authorization")
+  private val sensitiveResponseHeaders: Set[String] = Set("authorization", "proxy-authorization", "set-cookie", "www-authenticate", "proxy-authenticate")
+  private val defaultRequestTimeout: FiniteDuration = 30.seconds
 
   case class CallOptions(
     pathParams: Map[String, String] = Map.empty,
@@ -56,7 +56,7 @@ object AdminClient {
   }
 
   private def filterHeaders(h: Map[String, String]): Map[String, String] =
-    h.filterNot { case (k, _) => ForbiddenRequestHeaders.contains(k.toLowerCase) }
+    h.filterNot { case (k, _) => forbiddenRequestHeaders.contains(k.toLowerCase) }
 
   private def interpolatePath(path: String, params: Map[String, String]): String = {
     """\{([^}]+)\}""".r.replaceAllIn(path, m => {
@@ -93,13 +93,13 @@ object AdminClient {
     var builder = env.Ws.url(finalUrl)
       .withHttpHeaders(finalHeaders.toSeq: _*)
       .withMethod(httpMethod)
-      .withRequestTimeout(DefaultRequestTimeout)
+      .withRequestTimeout(defaultRequestTimeout)
       .withFollowRedirects(false)
     if (hasBody) builder = builder.withBody(opts.body.get)
 
     builder.execute().map { resp =>
       val respHeaders = resp.headers.collect {
-        case (k, v) if !SensitiveResponseHeaders.contains(k.toLowerCase) => k -> v.headOption.getOrElse("")
+        case (k, v) if !sensitiveResponseHeaders.contains(k.toLowerCase) => k -> v.headOption.getOrElse("")
       }
       val data: JsValue = {
         val ct = resp.contentType
