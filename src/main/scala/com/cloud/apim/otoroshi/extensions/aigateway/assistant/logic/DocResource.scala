@@ -11,7 +11,7 @@ object DocResource {
 
   case class StartingPoint(topic: String, title: String, url: String, description: String)
 
-  val Allowlist: Set[String] = Set("www.otoroshi.io", "cloud-apim.github.io")
+  val Allowlist: Set[String] = Set("www.otoroshi.io", "cloud-apim.github.io", "maif.github.io")
   val FetchTimeout: FiniteDuration = 10.seconds
   val MaxHtmlBytes: Int = 1000000
 
@@ -20,11 +20,13 @@ object DocResource {
       "Entry point to the Otoroshi documentation (concepts, architecture, tutorials)."),
     StartingPoint("entities", "Otoroshi entities", "https://www.otoroshi.io/docs/entities/index.html",
       "Core entities: routes, services, apikeys, certificates, auth modules."),
-    StartingPoint("admin-api", "Admin API usage", "https://www.otoroshi.io/docs/topics/admin-api.html",
+    StartingPoint("admin-api", "Admin API usage", "https://www.otoroshi.io/docs/api",
       "How to authenticate and call the Otoroshi Admin API."),
+    StartingPoint("admin-api-resources", "Admin API resources", "https://maif.github.io/otoroshi/devmanual/docs/topics/generic-resource-api",
+      "How consume the Otoroshi Admin API."),
     StartingPoint("plugins", "Plugins & extensions", "https://www.otoroshi.io/docs/plugins/index.html",
       "Built-in plugins and how to write your own."),
-    StartingPoint("llm-extension", "Otoroshi LLM Extension", "https://cloud-apim.github.io/otoroshi-llm-extension/",
+    StartingPoint("llm-extension", "Otoroshi LLM Extension", "https://cloud-apim.github.io/otoroshi-llm-extension/docs/overview",
       "Cloud-APIM's LLM extension: providers, prompts, guardrails, semantic cache."),
     StartingPoint("biscuit", "Otoroshi Biscuit Studio", "https://cloud-apim.github.io/otoroshi-biscuit-studio/docs/overview",
       "Biscuit tokens: forges, verifiers, attenuators, key-pairs."),
