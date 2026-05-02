@@ -135,7 +135,7 @@ class ExecuteTool extends AssistantTool {
             headers = headers,
           )
           println(s"LLM tools exec: ${method} ${url} ${opts.json.prettify}")
-          val host               = env.adminApiHost
+          val host = env.adminApiExposedHost
           val apikey = creds.apikey
           val request = new AssistantRequest(host, method, url, opts, apikey, env)
           val engine = env.scriptManager.getAnyScript[RequestHandler](s"cp:${classOf[ProxyEngine].getName}").right.get
