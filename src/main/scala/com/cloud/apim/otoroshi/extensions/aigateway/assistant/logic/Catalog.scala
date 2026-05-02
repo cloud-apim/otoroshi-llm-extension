@@ -55,9 +55,73 @@ object Catalog {
     responses: Map[String, Response],
   )
   case class Info(title: String, version: String, description: Option[String])
-  case class Document(info: Info, operations: Seq[Operation], tags: Seq[String], raw: JsObject) {
+  case class Document(info: Info, operations: Seq[Operation], tags: Seq[String], raw: JsObject, flatSchemas: Map[String, JsValue]) {
     lazy val byOperationId: Map[String, Operation] = operations.map(o => o.operationId -> o).toMap
     lazy val operationCount: Int = operations.size
+
+    def resolveRef(ref: String, visited: Set[String] = Set.empty): Option[JsValue] = {
+      if (visited.contains(ref)) return Some(Json.obj("$ref" -> ref, "_note" -> "circular reference"))
+      if (visited.size > maxRefDepth) return Some(Json.obj("$ref" -> ref, "_note" -> "max depth reached"))
+      if (!ref.startsWith("#/")) return None
+      val schemaPrefix = "#/components/schemas/"
+      val resolved = if (ref.startsWith(schemaPrefix)) {
+        val name = ref.substring(schemaPrefix.length)
+        flatSchemas.get(name)
+      } else {
+        val parts = ref.stripPrefix("#/").split("/").toSeq.map(_.replace("~1", "/").replace("~0", "~"))
+        parts.foldLeft(Option[JsValue](raw)) { (acc, part) =>
+          acc.flatMap(_.asOpt[JsObject]).flatMap(_.value.get(part))
+        }
+      }
+      resolved.flatMap {
+        case JsNull => None
+        case obj: JsObject if obj.value.get("$ref").flatMap(_.asOpt[String]).isDefined =>
+          resolveRef(obj.select("$ref").asString, visited + ref)
+        case other => Some(other)
+      }
+    }
+
+    def summarizeSchema(schema: JsValue, depth: Int = 0, seenRefs: Set[String] = Set.empty): String = {
+      if (depth > maxSchemaRenderDepth) return "unknown"
+      schema match {
+        case JsNull => "unknown"
+        case obj: JsObject =>
+          obj.value.get("$ref").flatMap(_.asOpt[String]) match {
+            case Some(ref) =>
+              val name = ref.split("/").lastOption.getOrElse("ref")
+              if (depth >= schemaRefResolveDepthCutoff || seenRefs.contains(ref)) name
+              else resolveRef(ref).map(r => summarizeSchema(r, depth + 1, seenRefs + ref)).getOrElse(name)
+            case None =>
+              obj.value.get("enum").flatMap(_.asOpt[Seq[JsValue]]) match {
+                case Some(values) =>
+                  val rendered = values.take(maxEnumPreview).map(v => v.asOpt[String].getOrElse(v.toString)).mkString("|")
+                  s"enum($rendered)"
+                case None =>
+                  if (obj.value.contains("properties")) {
+                    val props = obj.select("properties").asOpt[JsObject].map(_.value).getOrElse(Map.empty)
+                    if (props.isEmpty) "object"
+                    else {
+                      val keys = props.keys.take(maxObjectProperties).toSeq
+                      val inner = keys.map(k => s"$k: ${summarizeSchema(props(k), depth + 1, seenRefs)}").mkString(", ")
+                      val extra = if (props.size > keys.size) ", ..." else ""
+                      s"{ $inner$extra }"
+                    }
+                  } else obj.select("type").asOpt[String] match {
+                    case Some("array") =>
+                      val items = obj.value.get("items").getOrElse(JsNull)
+                      s"${summarizeSchema(items, depth + 1, seenRefs)}[]"
+                    case Some(t) => t
+                    case None =>
+                      val variants = obj.value.get("oneOf").orElse(obj.value.get("anyOf"))
+                        .flatMap(_.asOpt[Seq[JsValue]]).getOrElse(Seq.empty)
+                      if (variants.nonEmpty) variants.take(maxUnionVariants).map(v => summarizeSchema(v, depth + 1, seenRefs)).mkString(" | ")
+                      else "unknown"
+                  }
+              }
+          }
+        case other => other.toString
+      }
+    }
 
     private lazy val haystacks: Map[String, String] =
       operations.map(o => o.operationId -> normalize(haystackOf(o))).toMap
@@ -109,12 +173,12 @@ object Catalog {
           name = p.name,
           in = p.in,
           required = p.required,
-          `type` = p.schema.map(s => summarizeSchema(s, raw)).getOrElse("unknown"),
+          `type` = p.schema.map(s => summarizeSchema(s)).getOrElse("unknown"),
           description = p.description,
         )),
-        requestBodyType = op.requestBody.flatMap(_.schema).map(s => summarizeSchema(s, raw)),
+        requestBodyType = op.requestBody.flatMap(_.schema).map(s => summarizeSchema(s)),
         responseTypes = op.responses.map { case (status, r) =>
-          status -> r.schema.map(s => summarizeSchema(s, raw)).getOrElse("")
+          status -> r.schema.map(s => summarizeSchema(s)).getOrElse("")
         },
       )
     }
@@ -226,64 +290,35 @@ object Catalog {
       operations = operations,
       tags = tagSet.toSeq,
       raw = doc,
+      flatSchemas = buildFlatSchemas(doc),
     )
   }
 
-  def resolveRef(root: JsValue, ref: String, visited: Set[String] = Set.empty): Option[JsValue] = {
-    if (visited.contains(ref)) return Some(Json.obj("$ref" -> ref, "_note" -> "circular reference"))
-    if (visited.size > maxRefDepth) return Some(Json.obj("$ref" -> ref, "_note" -> "max depth reached"))
-    if (!ref.startsWith("#/")) return None
-    val parts = ref.stripPrefix("#/").split("/").toSeq.map(_.replace("~1", "/").replace("~0", "~"))
-    val node = parts.foldLeft(Option(root)) { (acc, part) =>
-      acc.flatMap(_.asOpt[JsObject]).map(_.value.getOrElse(part, JsNull))
-    }
-    node.flatMap {
-      case JsNull => None
-      case obj: JsObject if obj.value.get("$ref").flatMap(_.asOpt[String]).isDefined =>
-        resolveRef(root, obj.select("$ref").asString, visited + ref)
-      case other => Some(other)
-    }
-  }
-
-  def summarizeSchema(schema: JsValue, root: JsValue, depth: Int = 0, seenRefs: Set[String] = Set.empty): String = {
-    if (depth > maxSchemaRenderDepth) return "unknown"
-    schema match {
-      case JsNull => "unknown"
-      case obj: JsObject =>
-        obj.value.get("$ref").flatMap(_.asOpt[String]) match {
-          case Some(ref) =>
-            val name = ref.split("/").lastOption.getOrElse("ref")
-            if (depth >= schemaRefResolveDepthCutoff || seenRefs.contains(ref)) name
-            else resolveRef(root, ref).map(r => summarizeSchema(r, root, depth + 1, seenRefs + ref)).getOrElse(name)
-          case None =>
-            obj.value.get("enum").flatMap(_.asOpt[Seq[JsValue]]) match {
-              case Some(values) =>
-                val rendered = values.take(maxEnumPreview).map(v => v.asOpt[String].getOrElse(v.toString)).mkString("|")
-                s"enum($rendered)"
-              case None =>
-                obj.select("type").asOpt[String] match {
-                  case Some("array") =>
-                    val items = obj.value.get("items").getOrElse(JsNull)
-                    s"${summarizeSchema(items, root, depth + 1, seenRefs)}[]"
-                  case Some("object") | _ if obj.value.contains("properties") =>
-                    val props = obj.select("properties").asOpt[JsObject].map(_.value).getOrElse(Map.empty)
-                    if (props.isEmpty) "object"
-                    else {
-                      val keys = props.keys.take(maxObjectProperties).toSeq
-                      val inner = keys.map(k => s"$k: ${summarizeSchema(props(k), root, depth + 1, seenRefs)}").mkString(", ")
-                      val extra = if (props.size > keys.size) ", ..." else ""
-                      s"{ $inner$extra }"
-                    }
-                  case Some(t) => t
-                  case None =>
-                    val variants = obj.value.get("oneOf").orElse(obj.value.get("anyOf"))
-                      .flatMap(_.asOpt[Seq[JsValue]]).getOrElse(Seq.empty)
-                    if (variants.nonEmpty) variants.take(maxUnionVariants).map(v => summarizeSchema(v, root, depth + 1, seenRefs)).mkString(" | ")
-                    else "unknown"
-                }
-            }
+  private def buildFlatSchemas(doc: JsObject): Map[String, JsValue] = {
+    val schemasObj = doc.select("components").select("schemas").asOpt[JsObject]
+    schemasObj match {
+      case None => Map.empty
+      case Some(obj) =>
+        val builder = scala.collection.mutable.Map.empty[String, JsValue]
+        // First pass: register every root schema (unwrap when wrapped). Root entries always win over referencedSchemas duplicates.
+        obj.value.foreach { case (name, entry) =>
+          entry.asOpt[JsObject] match {
+            case Some(eobj) if eobj.value.contains("schema") && eobj.value.contains("referencedSchemas") =>
+              eobj.value.get("schema").foreach(s => builder(name) = s)
+            case _ => builder(name) = entry
+          }
         }
-      case other => other.toString
+        // Second pass: hoist referencedSchemas into the global namespace, never overwriting a root entry.
+        obj.value.foreach { case (_, entry) =>
+          entry.asOpt[JsObject].foreach { eobj =>
+            eobj.select("referencedSchemas").asOpt[JsObject].foreach { rs =>
+              rs.value.foreach { case (subName, subVal) =>
+                if (!builder.contains(subName)) builder(subName) = subVal
+              }
+            }
+          }
+        }
+        builder.toMap
     }
   }
 
