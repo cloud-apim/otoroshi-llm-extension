@@ -118,14 +118,16 @@ class ExecuteTool extends AssistantTool {
             body = body,
             headers = headers,
           )
-          AdminClient.request(creds, method, url, opts).map {
-            case Left(err) => Json.obj("error" -> err)
-            case Right(resp) => Json.obj(
-              "status" -> resp.status,
-              "headers" -> JsObject(resp.headers.map { case (k, v) => k -> JsString(v) }),
-              "body" -> resp.data,
-            )
-          }
+          println(s"LLM tools exec: ${method} ${url} ${opts.json.prettify}")
+          Json.obj("status" -> 529, "headers" -> Json.obj(), "body" -> Json.obj()).vfuture
+          // AdminClient.request(creds, method, url, opts).map {
+          //   case Left(err) => Json.obj("error" -> err)
+          //   case Right(resp) => Json.obj(
+          //     "status" -> resp.status,
+          //     "headers" -> JsObject(resp.headers.map { case (k, v) => k -> JsString(v) }),
+          //     "body" -> resp.data,
+          //   )
+          // }
         }
     }
   }
