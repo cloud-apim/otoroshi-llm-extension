@@ -28,6 +28,8 @@ object DocResource {
       "Deep dive on specific otoroshi topics and how things works"),
     StartingPoint("tutorials", "Tutorials", "https://www.otoroshi.io/docs/tutorials",
       "Learn how to do things on specific topics"),
+    StartingPoint("features", "Otoroshi Features", "https://www.otoroshi.io/docs/features", "List all the features of otoroshi"),
+    StartingPoint("faq", "Otoroshi FAQ", "https://www.otoroshi.io/docs/faq", "List all the question new users might want to know about otoroshi"),
     StartingPoint("plugins", "Plugins & extensions", "https://www.otoroshi.io/docs/plugins/index.html",
       "Built-in plugins and how to write your own."),
     StartingPoint("llm-extension", "Otoroshi LLM Extension", "https://cloud-apim.github.io/otoroshi-llm-extension/docs/overview",
