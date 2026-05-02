@@ -9,22 +9,22 @@ import scala.concurrent.duration._
 
 object Catalog {
 
-  val MaxRefDepth: Int = 20
-  val MaxSchemaRenderDepth: Int = 3
-  val SchemaRefResolveDepthCutoff: Int = 2
-  val MaxEnumPreview: Int = 5
-  val MaxObjectProperties: Int = 8
-  val MaxUnionVariants: Int = 3
+  val maxRefDepth: Int = 20
+  val maxSchemaRenderDepth: Int = 3
+  val schemaRefResolveDepthCutoff: Int = 2
+  val maxEnumPreview: Int = 5
+  val maxObjectProperties: Int = 8
+  val maxUnionVariants: Int = 3
 
-  val DefaultSearchLimit: Int = 30
-  private val ScoreOperationId: Int = 5
-  private val ScorePath: Int = 3
-  private val ScoreTag: Int = 2
-  private val ScoreSummary: Int = 1
+  val defaultSearchLimit: Int = 30
+  private val scoreOperationId: Int = 5
+  private val scorePath: Int = 3
+  private val scoreTag: Int = 2
+  private val scoreSummary: Int = 1
 
-  private val HttpMethods: Set[String] = Set("get", "post", "put", "patch", "delete", "options", "head")
+  private val httpMethods: Set[String] = Set("get", "post", "put", "patch", "delete", "options", "head")
 
-  private val SynonymGroups: Seq[Seq[String]] = Seq(
+  private val synonymGroups: Seq[Seq[String]] = Seq(
     Seq("list", "findall", "getall", "all"),
     Seq("get", "find", "read", "fetch", "retrieve", "findbyid"),
     Seq("create", "add", "new", "make"),
@@ -37,8 +37,8 @@ object Catalog {
     Seq("auth", "authentication", "authmodule"),
   )
 
-  private val Synonyms: Map[String, Seq[String]] =
-    SynonymGroups.flatMap(g => g.map(t => t -> g)).toMap
+  private val synonyms: Map[String, Seq[String]] =
+    synonymGroups.flatMap(g => g.map(t => t -> g)).toMap
 
   case class Parameter(name: String, in: String, required: Boolean, description: Option[String], schema: Option[JsValue])
   case class RequestBody(required: Boolean, schema: Option[JsValue])
@@ -62,7 +62,7 @@ object Catalog {
     private lazy val haystacks: Map[String, String] =
       operations.map(o => o.operationId -> normalize(haystackOf(o))).toMap
 
-    def search(query: String, limit: Int = DefaultSearchLimit): (Seq[Operation], Int) = {
+    def search(query: String, limit: Int = defaultSearchLimit): (Seq[Operation], Int) = {
       val rawTerms = query.split("""\s+""").filter(_.nonEmpty).toSeq
       if (rawTerms.isEmpty) return (Seq.empty, 0)
       val expandedGroups = rawTerms.map(expandTerm).filter(_.nonEmpty)
@@ -81,10 +81,10 @@ object Catalog {
           val score = expandedGroups.foldLeft(0) { (acc, group) =>
             acc + group.foldLeft(0) { (s, term) =>
               s +
-                (if (nOpId.contains(term)) ScoreOperationId else 0) +
-                (if (nPath.contains(term)) ScorePath else 0) +
-                (if (nTags.exists(_.contains(term))) ScoreTag else 0) +
-                (if (nSummary.contains(term)) ScoreSummary else 0)
+                (if (nOpId.contains(term)) scoreOperationId else 0) +
+                (if (nPath.contains(term)) scorePath else 0) +
+                (if (nTags.exists(_.contains(term))) scoreTag else 0) +
+                (if (nSummary.contains(term)) scoreSummary else 0)
             }
           }
           Some((op, score))
@@ -125,7 +125,7 @@ object Catalog {
   private def expandTerm(t: String): Seq[String] = {
     val n = normalize(t)
     if (n.isEmpty) Seq.empty
-    else Synonyms.getOrElse(n, Seq(n))
+    else synonyms.getOrElse(n, Seq(n))
   }
 
   private def haystackOf(op: Operation): String = {
@@ -210,7 +210,7 @@ object Catalog {
       pathItem.asOpt[JsObject].toSeq.flatMap { item =>
         item.value.toSeq.flatMap { case (method, opVal) =>
           val m = method.toLowerCase
-          if (HttpMethods.contains(m)) opVal.asOpt[JsObject].map(parseOperation(m, pathStr, _, seenIds))
+          if (httpMethods.contains(m)) opVal.asOpt[JsObject].map(parseOperation(m, pathStr, _, seenIds))
           else None
         }
       }
@@ -231,7 +231,7 @@ object Catalog {
 
   def resolveRef(root: JsValue, ref: String, visited: Set[String] = Set.empty): Option[JsValue] = {
     if (visited.contains(ref)) return Some(Json.obj("$ref" -> ref, "_note" -> "circular reference"))
-    if (visited.size > MaxRefDepth) return Some(Json.obj("$ref" -> ref, "_note" -> "max depth reached"))
+    if (visited.size > maxRefDepth) return Some(Json.obj("$ref" -> ref, "_note" -> "max depth reached"))
     if (!ref.startsWith("#/")) return None
     val parts = ref.stripPrefix("#/").split("/").toSeq.map(_.replace("~1", "/").replace("~0", "~"))
     val node = parts.foldLeft(Option(root)) { (acc, part) =>
@@ -246,19 +246,19 @@ object Catalog {
   }
 
   def summarizeSchema(schema: JsValue, root: JsValue, depth: Int = 0, seenRefs: Set[String] = Set.empty): String = {
-    if (depth > MaxSchemaRenderDepth) return "unknown"
+    if (depth > maxSchemaRenderDepth) return "unknown"
     schema match {
       case JsNull => "unknown"
       case obj: JsObject =>
         obj.value.get("$ref").flatMap(_.asOpt[String]) match {
           case Some(ref) =>
             val name = ref.split("/").lastOption.getOrElse("ref")
-            if (depth >= SchemaRefResolveDepthCutoff || seenRefs.contains(ref)) name
+            if (depth >= schemaRefResolveDepthCutoff || seenRefs.contains(ref)) name
             else resolveRef(root, ref).map(r => summarizeSchema(r, root, depth + 1, seenRefs + ref)).getOrElse(name)
           case None =>
             obj.value.get("enum").flatMap(_.asOpt[Seq[JsValue]]) match {
               case Some(values) =>
-                val rendered = values.take(MaxEnumPreview).map(v => v.asOpt[String].getOrElse(v.toString)).mkString("|")
+                val rendered = values.take(maxEnumPreview).map(v => v.asOpt[String].getOrElse(v.toString)).mkString("|")
                 s"enum($rendered)"
               case None =>
                 obj.select("type").asOpt[String] match {
@@ -269,7 +269,7 @@ object Catalog {
                     val props = obj.select("properties").asOpt[JsObject].map(_.value).getOrElse(Map.empty)
                     if (props.isEmpty) "object"
                     else {
-                      val keys = props.keys.take(MaxObjectProperties).toSeq
+                      val keys = props.keys.take(maxObjectProperties).toSeq
                       val inner = keys.map(k => s"$k: ${summarizeSchema(props(k), root, depth + 1, seenRefs)}").mkString(", ")
                       val extra = if (props.size > keys.size) ", ..." else ""
                       s"{ $inner$extra }"
@@ -278,7 +278,7 @@ object Catalog {
                   case None =>
                     val variants = obj.value.get("oneOf").orElse(obj.value.get("anyOf"))
                       .flatMap(_.asOpt[Seq[JsValue]]).getOrElse(Seq.empty)
-                    if (variants.nonEmpty) variants.take(MaxUnionVariants).map(v => summarizeSchema(v, root, depth + 1, seenRefs)).mkString(" | ")
+                    if (variants.nonEmpty) variants.take(maxUnionVariants).map(v => summarizeSchema(v, root, depth + 1, seenRefs)).mkString(" | ")
                     else "unknown"
                 }
             }
@@ -287,13 +287,13 @@ object Catalog {
     }
   }
 
-  private val Ttl: Long = 10.minutes.toMillis
+  private val ttl: Long = 10.minutes.toMillis
   @volatile private var cache: Option[(Long, Document)] = None
 
   def cached(env: Env): Document = {
     val now = System.currentTimeMillis()
     cache match {
-      case Some((t, doc)) if now - t < Ttl => doc
+      case Some((t, doc)) if now - t < ttl => doc
       case _ =>
         val raw = OpenApi.generate(env, None, None)
         val parsed = Json.parse(raw).asObject
