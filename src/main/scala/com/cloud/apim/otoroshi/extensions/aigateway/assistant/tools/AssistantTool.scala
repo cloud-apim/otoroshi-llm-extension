@@ -26,9 +26,9 @@ trait AssistantTool {
 }
 
 object AssistantTool {
-  val DefaultMaxOutput: Int = 24576
+  val defaultMaxOutput: Int = 24576
 
-  def truncate(text: String, max: Int = DefaultMaxOutput): String =
+  def truncate(text: String, max: Int = defaultMaxOutput): String =
     if (text.length <= max) text
     else s"${text.substring(0, max)}\n\n... (truncated, ${text.length} total chars, limit $max)"
 }
