@@ -11,7 +11,8 @@ class SearchTool extends AssistantTool {
   override def definition: ToolDefinition = ToolDefinition(
     name = "search",
     description =
-      """Search Otoroshi Admin API operations loaded from the running instance's OpenAPI (core + installed extensions). Returns matching operations with HTTP signature, parameters, request body, and response shape.
+      """Search Otoroshi Admin API operations loaded from the running instance's OpenAPI (core + installed extensions).
+        |Returns matching operations with HTTP signature, parameters, request body, and response shape.
         |
         |Use this when you need to *call* an Otoroshi endpoint. For *conceptual* questions (how does X work?), use the 'doc' tool instead.
         |
@@ -45,7 +46,7 @@ class SearchTool extends AssistantTool {
       val header = s"""Found $totalMatches operation(s) for "$query"$cappedNote:\n\n"""
       AssistantTool.truncate(header + formatted)
     }
-    println(s"call tool 'search' response: ${response}")
+    println(s"call tool 'search' response: ${response}\n\n----------------------------------\n\n")
     Future.successful(response)
   }
 
