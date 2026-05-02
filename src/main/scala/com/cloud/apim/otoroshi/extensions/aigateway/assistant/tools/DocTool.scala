@@ -39,10 +39,14 @@ class DocTool extends AssistantTool {
 
     println(s"call tool 'doc': ${url} - ${topic}")
 
-    if (topic.isDefined && url.isDefined) Future.successful("Error: provide either 'topic' or 'url', not both.")
+    val resultF = if (topic.isDefined && url.isDefined) Future.successful("Error: provide either 'topic' or 'url', not both.")
     else url match {
       case Some(u) => fetchUrl(u)(ec, ctx.env)
       case None => Future.successful(renderStartingPoints(topic))
+    }
+    resultF.map { response =>
+      println(s"call tool 'doc' response: ${response}")
+      response
     }
   }
 
