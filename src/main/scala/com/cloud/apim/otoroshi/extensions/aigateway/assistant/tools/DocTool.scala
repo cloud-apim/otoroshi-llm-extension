@@ -8,7 +8,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 class DocTool extends AssistantTool {
 
-  private val allowlistLabel: String = DocResource.Allowlist.toSeq.sorted.mkString(", ")
+  private val allowlistLabel: String = DocResource.allowlist.toSeq.sorted.mkString(", ")
 
   override def definition: ToolDefinition = ToolDefinition(
     name = "doc",
@@ -47,7 +47,7 @@ class DocTool extends AssistantTool {
   private def renderStartingPoints(topic: Option[String]): String = {
     val matches = DocResource.listStartingPoints(topic)
     if (matches.isEmpty) {
-      val knownTopics = DocResource.StartingPoints.map(_.topic).mkString(", ")
+      val knownTopics = DocResource.startingPoints.map(_.topic).mkString(", ")
       s"""No starting points match "${topic.getOrElse("")}". Known topics: $knownTopics"""
     } else {
       val body = matches.map(sp => s"- [${sp.topic}] ${sp.title}\n  ${sp.url}\n  ${sp.description}").mkString("\n\n")
