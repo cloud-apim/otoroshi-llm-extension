@@ -11,11 +11,11 @@ object DocResource {
 
   case class StartingPoint(topic: String, title: String, url: String, description: String)
 
-  val Allowlist: Set[String] = Set("www.otoroshi.io", "cloud-apim.github.io", "maif.github.io")
-  val FetchTimeout: FiniteDuration = 10.seconds
-  val MaxHtmlBytes: Int = 1000000
+  val allowlist: Set[String] = Set("www.otoroshi.io", "cloud-apim.github.io", "maif.github.io")
+  val fetchTimeout: FiniteDuration = 10.seconds
+  val maxHtmlBytes: Int = 1000000
 
-  val StartingPoints: Seq[StartingPoint] = Seq(
+  val startingPoints: Seq[StartingPoint] = Seq(
     StartingPoint("overview", "Otoroshi documentation", "https://www.otoroshi.io/docs/index.html",
       "Entry point to the Otoroshi documentation (concepts, architecture, tutorials)."),
     StartingPoint("entities", "Otoroshi entities", "https://www.otoroshi.io/docs/entities/index.html",
@@ -34,8 +34,8 @@ object DocResource {
 
   def listStartingPoints(topic: Option[String]): Seq[StartingPoint] = {
     topic.map(_.toLowerCase) match {
-      case None | Some("") => StartingPoints
-      case Some(t) => StartingPoints.filter(sp => s"${sp.topic} ${sp.title} ${sp.description}".toLowerCase.contains(t))
+      case None | Some("") => startingPoints
+      case Some(t) => startingPoints.filter(sp => s"${sp.topic} ${sp.title} ${sp.description}".toLowerCase.contains(t))
     }
   }
 
@@ -55,19 +55,19 @@ object DocResource {
         if (uri.getScheme != "https") Future.successful(FetchResult.InvalidUrl(s"Only https:// URLs are allowed (got ${uri.getScheme})"))
         else {
           val host = Option(uri.getHost).map(_.toLowerCase).getOrElse("")
-          if (!Allowlist.contains(host)) Future.successful(FetchResult.NotAllowed(host))
+          if (!allowlist.contains(host)) Future.successful(FetchResult.NotAllowed(host))
           else {
             env.Ws.url(url)
               .withHttpHeaders("Accept" -> "text/markdown, text/html;q=0.9, */*;q=0.1")
               .withFollowRedirects(false)
-              .withRequestTimeout(FetchTimeout)
+              .withRequestTimeout(fetchTimeout)
               .get()
               .map { resp =>
                 if (resp.status >= 300 && resp.status < 400) FetchResult.Failed(s"Unexpected redirect (HTTP ${resp.status}) fetching $url")
                 else if (resp.status < 200 || resp.status >= 400) FetchResult.Failed(s"HTTP ${resp.status} fetching $url")
                 else {
                   val raw = resp.body
-                  val capped = if (raw.length > MaxHtmlBytes) raw.substring(0, MaxHtmlBytes) else raw
+                  val capped = if (raw.length > maxHtmlBytes) raw.substring(0, maxHtmlBytes) else raw
                   val ct = resp.contentType
                   FetchResult.Ok(if (ct.contains("text/html")) htmlToText(capped) else capped)
                 }
