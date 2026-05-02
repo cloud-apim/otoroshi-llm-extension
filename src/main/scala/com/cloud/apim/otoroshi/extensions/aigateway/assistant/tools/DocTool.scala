@@ -45,7 +45,7 @@ class DocTool extends AssistantTool {
       case None => Future.successful(renderStartingPoints(topic))
     }
     resultF.map { response =>
-      println(s"call tool 'doc' response: ${response}")
+      println(s"call tool 'doc' response: ${response}\n\n----------------------------------\n\n")
       response
     }
   }
