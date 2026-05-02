@@ -70,6 +70,8 @@ class ExecuteTool extends AssistantTool {
     val requests = arguments.select("requests").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
     if (requests.isEmpty) return Future.successful("Error: missing or empty 'requests' array.")
 
+    println(s"call tool 'execute': ${JsArray(requests).prettify}")
+
     AdminCredentials.fetch(ctx.env, ctx.ext, ctx.user) match {
       case None =>
         Future.successful("Error: admin API credentials are not configured for the assistant. The 'execute' tool is unavailable until they are wired up. Use 'search' for discovery and answer with concrete payload examples instead.")
