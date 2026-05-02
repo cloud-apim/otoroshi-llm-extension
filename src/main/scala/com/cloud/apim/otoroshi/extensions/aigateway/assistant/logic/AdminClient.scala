@@ -17,10 +17,20 @@ case class AdminCredentials(baseUrl: String, clientId: String, clientSecret: Str
 }
 
 object AdminCredentials {
-  // TODO: fill in to wire actual admin api credentials for the assistant.
-  // Should return Some(AdminCredentials(baseUrl, clientId, clientSecret)) when configured,
-  // None to disable admin-API-backed tools (search/execute will report a clear error).
-  def fetch(env: Env, ext: AiExtension, user: Option[BackOfficeUser]): Option[AdminCredentials] = None
+
+  val MetadataKey: String = "otoroshi_assistant_admin_apikey_id"
+
+  def fetch(env: Env, ext: AiExtension, user: Option[BackOfficeUser]): Option[AdminCredentials] = {
+    for {
+      provider <- ext.states.allProviders().find(_.isOtoroshiAssistant)
+      apikeyId <- provider.metadata.get(MetadataKey).map(_.trim).filter(_.nonEmpty)
+      apikey <- env.proxyState.apikey(apikeyId)
+    } yield AdminCredentials(
+      baseUrl = s"${env.exposedRootScheme}://${env.adminApiExposedHost}${env.bestExposedPort}",
+      clientId = apikey.clientId,
+      clientSecret = apikey.clientSecret,
+    )
+  }
 }
 
 case class AdminResponse(status: Int, ok: Boolean, headers: Map[String, String], data: JsValue)
@@ -36,7 +46,14 @@ object AdminClient {
     query: Map[String, String] = Map.empty,
     body: Option[JsValue] = None,
     headers: Map[String, String] = Map.empty,
-  )
+  ) {
+    def json: JsValue = Json.obj(
+      "pathParams" -> pathParams,
+      "queryParams" -> query,
+      "body" -> body,
+      "headers" -> headers,
+    )
+  }
 
   private def filterHeaders(h: Map[String, String]): Map[String, String] =
     h.filterNot { case (k, _) => ForbiddenRequestHeaders.contains(k.toLowerCase) }
