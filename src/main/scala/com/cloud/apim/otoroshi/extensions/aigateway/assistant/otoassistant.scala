@@ -2,7 +2,8 @@ package com.cloud.apim.otoroshi.extensions.aigateway.assistant
 
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatPrompt, InputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools.{AssistantTool, ToolCallContext, ToolRegistry}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, InputChatMessage}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
 import otoroshi.models.{ApiKey, BackOfficeUser}
@@ -13,7 +14,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.mvc._
 
-import scala.concurrent.Future
+import scala.concurrent.{ExecutionContext, Future}
 
 object OtoroshiAssistant {
   private val basePrompt: String =
@@ -77,6 +78,8 @@ object OtoroshiAssistant {
 
 class OtoroshiAssistant(env: Env, ext: AiExtension) {
 
+  private val MaxToolCallIterations: Int = 8
+
   def assistantProvider: Option[AiProvider] = ext.states.allProviders().find(_.isOtoroshiAssistant)
 
   def isEnabled: Boolean = assistantProvider.isDefined
@@ -93,7 +96,7 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
           provider.getChatClient() match {
             case None => Results.InternalServerError(Json.obj("error" -> "Unable to create llm client")).vfuture
             case Some(client) => {
-              val bodyJson = bodyRaw.parseJson
+              val bodyJson = bodyRaw.parseJson.asObject
               val incoming = bodyJson.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj => InputChatMessage.fromJson(obj) }
               val currentUrl = req.headers.get("X-Otoroshi-Assistant-Current-Url")
               val now = java.time.ZonedDateTime.now()
@@ -102,8 +105,16 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
                 "content" -> OtoroshiAssistant.systemPrompt(user, currentUrl, now),
               ))
               val withoutClientSystem = incoming.filterNot(_.role == "system")
-              val messages = systemMessage +: withoutClientSystem
-              client.call(ChatPrompt(messages), TypedMap.empty, bodyJson).map {
+              val initialMessages = systemMessage +: withoutClientSystem
+
+              val registry = ToolRegistry.default
+              val toolCtx = ToolCallContext(env, ext, user)
+              val baseBody = (bodyJson - "messages") ++ Json.obj(
+                "tools" -> registry.openaiJson,
+                "tool_choice" -> JsString("auto"),
+              )
+
+              chatLoop(client, initialMessages, baseBody, registry, toolCtx, 0).map {
                 case Left(err) => Results.InternalServerError(Json.obj("error" -> err))
                 case Right(resp) => Results.Ok(resp.openaiJson("model", env))
               }
@@ -113,6 +124,63 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
       }
     } else {
       Results.InternalServerError(Json.obj("error" -> "Access is disabled")).vfuture
+    }
+  }
+
+  private def chatLoop(
+    client: ChatClient,
+    messages: Seq[InputChatMessage],
+    baseBody: JsObject,
+    registry: ToolRegistry,
+    toolCtx: ToolCallContext,
+    iteration: Int,
+  )(implicit ec: ExecutionContext): Future[Either[JsValue, ChatResponse]] = {
+    implicit val ev: Env = env
+    if (iteration >= MaxToolCallIterations) {
+      Left[JsValue, ChatResponse](JsString(s"Max tool-call iterations reached ($MaxToolCallIterations).")).vfuture
+    } else {
+      client.call(ChatPrompt(messages, None), TypedMap.empty, baseBody).flatMap {
+        case Left(err) => Left[JsValue, ChatResponse](err).vfuture
+        case Right(resp) =>
+          val gen = resp.headGeneration
+          val toolCalls = gen.message.tool_calls.getOrElse(Seq.empty)
+          if (!gen.message.has_tool_calls || toolCalls.isEmpty) Right[JsValue, ChatResponse](resp).vfuture
+          else {
+            val assistantMsg = InputChatMessage.fromJson(Json.obj(
+              "role" -> "assistant",
+              "content" -> JsString(gen.message.content),
+              "tool_calls" -> JsArray(toolCalls),
+            ))
+            val toolResultsF = Future.sequence(toolCalls.map(tc => runToolCall(tc, registry, toolCtx)))
+            toolResultsF.flatMap { results =>
+              val newMessages = (messages :+ assistantMsg) ++ results
+              chatLoop(client, newMessages, baseBody, registry, toolCtx, iteration + 1)
+            }
+          }
+      }
+    }
+  }
+
+  private def runToolCall(tc: JsObject, registry: ToolRegistry, toolCtx: ToolCallContext)(implicit ec: ExecutionContext): Future[InputChatMessage] = {
+    val callId = tc.select("id").asOpt[String].getOrElse(java.util.UUID.randomUUID().toString)
+    val fn = tc.select("function").asOpt[JsObject].getOrElse(Json.obj())
+    val name = fn.select("name").asOpt[String].getOrElse("")
+    val argsRaw = fn.select("arguments").asValue match {
+      case JsString(s) => s
+      case obj: JsObject => obj.stringify
+      case other => other.toString
+    }
+    val argsJson: JsValue = scala.util.Try(Json.parse(argsRaw)).getOrElse(Json.obj())
+    val resultF: Future[String] = registry.find(name) match {
+      case None => Future.successful(s"Error: unknown tool '$name'.")
+      case Some(tool) => tool.call(argsJson, toolCtx).recover { case t: Throwable => s"Error: ${t.getMessage}" }
+    }
+    resultF.map { content =>
+      InputChatMessage.fromJson(Json.obj(
+        "role" -> "tool",
+        "tool_call_id" -> callId,
+        "content" -> AssistantTool.truncate(content),
+      ))
     }
   }
 }
