@@ -32,7 +32,7 @@ class SearchTool extends AssistantTool {
     val query = arguments.select("query").asOpt[String].map(_.trim).getOrElse("")
     if (query.isEmpty) return Future.successful("Error: missing 'query' argument.")
     val catalog = Catalog.cached(ctx.env)
-    val (results, totalMatches) = catalog.search(query, Catalog.DefaultSearchLimit)
+    val (results, totalMatches) = catalog.search(query, Catalog.defaultSearchLimit)
     if (results.isEmpty) {
       val sampleTags = catalog.tags.take(10).mkString(", ")
       val more = if (catalog.tags.size > 10) ", ..." else ""
