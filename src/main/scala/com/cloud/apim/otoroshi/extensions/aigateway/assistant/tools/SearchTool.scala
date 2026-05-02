@@ -31,6 +31,7 @@ class SearchTool extends AssistantTool {
   override def call(arguments: JsValue, ctx: ToolCallContext)(implicit ec: ExecutionContext): Future[String] = {
     val query = arguments.select("query").asOpt[String].map(_.trim).getOrElse("")
     if (query.isEmpty) return Future.successful("Error: missing 'query' argument.")
+    println(s"call tool 'search': ${query}")
     val catalog = Catalog.cached(ctx.env)
     val (results, totalMatches) = catalog.search(query, Catalog.defaultSearchLimit)
     if (results.isEmpty) {
