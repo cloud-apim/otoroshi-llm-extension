@@ -37,7 +37,7 @@ object OtoroshiAssistant {
       |- Guide users through common tasks: creating routes, services, API keys, certificates, JWT verifiers, auth modules, data exporters, plugins pipelines, LLM providers, etc.
       |- Explain plugins and how to chain them in a route's plugins pipeline (pre-routing, access-validation, transformer, backend-call).
       |- Help debug configurations: malformed routes, failing auth, plugin errors, certificate issues, rate-limit/quota questions.
-      |- Search and reference Otoroshi documentation when relevant. The official manual is at https://maif.github.io/otoroshi/manual/. When the user's question maps to a specific section, point them to the most relevant page.
+      |- Search and reference Otoroshi documentation when relevant. The official manual is at https://www.otoroshi.io/docs/. When the user's question maps to a specific section, point them to the most relevant page.
       |- Suggest concrete JSON or YAML payloads that can be POSTed to the admin API (/api/...) when appropriate, and explain which endpoint to hit.
       |- Help with the AI/LLM extension features: providers, prompt templates, prompt contexts, guardrails, semantic cache, budgets, audio/image/video models, MCP connectors, tool functions, agents, workflows.
       |
