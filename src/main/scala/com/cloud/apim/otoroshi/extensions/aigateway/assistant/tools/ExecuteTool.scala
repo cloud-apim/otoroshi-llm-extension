@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools
 
-import com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic.{AdminClient, AdminCredentials}
+import com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic.{AdminClient, AdminCredentials, ExpressionLanguage}
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
 
@@ -20,7 +20,15 @@ class ExecuteTool extends AssistantTool {
         |- `body` (optional): JSON body for write methods.
         |- `name` (optional): label used as the key in the response. Defaults to `request_{idx}` (0-indexed).
         |
-        |Returns a JSON object keyed by request name, each value `{ status, headers, body }`. If a request fails before reaching the server (refused URL, network error), its entry is `{ error: "..." }`. Non-2xx responses are still returned (they are not failures), so the model can inspect them.
+        |Returns a JSON object keyed by request name, each value `{ status, headers, body }`. If a request fails before reaching the server (refused URL, network error, unresolved reference), its entry is `{ error: "..." }`. Non-2xx responses are still returned (they are not failures), so the model can inspect them.
+        |
+        |### Inter-request references (expression language)
+        |Inside any string field of a later request (`url`, header values, any string in `body`), use `${<name>.<path>}` to inject a value extracted from a previous request's result. The referenced request must have already executed (the engine runs in order).
+        |- `<name>` is the previous request's `name` (or `request_<idx>`).
+        |- `<path>` walks into the result object, which has shape `{ status, headers, body }`. Use dotted keys and `[idx]` for array indices.
+        |- Examples: `${list.body[0].id}`, `${create.status}`, `${list.headers.x-ratelimit-remaining}`.
+        |- A whole-string placeholder preserves the value's type (a number stays a number); a partial placeholder (e.g. `"/routes/${create.body.id}"`) splices a stringified form.
+        |- An unresolved reference fails the request with `{ error: "${...}: ..." }` and execution continues with the next entry.
         |
         |Use the `search` tool first to discover endpoints (operationIds + paths + body schemas).
         |
@@ -58,8 +66,6 @@ class ExecuteTool extends AssistantTool {
     ),
   )
 
-  // TODO: expression language for inter-request references (e.g. `${request_0.body.id}` resolved before sending the next request).
-
   override def call(arguments: JsValue, ctx: ToolCallContext)(implicit ec: ExecutionContext): Future[String] = {
     val requests = arguments.select("requests").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
     if (requests.isEmpty) return Future.successful("Error: missing or empty 'requests' array.")
@@ -83,37 +89,44 @@ class ExecuteTool extends AssistantTool {
   )(implicit ec: ExecutionContext, env: otoroshi.env.Env): Future[Vector[(String, JsValue)]] = {
     if (idx >= requests.size) Future.successful(acc)
     else {
-      val req = requests(idx)
-      val name = req.select("name").asOpt[String].map(_.trim).filter(_.nonEmpty).getOrElse(s"request_$idx")
-      runSingle(creds, req)
+      val rawReq = requests(idx)
+      val name = rawReq.select("name").asOpt[String].map(_.trim).filter(_.nonEmpty).getOrElse(s"request_$idx")
+      runSingle(creds, rawReq, acc.toMap)
         .recover { case t: Throwable => Json.obj("error" -> s"unexpected error: ${t.getMessage}") }
         .flatMap(entry => runSequentially(creds, requests, idx + 1, acc :+ (name -> entry)))
     }
   }
 
-  private def runSingle(creds: AdminCredentials, req: JsObject)(implicit ec: ExecutionContext, env: otoroshi.env.Env): Future[JsValue] = {
-    val method = req.select("method").asOpt[String].map(_.trim).filter(_.nonEmpty).getOrElse("GET")
-    val url = req.select("url").asOpt[String].map(_.trim).getOrElse("")
-    if (url.isEmpty) return Future.successful(Json.obj("error" -> "missing 'url'"))
-    val headers = req.select("headers").asOpt[JsObject].map(_.value.toMap.flatMap {
-      case (k, JsString(v)) => Some(k -> v)
-      case (k, v) if v != JsNull => Some(k -> v.toString)
-      case _ => None
-    }).getOrElse(Map.empty)
-    val body = req.value.get("body").filter(_ != JsNull)
-    val opts = AdminClient.CallOptions(
-      pathParams = Map.empty,
-      query = Map.empty,
-      body = body,
-      headers = headers,
-    )
-    AdminClient.request(creds, method, url, opts).map {
-      case Left(err) => Json.obj("error" -> err)
-      case Right(resp) => Json.obj(
-        "status" -> resp.status,
-        "headers" -> JsObject(resp.headers.map { case (k, v) => k -> JsString(v) }),
-        "body" -> resp.data,
-      )
+  private def runSingle(creds: AdminCredentials, rawReq: JsObject, refCtx: Map[String, JsValue])(implicit ec: ExecutionContext, env: otoroshi.env.Env): Future[JsValue] = {
+    ExpressionLanguage.expandValue(rawReq, refCtx) match {
+      case Left(err) => Future.successful(Json.obj("error" -> s"unresolved expression: $err"))
+      case Right(expanded) =>
+        val req = expanded.asOpt[JsObject].getOrElse(Json.obj())
+        val method = req.select("method").asOpt[String].map(_.trim).filter(_.nonEmpty).getOrElse("GET")
+        val url = req.select("url").asOpt[String].map(_.trim).getOrElse("")
+        if (url.isEmpty) Future.successful(Json.obj("error" -> "missing 'url'"))
+        else {
+          val headers = req.select("headers").asOpt[JsObject].map(_.value.toMap.flatMap {
+            case (k, JsString(v)) => Some(k -> v)
+            case (k, v) if v != JsNull => Some(k -> v.toString)
+            case _ => None
+          }).getOrElse(Map.empty)
+          val body = req.value.get("body").filter(_ != JsNull)
+          val opts = AdminClient.CallOptions(
+            pathParams = Map.empty,
+            query = Map.empty,
+            body = body,
+            headers = headers,
+          )
+          AdminClient.request(creds, method, url, opts).map {
+            case Left(err) => Json.obj("error" -> err)
+            case Right(resp) => Json.obj(
+              "status" -> resp.status,
+              "headers" -> JsObject(resp.headers.map { case (k, v) => k -> JsString(v) }),
+              "body" -> resp.data,
+            )
+          }
+        }
     }
   }
 
