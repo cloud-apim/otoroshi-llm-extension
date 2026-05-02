@@ -34,17 +34,19 @@ class SearchTool extends AssistantTool {
     println(s"call tool 'search': ${query}")
     val catalog = Catalog.cached(ctx.env)
     val (results, totalMatches) = catalog.search(query, Catalog.defaultSearchLimit)
-    if (results.isEmpty) {
+    val response = if (results.isEmpty) {
       val sampleTags = catalog.tags.take(10).mkString(", ")
       val more = if (catalog.tags.size > 10) ", ..." else ""
-      Future.successful(s"""No operations found for "$query". Try a simpler term, a tag name, or the 'doc' tool for conceptual help. Available tags (sample): $sampleTags$more""")
+      s"""No operations found for "$query". Try a simpler term, a tag name, or the 'doc' tool for conceptual help. Available tags (sample): $sampleTags$more"""
     } else {
       val formatted = results.map(op => formatDetails(catalog, op.operationId)).mkString("\n\n---\n\n")
       val capped = totalMatches > results.size
       val cappedNote = if (capped) s" (showing top ${results.size}, refine query for the rest)" else ""
       val header = s"""Found $totalMatches operation(s) for "$query"$cappedNote:\n\n"""
-      Future.successful(AssistantTool.truncate(header + formatted))
+      AssistantTool.truncate(header + formatted)
     }
+    println(s"call tool 'search' response: ${response}")
+    Future.successful(response)
   }
 
   private def formatDetails(catalog: Catalog.Document, operationId: String): String = {
