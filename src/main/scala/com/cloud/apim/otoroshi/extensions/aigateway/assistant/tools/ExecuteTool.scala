@@ -1,8 +1,17 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools
 
+import akka.stream.scaladsl.Source
+import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic.{AdminClient, AdminCredentials, ExpressionLanguage}
+import otoroshi.env.Env
+import otoroshi.models.ApiKey
+import otoroshi.next.proxy.{BackOfficeRequest, ProxyEngine, RelayRoutingRequest}
+import otoroshi.script.RequestHandler
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
+import play.api.libs.typedmap.TypedMap
+import play.api.mvc.request.{RemoteConnection, RequestTarget}
+import play.api.mvc.{Cookies, EssentialAction, Headers, Request, Results}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -72,7 +81,7 @@ class ExecuteTool extends AssistantTool {
 
     println(s"call tool 'execute': ${JsArray(requests).prettify}")
 
-    AdminCredentials.fetch(ctx.env, ctx.ext, ctx.user) match {
+    val resultF = AdminCredentials.fetch(ctx.env, ctx.ext, ctx.user) match {
       case None =>
         Future.successful("Error: admin API credentials are not configured for the assistant. The 'execute' tool is unavailable until they are wired up. Use 'search' for discovery and answer with concrete payload examples instead.")
       case Some(creds) =>
@@ -80,6 +89,10 @@ class ExecuteTool extends AssistantTool {
         runSequentially(creds, requests, 0, Vector.empty)
           .map(entries => JsObject(entries))
           .map(json => AssistantTool.truncate(Json.prettyPrint(json)))
+    }
+    resultF.map { response =>
+      println(s"call tool 'execute' response: ${response}")
+      response
     }
   }
 
@@ -121,7 +134,23 @@ class ExecuteTool extends AssistantTool {
             headers = headers,
           )
           println(s"LLM tools exec: ${method} ${url} ${opts.json.prettify}")
-          Json.obj("status" -> 529, "headers" -> Json.obj(), "body" -> Json.obj()).vfuture
+          if (method.toLowerCase().contains("get")) {
+            val host               = env.adminApiHost
+            val apikey = env.proxyState.apikey(env.backOfficeApiKey.clientId).get
+            val request = new AssistantRequest(host, method, url, opts, apikey, env)
+            val engine = env.scriptManager.getAnyScript[RequestHandler](s"cp:${classOf[ProxyEngine].getName}").right.get
+            engine.handle(request, _ => Results.InternalServerError("bad default routing").vfuture).flatMap { resp =>
+              resp.body.dataStream.runFold(ByteString.empty)(_ ++ _)(env.otoroshiMaterializer).map { bodyRaw =>
+                Json.obj(
+                  "status" -> resp.header.status,
+                  "headers" -> JsObject(resp.header.headers.map { case (k, v) => k -> JsString(v) }),
+                  "body" -> bodyRaw.utf8String.parseJson,
+                )
+              }
+            }
+          } else {
+            Json.obj("status" -> 529, "headers" -> Json.obj(), "body" -> Json.obj()).vfuture
+          }
           // AdminClient.request(creds, method, url, opts).map {
           //   case Left(err) => Json.obj("error" -> err)
           //   case Right(resp) => Json.obj(
@@ -134,4 +163,45 @@ class ExecuteTool extends AssistantTool {
     }
   }
 
+}
+
+class AssistantRequest(_host: String, m: String, _url: String, opts: AdminClient.CallOptions, apikey: ApiKey, env: Env) extends Request[Source[ByteString, _]] {
+
+
+  val bodyBs  = opts.body.map(_.stringify.byteString)
+  val bodyBsSize  = bodyBs.map(_.length).getOrElse(0L)
+
+  override def hasBody: Boolean = opts.body.isDefined
+
+  override def attrs: TypedMap = TypedMap.empty
+
+  override def body: Source[ByteString, _] = opts.body.map(json => Source.single(json.stringify.byteString)).getOrElse(Source.empty[ByteString])
+
+  override def connection: RemoteConnection = RemoteConnection("127.0.0.1", true, None)
+
+  override def method: String = m.toUpperCase()
+
+  override def target: RequestTarget = RequestTarget(_url, path, opts.query.mapValues(v => Seq(v)))
+
+  override def version: String = "HTTP/1.1"
+
+  override def headers: Headers = if (hasBody) {
+    Headers.apply(
+      (opts.headers.toSeq ++ Seq(
+        "Host" -> _host,
+        "Accept" -> "application/json",
+        "Content-Type" -> "application/json",
+        "Content-Length" -> bodyBsSize.toString,
+        "Authorization" -> s"Bearer ${apikey.toBearer()}"
+      )): _*
+    )
+  } else {
+    Headers.apply(
+      (opts.headers.toSeq ++ Seq(
+        "Host" -> _host,
+        "Accept" -> "application/json",
+        "Authorization" -> s"Bearer ${apikey.toBearer()}"
+      )): _*
+    )
+  }
 }
