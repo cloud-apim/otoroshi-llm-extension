@@ -6,9 +6,9 @@ import scala.util.matching.Regex
 
 object ExpressionLanguage {
 
-  private val ExprRegex: Regex = """\$\{([^}]+)\}""".r
-  private val NameRegex: Regex = """^([a-zA-Z_][a-zA-Z0-9_-]*)""".r
-  private val PathToken: Regex = """([a-zA-Z_][a-zA-Z0-9_-]*)|\[(\d+)\]""".r
+  private val exprRegex: Regex = """\$\{([^}]+)\}""".r
+  private val nameRegex: Regex = """^([a-zA-Z_][a-zA-Z0-9_-]*)""".r
+  private val pathToken: Regex = """([a-zA-Z_][a-zA-Z0-9_-]*)|\[(\d+)\]""".r
 
   def expandValue(v: JsValue, ctx: Map[String, JsValue]): Either[String, JsValue] = v match {
     case JsString(s) => expandString(s, ctx)
@@ -26,13 +26,13 @@ object ExpressionLanguage {
   }
 
   def expandString(s: String, ctx: Map[String, JsValue]): Either[String, JsValue] = {
-    val matches = ExprRegex.findAllMatchIn(s).toList
+    val matches = exprRegex.findAllMatchIn(s).toList
     if (matches.isEmpty) Right(JsString(s))
     else if (matches.size == 1 && matches.head.matched == s) {
       resolve(matches.head.group(1).trim, ctx)
     } else {
       var firstError: Option[String] = None
-      val replaced = ExprRegex.replaceAllIn(s, m => {
+      val replaced = exprRegex.replaceAllIn(s, m => {
         val expr = m.group(1).trim
         resolve(expr, ctx) match {
           case Right(JsString(v)) => Regex.quoteReplacement(v)
@@ -50,7 +50,7 @@ object ExpressionLanguage {
   }
 
   def resolve(expr: String, ctx: Map[String, JsValue]): Either[String, JsValue] = {
-    NameRegex.findFirstMatchIn(expr) match {
+    nameRegex.findFirstMatchIn(expr) match {
       case None => Left(s"invalid reference '$expr'")
       case Some(m) =>
         val name = m.group(1)
@@ -65,7 +65,7 @@ object ExpressionLanguage {
   def walkPath(start: JsValue, path: String): Either[String, JsValue] = {
     if (path.isEmpty) Right(start)
     else {
-      PathToken.findAllMatchIn(path).foldLeft[Either[String, JsValue]](Right(start)) {
+      pathToken.findAllMatchIn(path).foldLeft[Either[String, JsValue]](Right(start)) {
         case (Left(err), _) => Left(err)
         case (Right(v), m) =>
           Option(m.group(1)) match {
