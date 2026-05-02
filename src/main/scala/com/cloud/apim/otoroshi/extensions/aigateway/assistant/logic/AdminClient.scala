@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic
 
 import otoroshi.env.Env
-import otoroshi.models.BackOfficeUser
+import otoroshi.models.{ApiKey, BackOfficeUser}
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
@@ -11,8 +11,9 @@ import java.util.Base64
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 
-case class AdminCredentials(baseUrl: String, clientId: String, clientSecret: String) {
-  def basicHeader: String = "Basic " + Base64.getEncoder.encodeToString(s"$clientId:$clientSecret".getBytes("UTF-8"))
+case class AdminCredentials(baseUrl: String, apikey: ApiKey) {
+  def bearer: String = apikey.toBearer()
+  def bearerHeader: String = "Bearer " + apikey.toBearer()
   def origin: String = new URI(baseUrl).resolve("/").toString.stripSuffix("/")
 }
 
@@ -23,12 +24,11 @@ object AdminCredentials {
   def fetch(env: Env, ext: AiExtension, user: Option[BackOfficeUser]): Option[AdminCredentials] = {
     for {
       provider <- ext.states.allProviders().find(_.isOtoroshiAssistant)
-      apikeyId <- provider.metadata.get(metadataKey).map(_.trim).filter(_.nonEmpty)
+      apikeyId <- provider.metadata.get(metadataKey).map(_.trim).filter(_.nonEmpty).orElse(env.backOfficeApiKey.clientId.some)
       apikey <- env.proxyState.apikey(apikeyId)
     } yield AdminCredentials(
       baseUrl = s"${env.exposedRootScheme}://${env.adminApiExposedHost}${env.bestExposedPort}",
-      clientId = apikey.clientId,
-      clientSecret = apikey.clientSecret,
+      apikey = apikey,
     )
   }
 }
@@ -85,7 +85,7 @@ object AdminClient {
     if (targetOrigin != creds.origin) return Left(s"Refusing cross-origin URL $targetOrigin (expected ${creds.origin})").vfuture
 
     val userHeaders = filterHeaders(opts.headers)
-    val baseHeaders = Map("Accept" -> "application/json") ++ userHeaders + ("Authorization" -> creds.basicHeader)
+    val baseHeaders = Map("Accept" -> "application/json") ++ userHeaders + ("Authorization" -> creds.bearerHeader)
     val httpMethod = method.toUpperCase
     val hasBody = opts.body.isDefined && httpMethod != "GET" && httpMethod != "HEAD"
     val finalHeaders = if (hasBody) baseHeaders + ("Content-Type" -> "application/json") else baseHeaders
