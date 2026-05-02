@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools
 
+import akka.http.scaladsl.model.Uri
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic.{AdminClient, AdminCredentials, ExpressionLanguage}
@@ -10,7 +11,7 @@ import otoroshi.script.RequestHandler
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
 import play.api.libs.typedmap.TypedMap
-import play.api.mvc.request.{RemoteConnection, RequestTarget}
+import play.api.mvc.request.{Cell, RemoteConnection, RequestAttrKey, RequestTarget}
 import play.api.mvc.{Cookies, EssentialAction, Headers, Request, Results}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -91,7 +92,7 @@ class ExecuteTool extends AssistantTool {
           .map(json => AssistantTool.truncate(Json.prettyPrint(json)))
     }
     resultF.map { response =>
-      println(s"call tool 'execute' response: ${response}")
+      println(s"call tool 'execute' response: ${response}\n\n----------------------------------\n\n")
       response
     }
   }
@@ -134,31 +135,21 @@ class ExecuteTool extends AssistantTool {
             headers = headers,
           )
           println(s"LLM tools exec: ${method} ${url} ${opts.json.prettify}")
-          if (method.toLowerCase().contains("get")) {
-            val host               = env.adminApiHost
-            val apikey = env.proxyState.apikey(env.backOfficeApiKey.clientId).get
-            val request = new AssistantRequest(host, method, url, opts, apikey, env)
-            val engine = env.scriptManager.getAnyScript[RequestHandler](s"cp:${classOf[ProxyEngine].getName}").right.get
-            engine.handle(request, _ => Results.InternalServerError("bad default routing").vfuture).flatMap { resp =>
-              resp.body.dataStream.runFold(ByteString.empty)(_ ++ _)(env.otoroshiMaterializer).map { bodyRaw =>
-                Json.obj(
-                  "status" -> resp.header.status,
-                  "headers" -> JsObject(resp.header.headers.map { case (k, v) => k -> JsString(v) }),
-                  "body" -> bodyRaw.utf8String.parseJson,
-                )
-              }
+          val host               = env.adminApiHost
+          val apikey = creds.apikey
+          val request = new AssistantRequest(host, method, url, opts, apikey, env)
+          val engine = env.scriptManager.getAnyScript[RequestHandler](s"cp:${classOf[ProxyEngine].getName}").right.get
+          engine.handle(request, _ => Results.InternalServerError("bad default routing").vfuture).flatMap { resp =>
+            resp.body.dataStream.runFold(ByteString.empty)(_ ++ _)(env.otoroshiMaterializer).map { bodyRaw =>
+              val ctype = resp.header.headers.getIgnoreCase("content-type").getOrElse("text/plain")
+              val body: JsValue = if (ctype.startsWith("application/json")) bodyRaw.utf8String.parseJson else bodyRaw.utf8String.json
+              Json.obj(
+                "status" -> resp.header.status,
+                "headers" -> JsObject(resp.header.headers.map { case (k, v) => k -> JsString(v) }),
+                "body" -> body,
+              )
             }
-          } else {
-            Json.obj("status" -> 529, "headers" -> Json.obj(), "body" -> Json.obj()).vfuture
           }
-          // AdminClient.request(creds, method, url, opts).map {
-          //   case Left(err) => Json.obj("error" -> err)
-          //   case Right(resp) => Json.obj(
-          //     "status" -> resp.status,
-          //     "headers" -> JsObject(resp.headers.map { case (k, v) => k -> JsString(v) }),
-          //     "body" -> resp.data,
-          //   )
-          // }
         }
     }
   }
@@ -170,10 +161,15 @@ class AssistantRequest(_host: String, m: String, _url: String, opts: AdminClient
 
   val bodyBs  = opts.body.map(_.stringify.byteString)
   val bodyBsSize  = bodyBs.map(_.length).getOrElse(0L)
+  val _cookies = Cookies(Seq.empty)
+
+  lazy val attrs           = TypedMap.apply(
+    RequestAttrKey.Id      -> 1L,
+    RequestAttrKey.Cookies -> Cell(_cookies)
+  )
+
 
   override def hasBody: Boolean = opts.body.isDefined
-
-  override def attrs: TypedMap = TypedMap.empty
 
   override def body: Source[ByteString, _] = opts.body.map(json => Source.single(json.stringify.byteString)).getOrElse(Source.empty[ByteString])
 
@@ -181,27 +177,27 @@ class AssistantRequest(_host: String, m: String, _url: String, opts: AdminClient
 
   override def method: String = m.toUpperCase()
 
-  override def target: RequestTarget = RequestTarget(_url, path, opts.query.mapValues(v => Seq(v)))
+  override def target: RequestTarget = RequestTarget(_url, Uri(_url).path.toString(), opts.query.mapValues(v => Seq(v)))
 
   override def version: String = "HTTP/1.1"
 
   override def headers: Headers = if (hasBody) {
     Headers.apply(
-      (opts.headers.toSeq ++ Seq(
+      Seq(
         "Host" -> _host,
         "Accept" -> "application/json",
         "Content-Type" -> "application/json",
         "Content-Length" -> bodyBsSize.toString,
         "Authorization" -> s"Bearer ${apikey.toBearer()}"
-      )): _*
+      ): _*
     )
   } else {
     Headers.apply(
-      (opts.headers.toSeq ++ Seq(
+      Seq(
         "Host" -> _host,
         "Accept" -> "application/json",
         "Authorization" -> s"Bearer ${apikey.toBearer()}"
-      )): _*
+      ): _*
     )
   }
 }
