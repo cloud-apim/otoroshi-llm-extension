@@ -59,7 +59,7 @@ object DocResource {
           else {
             env.Ws.url(url)
               .withHttpHeaders("Accept" -> "text/markdown, text/html;q=0.9, */*;q=0.1")
-              .withFollowRedirects(false)
+              .withFollowRedirects(true)
               .withRequestTimeout(fetchTimeout)
               .get()
               .map { resp =>
