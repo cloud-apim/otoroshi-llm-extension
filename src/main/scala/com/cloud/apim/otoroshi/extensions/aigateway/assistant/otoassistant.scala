@@ -58,15 +58,15 @@ object OtoroshiAssistant {
       |## Using otoroshi admin. API to manage resources
       |- you can use the tool `execute` to call the otoroshi admin api
       |- all otoroshi resources follow the same endpoints pattern
-      |  - GET     /apis/:group/v1/:entity_plural_name/_count    : count all resources
-      |  - GET     /apis/:group/v1/:entity_plural_name/_schema   : resource schema
-      |  - GET     /apis/:group/v1/:entity_plural_name/_template : resource template (pre filled object)
-      |  - GET     /apis/:group/v1/:entity_plural_name/:id       : read one resource by id
-      |  - POST    /apis/:group/v1/:entity_plural_name/:id       : upsert one resource
-      |  - PUT     /apis/:group/v1/:entity_plural_name/:id       : update one resource
-      |  - DELETE  /apis/:group/v1/:entity_plural_name/:id       : delete one resource
-      |  - GET     /apis/:group/v1/:entity_plural_name           : list all resources
-      |  - POST    /apis/:group/v1/:entity_plural_name           : create one resource
+      |  - GET     /apis/:group/v1/:resource_plural_name/_count    : count all resources
+      |  - GET     /apis/:group/v1/:resource_plural_name/_schema   : resource schema
+      |  - GET     /apis/:group/v1/:resource_plural_name/_template : resource template (pre filled object)
+      |  - GET     /apis/:group/v1/:resource_plural_name/:id       : read one resource by id
+      |  - POST    /apis/:group/v1/:resource_plural_name/:id       : upsert one resource
+      |  - PUT     /apis/:group/v1/:resource_plural_name/:id       : update one resource
+      |  - DELETE  /apis/:group/v1/:resource_plural_name/:id       : delete one resource
+      |  - GET     /apis/:group/v1/:resource_plural_name           : list all resources
+      |  - POST    /apis/:group/v1/:resource_plural_name           : create one resource
       |- You can list all the possible resources by this otoroshi instance by doing GET /apis/entities
       |- a basic workflow to create a resource is to get a template first, modify it according to user needs then create the new resource instance
       |- a basic workflow to update an entity is to read it first, modify it according to user needs, then call the update endpoint
@@ -80,7 +80,7 @@ object OtoroshiAssistant {
     val contextBlock =
       s"""
          |- Here is a quick list of the possibles resources
-         |${env.allResources.resources.map(r => s"  - ${r.kind}: { group: ${r.group}, entity_plural_name: ${r.pluralName} }").mkString("\n")}
+         |${env.allResources.resources.map(r => s"  - ${r.kind}: { group: ${r.group}, resource_plural_name: ${r.pluralName} }").mkString("\n")}
          |## Current session context
          |Use this only when relevant to the user's question. Do not echo it back unless asked.
          |- Current date/time: $time
