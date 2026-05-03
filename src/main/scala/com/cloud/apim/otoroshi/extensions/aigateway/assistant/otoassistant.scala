@@ -3,11 +3,12 @@ package com.cloud.apim.otoroshi.extensions.aigateway.assistant
 import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools.{AssistantTool, ToolCallContext, ToolRegistry}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, InputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, InputChatMessage}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
 import otoroshi.models.{ApiKey, BackOfficeUser}
 import otoroshi.next.extensions._
+import otoroshi.next.plugins.api.{BackendCallResponse, NgPluginHttpResponse}
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
@@ -151,6 +152,7 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
             case None => Results.InternalServerError(Json.obj("error" -> "Unable to create llm client")).vfuture
             case Some(client) => {
               val bodyJson = bodyRaw.parseJson.asObject
+              val streaming = bodyJson.select("stream").asOptBoolean.getOrElse(false)
               val incoming = bodyJson.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj => InputChatMessage.fromJson(obj) }
               val currentUrl = req.headers.get("X-Otoroshi-Assistant-Current-Url")
               val now = java.time.ZonedDateTime.now()
@@ -167,10 +169,21 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
                 "tools" -> registry.openaiJson,
                 "tool_choice" -> JsString("auto"),
               )
-
-              chatLoop(client, initialMessages, baseBody, registry, toolCtx, 0).map {
-                case Left(err) => Results.InternalServerError(Json.obj("error" -> err))
-                case Right(resp) => Results.Ok(resp.openaiJson("model", env))
+              if (streaming) {
+                streamingChatLoop(client, initialMessages, baseBody, registry, toolCtx, 0).map {
+                  case Left(err) => Results.InternalServerError(Json.obj("error" -> err))
+                  case Right(source) => {
+                    val finalSource = source
+                      .map(_.asSse(env))
+                      .concat(Source.single("data: [DONE]\n\n".byteString))
+                    Results.Ok.chunked(finalSource).as("text/event-stream")
+                  }
+                }
+              } else {
+                chatLoop(client, initialMessages, baseBody, registry, toolCtx, 0).map {
+                  case Left(err) => Results.InternalServerError(Json.obj("error" -> err))
+                  case Right(resp) => Results.Ok(resp.openaiJson("model", env))
+                }
               }
             }
           }
@@ -235,6 +248,184 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
         "tool_call_id" -> callId,
         "content" -> AssistantTool.truncate(content),
       ))
+    }
+  }
+
+  private class StreamingToolCallBuffer {
+    val byIndex: scala.collection.mutable.LinkedHashMap[Long, MutableToolCall] =
+      scala.collection.mutable.LinkedHashMap.empty[Long, MutableToolCall]
+
+    def consume(deltas: Seq[com.cloud.apim.otoroshi.extensions.aigateway.ChatResponseChunkChoiceDeltaToolCall]): Unit = {
+      deltas.foreach { tc =>
+        val acc = byIndex.getOrElseUpdate(tc.index, new MutableToolCall(tc.index))
+        tc.id.foreach(v => acc.id = v)
+        tc.typ.foreach(v => acc.typ = v)
+        tc.function.nameOpt.foreach(v => acc.name = v)
+        if (tc.function.arguments.nonEmpty) acc.arguments.append(tc.function.arguments)
+      }
+    }
+
+    def toJsonArray: JsArray = JsArray(byIndex.values.toSeq.map(_.toJson))
+    def isEmpty: Boolean = byIndex.isEmpty
+  }
+
+  private class MutableToolCall(val index: Long) {
+    var id: String = ""
+    var typ: String = "function"
+    var name: String = ""
+    val arguments: StringBuilder = new StringBuilder()
+    def toJson: JsObject = Json.obj(
+      "id" -> (if (id.nonEmpty) id else s"tool_call_$index"),
+      "type" -> typ,
+      "function" -> Json.obj(
+        "name" -> name,
+        "arguments" -> arguments.toString,
+      ),
+    )
+  }
+
+  private def streamingChatLoop(
+    client: ChatClient,
+    messages: Seq[InputChatMessage],
+    baseBody: JsObject,
+    registry: ToolRegistry,
+    toolCtx: ToolCallContext,
+    iteration: Int,
+  )(implicit ec: ExecutionContext): Future[Either[JsValue, Source[AssistantStreamEvent, _]]] = {
+    implicit val ev: Env = env
+    if (iteration >= config.maxToolCalls) {
+      Left[JsValue, Source[AssistantStreamEvent, _]](JsString(s"Max tool-call iterations reached (${config.maxToolCalls}).")).vfuture
+    } else {
+      println(s"[assistant.stream] iter=$iteration starting (messages=${messages.size})")
+      client.stream(ChatPrompt(messages, None), TypedMap.empty, baseBody).map {
+        case Left(err) =>
+          println(s"[assistant.stream] iter=$iteration upstream LEFT: $err")
+          Left[JsValue, Source[AssistantStreamEvent, _]](err)
+        case Right(source) =>
+          val assistantContent = new StringBuilder()
+          val buffer = new StreamingToolCallBuffer()
+          @volatile var triggered = false
+          val chunkCount = new java.util.concurrent.atomic.AtomicInteger(0)
+
+          val transformed: Source[AssistantStreamEvent, _] = source.flatMapConcat { chunk =>
+            val n = chunkCount.incrementAndGet()
+            if (triggered) {
+              println(s"[assistant.stream] iter=$iteration chunk#$n DROPPED (already triggered): ${chunk.choices.headOption.map(_.json.stringify).getOrElse("?")}")
+              Source.empty[AssistantStreamEvent]
+            } else {
+              val choice = chunk.choices.headOption
+              val deltaToolCalls = choice.toSeq.flatMap(_.delta.tool_calls)
+              val finishReason = choice.flatMap(_.finishReason)
+              val deltaContent = choice.flatMap(_.delta.content)
+              println(s"[assistant.stream] iter=$iteration chunk#$n content=${deltaContent.map(s => s"'${s.take(40)}'").getOrElse("-")} toolCallDeltas=${deltaToolCalls.size} finish=${finishReason.getOrElse("-")} bufferSize=${buffer.byIndex.size}")
+
+              if (deltaToolCalls.nonEmpty) {
+                buffer.consume(deltaToolCalls)
+                Source.empty[AssistantStreamEvent]
+              } else if (finishReason.isDefined && !buffer.isEmpty) {
+                println(s"[assistant.stream] iter=$iteration TRIGGER tool execution (finish=${finishReason.getOrElse("?")}), ${buffer.byIndex.size} tool(s)")
+                triggered = true
+                val toolCallObjs = buffer.toJsonArray.value.collect { case obj: JsObject => obj }
+                val assistantMsg = InputChatMessage.fromJson(Json.obj(
+                  "role" -> "assistant",
+                  "content" -> JsString(assistantContent.toString),
+                  "tool_calls" -> JsArray(toolCallObjs),
+                ))
+
+                val startedEvents: List[AssistantStreamEvent] = toolCallObjs.toList.map { tc =>
+                  AssistantStreamEvent.ToolCallStarted(
+                    id = tc.select("id").asOpt[String].getOrElse(""),
+                    name = tc.select("function").select("name").asOpt[String].getOrElse(""),
+                    arguments = tc.select("function").select("arguments").asOpt[String].getOrElse(""),
+                    iteration = iteration,
+                  )
+                }
+
+                val toolRunsF: Future[Seq[(InputChatMessage, AssistantStreamEvent.ToolCallFinished)]] =
+                  Future.sequence(toolCallObjs.map { tc =>
+                    val startTs = System.currentTimeMillis()
+                    val id = tc.select("id").asOpt[String].getOrElse("")
+                    val name = tc.select("function").select("name").asOpt[String].getOrElse("")
+                    runToolCall(tc, registry, toolCtx).map { msg =>
+                      val finished = AssistantStreamEvent.ToolCallFinished(
+                        id = id,
+                        name = name,
+                        ok = true,
+                        durationMs = System.currentTimeMillis() - startTs,
+                        iteration = iteration,
+                      )
+                      (msg, finished)
+                    }.recover { case t: Throwable =>
+                      val errMsg = InputChatMessage.fromJson(Json.obj(
+                        "role" -> "tool",
+                        "tool_call_id" -> id,
+                        "content" -> AssistantTool.truncate(s"Error: ${t.getMessage}"),
+                      ))
+                      val finished = AssistantStreamEvent.ToolCallFinished(
+                        id = id,
+                        name = name,
+                        ok = false,
+                        durationMs = System.currentTimeMillis() - startTs,
+                        iteration = iteration,
+                      )
+                      (errMsg, finished)
+                    }
+                  })
+
+                val nextStepF: Future[Source[AssistantStreamEvent, _]] = toolRunsF.flatMap { results =>
+                  val msgs = results.map(_._1)
+                  val finishedEvents: List[AssistantStreamEvent] = results.map(_._2: AssistantStreamEvent).toList
+                  val newMessages = (messages :+ assistantMsg) ++ msgs
+                  streamingChatLoop(client, newMessages, baseBody, registry, toolCtx, iteration + 1).map {
+                    case Left(err) => Source.failed[AssistantStreamEvent](new RuntimeException(err.stringify))
+                    case Right(nextSource) => Source(finishedEvents) ++ nextSource
+                  }
+                }
+
+                Source(startedEvents) ++ Source.future(nextStepF).flatMapConcat(s => s)
+              } else {
+                choice.flatMap(_.delta.content).foreach(assistantContent.append)
+                Source.single(AssistantStreamEvent.Chunk(chunk): AssistantStreamEvent)
+              }
+            }
+          }
+          Right[JsValue, Source[AssistantStreamEvent, _]](transformed)
+      }
+    }
+  }
+}
+
+sealed trait AssistantStreamEvent {
+  def asSse(env: Env): akka.util.ByteString
+}
+
+object AssistantStreamEvent {
+  case class Chunk(chunk: ChatResponseChunk) extends AssistantStreamEvent {
+    def asSse(env: Env): akka.util.ByteString = chunk.openaiEventSource(env)
+  }
+  case class ToolCallStarted(id: String, name: String, arguments: String, iteration: Int) extends AssistantStreamEvent {
+    def asSse(env: Env): akka.util.ByteString = {
+      val payload = Json.obj(
+        "otoroshi_assistant_event" -> "tool_call_started",
+        "id" -> id,
+        "name" -> name,
+        "arguments" -> arguments,
+        "iteration" -> iteration,
+      )
+      akka.util.ByteString(s"data: ${payload.stringify}\n\n")
+    }
+  }
+  case class ToolCallFinished(id: String, name: String, ok: Boolean, durationMs: Long, iteration: Int) extends AssistantStreamEvent {
+    def asSse(env: Env): akka.util.ByteString = {
+      val payload = Json.obj(
+        "otoroshi_assistant_event" -> "tool_call_finished",
+        "id" -> id,
+        "name" -> name,
+        "ok" -> ok,
+        "duration_ms" -> durationMs,
+        "iteration" -> iteration,
+      )
+      akka.util.ByteString(s"data: ${payload.stringify}\n\n")
     }
   }
 }
