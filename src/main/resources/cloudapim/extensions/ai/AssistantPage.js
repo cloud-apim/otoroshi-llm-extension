@@ -632,6 +632,9 @@ class OtoroshiAssistant extends Component {
   }
 
   renderMessages() {
+    const lastMsg = this.state.messages[this.state.messages.length - 1];
+    const streamingHasContent = lastMsg && lastMsg.streaming && lastMsg.content && lastMsg.content.length > 0;
+    const showTyping = this.state.calling && !streamingHasContent;
     return React.createElement('div', {
       ref: (r) => this.scrollRef = r,
       style: {
@@ -651,7 +654,7 @@ class OtoroshiAssistant extends Component {
             onRetry: m.role === 'assistant' && !m.error && !m.streaming ? () => this.retryAt(idx) : undefined,
             retryDisabled: this.state.calling,
           })),
-      this.state.calling ? React.createElement(OtoroshiAssistantTyping, {
+      showTyping ? React.createElement(OtoroshiAssistantTyping, {
         key: 'typing',
         activeTools: this.state.activeTools,
         completedTools: this.state.completedTools,
