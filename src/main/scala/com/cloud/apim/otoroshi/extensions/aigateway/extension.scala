@@ -922,7 +922,8 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.enabled`,
             |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.provider`,
             |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.apikey`,
-            |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.allow_api_read`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.max_tool_calls`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.allow_api_usage`,
             |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.allow_api_write`,
             |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.allow_api_delete`,
             |          ],
@@ -947,9 +948,13 @@ class AiExtension(val env: Env) extends AdminExtension {
             |                transformer: (item) => ({ label: item.name, value: item.id }),
             |              },
             |            },
-            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.allow_api_read`]: {
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.max_tool_calls`]: {
+            |              type: 'number',
+            |              props: { label: 'Max. tool calls' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.allow_api_usage`]: {
             |              type: 'bool',
-            |              props: { label: 'Allow admin. api read' },
+            |              props: { label: 'Allow admin. api usage' },
             |            },
             |            [`extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.allow_api_write`]: {
             |              type: 'bool',
