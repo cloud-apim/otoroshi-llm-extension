@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools
 
+import com.cloud.apim.otoroshi.extensions.aigateway.assistant.AssistantConfiguration
 import otoroshi.env.Env
 import otoroshi.models.BackOfficeUser
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
@@ -7,7 +8,7 @@ import play.api.libs.json._
 
 import scala.concurrent.{ExecutionContext, Future}
 
-case class ToolCallContext(env: Env, ext: AiExtension, user: Option[BackOfficeUser])
+case class ToolCallContext(env: Env, ext: AiExtension, user: Option[BackOfficeUser], config: AssistantConfiguration)
 
 case class ToolDefinition(name: String, description: String, parameters: JsObject)
 
