@@ -69,7 +69,7 @@ object OtoroshiAssistant {
       |  - GET     /apis/:group/v1/:resource_plural_name           : list all resources
       |  - POST    /apis/:group/v1/:resource_plural_name           : create one resource
       |- You can list all the possible resources by this otoroshi instance by doing GET /apis/entities
-      |- a basic workflow to create a resource is to get a template first, modify it according to user needs then create the new resource instance
+      |- a basic workflow to create a resource is to get a template of the resource first using the GET .../_template endpoint, modify it according to user needs then create the new resource instance using the create or upsert endpoint
       |- a basic workflow to update an entity is to read it first, modify it according to user needs, then call the update endpoint
       |""".stripMargin
 
