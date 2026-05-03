@@ -57,7 +57,7 @@ object ProviderHelpers {
     if (env.isDev || AiExtension.logger.isDebugEnabled) {
       val msg = s"calling provider '${from}' - ${method} - ${url} - ${opts} - ${body.map(_.prettify).getOrElse("")}"
       if (env.isDev) {
-        //AiExtension.logger.info(msg)
+        AiExtension.logger.info(msg)
         // java.nio.file.Files.writeString(new java.io.File(s"req-${System.currentTimeMillis()}.json").toPath, body.map(_.prettify).getOrElse(""), java.nio.charset.StandardCharsets.UTF_8)
       } else if (AiExtension.logger.isDebugEnabled) {
         AiExtension.logger.debug(msg)
@@ -79,7 +79,7 @@ object ProviderHelpers {
     if (env.isDev || AiExtension.logger.isDebugEnabled) {
       val msg = s"provider response '${from}' - ${resp.status} - ${resp.body}"
       if (env.isDev) {
-        //AiExtension.logger.info(msg)
+        AiExtension.logger.info(msg)
         //java.nio.file.Files.writeString(new java.io.File(s"resp-${System.currentTimeMillis()}.json").toPath, resp.body.parseJson.prettify, java.nio.charset.StandardCharsets.UTF_8)
       } else if (AiExtension.logger.isDebugEnabled) {
         AiExtension.logger.debug(msg)
