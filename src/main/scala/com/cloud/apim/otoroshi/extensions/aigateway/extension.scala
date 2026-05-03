@@ -826,7 +826,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/extensions/assets/cloud-apim/extensions/ai-extension/extension.js",
       handle = (ctx: AdminExtensionRouterContext[AdminExtensionAssetRoute], req: RequestHeader) => {
         Results.Ok(
-          s"""(function() { 
+          s"""(function() {
             |  const extensionId = "${id.value}";
             |  Otoroshi.registerExtension(extensionId, false, (ctx) => {
             |
@@ -915,6 +915,45 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    return {
             |      id: extensionId,
             |      workflowNodes: workflowNodes,
+            |      dangerZoneParts: [
+            |        {
+            |          title: 'Otoroshi Assistant (LLM)',
+            |          flow: [
+            |            `extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.enabled`,
+            |            `extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.provider`,
+            |            `extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.apikey`,
+            |            `extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.allow_api_read`,
+            |            `extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.allow_api_write`,
+            |            `extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.allow_api_delete`,
+            |          ],
+            |          schema: {
+            |            [`extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.enabled`]: {
+            |              type: 'bool',
+            |              props: { label: 'Assistant enabled' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.provider`]: {
+            |              type: 'string',
+            |              props: { label: 'Assistant llm provider' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.apikey`]: {
+            |              type: 'string',
+            |              props: { label: 'Assistant apikey' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.allow_api_read`]: {
+            |              type: 'bool',
+            |              props: { label: 'Allow admin. api read' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.allow_api_write`]: {
+            |              type: 'bool',
+            |              props: { label: 'Allow admin. api write' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./ g, '_')}.otoroshiassistant.allow_api_delete`]: {
+            |              type: 'bool',
+            |              props: { label: 'Allow admin. api write' },
+            |            },
+            |          }
+            |        }
+            |      ],
             |      categories:[{
             |        title: 'AI - LLM',
             |        description: 'All the features provided the Cloud APIM AI - LLM extension',
