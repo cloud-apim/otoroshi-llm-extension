@@ -945,7 +945,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |              props: {
             |                label: 'Assistant apikey',
             |                valuesFrom: "/bo/api/proxy/apis/apim.otoroshi.io/v1/apikeys",
-            |                transformer: (item) => ({ label: item.name, value: item.id }),
+            |                transformer: (item) => ({ label: item.clientName, value: item.clientId }),
             |              },
             |            },
             |            [`extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.max_tool_calls`]: {
