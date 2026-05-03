@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic
 
+import com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools.ToolCallContext
 import otoroshi.env.Env
 import otoroshi.models.{ApiKey, BackOfficeUser}
 import otoroshi.utils.syntax.implicits._
@@ -21,15 +22,25 @@ object AdminCredentials {
 
   val metadataKey: String = "otoroshi_assistant_admin_apikey_id"
 
-  def fetch(env: Env, ext: AiExtension, user: Option[BackOfficeUser]): Option[AdminCredentials] = {
-    for {
-      provider <- ext.states.allProviders().find(_.isOtoroshiAssistant)
-      apikeyId <- provider.metadata.get(metadataKey).map(_.trim).filter(_.nonEmpty).orElse(env.backOfficeApiKey.clientId.some)
-      apikey <- env.proxyState.apikey(apikeyId)
-    } yield AdminCredentials(
-      baseUrl = s"${env.exposedRootScheme}://${env.adminApiExposedHost}${env.bestExposedPort}",
-      apikey = apikey,
-    )
+  def fetch(ctx: ToolCallContext): Option[AdminCredentials] = {
+    ctx.config.apikey.flatMap(id => ctx.env.proxyState.apikey(id)) match {
+      case Some(apikey) => {
+        AdminCredentials(
+          baseUrl = s"${ctx.env.exposedRootScheme}://${ctx.env.adminApiExposedHost}${ctx.env.bestExposedPort}",
+          apikey = apikey,
+        ).some
+      }
+      case _ => {
+        for {
+          provider <- ctx.ext.states.allProviders().find(_.isOtoroshiAssistant)
+          apikeyId <- provider.metadata.get(metadataKey).map(_.trim).filter(_.nonEmpty).orElse(ctx.env.backOfficeApiKey.clientId.some)
+          apikey <- ctx.env.proxyState.apikey(apikeyId)
+        } yield AdminCredentials(
+          baseUrl = s"${ctx.env.exposedRootScheme}://${ctx.env.adminApiExposedHost}${ctx.env.bestExposedPort}",
+          apikey = apikey,
+        )
+      }
+    }
   }
 }
 
