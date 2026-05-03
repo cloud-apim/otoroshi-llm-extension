@@ -46,6 +46,7 @@ class OtoroshiAssistantMessage extends Component {
     const isUser = this.props.message.role === 'user';
     const isError = this.props.message.error === true;
     const content = this.getRawContent();
+    if (this.props.message.streaming && (!content || content.length === 0)) return null;
     const userBubble = {
       backgroundColor: 'var(--color-primary)',
       color: '#1a1a1a',
