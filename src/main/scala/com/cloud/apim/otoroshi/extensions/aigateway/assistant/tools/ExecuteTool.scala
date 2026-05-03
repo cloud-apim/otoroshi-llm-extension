@@ -77,28 +77,33 @@ class ExecuteTool extends AssistantTool {
   )
 
   override def call(arguments: JsValue, ctx: ToolCallContext)(implicit ec: ExecutionContext): Future[String] = {
-    val requests = arguments.select("requests").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-    if (requests.isEmpty) return Future.successful("Error: missing or empty 'requests' array.")
+    if (!ctx.config.allowApiUsage) {
+      Future.successful("Error: Admin API usage is disabled. You have to enabled it in danger zone")
+    } else {
+      val requests = arguments.select("requests").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+      if (requests.isEmpty) return Future.successful("Error: missing or empty 'requests' array.")
 
-    println(s"call tool 'execute': ${JsArray(requests).prettify}")
+      println(s"call tool 'execute': ${JsArray(requests).prettify}")
 
-    val resultF = AdminCredentials.fetch(ctx.env, ctx.ext, ctx.user) match {
-      case None =>
-        Future.successful("Error: admin API credentials are not configured for the assistant. The 'execute' tool is unavailable until they are wired up. Use 'search' for discovery and answer with concrete payload examples instead.")
-      case Some(creds) =>
-        implicit val env = ctx.env
-        runSequentially(creds, requests, 0, Vector.empty)
-          .map(entries => JsObject(entries))
-          .map(json => AssistantTool.truncate(Json.prettyPrint(json)))
-    }
-    resultF.map { response =>
-      println(s"call tool 'execute' response: ${response}\n\n----------------------------------\n\n")
-      response
+      val resultF = AdminCredentials.fetch(ctx) match {
+        case None =>
+          Future.successful("Error: admin API credentials are not configured for the assistant. The 'execute' tool is unavailable until they are wired up. Use 'search' for discovery and answer with concrete payload examples instead.")
+        case Some(creds) =>
+          implicit val env = ctx.env
+          runSequentially(creds, ctx, requests, 0, Vector.empty)
+            .map(entries => JsObject(entries))
+            .map(json => AssistantTool.truncate(Json.prettyPrint(json)))
+      }
+      resultF.map { response =>
+        println(s"call tool 'execute' response: ${response}\n\n----------------------------------\n\n")
+        response
+      }
     }
   }
 
   private def runSequentially(
     creds: AdminCredentials,
+    ctx: ToolCallContext,
     requests: Seq[JsObject],
     idx: Int,
     acc: Vector[(String, JsValue)],
@@ -107,20 +112,24 @@ class ExecuteTool extends AssistantTool {
     else {
       val rawReq = requests(idx)
       val name = rawReq.select("name").asOpt[String].map(_.trim).filter(_.nonEmpty).getOrElse(s"request_$idx")
-      runSingle(creds, rawReq, acc.toMap)
+      runSingle(creds, ctx, rawReq, acc.toMap)
         .recover { case t: Throwable => Json.obj("error" -> s"unexpected error: ${t.getMessage}") }
-        .flatMap(entry => runSequentially(creds, requests, idx + 1, acc :+ (name -> entry)))
+        .flatMap(entry => runSequentially(creds, ctx, requests, idx + 1, acc :+ (name -> entry)))
     }
   }
 
-  private def runSingle(creds: AdminCredentials, rawReq: JsObject, refCtx: Map[String, JsValue])(implicit ec: ExecutionContext, env: otoroshi.env.Env): Future[JsValue] = {
+  private def runSingle(creds: AdminCredentials, ctx: ToolCallContext, rawReq: JsObject, refCtx: Map[String, JsValue])(implicit ec: ExecutionContext, env: otoroshi.env.Env): Future[JsValue] = {
     ExpressionLanguage.expandValue(rawReq, refCtx) match {
       case Left(err) => Future.successful(Json.obj("error" -> s"unresolved expression: $err"))
       case Right(expanded) =>
         val req = expanded.asOpt[JsObject].getOrElse(Json.obj())
         val method = req.select("method").asOpt[String].map(_.trim).filter(_.nonEmpty).getOrElse("GET")
         val url = req.select("url").asOpt[String].map(_.trim).getOrElse("")
-        if (url.isEmpty) Future.successful(Json.obj("error" -> "missing 'url'"))
+        if (method != "GET" && method != "DELETE" && !ctx.config.allowApiWrite) {
+          Future.successful(Json.obj("error" -> "Write now allowed"))
+        } else if (method == "DELETE" && !ctx.config.allowApiDelete) {
+          Future.successful(Json.obj("error" -> "Delete now allowed"))
+        } else if (url.isEmpty) Future.successful(Json.obj("error" -> "missing 'url'"))
         else {
           val headers = req.select("headers").asOpt[JsObject].map(_.value.toMap.flatMap {
             case (k, JsString(v)) => Some(k -> v)
