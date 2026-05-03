@@ -278,7 +278,7 @@ object Catalog {
           else None
         }
       }
-    }
+    }.filterNot(op => op.operationId.toLowerCase.contains("bulk"))
     val tagSet = scala.collection.mutable.SortedSet.empty[String]
     operations.foreach(_.tags.foreach(tagSet.add))
     Document(
