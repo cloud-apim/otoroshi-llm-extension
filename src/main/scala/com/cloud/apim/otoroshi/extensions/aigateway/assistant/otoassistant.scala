@@ -94,13 +94,49 @@ object OtoroshiAssistant {
   }
 }
 
+case class AssistantConfiguration(
+  provider: Option[String],
+  apikey: Option[String],
+  maxToolCalls: Int,
+  allowApiUsage: Boolean,
+  allowApiWrite: Boolean,
+  allowApiDelete: Boolean,
+  enabled: Boolean
+)
+
+object AssistantConfiguration {
+  def fromJson(json: JsValue): AssistantConfiguration = {
+    AssistantConfiguration(
+      provider = json.select("provider").asOptString,
+      apikey = json.select("apikey").asOptString,
+      maxToolCalls = json.select("max_tool_calls").asOptInt.getOrElse(30),
+      allowApiUsage = json.select("allow_api_usage").asOptBoolean.getOrElse(false),
+      allowApiWrite = json.select("allow_api_write").asOptBoolean.getOrElse(false),
+      allowApiDelete = json.select("allow_api_delete").asOptBoolean.getOrElse(false),
+      enabled = json.select("enabled").asOptBoolean.getOrElse(false),
+    )
+  }
+}
+
 class OtoroshiAssistant(env: Env, ext: AiExtension) {
 
-  private val maxToolCallIterations: Int = 20
+  //private val maxToolCallIterations: Int = 20
 
-  def assistantProvider: Option[AiProvider] = ext.states.allProviders().find(_.isOtoroshiAssistant)
+  private def gc = {
+    env.datastores.globalConfigDataStore.latest()(env.otoroshiExecutionContext, env)
+  }
+  private def config: AssistantConfiguration = {
+    AssistantConfiguration.fromJson(gc.extensions.get("cloud-apim_extensions_LlmExtension").flatMap(_.select("otoroshiassistant").asOpt[JsObject]).getOrElse(Json.obj()))
+  }
 
-  def isEnabled: Boolean = assistantProvider.isDefined
+  def assistantProvider: Option[AiProvider] = {
+    config.provider match {
+      case None => ext.states.allProviders().find(_.isOtoroshiAssistant)
+      case Some(id) => ext.states.provider(id)
+    }
+  }
+
+  def isEnabled: Boolean = config.enabled && assistantProvider.isDefined
 
   def handleAssistantCompletion(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
@@ -126,7 +162,7 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
               val initialMessages = systemMessage +: withoutClientSystem
 
               val registry = ToolRegistry.default
-              val toolCtx = ToolCallContext(env, ext, user)
+              val toolCtx = ToolCallContext(env, ext, user, config)
               val baseBody = (bodyJson - "messages") ++ Json.obj(
                 "tools" -> registry.openaiJson,
                 "tool_choice" -> JsString("auto"),
@@ -154,8 +190,8 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
     iteration: Int,
   )(implicit ec: ExecutionContext): Future[Either[JsValue, ChatResponse]] = {
     implicit val ev: Env = env
-    if (iteration >= maxToolCallIterations) {
-      Left[JsValue, ChatResponse](JsString(s"Max tool-call iterations reached ($maxToolCallIterations).")).vfuture
+    if (iteration >= config.maxToolCalls) {
+      Left[JsValue, ChatResponse](JsString(s"Max tool-call iterations reached (${config.maxToolCalls}).")).vfuture
     } else {
       client.call(ChatPrompt(messages, None), TypedMap.empty, baseBody).flatMap {
         case Left(err) => Left[JsValue, ChatResponse](err).vfuture
