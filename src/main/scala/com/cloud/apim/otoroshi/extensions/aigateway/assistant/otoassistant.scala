@@ -296,10 +296,10 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
     if (iteration >= config.maxToolCalls) {
       Left[JsValue, Source[AssistantStreamEvent, _]](JsString(s"Max tool-call iterations reached (${config.maxToolCalls}).")).vfuture
     } else {
-      println(s"[assistant.stream] iter=$iteration starting (messages=${messages.size})")
+      // println(s"[assistant.stream] iter=$iteration starting (messages=${messages.size})")
       client.stream(ChatPrompt(messages, None), TypedMap.empty, baseBody).map {
         case Left(err) =>
-          println(s"[assistant.stream] iter=$iteration upstream LEFT: $err")
+          // println(s"[assistant.stream] iter=$iteration upstream LEFT: $err")
           Left[JsValue, Source[AssistantStreamEvent, _]](err)
         case Right(source) =>
           val assistantContent = new StringBuilder()
@@ -310,20 +310,20 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
           val transformed: Source[AssistantStreamEvent, _] = source.flatMapConcat { chunk =>
             val n = chunkCount.incrementAndGet()
             if (triggered) {
-              println(s"[assistant.stream] iter=$iteration chunk#$n DROPPED (already triggered): ${chunk.choices.headOption.map(_.json.stringify).getOrElse("?")}")
+              // println(s"[assistant.stream] iter=$iteration chunk#$n DROPPED (already triggered): ${chunk.choices.headOption.map(_.json.stringify).getOrElse("?")}")
               Source.empty[AssistantStreamEvent]
             } else {
               val choice = chunk.choices.headOption
               val deltaToolCalls = choice.toSeq.flatMap(_.delta.tool_calls)
               val finishReason = choice.flatMap(_.finishReason)
               val deltaContent = choice.flatMap(_.delta.content)
-              println(s"[assistant.stream] iter=$iteration chunk#$n content=${deltaContent.map(s => s"'${s.take(40)}'").getOrElse("-")} toolCallDeltas=${deltaToolCalls.size} finish=${finishReason.getOrElse("-")} bufferSize=${buffer.byIndex.size}")
+              // println(s"[assistant.stream] iter=$iteration chunk#$n content=${deltaContent.map(s => s"'${s.take(40)}'").getOrElse("-")} toolCallDeltas=${deltaToolCalls.size} finish=${finishReason.getOrElse("-")} bufferSize=${buffer.byIndex.size}")
 
               if (deltaToolCalls.nonEmpty) {
                 buffer.consume(deltaToolCalls)
                 Source.empty[AssistantStreamEvent]
               } else if (finishReason.isDefined && !buffer.isEmpty) {
-                println(s"[assistant.stream] iter=$iteration TRIGGER tool execution (finish=${finishReason.getOrElse("?")}), ${buffer.byIndex.size} tool(s)")
+                // println(s"[assistant.stream] iter=$iteration TRIGGER tool execution (finish=${finishReason.getOrElse("?")}), ${buffer.byIndex.size} tool(s)")
                 triggered = true
                 val toolCallObjs = buffer.toJsonArray.value.collect { case obj: JsObject => obj }
                 val assistantMsg = InputChatMessage.fromJson(Json.obj(
