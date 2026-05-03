@@ -120,7 +120,57 @@ class OtoroshiAssistantMessage extends Component {
 }
 
 class OtoroshiAssistantTyping extends Component {
+  formatArgs(argsRaw) {
+    if (argsRaw == null || argsRaw === '') return '';
+    let s = argsRaw;
+    if (typeof s !== 'string') {
+      try { s = JSON.stringify(s); } catch (e) { s = String(s); }
+    } else {
+      try {
+        const parsed = JSON.parse(s);
+        s = JSON.stringify(parsed);
+      } catch (e) { /* leave as-is, may be partial JSON during streaming */ }
+    }
+    s = s.replace(/\s+/g, ' ').trim();
+    if (s.length > 80) s = s.slice(0, 77) + '…';
+    return s;
+  }
+  renderToolRow(tool, kind) {
+    const argsText = this.formatArgs(tool.arguments);
+    let icon, iconColor;
+    if (kind === 'active') { icon = 'fas fa-cog fa-spin'; iconColor = 'var(--color-primary)'; }
+    else if (kind === 'ok') { icon = 'fas fa-check'; iconColor = 'var(--color-green)'; }
+    else { icon = 'fas fa-times'; iconColor = 'var(--color-red)'; }
+    const meta = kind === 'active'
+      ? null
+      : React.createElement('span', { style: { color: 'var(--text-muted)', fontSize: 10, marginLeft: 4 } }, `(${tool.durationMs}ms)`);
+    return React.createElement('div', {
+      key: tool.id + '-' + kind,
+      style: { display: 'flex', flexDirection: 'row', alignItems: 'baseline', gap: 6, fontSize: 11, lineHeight: 1.4 }
+    },
+      React.createElement('i', { className: icon, style: { fontSize: 10, color: iconColor, width: 12, textAlign: 'center', flexShrink: 0 } }),
+      React.createElement('span', { style: { fontWeight: 600, color: 'var(--text)' } }, tool.name || '(unknown)'),
+      argsText ? React.createElement('code', {
+        style: {
+          color: 'var(--text-muted)',
+          backgroundColor: 'var(--bg-color_level1)',
+          border: '1px solid var(--border-color)',
+          borderRadius: 4,
+          padding: '1px 5px',
+          fontSize: 10,
+          whiteSpace: 'nowrap',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          maxWidth: '100%',
+        }
+      }, argsText) : null,
+      meta,
+    );
+  }
   render() {
+    const activeTools = this.props.activeTools || [];
+    const completedTools = this.props.completedTools || [];
+
     const dotStyle = {
       width: 6,
       height: 6,
@@ -130,8 +180,11 @@ class OtoroshiAssistantTyping extends Component {
       display: 'inline-block',
       animation: 'otoroshi-assistant-bounce 1.2s infinite ease-in-out',
     };
+
+    const showToolBar = activeTools.length > 0 || completedTools.length > 0;
+
     return React.createElement('div', {
-      style: { display: 'flex', flexDirection: 'row', justifyContent: 'flex-start', marginBottom: 8 }
+      style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', marginBottom: 8, gap: 6, width: '100%' }
     },
       React.createElement('div', {
         style: {
@@ -147,21 +200,49 @@ class OtoroshiAssistantTyping extends Component {
         React.createElement('span', { style: Object.assign({}, dotStyle, { animationDelay: '0s' }) }),
         React.createElement('span', { style: Object.assign({}, dotStyle, { animationDelay: '0.15s' }) }),
         React.createElement('span', { style: Object.assign({}, dotStyle, { animationDelay: '0.3s' }) }),
-      )
+      ),
+      showToolBar ? React.createElement('div', {
+        style: {
+          width: '100%',
+          maxWidth: '95%',
+          padding: '6px 10px',
+          borderRadius: 8,
+          backgroundColor: 'var(--bg-color_level2)',
+          border: '1px dashed var(--border-color)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+        }
+      },
+        completedTools.map(t => this.renderToolRow(t, t.ok ? 'ok' : 'err')),
+        activeTools.map(t => this.renderToolRow(t, 'active')),
+        completedTools.length > 0 ? React.createElement('div', {
+          style: { fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }
+        }, `${completedTools.length} tool call${completedTools.length > 1 ? 's' : ''} done`) : null,
+      ) : null,
     );
   }
 }
+
+const OTOROSHI_ASSISTANT_STREAMING_KEY = 'otoroshi-assistant-streaming';
 
 class OtoroshiAssistant extends Component {
   state = {
     display: false,
     expanded: false,
     calling: false,
+    streaming: true,
+    activeTools: [],
+    completedTools: [],
     input: '',
     messages: [],
   }
 
   componentDidMount() {
+    try {
+      const persisted = window.localStorage.getItem(OTOROSHI_ASSISTANT_STREAMING_KEY);
+      if (persisted === 'true') this.setState({ streaming: true });
+    } catch (e) { /* ignore */ }
     if (!OtoroshiAssistantMessage.converter) {
       OtoroshiAssistantMessage.converter = new showdown.Converter({
         omitExtraWLInCodeBlocks: true,
@@ -232,15 +313,31 @@ class OtoroshiAssistant extends Component {
     this.setState({ expanded: !this.state.expanded });
   }
 
-  clear = () => {
-    this.setState({ messages: [] });
+  toggleStreaming = () => {
+    if (this.state.calling) return;
+    const next = !this.state.streaming;
+    try { window.localStorage.setItem(OTOROSHI_ASSISTANT_STREAMING_KEY, next ? 'true' : 'false'); } catch (e) { /* ignore */ }
+    this.setState({ streaming: next });
   }
 
+  clear = () => {
+    this.setState({ messages: [], activeTools: [], completedTools: [] });
+  }
+
+  buildApiMessages = (messages) => messages
+    .filter(m => !m.error)
+    .map(m => ({ role: m.role, content: m.content }));
+
   callApi = (messages) => {
-    this.setState({ calling: true });
-    const apiMessages = messages
-      .filter(m => !m.error)
-      .map(m => ({ role: m.role, content: m.content }));
+    this.setState({ calling: true, activeTools: [], completedTools: [] });
+    if (this.state.streaming) {
+      this.callApiStreaming(messages);
+    } else {
+      this.callApiBlocking(messages);
+    }
+  }
+
+  callApiBlocking = (messages) => {
     fetch('/extensions/cloud-apim/extensions/ai-extension/assistant/chat/completions', {
       method: 'POST',
       credentials: 'include',
@@ -250,7 +347,7 @@ class OtoroshiAssistant extends Component {
         'X-Otoroshi-Assistant-Current-Url': window.location.href,
       },
       body: JSON.stringify({
-        messages: apiMessages,
+        messages: this.buildApiMessages(messages),
         stream: false,
       })
     }).then(r => {
@@ -284,6 +381,115 @@ class OtoroshiAssistant extends Component {
       this.setState({ messages: next, calling: false }, () => {
         if (this.inputRef) this.inputRef.focus();
       });
+    });
+  }
+
+  callApiStreaming = (messages) => {
+    const placeholder = { role: 'assistant', content: '', date: Date.now(), streaming: true };
+    this.setState({ messages: this.state.messages.concat([placeholder]) });
+
+    const finalize = (errorMsg) => {
+      const msgs = this.state.messages.slice();
+      const last = msgs[msgs.length - 1];
+      if (last && last.streaming) {
+        if (errorMsg && !last.content) {
+          msgs[msgs.length - 1] = Object.assign({}, last, { content: errorMsg, error: true, streaming: false });
+        } else if (errorMsg) {
+          msgs.push({ role: 'assistant', content: errorMsg, error: true, date: Date.now() });
+          msgs[msgs.length - 2] = Object.assign({}, last, { streaming: false });
+        } else {
+          msgs[msgs.length - 1] = Object.assign({}, last, { streaming: false });
+        }
+      } else if (errorMsg) {
+        msgs.push({ role: 'assistant', content: errorMsg, error: true, date: Date.now() });
+      }
+      this.setState({ messages: msgs, calling: false, activeTools: [] }, () => {
+        if (this.inputRef) this.inputRef.focus();
+      });
+    };
+
+    const appendDelta = (text) => {
+      if (!text) return;
+      const msgs = this.state.messages.slice();
+      const last = msgs[msgs.length - 1];
+      if (last && last.streaming) {
+        msgs[msgs.length - 1] = Object.assign({}, last, { content: (last.content || '') + text });
+        this.setState({ messages: msgs });
+      }
+    };
+
+    const handleEvent = (json) => {
+      const ev = json.otoroshi_assistant_event;
+      if (ev === 'tool_call_started') {
+        const tool = { id: json.id, name: json.name, arguments: json.arguments, iteration: json.iteration, startedAt: Date.now() };
+        this.setState({ activeTools: this.state.activeTools.concat([tool]) });
+      } else if (ev === 'tool_call_finished') {
+        const remaining = this.state.activeTools.filter(t => t.id !== json.id);
+        const matched = this.state.activeTools.find(t => t.id === json.id) || { name: json.name, arguments: '' };
+        const completed = {
+          id: json.id,
+          name: json.name || matched.name,
+          arguments: matched.arguments,
+          ok: !!json.ok,
+          durationMs: json.duration_ms,
+          iteration: json.iteration,
+        };
+        this.setState({ activeTools: remaining, completedTools: this.state.completedTools.concat([completed]) });
+      } else if (json.choices && json.choices[0]) {
+        const delta = json.choices[0].delta;
+        if (delta && typeof delta.content === 'string') {
+          appendDelta(delta.content);
+        }
+      }
+    };
+
+    fetch('/extensions/cloud-apim/extensions/ai-extension/assistant/chat/completions', {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        Accept: 'text/event-stream',
+        'Content-Type': 'application/json',
+        'X-Otoroshi-Assistant-Current-Url': window.location.href,
+      },
+      body: JSON.stringify({
+        messages: this.buildApiMessages(messages),
+        stream: true,
+      })
+    }).then(async (r) => {
+      if (!r.ok) {
+        const txt = await r.text();
+        let errMsg = txt;
+        try { const j = JSON.parse(txt); errMsg = (j.error && (j.error.message || j.error)) || j.message || txt; } catch (e) {}
+        throw new Error(errMsg || ('HTTP ' + r.status));
+      }
+      if (!r.body || !r.body.getReader) {
+        throw new Error('Streaming not supported by this browser');
+      }
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let done = false;
+      while (!done) {
+        const { value, done: rdone } = await reader.read();
+        done = rdone;
+        if (value) buffer += decoder.decode(value, { stream: !done });
+        let sepIdx;
+        while ((sepIdx = buffer.indexOf('\n\n')) >= 0) {
+          const chunk = buffer.slice(0, sepIdx);
+          buffer = buffer.slice(sepIdx + 2);
+          const lines = chunk.split('\n');
+          for (const line of lines) {
+            if (!line.startsWith('data:')) continue;
+            const data = line.slice(5).trim();
+            if (!data) continue;
+            if (data === '[DONE]') { done = true; break; }
+            try { handleEvent(JSON.parse(data)); } catch (e) { /* skip malformed */ }
+          }
+        }
+      }
+      finalize(null);
+    }).catch(ex => {
+      finalize((ex && ex.message) ? ex.message : String(ex));
     });
   }
 
@@ -360,8 +566,22 @@ class OtoroshiAssistant extends Component {
       }),
       React.createElement('div', { style: { display: 'flex', flexDirection: 'column', flex: 1 } },
         React.createElement('span', { style: { color: 'var(--text)', fontWeight: 600, fontSize: 14 } }, 'Otoroshi assistant'),
-        React.createElement('span', { style: { color: 'var(--text-muted)', fontSize: 11 } }, this.state.calling ? 'thinking…' : 'online'),
+        React.createElement('span', { style: { color: 'var(--text-muted)', fontSize: 11 } },
+          this.state.calling
+            ? (this.state.completedTools.length > 0
+                ? `thinking… · ${this.state.completedTools.length} tool call${this.state.completedTools.length > 1 ? 's' : ''}`
+                : 'thinking…')
+            : (this.state.streaming ? 'online · streaming' : 'online'),
+        ),
       ),
+      React.createElement('button', {
+        type: 'button',
+        title: this.state.streaming ? 'Streaming on (click to disable)' : 'Streaming off (click to enable)',
+        onClick: this.toggleStreaming,
+        disabled: this.state.calling,
+        className: 'otoroshi-assistant-icon-btn',
+        style: { marginRight: 4, fontSize: 14, color: this.state.streaming ? 'var(--color-primary)' : 'var(--text-muted)' },
+      }, React.createElement('i', { className: 'fas fa-bolt' })),
       React.createElement('button', {
         type: 'button',
         title: 'Clear conversation',
@@ -427,10 +647,14 @@ class OtoroshiAssistant extends Component {
         : this.state.messages.map((m, idx) => React.createElement(OtoroshiAssistantMessage, {
             key: m.date + '-' + m.role + '-' + idx,
             message: m,
-            onRetry: m.role === 'assistant' && !m.error ? () => this.retryAt(idx) : undefined,
+            onRetry: m.role === 'assistant' && !m.error && !m.streaming ? () => this.retryAt(idx) : undefined,
             retryDisabled: this.state.calling,
           })),
-      this.state.calling ? React.createElement(OtoroshiAssistantTyping, { key: 'typing' }) : null,
+      this.state.calling ? React.createElement(OtoroshiAssistantTyping, {
+        key: 'typing',
+        activeTools: this.state.activeTools,
+        completedTools: this.state.completedTools,
+      }) : null,
     );
   }
 
