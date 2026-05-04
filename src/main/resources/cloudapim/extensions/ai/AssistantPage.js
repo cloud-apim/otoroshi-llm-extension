@@ -295,11 +295,24 @@ class OtoroshiAssistant extends Component {
     }
   }
 
-  componentDidUpdate(_, prevState) {
-    if (this.state.messages.length !== prevState.messages.length || this.state.calling !== prevState.calling) {
-      if (this.scrollRef) {
-        this.scrollRef.scrollTop = this.scrollRef.scrollHeight;
-      }
+  getSnapshotBeforeUpdate() {
+    if (!this.scrollRef) return null;
+    const el = this.scrollRef;
+    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    return distanceToBottom < 80;
+  }
+
+  componentDidUpdate(_, prevState, wasNearBottom) {
+    const lengthChanged = this.state.messages.length !== prevState.messages.length;
+    const callingChanged = this.state.calling !== prevState.calling;
+    const lastNew = this.state.messages[this.state.messages.length - 1];
+    const lastPrev = prevState.messages[prevState.messages.length - 1];
+    const lastContentChanged = !!(lastNew && lastPrev && (lastNew.content || '') !== (lastPrev.content || ''));
+    const activeToolsChanged = (this.state.activeTools || []).length !== (prevState.activeTools || []).length;
+    const completedToolsChanged = (this.state.completedTools || []).length !== (prevState.completedTools || []).length;
+    const shouldScroll = lengthChanged || callingChanged || lastContentChanged || activeToolsChanged || completedToolsChanged;
+    if (shouldScroll && this.scrollRef && wasNearBottom !== false) {
+      this.scrollRef.scrollTop = this.scrollRef.scrollHeight;
     }
     if (this.state.display && !prevState.display && this.inputRef) {
       this.inputRef.focus();
