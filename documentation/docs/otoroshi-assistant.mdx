@@ -20,34 +20,25 @@ The model receives a tailored system prompt that includes the list of resources,
 
 ## Features
 
-### Conversation UI
+### Answers your questions in context
 
-- **Floating button** anchored at the bottom-right of every backoffice page, opens a docked chat panel
-- **Markdown rendering** of assistant replies (showdown), with code blocks, tables, headings, and clickable links that open in a new tab
-- **Light & dark themes** — the chat picks up Otoroshi's theme variables and switches with the rest of the UI
-- **Expand button** for a near-fullscreen layout when drafting longer prompts
-- **Copy** and **Retry** buttons under each assistant message
-- **Clear** to wipe the conversation and start fresh
+The assistant draws on the official Otoroshi documentation and your running instance — its concepts, your loaded extensions, the page you are currently looking at. Ask *how does X work* or *where do I configure Y* and you get an answer grounded in your setup, not a generic one. Replies come with clickable links into the docs and into the right backoffice page.
 
-### Streaming with live tool indicators
+### Performs admin tasks on your behalf
 
-A streaming toggle (⚡ in the header) enables Server-Sent Events streaming. While streaming, the chat shows:
+Describe what you want — *"create a route that exposes example.com on my-api.oto.tools with the API key plugin"*, *"list all disabled LLM providers"*, *"give route abc123 the same JWT verifier as route xyz789"* — and the assistant runs the matching admin API calls. Read, write, and delete permissions are each toggleable, so you can scope what the assistant is allowed to touch on a given environment.
 
-- The 3-dot "thinking" indicator
-- A panel listing each tool call **as it happens**: tool name, a preview of the arguments, and an icon (spinning gear → green check or red cross with elapsed milliseconds)
-- A counter of the total tool calls done so far in the current turn
+### Handles multi-step workflows
 
-The indicator disappears as soon as the model starts streaming back text content.
+Complex requests don't need to be broken down. The assistant can fetch a template, mutate it, post it back, and link you to the result — all in a single prompt. It chains the actions itself and reuses values from earlier steps, so one instruction can drive a whole workflow.
 
-### Multi-turn tool calling
+### Shows you what it's doing
 
-The assistant runs a tool-calling loop bounded by `Max. tool calls`. Inside one turn the model can:
+With streaming enabled (⚡ icon), each step appears in real time: which documentation page is being read, which admin API call is in flight, what arguments were sent, whether it succeeded, and how long it took. Nothing happens behind the scenes — you can audit the work as it runs and stop the conversation if it goes off-track.
 
-1. Discover an endpoint with `search`
-2. Fetch a template with `execute`
-3. Mutate it and POST it back with `execute` (referencing the template via `${...}`)
-4. Read documentation with `doc` to confirm the shape
-5. Reply with a summary of what it did and a link to the right backoffice page
+### Lives inside the backoffice
+
+A floating button in the bottom-right opens a chat panel docked alongside your work — no context switch, no separate tab. Expand it to near-fullscreen for longer prompts, switch between light and dark themes (it follows the rest of the backoffice), copy or retry any reply, or clear the conversation to start fresh.
 
 ## Setup
 
