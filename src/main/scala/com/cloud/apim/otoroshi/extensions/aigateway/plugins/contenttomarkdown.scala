@@ -7,6 +7,7 @@ import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.utils.syntax.implicits._
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.mvc.Results
 
@@ -61,7 +62,9 @@ class ContentToMarkdownPlugin extends NgBackendCall {
   override def configSchema: Option[JsObject] = ContentToMarkdownConfig.configSchema
 
   override def start(env: Env): Future[Unit] = {
-    env.logger.info("the 'Content to Markdown' plugin is available !")
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'Content to Markdown' plugin is available !")
+    }
     ().vfuture
   }
 
