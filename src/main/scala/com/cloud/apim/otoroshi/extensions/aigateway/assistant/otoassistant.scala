@@ -94,6 +94,7 @@ object OtoroshiAssistant {
        |- Networking: TCP/UDP tunnels, TLS termination, certificates with auto-renewal (ACME/Let's Encrypt), HTTP/2, HTTP/3, websockets.
        |- Multi-tenancy via organizations and teams.
        |- This installation runs the Cloud APIM AI/LLM extension which adds an LLM gateway, providers, prompts, guardrails, semantic cache, embeddings, MCP connectors, AI agents, and more.
+       |- This installation can run other extensions and plugins from the Otoroshi Ecosystem. You can supported additional extension entities by calling GET /apis/entities on the admin API.
        |
        |## Your role
        |You help backoffice users master Otoroshi. Concretely you:
