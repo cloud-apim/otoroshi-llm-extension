@@ -2,11 +2,18 @@ package com.cloud.apim.otoroshi.extensions.aigateway.assistant.docsearch
 
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools.{AssistantTool, ToolCallContext, ToolDefinition}
 import otoroshi.utils.syntax.implicits._
+import play.api.Logger
 import play.api.libs.json._
 
 import scala.concurrent.{ExecutionContext, Future}
 
+object DocSearchTool {
+  val logger: Logger = Logger("cloud-apim-llm-extension-doc-search")
+}
+
 class DocSearchTool extends AssistantTool {
+
+  private val logger = DocSearchTool.logger
 
   override def definition: ToolDefinition = ToolDefinition(
     name = "doc_search",
@@ -38,23 +45,41 @@ class DocSearchTool extends AssistantTool {
 
   override def call(arguments: JsValue, ctx: ToolCallContext)(implicit ec: ExecutionContext): Future[String] = {
     val query = arguments.select("query").asOpt[String].map(_.trim).getOrElse("")
-    if (query.isEmpty) return Future.successful("Error: missing 'query' argument.")
+    if (query.isEmpty) {
+      logger.warn("doc_search called with empty query")
+      return Future.successful("Error: missing 'query' argument.")
+    }
     val corpus = arguments.select("corpus").asOpt[String].map(_.trim).filter(_.nonEmpty)
-    println(s"call tool 'doc_search': query=$query corpus=${corpus.getOrElse("<all>")}")
+    val index = DocSearchIndex.get()
+    logger.info(s"doc_search call: query=${quote(query)} corpus=${corpus.getOrElse("<all>")} index.ready=${index.isReady} index.building=${index.isBuilding}")
+    val startedAt = System.currentTimeMillis()
     implicit val env: otoroshi.env.Env = ctx.env
-    DocSearchIndex.get().search(query, corpus).map {
-      case Left(message) => s"doc_search: $message"
+    index.search(query, corpus).map {
+      case Left(message) =>
+        val took = System.currentTimeMillis() - startedAt
+        logger.warn(s"doc_search unavailable: query=${quote(query)} message='$message' took=${took}ms")
+        s"doc_search: $message"
       case Right(results) if results.isEmpty =>
+        val took = System.currentTimeMillis() - startedAt
+        logger.info(s"doc_search empty: query=${quote(query)} corpus=${corpus.getOrElse("<all>")} took=${took}ms")
         s"""No results for "$query"${corpus.map(c => s" in corpus '$c'").getOrElse("")}. Try a different phrasing, drop the corpus filter, or use `doc({ topic })` to discover starting-point URLs."""
       case Right(results) =>
+        val took = System.currentTimeMillis() - startedAt
+        val byCorpus = results.groupBy(_.chunk.corpusId).toSeq.map { case (c, rs) => (c, rs.size) }.sortBy(-_._2).map { case (c, n) => s"$c=$n" }.mkString(",")
+        logger.info(s"doc_search ok: query=${quote(query)} results=${results.size} (${byCorpus}) took=${took}ms")
+        results.take(3).zipWithIndex.foreach { case (r, i) =>
+          logger.info(f"  #${i + 1} score=${r.score}%.4f lexRank=${r.lexicalRank.map(_.toString).getOrElse("-")} semRank=${r.semanticRank.map(_.toString).getOrElse("-")} corpus=${r.chunk.corpusId} title='${truncateForLog(r.chunk.title)}' url=${r.chunk.url}")
+        }
         val header = s"""Found ${results.size} result(s) for "$query"${corpus.map(c => s" in corpus '$c'").getOrElse("")}:\n\n"""
         val body = results.zipWithIndex.map { case (r, idx) => formatResult(idx + 1, r) }.mkString("\n\n---\n\n")
         AssistantTool.truncate(header + body)
-    }.map { response =>
-      println(s"call tool 'doc_search' response length: ${response.length}\n\n----------------------------------\n\n")
-      response
     }
   }
+
+  private def quote(s: String): String = "\"" + s.replace("\"", "\\\"") + "\""
+
+  private def truncateForLog(s: String, max: Int = 80): String =
+    if (s.length <= max) s else s.substring(0, max) + "…"
 
   private val excerptMaxChars: Int = 400
 
