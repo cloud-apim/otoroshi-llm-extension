@@ -51,7 +51,7 @@ class DocSearchTool extends AssistantTool {
     }
     val corpus = arguments.select("corpus").asOpt[String].map(_.trim).filter(_.nonEmpty)
     val index = DocSearchIndex.get()
-    logger.info(s"doc_search call: query=${quote(query)} corpus=${corpus.getOrElse("<all>")} index.ready=${index.isReady} index.building=${index.isBuilding}")
+    if (logger.isDebugEnabled) logger.debug(s"doc_search call: query=${quote(query)} corpus=${corpus.getOrElse("<all>")} index.ready=${index.isReady} index.building=${index.isBuilding}")
     val startedAt = System.currentTimeMillis()
     implicit val env: otoroshi.env.Env = ctx.env
     index.search(query, corpus).map {
@@ -61,14 +61,16 @@ class DocSearchTool extends AssistantTool {
         s"doc_search: $message"
       case Right(results) if results.isEmpty =>
         val took = System.currentTimeMillis() - startedAt
-        logger.info(s"doc_search empty: query=${quote(query)} corpus=${corpus.getOrElse("<all>")} took=${took}ms")
+        if (logger.isDebugEnabled) logger.debug(s"doc_search empty: query=${quote(query)} corpus=${corpus.getOrElse("<all>")} took=${took}ms")
         s"""No results for "$query"${corpus.map(c => s" in corpus '$c'").getOrElse("")}. Try a different phrasing, drop the corpus filter, or use `doc({ topic })` to discover starting-point URLs."""
       case Right(results) =>
         val took = System.currentTimeMillis() - startedAt
-        val byCorpus = results.groupBy(_.chunk.corpusId).toSeq.map { case (c, rs) => (c, rs.size) }.sortBy(-_._2).map { case (c, n) => s"$c=$n" }.mkString(",")
-        logger.info(s"doc_search ok: query=${quote(query)} results=${results.size} (${byCorpus}) took=${took}ms")
-        results.take(3).zipWithIndex.foreach { case (r, i) =>
-          logger.info(f"  #${i + 1} score=${r.score}%.4f lexRank=${r.lexicalRank.map(_.toString).getOrElse("-")} semRank=${r.semanticRank.map(_.toString).getOrElse("-")} corpus=${r.chunk.corpusId} title='${truncateForLog(r.chunk.title)}' url=${r.chunk.url}")
+        if (logger.isDebugEnabled) {
+          val byCorpus = results.groupBy(_.chunk.corpusId).toSeq.map { case (c, rs) => (c, rs.size) }.sortBy(-_._2).map { case (c, n) => s"$c=$n" }.mkString(",")
+          logger.debug(s"doc_search ok: query=${quote(query)} results=${results.size} (${byCorpus}) took=${took}ms")
+          results.take(3).zipWithIndex.foreach { case (r, i) =>
+            logger.debug(f"  #${i + 1} score=${r.score}%.4f lexRank=${r.lexicalRank.map(_.toString).getOrElse("-")} semRank=${r.semanticRank.map(_.toString).getOrElse("-")} corpus=${r.chunk.corpusId} title='${truncateForLog(r.chunk.title)}' url=${r.chunk.url}")
+          }
         }
         val header = s"""Found ${results.size} result(s) for "$query"${corpus.map(c => s" in corpus '$c'").getOrElse("")}:\n\n"""
         val body = results.zipWithIndex.map { case (r, idx) => formatResult(idx + 1, r) }.mkString("\n\n---\n\n")
