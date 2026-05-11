@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools
 
+import com.cloud.apim.otoroshi.extensions.aigateway.assistant.docsearch.DocSearchTool
 import play.api.libs.json._
 
 class ToolRegistry {
@@ -7,6 +8,7 @@ class ToolRegistry {
     new SearchTool(),
     new ExecuteTool(),
     new DocTool(),
+    new DocSearchTool(),
   )
 
   def all: Seq[AssistantTool] = tools
