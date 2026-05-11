@@ -64,6 +64,10 @@ lazy val root = (project in file("."))
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       "dev.kreuzberg" % "kreuzberg" % "4.6.3" excludeAll(jackson: _*),
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+      "org.apache.lucene" % "lucene-core" % "9.11.1" excludeAll(all: _*),
+      "org.apache.lucene" % "lucene-analysis-common" % "9.11.1" excludeAll(all: _*),
+      "org.apache.lucene" % "lucene-queryparser" % "9.11.1" excludeAll(all: _*),
+      //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       "io.netty" % "netty-transport-native-kqueue" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       "io.netty" % "netty-transport-native-epoll" % "4.1.107.Final" % "provided" excludeAll(jackson: _*),
       munit % Test
