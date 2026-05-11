@@ -58,7 +58,7 @@ final class DocSearchIndex(val config: DocSearchConfig) {
             case Some(c) => s.chunksById.filter { case (_, chunk) => chunk.corpusId == c }
           }
           val fused = HybridSearcher.fuse(lex, sem, candidates, config.rrfK, config.topK)
-          logger.info(f"doc-search query timing: lex=${lexMs}%.1fms (${lex.size} hits), sem=${semMs}%.1fms (${sem.size} hits) -> fused=${fused.size}")
+          if (logger.isDebugEnabled) logger.debug(f"doc-search query timing: lex=${lexMs}%.1fms (${lex.size} hits), sem=${semMs}%.1fms (${sem.size} hits) -> fused=${fused.size}")
           Right(fused)
       }
     }
@@ -87,7 +87,7 @@ final class DocSearchIndex(val config: DocSearchConfig) {
     val previousSnapshots: Map[String, CorpusSnapshot] = previous.map(_.snapshots).getOrElse(Map.empty)
     val isFirstBuild = previous.isEmpty
     val rebuildStartedAt = System.currentTimeMillis()
-    logger.info(s"doc-search: ${if (isFirstBuild) "initial" else "refresh"} build starting (corpora=${config.corpora.map(_.id).mkString(",")})")
+    if (logger.isDebugEnabled) logger.debug(s"doc-search: ${if (isFirstBuild) "initial" else "refresh"} build starting (corpora=${config.corpora.map(_.id).mkString(",")})")
     val fetches: Future[Seq[CorpusSnapshot]] = Future.sequence(config.corpora.map { source =>
       val prev = previousSnapshots.get(source.id)
       DocSearchCorpus.fetch(source, prev.flatMap(_.etag), prev.flatMap(_.lastModified)).map {
@@ -96,7 +96,7 @@ final class DocSearchIndex(val config: DocSearchConfig) {
         case CorpusFetchResult.NotModified =>
           prev match {
             case Some(p) =>
-              logger.info(s"doc-search: reusing previous snapshot for ${source.id} (${p.chunks.size} chunks)")
+              if (logger.isDebugEnabled) logger.debug(s"doc-search: reusing previous snapshot for ${source.id} (${p.chunks.size} chunks)")
               p.copy(fetchedAt = System.currentTimeMillis())
             case None =>
               CorpusSnapshot(source, Seq.empty, None, None, System.currentTimeMillis())
@@ -112,24 +112,26 @@ final class DocSearchIndex(val config: DocSearchConfig) {
         if (allChunks.isEmpty && previous.isEmpty) {
           logger.warn("doc-search: no chunks fetched and no previous state — search will be unavailable")
         } else {
-          val perCorpus = snapshots.map(s => s"${s.source.id}=${s.chunks.size}").mkString(",")
           val embeddable = allChunks.count(_.hasBody)
-          logger.info(s"doc-search: indexing $perCorpus (total=${allChunks.size}, embeddable=$embeddable)")
+          if (logger.isDebugEnabled) {
+            val perCorpus = snapshots.map(s => s"${s.source.id}=${s.chunks.size}").mkString(",")
+            logger.debug(s"doc-search: indexing $perCorpus (total=${allChunks.size}, embeddable=$embeddable)")
+          }
           val chunksById: Map[String, DocChunk] = allChunks.iterator.map(c => c.docId -> c).toMap
           val lexStart = System.currentTimeMillis()
           val lex = LexicalIndex.build(allChunks)
           val lexTook = System.currentTimeMillis() - lexStart
-          logger.info(s"doc-search: lexical index built in ${lexTook}ms")
+          if (logger.isDebugEnabled) logger.debug(s"doc-search: lexical index built in ${lexTook}ms")
           val semStart = System.currentTimeMillis()
           val sem = SemanticIndex.build(allChunks)
           val semTook = System.currentTimeMillis() - semStart
-          logger.info(s"doc-search: semantic index built in ${semTook}ms ($embeddable embeddings)")
+          if (logger.isDebugEnabled) logger.debug(s"doc-search: semantic index built in ${semTook}ms ($embeddable embeddings)")
           val snapshotMap: Map[String, CorpusSnapshot] = snapshots.map(s => s.source.id -> s).toMap
           val newState = IndexState(System.currentTimeMillis(), snapshotMap, chunksById, lex, sem)
           val old = state.getAndSet(Some(newState))
           old.foreach { o => try o.lexical.close() catch { case _: Throwable => () } }
           val total = System.currentTimeMillis() - rebuildStartedAt
-          logger.info(s"doc-search: build complete — ${allChunks.size} chunks, totalTook=${total}ms (lex=${lexTook}ms, sem=${semTook}ms)")
+          if (logger.isDebugEnabled) logger.debug(s"doc-search: build complete — ${allChunks.size} chunks, totalTook=${total}ms (lex=${lexTook}ms, sem=${semTook}ms)")
         }
       } catch {
         case t: Throwable => logger.error("doc-search: rebuild failed", t)
