@@ -37,8 +37,10 @@ object DocSearchCorpus {
       previousLastModified.map("If-Modified-Since" -> _)
     ).flatten
     val startedAt = System.currentTimeMillis()
-    val conditionalNote = if (conditional.isEmpty) "" else s" (conditional: ${conditional.map(_._1).mkString(",")})"
-    logger.info(s"doc-search fetch start: corpus=${source.id} url=${source.url}$conditionalNote")
+    if (logger.isDebugEnabled) {
+      val conditionalNote = if (conditional.isEmpty) "" else s" (conditional: ${conditional.map(_._1).mkString(",")})"
+      logger.debug(s"doc-search fetch start: corpus=${source.id} url=${source.url}$conditionalNote")
+    }
     env.Ws.url(source.url)
       .withHttpHeaders((baseHeaders ++ conditional): _*)
       .withFollowRedirects(true)
@@ -47,7 +49,7 @@ object DocSearchCorpus {
       .map { resp =>
         val took = System.currentTimeMillis() - startedAt
         if (resp.status == 304) {
-          logger.info(s"doc-search fetch 304 Not Modified: corpus=${source.id} took=${took}ms")
+          if (logger.isDebugEnabled) logger.debug(s"doc-search fetch 304 Not Modified: corpus=${source.id} took=${took}ms")
           CorpusFetchResult.NotModified
         } else if (resp.status < 200 || resp.status >= 300) {
           logger.warn(s"doc-search fetch failed: corpus=${source.id} status=${resp.status} took=${took}ms")
@@ -60,7 +62,7 @@ object DocSearchCorpus {
           val parseTook = System.currentTimeMillis() - parseStart
           val etag = resp.header("ETag").orElse(resp.header("Etag"))
           val lastModified = resp.header("Last-Modified")
-          logger.info(s"doc-search fetch ok: corpus=${source.id} status=${resp.status} bytes=$bytes chunks=${chunks.size} httpTook=${took - parseTook}ms parseTook=${parseTook}ms etag=${etag.getOrElse("-")} lastModified=${lastModified.getOrElse("-")}")
+          if (logger.isDebugEnabled) logger.debug(s"doc-search fetch ok: corpus=${source.id} status=${resp.status} bytes=$bytes chunks=${chunks.size} httpTook=${took - parseTook}ms parseTook=${parseTook}ms etag=${etag.getOrElse("-")} lastModified=${lastModified.getOrElse("-")}")
           CorpusFetchResult.Fresh(chunks, etag, lastModified)
         }
       }
