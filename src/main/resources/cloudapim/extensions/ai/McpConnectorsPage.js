@@ -38,12 +38,14 @@ class McpConnectorsPage extends Component {
           { label: 'Stdio', value: "stdio" },
           { label: 'HTTP', value: "http" },
           { label: 'WebSocket (not standard, experimental)', value: "ws" },
+          { label: 'Meta (aggregate other MCP Connectors)', value: "meta" },
         ] }
     },
     'transport.options': {
       type: "jsonobjectcode",
       props: {
-        label: 'Configuration'
+        label: 'Configuration',
+        help: 'For "meta" kind, use {"connectors": ["mcp-connector_id1", "mcp-connector_id2"]} to select sub-connectors to aggregate.'
       }
     },
     'strict': {

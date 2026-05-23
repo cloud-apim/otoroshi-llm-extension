@@ -39,6 +39,7 @@ object McpConnectorTransportKind {
     case "sse" => Sse
     case "ws" => Websocket
     case "http" => Http
+    case "meta" => Meta
     case _ => Stdio
   }
 
@@ -57,6 +58,10 @@ object McpConnectorTransportKind {
   case object Http extends McpConnectorTransportKind {
     def name: String = "http"
   }
+
+  case object Meta extends McpConnectorTransportKind {
+    def name: String = "meta"
+  }
 }
 
 case class McpConnectorTransportStdioOption(raw: JsObject) {
@@ -73,11 +78,17 @@ case class McpConnectorTransportSseOption(raw: JsObject) {
   lazy val log: Boolean = raw.select("log").asOptBoolean.getOrElse(false)
 }
 
+case class McpConnectorTransportMetaOption(raw: JsObject) {
+  lazy val connectors: Seq[String] = raw.select("connectors").asOpt[Seq[String]].getOrElse(Seq.empty)
+}
+
 case class McpConnectorTransport(kind: McpConnectorTransportKind = McpConnectorTransportKind.Stdio, options: JsObject = Json.obj()) {
   lazy val isStdio: Boolean = kind == McpConnectorTransportKind.Stdio
   lazy val isSse: Boolean = kind == McpConnectorTransportKind.Sse
+  lazy val isMeta: Boolean = kind == McpConnectorTransportKind.Meta
   lazy val stdioOptions: McpConnectorTransportStdioOption = McpConnectorTransportStdioOption(options)
   lazy val sseOptions: McpConnectorTransportSseOption = McpConnectorTransportSseOption(options)
+  lazy val metaOptions: McpConnectorTransportMetaOption = McpConnectorTransportMetaOption(options)
 
   def json: JsValue = McpConnectorTransport.format.writes(this)
 }
@@ -311,6 +322,7 @@ case class McpConnector(
           .timeout(java.time.Duration.ofMillis(opts.timeout.toMillis))
           .build()
       }
+      case McpConnectorTransportKind.Meta => throw new RuntimeException(s"meta mcp connector '${id}' does not have a real transport client")
     }
     new DefaultMcpClient.Builder()
       .transport(trsprt)
@@ -363,27 +375,61 @@ case class McpConnector(
       matchesRules(prompt.name(), ctx, allowRules.promptRules, disallowRules.promptRules)
   }
 
+  private def metaSubConnectors()(implicit env: Env): Seq[McpConnector] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    transport.metaOptions.connectors.filter(_ != id).flatMap(cid => ext.states.mcpConnector(cid)).filter(_.enabled)
+  }
+
   def listToolsBlocking(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Seq[ToolSpecification] = Await.result(listTools(attrs), 10.seconds)
   def listResources(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResource]] = {
     val ctx = attrs.json
-    withClient(attrs)(_.listResources().asScala.filter(r => matchesResource(r, ctx, attrs)))
+    if (transport.isMeta) {
+      Future.sequence(metaSubConnectors().map(_.listResources(attrs))).map(_.flatten.filter(r => matchesResource(r, ctx, attrs)))
+    } else {
+      withClient(attrs)(_.listResources().asScala.filter(r => matchesResource(r, ctx, attrs)))
+    }
   }
   def listResourceTemplates(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResourceTemplate]] = {
     val ctx = attrs.json
-    withClient(attrs)(_.listResourceTemplates().asScala.filter(r => matchesResourceTemplate(r, ctx, attrs)))
+    if (transport.isMeta) {
+      Future.sequence(metaSubConnectors().map(_.listResourceTemplates(attrs))).map(_.flatten.filter(r => matchesResourceTemplate(r, ctx, attrs)))
+    } else {
+      withClient(attrs)(_.listResourceTemplates().asScala.filter(r => matchesResourceTemplate(r, ctx, attrs)))
+    }
   }
   def listPrompts(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpPrompt]] = {
     val ctx = attrs.json
-    withClient(attrs)(_.listPrompts().asScala.filter(r => matchesPrompt(r, ctx, attrs)))
+    if (transport.isMeta) {
+      Future.sequence(metaSubConnectors().map(_.listPrompts(attrs))).map(_.flatten.filter(r => matchesPrompt(r, ctx, attrs)))
+    } else {
+      withClient(attrs)(_.listPrompts().asScala.filter(r => matchesPrompt(r, ctx, attrs)))
+    }
   }
   def listTools(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = {
     val ctx = attrs.json
-    withClient(attrs)(_.listTools().asScala.filter(r => matchesTool(r, ctx, attrs)))
+    if (transport.isMeta) {
+      Future.sequence(metaSubConnectors().map(_.listTools(attrs))).map(_.flatten.filter(r => matchesTool(r, ctx, attrs)))
+    } else {
+      withClient(attrs)(_.listTools().asScala.filter(r => matchesTool(r, ctx, attrs)))
+    }
   }
 
   def readResource(uri: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Option[McpReadResourceResult]] = {
     val ctx = attrs.json
-    if (matchesRules(uri, ctx, allowRules.resourceRules, disallowRules.resourceRules)) {
+    if (transport.isMeta) {
+      if (!matchesRules(uri, ctx, allowRules.resourceRules, disallowRules.resourceRules)) {
+        None.vfuture
+      } else {
+        def find(remaining: List[McpConnector]): Future[Option[McpReadResourceResult]] = remaining match {
+          case Nil => None.vfuture
+          case head :: tail => head.listResources(attrs).flatMap { res =>
+            if (res.exists(_.uri() == uri)) head.readResource(uri, attrs)
+            else find(tail)
+          }
+        }
+        find(metaSubConnectors().toList)
+      }
+    } else if (matchesRules(uri, ctx, allowRules.resourceRules, disallowRules.resourceRules)) {
       withClient(attrs)(_.readResource(uri)).map(Option(_)).recover { case _ => None }
     } else {
       None.vfuture
@@ -391,7 +437,20 @@ case class McpConnector(
   }
   def getPrompt(name: String, arguments: Map[String, Object], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Option[McpGetPromptResult]] = {
     val ctx = attrs.json
-    if (matchesByName(name, includePrompts, excludePrompts) && matchesRules(name, ctx, allowRules.promptRules, disallowRules.promptRules)) {
+    if (transport.isMeta) {
+      if (!matchesByName(name, includePrompts, excludePrompts) || !matchesRules(name, ctx, allowRules.promptRules, disallowRules.promptRules)) {
+        None.vfuture
+      } else {
+        def find(remaining: List[McpConnector]): Future[Option[McpGetPromptResult]] = remaining match {
+          case Nil => None.vfuture
+          case head :: tail => head.listPrompts(attrs).flatMap { prompts =>
+            if (prompts.exists(_.name() == name)) head.getPrompt(name, arguments, attrs)
+            else find(tail)
+          }
+        }
+        find(metaSubConnectors().toList)
+      }
+    } else if (matchesByName(name, includePrompts, excludePrompts) && matchesRules(name, ctx, allowRules.promptRules, disallowRules.promptRules)) {
       withClient(attrs)(_.getPrompt(name, arguments.asJava)).map(Option(_)).recover { case _ => None }
     } else {
       None.vfuture
@@ -399,7 +458,20 @@ case class McpConnector(
   }
   def call(name: String, args: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
     val ctx = attrs.json
-    if (matchesByName(name, includeFunctions, excludeFunctions) && matchesRules(name, ctx, allowRules.toolRules, disallowRules.toolRules)) {
+    if (transport.isMeta) {
+      if (!matchesByName(name, includeFunctions, excludeFunctions) || !matchesRules(name, ctx, allowRules.toolRules, disallowRules.toolRules)) {
+        s"you cannot call tool named: '${name}'".future
+      } else {
+        def find(remaining: List[McpConnector]): Future[String] = remaining match {
+          case Nil => s"no mcp sub-connector found that can handle tool: '${name}'".future
+          case head :: tail => head.listTools(attrs).flatMap { tools =>
+            if (tools.exists(_.name() == name)) head.call(name, args, attrs)
+            else find(tail)
+          }
+        }
+        find(metaSubConnectors().toList)
+      }
+    } else if (matchesByName(name, includeFunctions, excludeFunctions) && matchesRules(name, ctx, allowRules.toolRules, disallowRules.toolRules)) {
       val request = ToolExecutionRequest.builder().id(UUID.randomUUID().toString()).name(name).arguments(args).build()
       withClient(attrs)(_.executeTool(request)).map { res =>
         if (res.isError) {
