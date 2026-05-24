@@ -45,7 +45,19 @@ class McpConnectorsPage extends Component {
       type: "jsonobjectcode",
       props: {
         label: 'Configuration',
-        help: 'For "meta" kind, use {"connectors": ["mcp-connector_id1", "mcp-connector_id2"]} to select sub-connectors to aggregate.'
+        help: 'For "meta" kind, use the MCP Connectors selector below instead.'
+      }
+    },
+    'transport.options.connectors': {
+      type: 'array',
+      props: {
+        label: 'MCP Connectors',
+        description: 'Sub-connectors aggregated by this meta MCP connector',
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-connectors',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
       }
     },
     'strict': {
@@ -90,8 +102,14 @@ class McpConnectorsPage extends Component {
     },
   ];
 
-  formFlow = [
-    '_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options', 'strict', 'forward_auth', '---', 'include_functions', 'exclude_functions'];
+  formFlow = (state) => {
+    if (state?.transport?.kind === "meta") {
+      return ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options.connectors', 'strict', 'forward_auth', '---', 'include_functions', 'exclude_functions'];
+    } else {
+      return ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options', 'strict', 'forward_auth', '---', 'include_functions', 'exclude_functions'];
+    }
+  }
+
 
   componentDidMount() {
     this.props.setTitle(`MCP Connectors`);
