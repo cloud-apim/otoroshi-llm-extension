@@ -52,12 +52,19 @@ class McpConnectorsPage extends Component {
       type: 'array',
       props: {
         label: 'MCP Connectors',
-        description: 'Sub-connectors aggregated by this meta MCP connector',
+        description: 'Sub-connectors aggregated by this meta MCP connector. The meta connector exposes 5 tools to the LLM: list_servers, list_tools, get_tool_schema, execute, search_tools.',
         valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-connectors',
         transformer: (a) => ({
           value: a.id,
           label: a.name,
         }),
+      }
+    },
+    'transport.options.semantic_search_enabled': {
+      type: 'bool',
+      props: {
+        label: 'Semantic search',
+        help: 'When enabled, search_tools fuses BM25 with embedding-based similarity (MiniLM-L6-v2). Loads a ~25MB ONNX model on first use.',
       }
     },
     'strict': {
@@ -192,7 +199,7 @@ class McpConnectorsPage extends Component {
   formFlow = (state) => {
     const head = ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind'];
     if (state?.transport?.kind === "meta") {
-      return [...head, 'transport.options.connectors', ...this.commonFlowTail];
+      return [...head, 'transport.options.connectors', 'transport.options.semantic_search_enabled', ...this.commonFlowTail];
     } else {
       return [...head, 'transport.options', ...this.commonFlowTail];
     }
