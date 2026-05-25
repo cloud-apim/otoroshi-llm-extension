@@ -13,9 +13,11 @@ export async function startMcpHttpServer({ name, version = "1.0.0", port, regist
   app.use(express.json({ limit: "4mb" }));
 
   app.post("/mcp", async (req, res) => {
+    console.log(`new connection on ${name}`)
     try {
       const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: undefined, // stateless
+        sessionIdGenerator: undefined, // stateless mode
+        enableJsonResponse: true,
       });
       res.on("close", () => { try { transport.close(); } catch {} });
       await server.connect(transport);

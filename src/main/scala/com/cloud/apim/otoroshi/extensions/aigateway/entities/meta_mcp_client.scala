@@ -129,7 +129,7 @@ object MetaMcpClient {
                 .addProperty("server", strField("Server slug (from list_servers)."))
                 .addProperty("tool", strField("Tool name (from list_tools)."))
                 .addProperty("args", JsonObjectSchema.builder().description("JSON arguments for the tool.").build())
-                .required(ju.Arrays.asList("server", "tool"))
+                .required(ju.Arrays.asList("server", "tool", "name", "args"))
                 .build()
             )
             .build(),
@@ -152,11 +152,11 @@ object MetaMcpClient {
         .addProperty(
           "servers",
           JsonArraySchema.builder()
-            .description("Optional list of server slugs to restrict the search.")
+            .description("Optional list of server slugs to restrict the search. Empty if none specifically searched.")
             .items(strField("Server slug"))
             .build(),
         )
-        .required(ju.Arrays.asList("query"))
+        .required(ju.Arrays.asList("query", "servers"))
         .build()
     )
     .build()

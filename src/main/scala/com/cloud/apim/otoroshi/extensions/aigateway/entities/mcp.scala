@@ -273,6 +273,7 @@ case class McpConnector(
   override def json: JsValue = McpConnector.format.writes(this)
 
   private def buildClient(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): McpClient = {
+    println(s"building McpClient for ${name}")
     if (transport.kind == McpConnectorTransportKind.Meta) {
       return new MetaMcpClient(this, env, ec)
     }
@@ -318,6 +319,7 @@ case class McpConnector(
       }
       case McpConnectorTransportKind.Http => {
         val opts = transport.sseOptions
+        println(s"targeting url: ${opts.url}")
         new StreamableHttpMcpTransport.Builder()
           .url(opts.url)
           .customHeaders(headers.asJava)
