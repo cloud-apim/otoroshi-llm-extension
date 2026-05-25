@@ -82,6 +82,76 @@ class McpConnectorsPage extends Component {
         placeholder: 'Name of the functions excluded from MCP Connectors (optional)',
       }
     },
+    'include_resources': {
+      type: 'array',
+      props: {
+        label: 'Included Resources',
+        placeholder: 'Name of the resources included from MCP Connectors (optional)',
+      }
+    },
+    'exclude_resources': {
+      type: 'array',
+      props: {
+        label: 'Excluded Resources',
+        placeholder: 'Name of the resources excluded from MCP Connectors (optional)',
+      }
+    },
+    'include_resource_templates': {
+      type: 'array',
+      props: {
+        label: 'Included Resource Templates',
+        placeholder: 'Name of the resource templates included from MCP Connectors (optional)',
+      }
+    },
+    'exclude_resource_templates': {
+      type: 'array',
+      props: {
+        label: 'Excluded Resource Templates',
+        placeholder: 'Name of the resource templates excluded from MCP Connectors (optional)',
+      }
+    },
+    'include_resource_template_uris': {
+      type: 'array',
+      props: {
+        label: 'Included Resource Template URIs',
+        placeholder: 'URI of the resource templates included from MCP Connectors (optional)',
+      }
+    },
+    'exclude_resource_template_uris': {
+      type: 'array',
+      props: {
+        label: 'Excluded Resource Template URIs',
+        placeholder: 'URI of the resource templates excluded from MCP Connectors (optional)',
+      }
+    },
+    'include_prompts': {
+      type: 'array',
+      props: {
+        label: 'Included Prompts',
+        placeholder: 'Name of the prompts included from MCP Connectors (optional)',
+      }
+    },
+    'exclude_prompts': {
+      type: 'array',
+      props: {
+        label: 'Excluded Prompts',
+        placeholder: 'Name of the prompts excluded from MCP Connectors (optional)',
+      }
+    },
+    'allow_rules': {
+      type: 'monaco',
+      props: {
+        label: 'Allow Rules',
+        help: 'JSON-path validators by category. Shape: { "tool_rules": { "<name>": [ { "path": "$.foo", "value": "bar" } ] }, "prompt_rules": {}, "resource_rules": {}, "resource_templates_rules": {} }',
+      }
+    },
+    'disallow_rules': {
+      type: 'monaco',
+      props: {
+        label: 'Disallow Rules',
+        help: 'JSON-path validators by category. Shape: { "tool_rules": { "<name>": [ { "path": "$.foo", "value": "bar" } ] }, "prompt_rules": {}, "resource_rules": {}, "resource_templates_rules": {} }',
+      }
+    },
   };
 
   columns = [
@@ -102,11 +172,27 @@ class McpConnectorsPage extends Component {
     },
   ];
 
+  commonFlowTail = [
+    'strict', 'forward_auth',
+    '---',
+    'include_functions', 'exclude_functions',
+    '---',
+    'include_resources', 'exclude_resources',
+    '---',
+    'include_resource_templates', 'exclude_resource_templates',
+    'include_resource_template_uris', 'exclude_resource_template_uris',
+    '---',
+    'include_prompts', 'exclude_prompts',
+    '---',
+    'allow_rules', 'disallow_rules',
+  ];
+
   formFlow = (state) => {
+    const head = ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind'];
     if (state?.transport?.kind === "meta") {
-      return ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options.connectors', 'strict', 'forward_auth', '---', 'include_functions', 'exclude_functions'];
+      return [...head, 'transport.options.connectors', ...this.commonFlowTail];
     } else {
-      return ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind', 'transport.options', 'strict', 'forward_auth', '---', 'include_functions', 'exclude_functions'];
+      return [...head, 'transport.options', ...this.commonFlowTail];
     }
   }
 
