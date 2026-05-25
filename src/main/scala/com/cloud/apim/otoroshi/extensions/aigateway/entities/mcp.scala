@@ -4,7 +4,7 @@ import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorTransportKind.Stdio
 import com.google.gson.Gson
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
-import dev.langchain4j.mcp.client.{DefaultMcpClient, McpBlobResourceContents, McpGetPromptResult, McpImageContent, McpPrompt, McpPromptContent, McpReadResourceResult, McpResource, McpResourceContents, McpResourceTemplate, McpTextContent, McpTextResourceContents}
+import dev.langchain4j.mcp.client.{DefaultMcpClient, McpBlobResourceContents, McpClient, McpGetPromptResult, McpImageContent, McpPrompt, McpPromptContent, McpReadResourceResult, McpResource, McpResourceContents, McpResourceTemplate, McpTextContent, McpTextResourceContents}
 import dev.langchain4j.mcp.client.transport.http.{HttpMcpTransport, StreamableHttpMcpTransport}
 import dev.langchain4j.mcp.client.transport.stdio.StdioMcpTransport
 import dev.langchain4j.mcp.client.transport.websocket.WebSocketMcpTransport
@@ -80,6 +80,7 @@ case class McpConnectorTransportSseOption(raw: JsObject) {
 
 case class McpConnectorTransportMetaOption(raw: JsObject) {
   lazy val connectors: Seq[String] = raw.select("connectors").asOpt[Seq[String]].getOrElse(Seq.empty)
+  lazy val semanticSearchEnabled: Boolean = raw.select("semantic_search_enabled").asOpt[Boolean].getOrElse(false)
 }
 
 case class McpConnectorTransport(kind: McpConnectorTransportKind = McpConnectorTransportKind.Stdio, options: JsObject = Json.obj()) {
@@ -250,13 +251,13 @@ case class McpConnector(
     }
   }
 
-  private def clientPool(attrs: TypedMap): ConcurrentLinkedQueue[DefaultMcpClient] = synchronized {
+  private def clientPool(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): ConcurrentLinkedQueue[McpClient] = synchronized {
     val transportSha = transport.json.stringify.sha256
     McpConnector.connectorsCache.get(id) match {
       case Some((cli, _, hash, _)) if hash == transportSha => cli
       case e => try {
         val cli = buildClient(attrs)
-        val pool = new ConcurrentLinkedQueue[DefaultMcpClient]()
+        val pool = new ConcurrentLinkedQueue[McpClient]()
         pool.add(cli)
         McpConnector.connectorsCache.put(id, (pool, new AtomicInteger(1), transportSha, System.currentTimeMillis()))
         e.foreach(_._1.asScala.foreach(_.close()))
@@ -264,14 +265,17 @@ case class McpConnector(
       } catch {
         case e: Throwable =>
           e.printStackTrace()
-          new ConcurrentLinkedQueue[DefaultMcpClient]()
+          new ConcurrentLinkedQueue[McpClient]()
       }
     }
   }
 
   override def json: JsValue = McpConnector.format.writes(this)
 
-  private def buildClient(attrs: TypedMap): DefaultMcpClient = {
+  private def buildClient(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): McpClient = {
+    if (transport.kind == McpConnectorTransportKind.Meta) {
+      return new MetaMcpClient(this, env, ec)
+    }
     val inputToken: String = if (forwardAuth) {
       attrs.get(McpOAuthFilterUtils.McpUserAuthTokenKey)
         // .orElse(attrs.get(otoroshi.plugins.Keys.MatchedRawInputTokenKey)) // TODO: use MatchedRawInputTokenKey
@@ -322,7 +326,7 @@ case class McpConnector(
           .timeout(java.time.Duration.ofMillis(opts.timeout.toMillis))
           .build()
       }
-      case McpConnectorTransportKind.Meta => throw new RuntimeException(s"meta mcp connector '${id}' does not have a real transport client")
+      case McpConnectorTransportKind.Meta => throw new IllegalStateException("unreachable")
     }
     new DefaultMcpClient.Builder()
       .transport(trsprt)
@@ -375,61 +379,27 @@ case class McpConnector(
       matchesRules(prompt.name(), ctx, allowRules.promptRules, disallowRules.promptRules)
   }
 
-  private def metaSubConnectors()(implicit env: Env): Seq[McpConnector] = {
-    val ext = env.adminExtensions.extension[AiExtension].get
-    transport.metaOptions.connectors.filter(_ != id).flatMap(cid => ext.states.mcpConnector(cid)).filter(_.enabled)
-  }
-
   def listToolsBlocking(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Seq[ToolSpecification] = Await.result(listTools(attrs), 10.seconds)
   def listResources(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResource]] = {
     val ctx = attrs.json
-    if (transport.isMeta) {
-      Future.sequence(metaSubConnectors().map(_.listResources(attrs))).map(_.flatten.filter(r => matchesResource(r, ctx, attrs)))
-    } else {
-      withClient(attrs)(_.listResources().asScala.filter(r => matchesResource(r, ctx, attrs)))
-    }
+    withClient(attrs)(_.listResources().asScala.filter(r => matchesResource(r, ctx, attrs)))
   }
   def listResourceTemplates(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpResourceTemplate]] = {
     val ctx = attrs.json
-    if (transport.isMeta) {
-      Future.sequence(metaSubConnectors().map(_.listResourceTemplates(attrs))).map(_.flatten.filter(r => matchesResourceTemplate(r, ctx, attrs)))
-    } else {
-      withClient(attrs)(_.listResourceTemplates().asScala.filter(r => matchesResourceTemplate(r, ctx, attrs)))
-    }
+    withClient(attrs)(_.listResourceTemplates().asScala.filter(r => matchesResourceTemplate(r, ctx, attrs)))
   }
   def listPrompts(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[McpPrompt]] = {
     val ctx = attrs.json
-    if (transport.isMeta) {
-      Future.sequence(metaSubConnectors().map(_.listPrompts(attrs))).map(_.flatten.filter(r => matchesPrompt(r, ctx, attrs)))
-    } else {
-      withClient(attrs)(_.listPrompts().asScala.filter(r => matchesPrompt(r, ctx, attrs)))
-    }
+    withClient(attrs)(_.listPrompts().asScala.filter(r => matchesPrompt(r, ctx, attrs)))
   }
   def listTools(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[ToolSpecification]] = {
     val ctx = attrs.json
-    if (transport.isMeta) {
-      Future.sequence(metaSubConnectors().map(_.listTools(attrs))).map(_.flatten.filter(r => matchesTool(r, ctx, attrs)))
-    } else {
-      withClient(attrs)(_.listTools().asScala.filter(r => matchesTool(r, ctx, attrs)))
-    }
+    withClient(attrs)(_.listTools().asScala.filter(r => matchesTool(r, ctx, attrs)))
   }
 
   def readResource(uri: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Option[McpReadResourceResult]] = {
     val ctx = attrs.json
-    if (transport.isMeta) {
-      if (!matchesRules(uri, ctx, allowRules.resourceRules, disallowRules.resourceRules)) {
-        None.vfuture
-      } else {
-        def find(remaining: List[McpConnector]): Future[Option[McpReadResourceResult]] = remaining match {
-          case Nil => None.vfuture
-          case head :: tail => head.listResources(attrs).flatMap { res =>
-            if (res.exists(_.uri() == uri)) head.readResource(uri, attrs)
-            else find(tail)
-          }
-        }
-        find(metaSubConnectors().toList)
-      }
-    } else if (matchesRules(uri, ctx, allowRules.resourceRules, disallowRules.resourceRules)) {
+    if (matchesRules(uri, ctx, allowRules.resourceRules, disallowRules.resourceRules)) {
       withClient(attrs)(_.readResource(uri)).map(Option(_)).recover { case _ => None }
     } else {
       None.vfuture
@@ -437,20 +407,7 @@ case class McpConnector(
   }
   def getPrompt(name: String, arguments: Map[String, Object], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Option[McpGetPromptResult]] = {
     val ctx = attrs.json
-    if (transport.isMeta) {
-      if (!matchesByName(name, includePrompts, excludePrompts) || !matchesRules(name, ctx, allowRules.promptRules, disallowRules.promptRules)) {
-        None.vfuture
-      } else {
-        def find(remaining: List[McpConnector]): Future[Option[McpGetPromptResult]] = remaining match {
-          case Nil => None.vfuture
-          case head :: tail => head.listPrompts(attrs).flatMap { prompts =>
-            if (prompts.exists(_.name() == name)) head.getPrompt(name, arguments, attrs)
-            else find(tail)
-          }
-        }
-        find(metaSubConnectors().toList)
-      }
-    } else if (matchesByName(name, includePrompts, excludePrompts) && matchesRules(name, ctx, allowRules.promptRules, disallowRules.promptRules)) {
+    if (matchesByName(name, includePrompts, excludePrompts) && matchesRules(name, ctx, allowRules.promptRules, disallowRules.promptRules)) {
       withClient(attrs)(_.getPrompt(name, arguments.asJava)).map(Option(_)).recover { case _ => None }
     } else {
       None.vfuture
@@ -458,20 +415,7 @@ case class McpConnector(
   }
   def call(name: String, args: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
     val ctx = attrs.json
-    if (transport.isMeta) {
-      if (!matchesByName(name, includeFunctions, excludeFunctions) || !matchesRules(name, ctx, allowRules.toolRules, disallowRules.toolRules)) {
-        s"you cannot call tool named: '${name}'".future
-      } else {
-        def find(remaining: List[McpConnector]): Future[String] = remaining match {
-          case Nil => s"no mcp sub-connector found that can handle tool: '${name}'".future
-          case head :: tail => head.listTools(attrs).flatMap { tools =>
-            if (tools.exists(_.name() == name)) head.call(name, args, attrs)
-            else find(tail)
-          }
-        }
-        find(metaSubConnectors().toList)
-      }
-    } else if (matchesByName(name, includeFunctions, excludeFunctions) && matchesRules(name, ctx, allowRules.toolRules, disallowRules.toolRules)) {
+    if (matchesByName(name, includeFunctions, excludeFunctions) && matchesRules(name, ctx, allowRules.toolRules, disallowRules.toolRules)) {
       val request = ToolExecutionRequest.builder().id(UUID.randomUUID().toString()).name(name).arguments(args).build()
       withClient(attrs)(_.executeTool(request)).map { res =>
         if (res.isError) {
@@ -485,7 +429,7 @@ case class McpConnector(
     }
   }
 
-  private def withClient[T](attrs: TypedMap)(f: DefaultMcpClient => T)(implicit ec: ExecutionContext, env: Env): Future[T] = {
+  private def withClient[T](attrs: TypedMap)(f: McpClient => T)(implicit ec: ExecutionContext, env: Env): Future[T] = {
     if (!enabled) {
       Future.failed(new RuntimeException("Mcp client is not enabled"))
     } else {
@@ -539,7 +483,7 @@ case class McpConnector(
 }
 
 object McpConnector {
-  val connectorsCache = new TrieMap[String, (ConcurrentLinkedQueue[DefaultMcpClient], AtomicInteger, String, Long)]()
+  val connectorsCache = new TrieMap[String, (ConcurrentLinkedQueue[McpClient], AtomicInteger, String, Long)]()
   val format = new Format[McpConnector] {
     override def writes(o: McpConnector): JsValue = o.location.jsonWithKey ++ Json.obj(
       "id" -> o.id,
