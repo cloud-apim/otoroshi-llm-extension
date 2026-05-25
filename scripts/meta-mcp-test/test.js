@@ -12,7 +12,7 @@
 // the OpenAI-compatible endpoint and asserts on the assistant's final reply (which should
 // contain values produced by the underlying tools).
 
-const ENDPOINT = process.env.TEST_ENDPOINT ?? "http://test.oto.tools:9999/chat/completions";
+const ENDPOINT = process.env.TEST_ENDPOINT ?? "http://testmcpmeta.oto.tools:9999/chat/completions";
 const API_KEY  = process.env.TEST_API_KEY  ?? "";
 const MODEL    = process.env.TEST_MODEL    ?? "gpt-5.4";
 
@@ -94,6 +94,7 @@ async function chat(userMessage) {
   };
   const headers = { "content-type": "application/json" };
   if (API_KEY) headers["authorization"] = `Bearer ${API_KEY}`;
+  console.log('calling', 'POST', ENDPOINT);
   const res = await fetch(ENDPOINT, { method: "POST", headers, body: JSON.stringify(body) });
   if (!res.ok) {
     const raw = await res.text().catch(() => "");
