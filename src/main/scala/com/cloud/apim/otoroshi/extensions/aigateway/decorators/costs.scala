@@ -97,7 +97,10 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
     val json = Json.parse(getResourceCode("data/ltllm-prices.json")).asObject
     json.value.filterNot(_._1 == "sample_spec").map {
       case (name, obj) => CostModel(name, obj)
-    }.map(c => (s"${c.litellm_provider}-${c.nameWithoutProvider}", c)).toMap
+    }.map {
+      case c if c.litellm_provider == "gemini" => (s"${c.litellm_provider}-models/${c.nameWithoutProvider.replaceFirst("models/", "")}", c)
+      case c => (s"${c.litellm_provider}-${c.nameWithoutProvider}", c)
+    }.toMap
   }
 
   val customModels: Map[String, CostModel] = {
@@ -150,6 +153,30 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
       }
     }
   }
+
+  def getProvider(provider: String): Option[String] = {
+    provider.toLowerCase() match {
+      case "openai" => "openai".some
+      case "openai-compatible" => None
+      case "scaleway" => None
+      case "deepseek" => "deepseek".some
+      case "x-ai" => "xai".some
+      case "ovh-ai-endpoints" => "ovhcloud".some
+      case "ovh-ai-endpoints-unified" => "ovhcloud".some
+      case "azure-openai" => "azure".some
+      case "azure-ai-foundry" => "azure".some
+      case "cloudflare" => "cloudflare".some
+      case "gemini" => "gemini".some
+      case "huggingface" => None
+      case "mistral" => "mistral".some
+      case "ollama" => "ollama".some
+      case "ollama-openai" => "ollama".some
+      case "cohere" => "cohere".some
+      case "anthropic" => "anthropic".some
+      case "groq" => "groq".some
+      case v => v.some
+    }
+  }
 }
 
 
@@ -175,26 +202,8 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     if (allowConfigOverride) originalBody.select("model").asOptString.getOrElse(chatClient.computeModel(originalBody).getOrElse("--")) else chatClient.computeModel(originalBody).getOrElse("--")
   }
 
-  def getProvider(): Option[String] = {
-    originalProvider.provider.toLowerCase() match {
-      case "openai" => "openai".some
-      case "scaleway" => None
-      case "deepseek" => "deepseek".some
-      case "x-ai" => "xai".some
-      case "ovh-ai-endpoints" => None
-      case "ovh-ai-endpoints-unified" => None
-      case "azure-openai" => "azure".some
-      case "azure-ai-foundry" => "azure".some
-      case "cloudflare" => "cloudflare".some
-      case "gemini" => "gemini".some
-      case "huggingface" => None
-      case "mistral" => "mistral".some
-      case "ollama" => "ollama".some
-      case "cohere" => "cohere".some
-      case "anthropic" => "anthropic".some
-      case "groq" => "groq".some
-      case _ => None
-    }
+  def getProvider()(implicit env: Env): Option[String] = {
+    env.adminExtensions.extension[AiExtension].flatMap(ext => ext.costsTracking.getProvider(originalProvider.provider))
   }
 
   private def handleStream(attrs: TypedMap, originalBody: JsValue)(f: => Future[Either[JsValue, Source[ChatResponseChunk, _]]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
