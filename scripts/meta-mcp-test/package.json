@@ -1,0 +1,19 @@
+{
+  "name": "meta-mcp-test",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "3 demo MCP servers + a test client for the Otoroshi meta MCP connector",
+  "scripts": {
+    "start": "bun run start-all.js",
+    "start:math": "bun run servers/math.js",
+    "start:weather": "bun run servers/weather.js",
+    "start:notes": "bun run servers/notes.js",
+    "test": "bun run test.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "express": "^4.21.0",
+    "zod": "^3.23.8"
+  }
+}
