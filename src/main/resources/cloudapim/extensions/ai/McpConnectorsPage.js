@@ -142,6 +142,7 @@ class McpConnectorsPage extends Component {
       type: 'monaco',
       props: {
         label: 'Allow Rules',
+        height: 300,
         help: 'JSON-path validators by category. Shape: { "tool_rules": { "<name>": [ { "path": "$.foo", "value": "bar" } ] }, "prompt_rules": {}, "resource_rules": {}, "resource_templates_rules": {} }',
       }
     },
@@ -149,6 +150,7 @@ class McpConnectorsPage extends Component {
       type: 'monaco',
       props: {
         label: 'Disallow Rules',
+        height: 300,
         help: 'JSON-path validators by category. Shape: { "tool_rules": { "<name>": [ { "path": "$.foo", "value": "bar" } ] }, "prompt_rules": {}, "resource_rules": {}, "resource_templates_rules": {} }',
       }
     },
