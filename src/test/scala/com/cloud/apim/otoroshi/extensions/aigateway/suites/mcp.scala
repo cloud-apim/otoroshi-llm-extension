@@ -27,6 +27,7 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     /////////                                  setup                                                         ///////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     val mcpConnector = McpConnector(
+      enabled = true,
       id = UUID.randomUUID().toString,
       name = "test connector",
       transport = McpConnectorTransport(
@@ -101,6 +102,7 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     /////////                                  setup                                                         ///////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     val mcpConnectorRun = McpConnector(
+      enabled = true,
       id = UUID.randomUUID().toString,
       name = "test connector run",
       transport = McpConnectorTransport(
@@ -114,6 +116,7 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       )
     )
     val mcpConnector = McpConnector(
+      enabled = true,
       id = UUID.randomUUID().toString,
       name = "test connector",
       transport = McpConnectorTransport(
@@ -589,6 +592,7 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     /////////                                  setup                                                         ///////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     val mcpConnector = McpConnector(
+      enabled = true,
       id = UUID.randomUUID().toString,
       name = "test connector",
       transport = McpConnectorTransport(
