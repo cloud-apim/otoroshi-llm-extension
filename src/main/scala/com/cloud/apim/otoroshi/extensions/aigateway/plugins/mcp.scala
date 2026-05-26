@@ -1295,7 +1295,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
   def initialize(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val response = Json.obj(
       "protocolVersion" -> "2025-06-18", //"2024-11-05",
-      "capabilities" -> Json.obj("tools" -> Json.obj(), "logging" -> Json.obj()),
+      "capabilities" -> Json.obj("tools" -> Json.obj()),
       "serverInfo" -> Json.obj(
         "name" -> config.name.getOrElse("otoroshi-http-endpoint").json,
         "version" -> config.version.getOrElse("1.0.0").json,
