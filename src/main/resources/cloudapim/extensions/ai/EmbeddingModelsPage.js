@@ -51,7 +51,7 @@ class EmbeddingModelsPage extends Component {
       ], i => i.label) }
     },
     config: {
-      type: "jsonobjectcode",
+      type: "monaco-json",
       props: {
         label: 'Configuration'
       }
