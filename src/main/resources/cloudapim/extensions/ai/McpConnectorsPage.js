@@ -179,6 +179,21 @@ class McpConnectorsPage extends Component {
       filterId: 'enabled',
       content: (item) => item.enabled ? React.createElement('span', { className: "badge bg-success" }, 'yes') : React.createElement('span', { className: "badge bg-danger" }, 'no'),
     },
+    {
+      title: 'Transport',
+      filterId: 'transport.kind',
+      content: (item) => {
+        const kind = item?.transport?.kind ?? 'stdio';
+        const cls = ({
+          http: 'bg-primary',
+          sse: 'bg-info',
+          ws: 'bg-dark',
+          stdio: 'bg-secondary',
+          meta: 'bg-warning',
+        })[kind] ?? 'bg-secondary';
+        return React.createElement('span', { className: `badge ${cls}` }, kind);
+      },
+    }
   ];
 
   commonFlowTail = [
