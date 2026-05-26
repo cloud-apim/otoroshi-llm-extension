@@ -38,9 +38,10 @@ class EmbeddingStoresPage extends Component {
       ], i => i.label) }
     },
     config: {
-      type: "jsonobjectcode",
+      type: "monaco-json",
       props: {
-        label: 'Configuration'
+        label: 'Configuration',
+        height: 300,
       }
     }
   };
