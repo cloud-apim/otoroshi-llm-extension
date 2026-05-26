@@ -250,7 +250,7 @@ class Guardrail extends Component {
               ], i => i.label)
             }
           },
-          config: { type: 'jsonobjectcode', props: { label: 'Config.', height: '150px' } },
+          config: { type: 'monaco-json', props: { label: 'Config.', height: '150px' } },
           'config.context': { type: 'string', props: { label: 'Context' } },
           'config.exclude_out_of_scope_statements': { type: 'bool', props: { label: 'Exclude Out of Scope statements' } },
           'config.threshold': { type: 'number', props: { label: 'Score threshold' } },
@@ -698,15 +698,17 @@ class AiProvidersPage extends Component {
       type: AiProviderTester,
     },
     connection: {
-      type: "jsonobjectcode",
+      type: "monaco-json",
       props: {
-        label: ''
+        label: '',
+        height: 300,
       }
     },
     options: {
-      type: "jsonobjectcode",
+      type: "monaco-json",
       props: {
-        label: ''
+        label: '',
+        height: 300,
       }
     },
     'options.random_seed': {
@@ -966,8 +968,8 @@ class AiProvidersPage extends Component {
       }
     },
     _guardrails: {
-      type: 'jsonobjectcode',
-      props: { label: 'Guardrails config.' }
+      type: 'monaco-json',
+      props: { label: 'Guardrails config.', height: 300, }
     },
     guardrails_fail_on_deny: {
       type: 'bool',
