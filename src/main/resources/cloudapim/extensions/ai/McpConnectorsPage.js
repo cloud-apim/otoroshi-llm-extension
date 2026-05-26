@@ -42,8 +42,9 @@ class McpConnectorsPage extends Component {
         ] }
     },
     'transport.options': {
-      type: "jsonobjectcode",
+      type: "monaco-json",
       props: {
+        height: 300,
         label: 'Configuration',
         help: 'For "meta" kind, use the MCP Connectors selector below instead.'
       }
