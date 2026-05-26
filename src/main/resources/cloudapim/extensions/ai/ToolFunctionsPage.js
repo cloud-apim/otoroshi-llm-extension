@@ -102,8 +102,8 @@ class ToolFunctionsPage extends Component {
       props: { label: 'Strict' },
     },
     parameters: {
-      type: 'jsonobjectcode',
-      props: { label: 'Parameters spec.', mode: 'javascript' },
+      type: 'monaco-json',
+      props: { label: 'Parameters spec.', mode: 'javascript', height: 300 },
     },
     required: {
       type: 'array',
