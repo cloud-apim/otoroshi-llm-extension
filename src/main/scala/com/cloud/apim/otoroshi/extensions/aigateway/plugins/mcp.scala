@@ -171,6 +171,42 @@ case class McpProxyEndpointConfig(
     allowRules = connector.allowRules.merge(allowRules),
     disallowRules = connector.disallowRules.merge(disallowRules),
   )
+
+  /**
+   * Build the `capabilities` block advertised in the MCP `initialize` response based on
+   * what's actually configured. Probes the referenced connectors and includes each
+   * capability only when at least one connector exposes something in it. Local workflow
+   * functions (`functionRefs`) count as tools.
+   */
+  def computeCapabilities(attrs: TypedMap, includeLogging: Boolean)(implicit env: Env, ec: ExecutionContext): Future[JsObject] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val hasLocalFunctions = functionRefs.flatMap(r => ext.states.toolFunction(r)).nonEmpty
+    val connectors = mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(applyFiltersTo)
+
+    def anyNonEmpty[T](probe: McpConnector => Future[Seq[T]]): Future[Boolean] =
+      Future
+        .sequence(connectors.map(c => probe(c).recover { case _ => Seq.empty[T] }))
+        .map(_.exists(_.nonEmpty))
+
+    val toolsF     = if (connectors.isEmpty) Future.successful(false) else anyNonEmpty(_.listTools(attrs))
+    val resourcesF = if (connectors.isEmpty) Future.successful(false) else anyNonEmpty(_.listResources(attrs))
+    val templatesF = if (connectors.isEmpty) Future.successful(false) else anyNonEmpty(_.listResourceTemplates(attrs))
+    val promptsF   = if (connectors.isEmpty) Future.successful(false) else anyNonEmpty(_.listPrompts(attrs))
+
+    for {
+      hasTools     <- toolsF
+      hasResources <- resourcesF
+      hasTemplates <- templatesF
+      hasPrompts   <- promptsF
+    } yield {
+      var caps: JsObject = Json.obj()
+      if (hasLocalFunctions || hasTools) caps = caps ++ Json.obj("tools" -> Json.obj())
+      if (hasResources || hasTemplates)  caps = caps ++ Json.obj("resources" -> Json.obj())
+      if (hasPrompts)                    caps = caps ++ Json.obj("prompts" -> Json.obj())
+      if (includeLogging)                caps = caps ++ Json.obj("logging" -> Json.obj())
+      caps
+    }
+  }
 }
 
 object McpProxyEndpointConfig {
@@ -611,17 +647,19 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     jsonRpcResponse(id, Json.obj())
   }
 
-  def initialize(id: Long, session: SseSession, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val response = Json.obj(
-      "protocolVersion" -> "2025-06-18", //"2024-11-05",
-      "capabilities" -> Json.obj("tools" -> Json.obj(), "logging" -> Json.obj()),
-      "serverInfo" -> Json.obj("name" ->
-        config.name.getOrElse("otoroshi-sse-endpoint").json,
-        "version" -> config.version.getOrElse("1.0.0").json,
-      ),
-    )
-    session.send(id, response)
-    jsonRpcResponse(id, response)
+  def initialize(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    config.computeCapabilities(attrs, includeLogging = true).flatMap { capabilities =>
+      val response = Json.obj(
+        "protocolVersion" -> "2025-06-18", //"2024-11-05",
+        "capabilities" -> capabilities,
+        "serverInfo" -> Json.obj("name" ->
+          config.name.getOrElse("otoroshi-sse-endpoint").json,
+          "version" -> config.version.getOrElse("1.0.0").json,
+        ),
+      )
+      session.send(id, response)
+      jsonRpcResponse(id, response)
+    }
   }
 
   def getToolList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
@@ -864,7 +902,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
                     val method = json.select("method").asOpt[String].getOrElse("--")
                     val start = System.currentTimeMillis()
                     val result: Future[Either[NgProxyEngineError, BackendCallResponse]] = method match {
-                      case "initialize" => initialize(id, session, config)
+                      case "initialize" => initialize(id, session, config, ctx.attrs)
                       case "shutdown" => {
                         session.finished.set(true)
                         session.send(id, Json.obj())
@@ -1001,16 +1039,20 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     jsonRpcResponse(id, Json.obj())
   }
 
-  def initialize(id: Long): JsValue = {
-    val response = Json.obj(
-      "protocolVersion" -> "2025-06-18",//"2024-11-05",
-      "capabilities" -> Json.obj("tools" -> Json.obj(), "logging" -> Json.obj()),
-      "serverInfo" -> Json.obj(
-        "name" -> config.name.getOrElse("otoroshi-ws-endpoint").json,
-        "version" -> config.version.getOrElse("1.0.0").json,
-      ),
-    )
-    jsonRpcResponse(id, response)
+  def initialize(id: Long): Future[JsValue] = {
+    implicit val e: Env = env
+    implicit val ec: ExecutionContext = env.otoroshiExecutionContext
+    config.computeCapabilities(attrs, includeLogging = true).map { capabilities =>
+      val response = Json.obj(
+        "protocolVersion" -> "2025-06-18",//"2024-11-05",
+        "capabilities" -> capabilities,
+        "serverInfo" -> Json.obj(
+          "name" -> config.name.getOrElse("otoroshi-ws-endpoint").json,
+          "version" -> config.version.getOrElse("1.0.0").json,
+        ),
+      )
+      jsonRpcResponse(id, response)
+    }
   }
 
   def getToolList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap): JsValue = {
@@ -1194,7 +1236,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
         val method = json.select("method").asOpt[String].getOrElse("--")
         val start = System.currentTimeMillis()
         val resp: Future[JsValue] = method match {
-          case "initialize" => initialize(id).vfuture
+          case "initialize" => initialize(id)
           case "shutdown" => {
             self ! PoisonPill
             emptyResp(id).vfuture
@@ -1292,16 +1334,18 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     jsonRpcResponse(id, Json.obj())
   }
 
-  def initialize(id: Long, config: McpProxyEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val response = Json.obj(
-      "protocolVersion" -> "2025-06-18", //"2024-11-05",
-      "capabilities" -> Json.obj("tools" -> Json.obj()),
-      "serverInfo" -> Json.obj(
-        "name" -> config.name.getOrElse("otoroshi-http-endpoint").json,
-        "version" -> config.version.getOrElse("1.0.0").json,
-      ),
-    )
-    jsonRpcResponse(id, response)
+  def initialize(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    config.computeCapabilities(attrs, includeLogging = false).flatMap { capabilities =>
+      val response = Json.obj(
+        "protocolVersion" -> "2025-06-18", //"2024-11-05",
+        "capabilities" -> capabilities,
+        "serverInfo" -> Json.obj(
+          "name" -> config.name.getOrElse("otoroshi-http-endpoint").json,
+          "version" -> config.version.getOrElse("1.0.0").json,
+        ),
+      )
+      jsonRpcResponse(id, response)
+    }
   }
 
   def getToolList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
@@ -1497,7 +1541,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
             val method = json.select("method").asOpt[String].getOrElse("--")
             val start = System.currentTimeMillis()
             val result: Future[Either[NgProxyEngineError, BackendCallResponse]] = method match {
-              case "initialize" => initialize(id, config)
+              case "initialize" => initialize(id, config, ctx.attrs)
               case "shutdown" => emptyResp(id)
               case "exit" => emptyResp(id)
               case "ping" => jsonRpcResponse(id, Json.obj())
