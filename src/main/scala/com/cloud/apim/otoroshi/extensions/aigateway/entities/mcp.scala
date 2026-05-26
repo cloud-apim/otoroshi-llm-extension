@@ -2,12 +2,13 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorTransportKind.Stdio
+import com.cloud.apim.otoroshi.extensions.aigateway.mcp.{MetaMcpClient, WsMcpTransport}
 import com.google.gson.Gson
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
-import dev.langchain4j.mcp.client.{DefaultMcpClient, McpBlobResourceContents, McpClient, McpGetPromptResult, McpImageContent, McpPrompt, McpPromptContent, McpReadResourceResult, McpResource, McpResourceContents, McpResourceTemplate, McpTextContent, McpTextResourceContents}
 import dev.langchain4j.mcp.client.transport.http.{HttpMcpTransport, StreamableHttpMcpTransport}
 import dev.langchain4j.mcp.client.transport.stdio.StdioMcpTransport
 import dev.langchain4j.mcp.client.transport.websocket.WebSocketMcpTransport
+import dev.langchain4j.mcp.client._
 import dev.langchain4j.model.chat.request.json._
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
 import otoroshi.env.Env
@@ -15,8 +16,8 @@ import otoroshi.models.{EntityLocation, EntityLocationSupport}
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
 import otoroshi.storage.{BasicStore, RedisLike, RedisLikeStore}
-import otoroshi.utils.{JsonPathValidator, TypedMap}
 import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.{JsonPathValidator, TypedMap}
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiExtension, AiGatewayExtensionDatastores, AiGatewayExtensionState}
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpOAuthFilterUtils
 import play.api.libs.json._
@@ -38,6 +39,7 @@ object McpConnectorTransportKind {
   def apply(str: String): McpConnectorTransportKind = str.toLowerCase match {
     case "sse" => Sse
     case "ws" => Websocket
+    case "http_langchain" => HttpLangchain
     case "http" => Http
     case "meta" => Meta
     case _ => Stdio
@@ -57,6 +59,10 @@ object McpConnectorTransportKind {
 
   case object Http extends McpConnectorTransportKind {
     def name: String = "http"
+  }
+
+  case object HttpLangchain extends McpConnectorTransportKind {
+    def name: String = "http_langchain"
   }
 
   case object Meta extends McpConnectorTransportKind {
@@ -317,7 +323,7 @@ case class McpConnector(
           .build()
         // new WebsocketHttpTransport(opts.url, opts.log, opts.log, java.time.Duration.ofMillis(opts.timeout.toMillis))
       }
-      case McpConnectorTransportKind.Http => {
+      case McpConnectorTransportKind.HttpLangchain => {
         val opts = transport.sseOptions
         println(s"targeting url: ${opts.url}")
         new StreamableHttpMcpTransport.Builder()
@@ -327,6 +333,15 @@ case class McpConnector(
           .logResponses(opts.log)
           .timeout(java.time.Duration.ofMillis(opts.timeout.toMillis))
           .build()
+      }
+      case McpConnectorTransportKind.Http => {
+        val opts = transport.sseOptions
+        new WsMcpTransport(
+          url = opts.url,
+          customHeaders = headers,
+          timeout = opts.timeout,
+          log = opts.log,
+        )
       }
       case McpConnectorTransportKind.Meta => throw new IllegalStateException("unreachable")
     }
