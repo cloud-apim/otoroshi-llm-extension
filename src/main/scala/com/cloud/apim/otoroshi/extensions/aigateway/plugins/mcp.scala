@@ -648,7 +648,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def initialize(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    config.computeCapabilities(attrs, includeLogging = true).flatMap { capabilities =>
+    config.computeCapabilities(attrs, includeLogging = false).flatMap { capabilities =>
       val response = Json.obj(
         "protocolVersion" -> "2025-06-18", //"2024-11-05",
         "capabilities" -> capabilities,
@@ -1042,7 +1042,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
   def initialize(id: Long): Future[JsValue] = {
     implicit val e: Env = env
     implicit val ec: ExecutionContext = env.otoroshiExecutionContext
-    config.computeCapabilities(attrs, includeLogging = true).map { capabilities =>
+    config.computeCapabilities(attrs, includeLogging = false).map { capabilities =>
       val response = Json.obj(
         "protocolVersion" -> "2025-06-18",//"2024-11-05",
         "capabilities" -> capabilities,
