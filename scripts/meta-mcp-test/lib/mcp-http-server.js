@@ -37,6 +37,7 @@ export async function startMcpHttpServer({ name, version = "1.0.0", port, regist
   // GET/DELETE are not used in stateless mode — return 405 explicitly.
   for (const verb of ["get", "delete"]) {
     app[verb]("/mcp", (_req, res) => {
+      console.log(`${verb} /mcp request`);
       res.status(405).json({
         jsonrpc: "2.0",
         error: { code: -32000, message: "Method not allowed." },

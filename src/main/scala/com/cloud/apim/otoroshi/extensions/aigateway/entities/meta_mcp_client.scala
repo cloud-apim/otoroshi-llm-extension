@@ -3,6 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.docsearch.{DocChunk, HybridSearcher, LexicalIndex, SemanticIndex}
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic.ExpressionLanguage
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
+import dev.langchain4j.invocation.InvocationContext
 import dev.langchain4j.mcp.client._
 import dev.langchain4j.model.chat.request.json._
 import dev.langchain4j.service.tool.ToolExecutionResult
@@ -177,23 +178,13 @@ class MetaMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) ext
   private implicit val _env: Env = env
   private implicit val _ec: ExecutionContext = ec
 
+  override def subscribeToResource(uri: String): Unit = ()
+
+  override def unsubscribeFromResource(uri: String): Unit = ()
+
   override def key(): String = s"meta-${connector.id}"
 
-  override def listTools(): ju.List[ToolSpecification] =
-    MetaMcpClient.toolSpecs.asJava
-
-  override def listResources(): ju.List[McpResource] = ju.Collections.emptyList()
-  override def listResourceTemplates(): ju.List[McpResourceTemplate] = ju.Collections.emptyList()
-  override def listPrompts(): ju.List[McpPrompt] = ju.Collections.emptyList()
-
-  override def readResource(uri: String): McpReadResourceResult =
-    throw new RuntimeException(s"meta MCP connector does not expose resources")
-  override def getPrompt(name: String, arguments: ju.Map[String, AnyRef]): McpGetPromptResult =
-    throw new RuntimeException(s"meta MCP connector does not expose prompts")
-
-  override def checkHealth(): Unit = ()
-  override def setRoots(roots: ju.List[McpRoot]): Unit = ()
-  override def close(): Unit = MetaMcpClient.invalidate(connector.id)
+  override def listTools(): ju.List[ToolSpecification] = MetaMcpClient.toolSpecs.asJava
 
   override def executeTool(request: ToolExecutionRequest): ToolExecutionResult = {
     val attrs = TypedMap.empty
@@ -201,12 +192,12 @@ class MetaMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) ext
     val rawArgs = Option(request.arguments()).getOrElse("{}")
     val args: JsValue = scala.util.Try(Json.parse(rawArgs)).getOrElse(JsObject.empty)
     val resultF: Future[(Boolean, String)] = name match {
-      case "list_servers"   => handleListServers(attrs)
-      case "list_tools"     => handleListTools(args, attrs)
-      case "get_tool_schema"=> handleGetToolSchema(args, attrs)
-      case "execute"        => handleExecute(args, attrs)
-      case "search_tools"   => handleSearchTools(args, attrs)
-      case other            => Future.successful((true, s"unknown meta tool: '$other'"))
+      case "list_servers" => handleListServers(attrs)
+      case "list_tools" => handleListTools(args, attrs)
+      case "get_tool_schema" => handleGetToolSchema(args, attrs)
+      case "execute" => handleExecute(args, attrs)
+      case "search_tools" => handleSearchTools(args, attrs)
+      case other => Future.successful((true, s"unknown meta tool: '$other'"))
     }
     val (isError, text) = try Await.result(resultF, 5.minutes) catch {
       case t: Throwable => (true, s"meta tool '$name' failed: ${t.getMessage}")
@@ -216,6 +207,34 @@ class MetaMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) ext
       .result(text)
       .resultText(text)
       .build()
+  }
+
+  override def listResources(): ju.List[McpResource] = ju.Collections.emptyList()
+
+  override def listResourceTemplates(): ju.List[McpResourceTemplate] = ju.Collections.emptyList()
+
+  override def readResource(uri: String): McpReadResourceResult = throw new RuntimeException(s"meta MCP connector does not expose resources")
+
+  override def listTools(invocationContext: InvocationContext): ju.List[ToolSpecification] = MetaMcpClient.toolSpecs.asJava
+
+  override def listResources(invocationContext: InvocationContext): ju.List[McpResource] = ju.Collections.emptyList()
+
+  override def listResourceTemplates(invocationContext: InvocationContext): ju.List[McpResourceTemplate] = ju.Collections.emptyList()
+
+  override def listPrompts(): ju.List[McpPrompt] = ju.Collections.emptyList()
+
+  override def readResource(uri: String, invocationContext: InvocationContext): McpReadResourceResult = throw new RuntimeException(s"meta MCP connector does not expose resources")
+
+  override def getPrompt(name: String, arguments: ju.Map[String, AnyRef]): McpGetPromptResult = throw new RuntimeException(s"meta MCP connector does not expose prompts")
+
+  override def checkHealth(): Unit = ()
+
+  override def setRoots(roots: ju.List[McpRoot]): Unit = ()
+
+  override def close(): Unit = MetaMcpClient.invalidate(connector.id)
+
+  override def executeTool(request: ToolExecutionRequest, invocationContext: InvocationContext): ToolExecutionResult = {
+    executeTool(request)
   }
 
   // ---------- Sub-connector resolution ----------
@@ -318,12 +337,12 @@ class MetaMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) ext
   }
 
   private def runSequentially(
-    servers: Seq[ResolvedServer],
-    calls: Seq[JsObject],
-    idx: Int,
-    attrs: TypedMap,
-    acc: Vector[(String, JsValue)],
-  ): Future[Vector[(String, JsValue)]] = {
+                               servers: Seq[ResolvedServer],
+                               calls: Seq[JsObject],
+                               idx: Int,
+                               attrs: TypedMap,
+                               acc: Vector[(String, JsValue)],
+                             ): Future[Vector[(String, JsValue)]] = {
     if (idx >= calls.size) Future.successful(acc)
     else {
       val raw = calls(idx)
@@ -335,11 +354,11 @@ class MetaMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) ext
   }
 
   private def runSingle(
-    servers: Seq[ResolvedServer],
-    raw: JsObject,
-    refCtx: Map[String, JsValue],
-    attrs: TypedMap,
-  ): Future[JsValue] = {
+                         servers: Seq[ResolvedServer],
+                         raw: JsObject,
+                         refCtx: Map[String, JsValue],
+                         attrs: TypedMap,
+                       ): Future[JsValue] = {
     ExpressionLanguage.expandValue(raw, refCtx) match {
       case Left(err) => Future.successful(Json.obj("error" -> s"unresolved expression: $err"))
       case Right(expanded) =>
@@ -373,8 +392,9 @@ class MetaMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) ext
     if (query.isEmpty) return Future.successful((true, "missing required argument 'query'"))
     val filterServers = args.select("servers").asOpt[Seq[String]].map(_.toSet).getOrElse(Set.empty[String])
     ensureSearchIndex().map { idx =>
-      val filterFn: ((String, _)) => Boolean = { case (docId, _) =>
-        if (filterServers.isEmpty) true else idx.entries.get(docId).exists(e => filterServers.contains(e.serverSlug))
+      val filterFn: ((String, _)) => Boolean = {
+        case (docId, _) =>
+          if (filterServers.isEmpty) true else idx.entries.get(docId).exists(e => filterServers.contains(e.serverSlug))
       }
       val lex = idx.lexical.search(query, MetaMcpClient.lexicalCandidates).filter(filterFn)
       val sem = idx.semantic.map(_.search(query, MetaMcpClient.semanticCandidates).filter(filterFn)).getOrElse(Seq.empty)
@@ -435,7 +455,9 @@ class MetaMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) ext
             fingerprint = fingerprint,
           )
           MetaMcpClient.searchIndices.put(connector.id, newEntry)
-          other.foreach(o => try o.lexical.close() catch { case _: Throwable => () })
+          other.foreach(o => try o.lexical.close() catch {
+            case _: Throwable => ()
+          })
           newEntry
       }
     }
