@@ -37,6 +37,7 @@ class McpConnectorsPage extends Component {
           { label: 'SSE', value: "sse" },
           { label: 'Stdio', value: "stdio" },
           { label: 'HTTP', value: "http" },
+          { label: 'HTTP (experimental)', value: "httpscala" },
           { label: 'WebSocket (not standard, experimental)', value: "ws" },
           { label: 'Meta (aggregate other MCP Connectors)', value: "meta" },
         ] }
@@ -187,6 +188,7 @@ class McpConnectorsPage extends Component {
         const kind = item?.transport?.kind ?? 'stdio';
         const cls = ({
           http: 'bg-primary',
+          http_langchain: 'bg-danger',
           sse: 'bg-info',
           ws: 'bg-dark',
           stdio: 'bg-secondary',
