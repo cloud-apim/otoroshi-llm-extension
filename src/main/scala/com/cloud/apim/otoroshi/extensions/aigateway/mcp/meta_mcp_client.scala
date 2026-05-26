@@ -102,20 +102,22 @@ object MetaMcpClient {
   private val executeTool: ToolSpecification = ToolSpecification.builder()
     .name("execute")
     .description(
-      """Run one or more tool calls against MCP servers in order. Each `calls` entry is `{server, tool, args, name?}`:
-        |- `server` (required): server slug (from list_servers).
-        |- `tool` (required): tool name (from list_tools).
-        |- `args` (optional): JSON object passed as the tool arguments.
-        |- `name` (optional): label used as the key in the response. Defaults to `call_{idx}` (0-indexed).
+      """Run one or more tool calls against MCP servers in order. Each `calls` entry is `{server, tool, arguments, name}`:
+        |- `server`: server slug (from list_servers).
+        |- `tool`: tool name (from list_tools).
+        |- `arguments`: JSON-encoded **string** of the tool's parameters object. Examples:
+        |    - tool that takes `{city: string}` → `"{\"city\": \"Paris\"}"`
+        |    - tool that takes nothing → `"{}"`
+        |  Always use `get_tool_schema` first to know exactly which keys the tool expects.
+        |- `name`: label used as the key in the response.
         |
         |Returns a JSON object (as a string) keyed by each call's name. Each entry is `{ok, result}` for a successful call or `{error}` for a failed one. Non-error results stay in the response; execution continues regardless.
         |
         |### Inter-call references (expression language)
-        |Inside any string field of a later call (any string inside `args`), use `${<name>.<path>}` to inject a value extracted from a previous call's result. The referenced call must have already executed (order is preserved).
+        |Inside the JSON-encoded `arguments` string of a later call, use `${<name>.<path>}` to inject a value extracted from a previous call's result. The engine parses the JSON, substitutes, and re-encodes — placeholders preserve their native type when the whole field value is a single placeholder.
         |- `<name>` is the previous call's `name` (or `call_<idx>`).
         |- `<path>` walks into the entry, which has shape `{ok, result}` (or `{error}`). Use dotted keys and `[idx]` for array indices. The tool's own JSON output is under `.result`.
-        |- Example: `${first.result.id}`, `${list.result[0].name}`.
-        |- A whole-string placeholder preserves the value's type; a partial placeholder splices a stringified form.
+        |- Example: `"{\"id\": \"${first.result.id}\"}"` to pass the id field returned by the call named `first`.
         |- An unresolved reference produces `{error}` for that call; subsequent calls still run.
         |""".stripMargin
     )
@@ -127,11 +129,17 @@ object MetaMcpClient {
             .description("Ordered list of tool calls to run.")
             .items(
               JsonObjectSchema.builder()
-                .addProperty("name", strField("Optional label used as the key in the response."))
+                .addProperty("name", strField("Label used as the key in the response."))
                 .addProperty("server", strField("Server slug (from list_servers)."))
                 .addProperty("tool", strField("Tool name (from list_tools)."))
-                .addProperty("args", JsonObjectSchema.builder().description("JSON arguments for the tool.").build())
-                .required(ju.Arrays.asList("server", "tool", "name", "args"))
+                .addProperty(
+                  "arguments",
+                  strField(
+                    "JSON-encoded string of the tool's arguments object. " +
+                      "Example: \"{\\\"city\\\": \\\"Paris\\\"}\". Use \"{}\" for tools that take no arguments."
+                  ),
+                )
+                .required(ju.Arrays.asList("server", "tool", "name", "arguments"))
                 .build()
             )
             .build(),
@@ -360,23 +368,34 @@ class MetaMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) ext
                          refCtx: Map[String, JsValue],
                          attrs: TypedMap,
                        ): Future[JsValue] = {
-    ExpressionLanguage.expandValue(raw, refCtx) match {
+    val serverSlug = raw.select("server").asOpt[String].map(_.trim).getOrElse("")
+    val toolName   = raw.select("tool").asOpt[String].map(_.trim).getOrElse("")
+    if (serverSlug.isEmpty) return Future.successful(Json.obj("error" -> "missing 'server'"))
+    if (toolName.isEmpty)   return Future.successful(Json.obj("error" -> "missing 'tool'"))
+
+    // `arguments` is a JSON-encoded string per the strict-mode schema. Accept legacy
+    // `args`/`parameters` objects too, in case the model produced them directly.
+    val rawArgs: JsValue =
+      raw.value.get("arguments")
+        .orElse(raw.value.get("args"))
+        .orElse(raw.value.get("parameters"))
+        .getOrElse(JsObject.empty)
+
+    val argsTree: Either[String, JsValue] = rawArgs match {
+      case JsString(s) =>
+        val trimmed = s.trim
+        if (trimmed.isEmpty) Right(JsObject.empty)
+        else scala.util.Try(Json.parse(trimmed)).toEither.left.map(t => s"invalid JSON in 'arguments': ${t.getMessage}")
+      case other => Right(other)
+    }
+
+    argsTree.flatMap(t => ExpressionLanguage.expandValue(t, refCtx)) match {
       case Left(err) => Future.successful(Json.obj("error" -> s"unresolved expression: $err"))
-      case Right(expanded) =>
-        val req = expanded.asOpt[JsObject].getOrElse(Json.obj())
-        val serverSlug = req.select("server").asOpt[String].map(_.trim).getOrElse("")
-        val toolName = req.select("tool").asOpt[String].map(_.trim).getOrElse("")
-        val toolArgs = req.value.get("args") match {
-          case Some(o: JsObject) => o
-          case Some(other) if other != JsNull => Json.obj("value" -> other)
-          case _ => Json.obj()
-        }
-        if (serverSlug.isEmpty) Future.successful(Json.obj("error" -> "missing 'server'"))
-        else if (toolName.isEmpty) Future.successful(Json.obj("error" -> "missing 'tool'"))
-        else findServer(servers, serverSlug) match {
+      case Right(expandedArgs) =>
+        findServer(servers, serverSlug) match {
           case None => Future.successful(Json.obj("error" -> s"unknown server '$serverSlug'"))
           case Some(rs) =>
-            rs.connector.call(toolName, Json.stringify(toolArgs), attrs)
+            rs.connector.call(toolName, Json.stringify(expandedArgs), attrs)
               .map(out => Json.obj("ok" -> true, "result" -> parseOrString(out)))
               .recover { case t: Throwable => Json.obj("error" -> s"call failed: ${t.getMessage}") }
         }
