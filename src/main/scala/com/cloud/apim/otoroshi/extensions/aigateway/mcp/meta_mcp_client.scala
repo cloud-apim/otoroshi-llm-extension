@@ -1,7 +1,8 @@
-package com.cloud.apim.otoroshi.extensions.aigateway.entities
+package com.cloud.apim.otoroshi.extensions.aigateway.mcp
 
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.docsearch.{DocChunk, HybridSearcher, LexicalIndex, SemanticIndex}
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic.ExpressionLanguage
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{McpConnector, McpSupport}
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
 import dev.langchain4j.invocation.InvocationContext
 import dev.langchain4j.mcp.client._
@@ -14,8 +15,8 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 
 import java.{util => ju}
-import scala.collection.concurrent.TrieMap
 import scala.collection.JavaConverters._
+import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration._
 import scala.concurrent.{Await, ExecutionContext, Future}
 
