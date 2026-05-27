@@ -37,7 +37,7 @@ class McpConnectorsPage extends Component {
           { label: 'SSE', value: "sse" },
           { label: 'Stdio', value: "stdio" },
           { label: 'HTTP', value: "http" },
-          { label: 'HTTP (Langchain)', value: "http_langchain" },
+          { label: 'HTTP (Langchain, deprecated)', value: "http_langchain" },
           { label: 'WebSocket (not standard, experimental)', value: "ws" },
           { label: 'Meta (aggregate other MCP Connectors)', value: "meta" },
         ] }
