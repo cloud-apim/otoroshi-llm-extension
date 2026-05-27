@@ -283,6 +283,9 @@ case class McpConnector(
     if (transport.kind == McpConnectorTransportKind.Meta) {
       return new MetaMcpClient(this, env, ec)
     }
+    val finaltransport = {
+      Try(McpConnectorTransport.format.reads(transport.json.stringify.evaluateEl(attrs).parseJson).getOrElse(transport)).getOrElse(transport)
+    }
     val inputToken: String = if (forwardAuth) {
       attrs.get(McpOAuthFilterUtils.McpUserAuthTokenKey)
         // .orElse(attrs.get(otoroshi.plugins.Keys.MatchedRawInputTokenKey)) // TODO: use MatchedRawInputTokenKey
@@ -292,10 +295,10 @@ case class McpConnector(
         )
         .getOrElse("--")
     } else "--"
-    val headers: Map[String, String] = if (forwardAuth) transport.sseOptions.headers.mapValues(_.applyOnWithPredicate(_.contains("{input_token}"))(_.replace("{input_token}", inputToken))) else transport.sseOptions.headers
-    val trsprt = transport.kind match {
+    val headers: Map[String, String] = if (forwardAuth) finaltransport.sseOptions.headers.mapValues(_.applyOnWithPredicate(_.contains("{input_token}"))(_.replace("{input_token}", inputToken))) else transport.sseOptions.headers
+    val trsprt = finaltransport.kind match {
       case McpConnectorTransportKind.Stdio => {
-        val opts = transport.stdioOptions
+        val opts = finaltransport.stdioOptions
         new StdioMcpTransport.Builder()
           .command((Seq(opts.command) ++ opts.args).asJava)
           .logEvents(opts.log)
@@ -303,7 +306,7 @@ case class McpConnector(
           .build()
       }
       case McpConnectorTransportKind.Sse => {
-        val opts = transport.sseOptions
+        val opts = finaltransport.sseOptions
         new HttpMcpTransport.Builder()
           .sseUrl(opts.url)
           .customHeaders(headers.asJava)
@@ -313,7 +316,7 @@ case class McpConnector(
           .build()
       }
       case McpConnectorTransportKind.Websocket => {
-        val opts = transport.sseOptions
+        val opts = finaltransport.sseOptions
         new WebSocketMcpTransport.Builder()
           .url(opts.url)
           .headersSupplier(() => headers.asJava)
@@ -324,7 +327,7 @@ case class McpConnector(
         // new WebsocketHttpTransport(opts.url, opts.log, opts.log, java.time.Duration.ofMillis(opts.timeout.toMillis))
       }
       case McpConnectorTransportKind.HttpLangchain => {
-        val opts = transport.sseOptions
+        val opts = finaltransport.sseOptions
         println(s"targeting url: ${opts.url}")
         new StreamableHttpMcpTransport.Builder()
           .url(opts.url)
@@ -335,7 +338,7 @@ case class McpConnector(
           .build()
       }
       case McpConnectorTransportKind.Http => {
-        val opts = transport.sseOptions
+        val opts = finaltransport.sseOptions
         new WsMcpTransport(
           url = opts.url,
           customHeaders = headers,
