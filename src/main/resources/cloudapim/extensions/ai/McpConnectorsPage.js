@@ -47,9 +47,45 @@ class McpConnectorsPage extends Component {
       props: {
         height: 300,
         label: 'Configuration',
-        help: 'For "meta" kind, use the MCP Connectors selector below instead.'
+        help: 'Raw transport options (used as a fallback when the kind is unknown).'
       }
     },
+
+    // --- stdio options ---
+    'transport.options.command': {
+      type: 'string',
+      props: { label: 'Command', placeholder: 'node', help: 'Executable used to spawn the MCP server process.' },
+    },
+    'transport.options.args': {
+      type: 'array',
+      props: { label: 'Args', placeholder: '/path/to/server.js' },
+    },
+    'transport.options.env': {
+      type: 'object',
+      props: { label: 'Environment variables' },
+    },
+
+    // --- http / sse / ws / http_langchain options ---
+    'transport.options.url': {
+      type: 'string',
+      props: { label: 'URL', placeholder: 'http://localhost:7001/mcp' },
+    },
+    'transport.options.headers': {
+      type: 'object',
+      props: { label: 'Headers', help: 'Custom headers sent on every request. Use {input_token} to inject the forwarded OAuth2 bearer (requires "Forward OAuth2 authentication").' },
+    },
+    'transport.options.timeout': {
+      type: 'number',
+      props: { label: 'Timeout (ms)', placeholder: '180000', help: 'Request timeout in milliseconds. Defaults to 180000 (3 minutes).' },
+    },
+
+    // --- common transport flag ---
+    'transport.options.log': {
+      type: 'bool',
+      props: { label: 'Log transport traffic', help: 'Log requests/responses (HTTP-style transports) or process events (stdio).' },
+    },
+
+    // --- meta options ---
     'transport.options.connectors': {
       type: 'array',
       props: {
@@ -214,13 +250,26 @@ class McpConnectorsPage extends Component {
     'allow_rules', 'disallow_rules',
   ];
 
+  transportFieldsFor = (kind) => {
+    switch (kind) {
+      case 'stdio':
+        return ['transport.options.command', 'transport.options.args', 'transport.options.env', 'transport.options.log'];
+      case 'sse':
+      case 'http':
+      case 'http_langchain':
+      case 'ws':
+        return ['transport.options.url', 'transport.options.headers', 'transport.options.timeout', 'transport.options.log'];
+      case 'meta':
+        return ['transport.options.connectors', 'transport.options.semantic_search_enabled'];
+      default:
+        return ['transport.options'];
+    }
+  }
+
   formFlow = (state) => {
     const head = ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind'];
-    if (state?.transport?.kind === "meta") {
-      return [...head, 'transport.options.connectors', 'transport.options.semantic_search_enabled', ...this.commonFlowTail];
-    } else {
-      return [...head, 'transport.options', ...this.commonFlowTail];
-    }
+    const transportFields = this.transportFieldsFor(state?.transport?.kind);
+    return [...head, ...transportFields, ...this.commonFlowTail];
   }
 
 
