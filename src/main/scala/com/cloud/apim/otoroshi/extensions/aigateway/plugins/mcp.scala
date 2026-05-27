@@ -331,12 +331,20 @@ object McpProxyEndpointConfig {
       "label" -> "Exclude prompts"
     ),
     "allow_rules" -> Json.obj(
-      "type" -> "jsonobject",
-      "label" -> "Allow rules"
+      "type" -> "any",
+      "label" -> "Allow rules",
+      "props" -> Json.obj(
+        "language" -> "json",
+        "height" -> "150px"
+      )
     ),
     "disallow_rules" -> Json.obj(
-      "type" -> "jsonobject",
-      "label" -> "Disallow rules"
+      "type" -> "any",
+      "label" -> "Disallow rules",
+      "props" -> Json.obj(
+        "language" -> "json",
+        "height" -> "150px"
+      )
     )
   ))
   val default = McpProxyEndpointConfig(
