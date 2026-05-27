@@ -29,7 +29,11 @@ class McpConnectorsPage extends Component {
     },
     'pool.size': {
       type: 'number',
-      props: { label: 'Pool size', placeholder: 'Connector pool size' },
+      props: {
+        label: 'Pool size',
+        placeholder: 'Connector pool size',
+        help: 'Max number of underlying MCP clients kept around for this connector. Set to 0 for one-shot mode: a fresh client is built for every call and closed right after (useful for short-lived sub-processes or when you want a clean state per request).',
+      },
     },
     'transport.kind': {
       'type': 'select',

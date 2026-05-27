@@ -449,6 +449,18 @@ case class McpConnector(
   private def withClient[T](attrs: TypedMap)(f: McpClient => T)(implicit ec: ExecutionContext, env: Env): Future[T] = {
     if (!enabled) {
       Future.failed(new RuntimeException("Mcp client is not enabled"))
+    } else if (pool.size <= 0) {
+      // pool.size == 0 → one-shot mode: build a fresh client, run f, close it. Nothing is cached.
+      Future {
+        val cli = buildClient(attrs)
+        try {
+          f(cli)
+        } finally {
+          try cli.close() catch {
+            case t: Throwable => println(s"failed to close one-shot mcp client '${id}': ${t.getMessage}")
+          }
+        }
+      }
     } else {
       //f(McpConnector.connectorsCache.get(id).get._1.peek()).vfuture
       val promise = Promise.apply[T]()
@@ -536,7 +548,7 @@ object McpConnector {
         description = (json \ "description").as[String],
         metadata = (json \ "metadata").asOpt[Map[String, String]].getOrElse(Map.empty),
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
-        pool = McpConnectorPoolSettings((json \ "pool" \ "size").asOpt[Int].filter(_ > 0).getOrElse(1)),
+        pool = McpConnectorPoolSettings((json \ "pool" \ "size").asOpt[Int].filter(_ >= 0).getOrElse(1)),
         transport = (json \ "transport").asOpt(McpConnectorTransport.format).getOrElse(McpConnectorTransport()),
         strict = (json \ "strict").asOpt[Boolean].getOrElse(true),
         includeFunctions = json.select("include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
