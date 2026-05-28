@@ -48,8 +48,9 @@ class FunctionTester extends Component {
           React.createElement('div', { style: { display: 'flex', width: '100%', flexDirection: 'column' }},
 
             React.createElement(React.Suspense, { fallback: "Loading..." },
-              React.createElement(LazyCodeInput, {
+              React.createElement(NgAnyRenderer, {
                 editorOnly: true,
+                label: '',
                 value: this.state.input,
                 onChange: input => this.setState({ input })
               }),
