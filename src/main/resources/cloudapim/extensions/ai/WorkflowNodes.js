@@ -35,7 +35,8 @@ const workflowNodes = [
         "type": "any",
         "label": "Description",
         "props": {
-          "height": "200px"
+          "height": "200px",
+          "description": "Description of the agent (useful for handoff/delegation)"
         }
       },
       "instructions": {
@@ -51,6 +52,36 @@ const workflowNodes = [
         "props": {
           "height": "200px"
         }
+      },
+      "model": {
+        "type": "string",
+        "label": "Model",
+        "props": {
+          "description": "Override the default model declared on the provider (optional)"
+        }
+      },
+      "model_options": {
+        "type": "any",
+        "label": "Model options",
+        "props": {
+          "height": "200px",
+          "language": "json",
+          "description": "Extra model options merged with provider options (JSON)"
+        }
+      },
+      "run_config": {
+        "label": "Run config",
+        "type": "form",
+        "collapsable": true,
+        "collapsed": true,
+        "schema": {
+          "max_turns": {
+            "label": "Max turns",
+            "type": "number",
+            "help": "Maximum number of LLM iterations the agent loop will perform (default: 10)"
+          }
+        },
+        "flow": ["max_turns"]
       },
       "tools": {
         "type": "select",
@@ -88,6 +119,223 @@ const workflowNodes = [
             "label": "name",
             "value": "id"
           }
+        }
+      },
+      "built_in_tools": {
+        "label": "Built-in tools",
+        "type": "form",
+        "collapsable": true,
+        "collapsed": true,
+        "schema": {
+          "all": {
+            "label": "Enable all built-in tools",
+            "type": "box-bool",
+            "props": {
+              "description": "Shortcut to enable every category of built-in tools at once"
+            }
+          },
+          "workspace": {
+            "label": "Workspace tools",
+            "type": "box-bool",
+            "props": {
+              "description": "Enables list_files, read_file, write_file, append_file, search_in_files (requires allowed_paths)"
+            }
+          },
+          "shell": {
+            "label": "Shell tool",
+            "type": "box-bool",
+            "props": {
+              "description": "Enables run_command (requires allowed_paths)"
+            }
+          },
+          "tasks": {
+            "label": "Tasks tools",
+            "type": "box-bool",
+            "props": {
+              "description": "Enables task_create, task_update, task_get, task_list (scratchpad)"
+            }
+          },
+          "plan": {
+            "label": "Plan tools",
+            "type": "box-bool",
+            "props": {
+              "description": "Enables plan_set, plan_get (scratchpad)"
+            }
+          },
+          "memory": {
+            "label": "Scratchpad memory tools",
+            "type": "box-bool",
+            "props": {
+              "description": "Enables memory_set, memory_get, memory_list (in-run scratchpad, distinct from persistent memory)"
+            }
+          },
+          "agent": {
+            "label": "Delegate tool",
+            "type": "box-bool",
+            "props": {
+              "description": "Enables 'delegate' to call configured handoff agents"
+            }
+          },
+          "http": {
+            "label": "HTTP tool",
+            "type": "box-bool",
+            "props": {
+              "description": "Enables http_call to perform outbound HTTP requests"
+            }
+          },
+          "content_to_markdown": {
+            "label": "Content to Markdown tool",
+            "type": "box-bool",
+            "props": {
+              "description": "Enables content_to_markdown to convert HTML/PDF/etc to markdown"
+            }
+          },
+          "control": {
+            "label": "Final answer tool",
+            "type": "box-bool",
+            "props": {
+              "description": "Enables final_answer to let the agent explicitly terminate the loop"
+            }
+          },
+          "persistent_kv": {
+            "label": "Persistent KV tools",
+            "type": "box-bool",
+            "props": {
+              "description": "Enables persistent_kv_set/get/delete/list (requires persistent_kv_uri)"
+            }
+          },
+          "persistent_kv_uri": {
+            "label": "Persistent KV URI",
+            "type": "string",
+            "help": "Datastore URI for the persistent KV (e.g. redis://...)"
+          },
+          "persistent_kv_namespace": {
+            "label": "Persistent KV namespace",
+            "type": "string",
+            "help": "Optional namespace/prefix for persistent KV keys"
+          },
+          "allowed_paths": {
+            "label": "Allowed paths",
+            "type": "array",
+            "array": true,
+            "format": null,
+            "help": "Filesystem paths the workspace/shell tools are allowed to operate on"
+          },
+          "command_timeout": {
+            "label": "Command timeout (ms)",
+            "type": "number",
+            "help": "Timeout for run_command in milliseconds (default: 30000)"
+          },
+          "include": {
+            "label": "Force-include tools",
+            "type": "select",
+            "array": true,
+            "props": {
+              "isClearable": true,
+              "createOption": true,
+              "description": "Force-enable specific tool names regardless of categories",
+              "possibleValues": [
+                { "label": "list_files", "value": "list_files" },
+                { "label": "read_file", "value": "read_file" },
+                { "label": "write_file", "value": "write_file" },
+                { "label": "append_file", "value": "append_file" },
+                { "label": "search_in_files", "value": "search_in_files" },
+                { "label": "run_command", "value": "run_command" },
+                { "label": "task_create", "value": "task_create" },
+                { "label": "task_update", "value": "task_update" },
+                { "label": "task_get", "value": "task_get" },
+                { "label": "task_list", "value": "task_list" },
+                { "label": "plan_set", "value": "plan_set" },
+                { "label": "plan_get", "value": "plan_get" },
+                { "label": "memory_set", "value": "memory_set" },
+                { "label": "memory_get", "value": "memory_get" },
+                { "label": "memory_list", "value": "memory_list" },
+                { "label": "persistent_kv_set", "value": "persistent_kv_set" },
+                { "label": "persistent_kv_get", "value": "persistent_kv_get" },
+                { "label": "persistent_kv_delete", "value": "persistent_kv_delete" },
+                { "label": "persistent_kv_list", "value": "persistent_kv_list" },
+                { "label": "delegate", "value": "delegate" },
+                { "label": "spawn_agent", "value": "spawn_agent" },
+                { "label": "http_call", "value": "http_call" },
+                { "label": "content_to_markdown", "value": "content_to_markdown" },
+                { "label": "final_answer", "value": "final_answer" }
+              ]
+            }
+          },
+          "exclude": {
+            "label": "Exclude tools",
+            "type": "select",
+            "array": true,
+            "props": {
+              "isClearable": true,
+              "createOption": true,
+              "description": "Force-disable specific tool names (wins over categories and include)",
+              "possibleValues": [
+                { "label": "list_files", "value": "list_files" },
+                { "label": "read_file", "value": "read_file" },
+                { "label": "write_file", "value": "write_file" },
+                { "label": "append_file", "value": "append_file" },
+                { "label": "search_in_files", "value": "search_in_files" },
+                { "label": "run_command", "value": "run_command" },
+                { "label": "task_create", "value": "task_create" },
+                { "label": "task_update", "value": "task_update" },
+                { "label": "task_get", "value": "task_get" },
+                { "label": "task_list", "value": "task_list" },
+                { "label": "plan_set", "value": "plan_set" },
+                { "label": "plan_get", "value": "plan_get" },
+                { "label": "memory_set", "value": "memory_set" },
+                { "label": "memory_get", "value": "memory_get" },
+                { "label": "memory_list", "value": "memory_list" },
+                { "label": "persistent_kv_set", "value": "persistent_kv_set" },
+                { "label": "persistent_kv_get", "value": "persistent_kv_get" },
+                { "label": "persistent_kv_delete", "value": "persistent_kv_delete" },
+                { "label": "persistent_kv_list", "value": "persistent_kv_list" },
+                { "label": "delegate", "value": "delegate" },
+                { "label": "spawn_agent", "value": "spawn_agent" },
+                { "label": "http_call", "value": "http_call" },
+                { "label": "content_to_markdown", "value": "content_to_markdown" },
+                { "label": "final_answer", "value": "final_answer" }
+              ]
+            }
+          },
+          "sub_agents": {
+            "label": "Sub-agents (spawn_agent)",
+            "type": "any",
+            "props": {
+              "height": "300px",
+              "language": "json",
+              "description": "Profiles available to the spawn_agent tool. JSON array of { name, description, instructions, provider, model, model_options, built_in_tools }"
+            }
+          }
+        },
+        "flow": [
+          "all",
+          "workspace",
+          "shell",
+          "tasks",
+          "plan",
+          "memory",
+          "agent",
+          "http",
+          "content_to_markdown",
+          "control",
+          "persistent_kv",
+          "persistent_kv_uri",
+          "persistent_kv_namespace",
+          "allowed_paths",
+          "command_timeout",
+          "include",
+          "exclude",
+          "sub_agents"
+        ]
+      },
+      "handoffs": {
+        "label": "Handoffs",
+        "type": "any",
+        "props": {
+          "height": "300px",
+          "language": "json",
+          "description": "Handoff targets used by the 'delegate' built-in tool. JSON array of { agent: AgentConfig, enabled, tool_name_override, tool_description_override }"
         }
       },
       "guardrails": {
@@ -190,7 +438,22 @@ const workflowNodes = [
         "flow": ["id", "before", "after", "config"]
       }
     },
-    flow: ["provider", "name", "instructions", "input", "tools", "mcp_connectors", "memory", "guardrails"],
+    flow: [
+      "name",
+      "description",
+      "provider",
+      "model",
+      "model_options",
+      "instructions",
+      "input",
+      "tools",
+      "mcp_connectors",
+      "memory",
+      "guardrails",
+      "built_in_tools",
+      "handoffs",
+      "run_config"
+    ],
     height: (data) => `${110 + 20 * data?.sourceHandles?.length}px`,
     nodeToJson: ({
                    edges,
