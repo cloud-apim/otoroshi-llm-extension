@@ -44,7 +44,7 @@ object WorkflowFunctionsInitializer {
 class AgentFunction extends WorkflowFunction {
 
   override def documentationName: String = "extensions.com.cloud-apim.llm-extension.agent"
-  override def documentationDisplayName: String = "AI Agent (function)"
+  override def documentationDisplayName: String = "AI Agent function (deprecated)"
   override def documentationIcon: String = "fas fa-robot"
   override def documentationDescription: String = "Deprecated way to do AI agents"
   override def documentationInputSchema: Option[JsObject] = Some(Json.obj(

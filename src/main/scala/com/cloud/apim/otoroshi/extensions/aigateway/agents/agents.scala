@@ -793,20 +793,20 @@ class AiAgentNode(val json: JsObject) extends Node {
         ),
       )
     ),
-    "name" -> Json.obj(
-      "type"  -> "string",
-      "label" -> "Name",
-      "props" -> Json.obj(
-        "description" -> "Name"
-      )
-    ),
-    "description" -> Json.obj(
-      "type" -> "any",
-      "label" -> "Description",
-      "props" -> Json.obj(
-        "height" -> "200px"
-      )
-    ),
+    // "name" -> Json.obj(
+    //   "type"  -> "string",
+    //   "label" -> "Name",
+    //   "props" -> Json.obj(
+    //     "description" -> "Name"
+    //   )
+    // ),
+    // "description" -> Json.obj(
+    //   "type" -> "any",
+    //   "label" -> "Description",
+    //   "props" -> Json.obj(
+    //     "height" -> "200px"
+    //   )
+    // ),
     "instructions" -> Json.obj(
       "type" -> "any",
       "label" -> "Instructions",

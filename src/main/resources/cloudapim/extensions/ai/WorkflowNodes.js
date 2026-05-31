@@ -31,14 +31,14 @@ const workflowNodes = [
           "description": "Name"
         }
       },
-      "description": {
-        "type": "any",
-        "label": "Description",
-        "props": {
-          "height": "200px",
-          "description": "Description of the agent (useful for handoff/delegation)"
-        }
-      },
+      // "description": {
+      //   "type": "any",
+      //   "label": "Description",
+      //   "props": {
+      //     "height": "200px",
+      //     "description": "Description of the agent (useful for handoff/delegation)"
+      //   }
+      // },
       "instructions": {
         "type": "any",
         "label": "Instructions",
@@ -439,8 +439,8 @@ const workflowNodes = [
       }
     },
     flow: [
-      "name",
-      "description",
+      //"name",
+      //"description",
       "provider",
       "model",
       "model_options",
