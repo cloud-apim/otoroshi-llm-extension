@@ -41,11 +41,18 @@ class FunctionTester extends Component {
     }
   }
   render() {
+    let formattedResult = this.state.result;
+    if (formattedResult) {
+      try {
+        formattedResult = JSON.stringify(JSON.parse(formattedResult), null, 2);
+      } catch (e) {
+      }
+    }
     return [
       React.createElement('div', { className: 'row mb-3' },
         React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, ''),
         React.createElement('div', { className: 'col-sm-10', style: { display: 'flex' } },
-          React.createElement('div', { style: { display: 'flex', width: '100%', flexDirection: 'column' }},
+          React.createElement('div', { style: { display: 'flex', width: '100%', flexDirection: 'column', marginTop: 10 }},
 
             React.createElement(NgRawMonacoEditor, {
               height: '200px',
@@ -74,13 +81,25 @@ class FunctionTester extends Component {
               ),
             ),
 
-            (this.state.result && React.createElement(React.Suspense, { fallback: "Loading..." },
-              React.createElement(LazyCodeInput, {
-                editorOnly: true,
-                value: this.state.result,
-                onChange: input => this.setState({ input })
-              })
-            ))
+            (this.state.result && React.createElement(NgRawMonacoEditor, {
+              height: '200px',
+              width: '100%',
+              theme: 'vs-dark',
+              language: 'json',
+              value: formattedResult,
+              options: {
+                readOnly: true,
+                automaticLayout: true,
+                selectOnLineNumbers: true,
+                minimap: { enabled: false },
+                lineNumbers: 'off',
+                glyphMargin: false,
+                folding: true,
+                lineDecorationsWidth: 0,
+                lineNumbersMinChars: 0,
+              },
+              onChange: input => '',
+            }))
           )
         )
       )
