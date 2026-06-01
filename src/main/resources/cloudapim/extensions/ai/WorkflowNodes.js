@@ -451,8 +451,8 @@ const workflowNodes = [
       "memory",
       "guardrails",
       "built_in_tools",
+      "run_config",
       "handoffs",
-      "run_config"
     ],
     height: (data) => `${110 + 20 * data?.sourceHandles?.length}px`,
     nodeToJson: ({
