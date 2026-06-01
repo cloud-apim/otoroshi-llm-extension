@@ -47,14 +47,25 @@ class FunctionTester extends Component {
         React.createElement('div', { className: 'col-sm-10', style: { display: 'flex' } },
           React.createElement('div', { style: { display: 'flex', width: '100%', flexDirection: 'column' }},
 
-            React.createElement(React.Suspense, { fallback: "Loading..." },
-              React.createElement(NgAnyRenderer, {
-                editorOnly: true,
-                label: '',
-                value: this.state.input,
-                onChange: input => this.setState({ input })
-              }),
-            ),
+            React.createElement(NgRawMonacoEditor, {
+              height: '200px',
+              width: '100%',
+              theme: 'vs-dark',
+              language: 'json',
+              defaultLanguage: 'json',
+              value: this.state.input,
+              options: {
+                automaticLayout: true,
+                selectOnLineNumbers: true,
+                minimap: { enabled: false },
+                lineNumbers: 'off',
+                glyphMargin: false,
+                folding: true,
+                lineDecorationsWidth: 0,
+                lineNumbersMinChars: 0,
+              },
+              onChange: input => this.setState({ input }),
+            }),
 
             React.createElement('div', { style: { width: '100%', padding: 5, display: 'flex', justifyContent: 'flex-end' }, className: 'input-group'},
               React.createElement('button', { type: 'button', className: 'btn btn-sm btn-success', style: { marginTop: 15 }, onClick: this.send, disabled: this.state.calling },

@@ -843,6 +843,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    const SelectInput = dependencies.Components.Inputs.SelectInput;
             |    const LazyCodeInput = dependencies.Components.Inputs.LazyCodeInput;
             |    const NgAnyRenderer = dependencies.Components.NgInputs.NgAnyRenderer;
+            |    const NgRawMonacoEditor = dependencies.Components.NgInputs.RawMonacoEditor;
             |    const BackOfficeServices = dependencies.BackOfficeServices;
             |    const BaseUrls = {
             |      openai: '${OpenAiApi.baseUrl}',
