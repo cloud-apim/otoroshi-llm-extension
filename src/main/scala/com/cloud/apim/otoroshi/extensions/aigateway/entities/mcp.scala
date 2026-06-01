@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import akka.stream.scaladsl.{Sink, Source}
+import com.cloud.apim.otoroshi.extensions.aigateway.agents.InlineFunctions
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorTransportKind.Stdio
 import com.cloud.apim.otoroshi.extensions.aigateway.mcp.{MetaMcpClient, WsMcpTransport}
 import com.google.gson.Gson
@@ -437,7 +438,34 @@ case class McpConnector(
     val ctx = attrs.json
     if (matchesByName(name, includeFunctions, excludeFunctions) && matchesRules(name, ctx, allowRules.toolRules, disallowRules.toolRules)) {
       val request = ToolExecutionRequest.builder().id(UUID.randomUUID().toString()).name(name).arguments(args).build()
+      val possibleNode = attrs.get(InlineFunctions.InlineMcpWfrKey).flatMap(_.get(id))
+      possibleNode.foreach { tool =>
+        attrs.get(InlineFunctions.InlineFunctionWfrKey).flatten.filter(_ => possibleNode.isDefined).foreach { wfr =>
+          wfr.attrs.get(otoroshi.next.workflow.WorkflowAdminExtension.liveUpdatesSourceKey).foreach { source =>
+            source.tryEmitNext(Json.obj("kind" -> "progress", "data" -> Json.obj(
+              "timestamp" -> System.currentTimeMillis(),
+              "message" -> s"starting '$name' on mcp connector '${this.name}'",
+              "node" -> tool,
+              "memory" -> wfr.memory.json,
+              "error" -> JsNull
+            )))
+          }
+        }
+      }
       withClient(attrs)(_.executeTool(request)).map { res =>
+        possibleNode.foreach { tool =>
+          attrs.get(InlineFunctions.InlineFunctionWfrKey).flatten.foreach { wfr =>
+            wfr.attrs.get(otoroshi.next.workflow.WorkflowAdminExtension.liveUpdatesSourceKey).foreach { source =>
+              source.tryEmitNext(Json.obj("kind" -> "progress", "data" -> Json.obj(
+                "timestamp" -> System.currentTimeMillis(),
+                "message" -> s"ending '$name' on mcp connector '${this.name}'",
+                "node" -> tool,
+                "memory" -> wfr.memory.json,
+                "error" -> JsNull
+              )))
+            }
+          }
+        }
         if (res.isError) {
           s"an error occurred while executing request: ${res.resultText()}"
         } else {

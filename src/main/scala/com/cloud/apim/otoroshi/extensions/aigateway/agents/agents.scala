@@ -17,6 +17,7 @@ import scala.util.Try
 object InlineFunctions {
   val InlineFunctionsKey = TypedKey[Map[String, InlineFunction]]("cloud-apim.ai-gateway.InlineFunctions")
   val InlineFunctionWfrKey = TypedKey[Option[WorkflowRun]]("cloud-apim.ai-gateway.InlineFunctionsWorkflowRun")
+  val InlineMcpWfrKey = TypedKey[Map[String, JsValue]]("cloud-apim.ai-gateway.InlineMcpWorkflowRun")
 }
 
 case class InlineFunctionDeclaration(name: String, description: String = "", strict: Boolean = true, parameters: JsObject, required: Seq[String] = Seq.empty)
@@ -942,6 +943,12 @@ class AiAgentNode(val json: JsObject) extends Node {
           case _ => AgentInput.empty
         }
         .getOrElse(AgentInput.empty)
+      val mcpNodes: Map[String, JsValue] = json.select("inline_tools").asOpt[Seq[JsObject]].map { seq =>
+        seq.filter(_.select("mcp_ref").isDefined).map { tool =>
+          (tool.select("mcp_ref").asString, tool)
+        }
+      }.getOrElse(Seq.empty).toMap
+      wfr.attrs.put(InlineFunctions.InlineMcpWfrKey -> mcpNodes)
       agent.run(input, rcfg, wfr.attrs, wfr.some).map {
         case Left(error) => Left(WorkflowError(s"Error executing workflow", error.asObject.some))
         case Right(output) => output.wholeTextContent.json.right
