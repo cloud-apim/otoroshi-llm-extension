@@ -34,6 +34,7 @@ class AudioModelsPage extends Component {
           {label: 'Groq', value: "groq"},
           {label: 'ElevenLabs', value: "elevenlabs"},
           {label: 'Cloud Temple', value: "cloud-temple"},
+          {label: 'AlphaEdge', value: "alphaedge"},
         ], i => i.label)
       }
     },
@@ -296,6 +297,30 @@ class AudioModelsPage extends Component {
                       diarize: false,
                       temperature: 0.0,
                       language: 'english',
+                    }
+                  }
+                }
+              });
+            } else if (state.provider === 'alphaedge') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'alphaedge',
+                config: {
+                  connection: {
+                    base_url: 'https://api-endpoints.alphaedge-ai.com',
+                    token: 'xxxxx',
+                    timeout: 180000,
+                  },
+                  options: {
+                    stt: {
+                      enabled: true,
+                      model: 'alpha-audio-v1',
+                      enable_diarization: false,
+                      enable_postcorrect: false,
                     }
                   }
                 }
