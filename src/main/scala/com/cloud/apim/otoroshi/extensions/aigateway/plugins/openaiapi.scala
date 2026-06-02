@@ -17,6 +17,7 @@ case class OpenAiCompatApiConfig(
   languageModelRefs: Seq[String],
   audioModelRefs: Seq[String],
   imageModelRefs: Seq[String],
+  ocrModelRefs: Seq[String],
   embeddingModelRefs: Seq[String],
   moderationModelRefs: Seq[String],
   contextRefs: Seq[String],
@@ -29,7 +30,7 @@ case class OpenAiCompatApiConfig(
 
 object OpenAiCompatApiConfig {
 
-  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "embedding_model_refs", "moderation_model_refs", "context_refs", "max_size_upload", "decode_images", "use_open_response_for_responses")
+  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "ocr_model_refs", "embedding_model_refs", "moderation_model_refs", "context_refs", "max_size_upload", "decode_images", "use_open_response_for_responses")
 
   def configSchema: Option[JsObject] = Some(Json.obj(
     "language_model_refs" -> Json.obj(
@@ -62,6 +63,18 @@ object OpenAiCompatApiConfig {
       "label" -> "Image models",
       "props" -> Json.obj(
         "optionsFrom" -> "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/image-models",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      ),
+    ),
+    "ocr_model_refs" -> Json.obj(
+      "type" -> "select",
+      "array" -> true,
+      "label" -> "OCR models",
+      "props" -> Json.obj(
+        "optionsFrom" -> "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/ocr-models",
         "optionsTransformer" -> Json.obj(
           "label" -> "name",
           "value" -> "id",
@@ -127,6 +140,7 @@ object OpenAiCompatApiConfig {
     languageModelRefs = Seq.empty,
     audioModelRefs = Seq.empty,
     imageModelRefs = Seq.empty,
+    ocrModelRefs = Seq.empty,
     embeddingModelRefs = Seq.empty,
     moderationModelRefs = Seq.empty,
     contextRefs = Seq.empty,
@@ -140,6 +154,7 @@ object OpenAiCompatApiConfig {
       "language_model_refs" -> o.languageModelRefs,
       "audio_model_refs" -> o.audioModelRefs,
       "image_model_refs" -> o.imageModelRefs,
+      "ocr_model_refs" -> o.ocrModelRefs,
       "embedding_model_refs" -> o.embeddingModelRefs,
       "moderation_model_refs" -> o.moderationModelRefs,
       "context_refs" -> o.contextRefs,
@@ -152,6 +167,7 @@ object OpenAiCompatApiConfig {
         languageModelRefs = json.select("language_model_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
         audioModelRefs = json.select("audio_model_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
         imageModelRefs = json.select("image_model_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
+        ocrModelRefs = json.select("ocr_model_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
         embeddingModelRefs = json.select("embedding_model_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
         moderationModelRefs = json.select("moderation_model_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
         contextRefs = json.select("context_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
@@ -228,6 +244,10 @@ class OpenAiCompatApi extends NgBackendCall {
     } else if (method == "POST" && path.endsWith("/moderations")) {
       val moderationConfig = OpenAICompatModerationConfig(config.moderationModelRefs)
       OpenAICompatModeration.handleRequest(moderationConfig, ctx)
+
+    } else if (method == "POST" && path.endsWith("/ocr")) {
+      val ocrConfig = OpenAICompatOcrConfig(config.ocrModelRefs, config.maxSizeUpload)
+      OpenAICompatOcr.handleRequest(ocrConfig, ctx)
 
     } else if (method == "POST" && path.endsWith("/responses")) {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
