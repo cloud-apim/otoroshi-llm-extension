@@ -1543,6 +1543,122 @@ object AudioModelClient {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                              OCR                                               ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class OcrGenModel(modelId: String, modelName: String) {
+  def toJson: JsValue = Json.obj("model_id" -> modelId, "model_name" -> modelName)
+}
+
+// Unified OCR input. The document can be provided as raw bytes (multipart upload or inline base64) or as a remote url.
+// The format reads a Mistral-inspired body: { model, document: { type, document_url | image_url } }, and also accepts
+// flat fields (document_url, image_url, image_base64, document_base64, url).
+case class OcrModelClientInputOptions(
+  bytes: Option[ByteString] = None,
+  url: Option[String] = None,
+  fileName: Option[String] = None,
+  fileContentType: Option[String] = None,
+  model: Option[String] = None,
+  pages: Option[Seq[Int]] = None,
+) {
+  def json: JsValue = OcrModelClientInputOptions.format.writes(this)
+}
+
+object OcrModelClientInputOptions {
+
+  private def dataUrlToBytes(s: String): Option[(ByteString, Option[String])] = {
+    if (s.startsWith("data:") && s.contains("base64,")) {
+      val base = s.substring("data:".length)
+      val media = base.split(";").headOption.filter(_.nonEmpty)
+      val b64 = base.split("base64,").lift(1).getOrElse("")
+      Some((b64.byteString.decodeBase64, media))
+    } else None
+  }
+
+  // returns (bytes, url, contentType)
+  def resolveDocument(json: JsValue): (Option[ByteString], Option[String], Option[String]) = {
+    val doc = json.select("document").asOpt[JsObject]
+    val urlCandidate: Option[String] = doc.flatMap { d =>
+      d.select("document_url").asOptString
+        .orElse(d.select("image_url").asOptString)
+        .orElse(d.at("image_url.url").asOptString)
+        .orElse(d.select("url").asOptString)
+    }.orElse(json.select("document_url").asOptString)
+      .orElse(json.select("image_url").asOptString)
+      .orElse(json.at("image_url.url").asOptString)
+      .orElse(json.select("url").asOptString)
+    val base64Candidate: Option[String] = json.select("document_base64").asOptString
+      .orElse(json.select("image_base64").asOptString)
+      .orElse(doc.flatMap(_.select("document_base64").asOptString))
+      .orElse(doc.flatMap(_.select("image_base64").asOptString))
+    base64Candidate match {
+      case Some(b64) => (Some(b64.byteString.decodeBase64), None, None)
+      case None => urlCandidate match {
+        case Some(u) => dataUrlToBytes(u) match {
+          case Some((bytes, ct)) => (Some(bytes), None, ct)
+          case None => (None, Some(u), None)
+        }
+        case None => (None, None, None)
+      }
+    }
+  }
+
+  val format = new Format[OcrModelClientInputOptions] {
+    override def reads(json: JsValue): JsResult[OcrModelClientInputOptions] = Try {
+      val (bytes, url, ct) = resolveDocument(json)
+      OcrModelClientInputOptions(
+        bytes = bytes,
+        url = url,
+        fileName = json.select("filename").asOptString.orElse(json.select("fileName").asOptString),
+        fileContentType = json.select("content_type").asOptString.orElse(json.select("fileContentType").asOptString).orElse(ct),
+        model = json.select("model").asOptString,
+        pages = json.select("pages").asOpt[Seq[Int]],
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(v) => JsSuccess(v)
+    }
+    override def writes(o: OcrModelClientInputOptions): JsValue = Json.obj()
+      .applyOnWithOpt(o.model) { case (obj, m) => obj ++ Json.obj("model" -> m) }
+      .applyOnWithOpt(o.url) { case (obj, u) => obj ++ Json.obj("document_url" -> u) }
+      .applyOnWithOpt(o.pages) { case (obj, p) => obj ++ Json.obj("pages" -> p) }
+  }
+}
+
+case class OcrModelClientResultPage(index: Int, markdown: String) {
+  def json: JsValue = Json.obj("index" -> index, "markdown" -> markdown)
+}
+
+object OcrModelClientResultUsage {
+  val empty: OcrModelClientResultUsage = OcrModelClientResultUsage(0, None)
+}
+
+case class OcrModelClientResultUsage(pagesProcessed: Int, docSizeBytes: Option[Long]) {
+  def json: JsValue = Json.obj("pages_processed" -> pagesProcessed).applyOnWithOpt(docSizeBytes) {
+    case (obj, s) => obj ++ Json.obj("doc_size_bytes" -> s)
+  }
+}
+
+case class OcrModelClientResponse(model: String, text: String, pages: Seq[OcrModelClientResultPage], usage: OcrModelClientResultUsage) {
+  def toJson: JsValue = Json.obj(
+    "model" -> model,
+    "text" -> text,
+    "pages" -> JsArray(pages.map(_.json)),
+    "usage_info" -> usage.json,
+  )
+}
+
+trait OcrModelClient {
+  def supportsOcr: Boolean = true
+  def ocr(options: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]]
+  def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
+}
+
+object OcrModelClient {
+  val ApiUsageKey = TypedKey[OcrModelClientResultUsage]("otoroshi-extensions.cloud-apim.ai.ocr.ApiUsage")
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////                                       Images Gen                                               ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
