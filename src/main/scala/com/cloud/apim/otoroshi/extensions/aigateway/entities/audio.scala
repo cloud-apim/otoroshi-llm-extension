@@ -107,6 +107,11 @@ case class AudioModel(
         val sttopts = MistralAiAudioModelClientSttOptions.fromJson(sttOptions)
         new MistralAIAudioModelClient(api, sttopts, id).some
       }
+      case "alphaedge" => {
+        val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val sttopts = AlphaEdgeAudioModelClientSttOptions.fromJson(sttOptions)
+        new AlphaEdgeAudioModelClient(api, sttopts, id).some
+      }
       case _ => None
     }
     rawClient.map(c => AudioModelClientDecorators(this, c, env))
