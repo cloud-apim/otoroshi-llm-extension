@@ -43,6 +43,7 @@ This makes it the ideal choice when you want to expose a single, coherent API su
 | `POST` | `/audio/transcriptions` | OpenAI Speech-to-Text API | `audio_model_refs` |
 | `POST` | `/audio/translations` | OpenAI Audio Translation API | `audio_model_refs` |
 | `POST` | `/moderations` | OpenAI Moderation API | `moderation_model_refs` |
+| `POST` | `/ocr` | OCR (text extraction from images and pdf) | `ocr_model_refs` |
 
 ## Plugin configuration
 
@@ -54,6 +55,7 @@ This makes it the ideal choice when you want to expose a single, coherent API su
     "language_model_refs": ["provider_openai_1", "provider_mistral_1"],
     "audio_model_refs": ["audio_model_1"],
     "image_model_refs": ["image_model_1"],
+    "ocr_model_refs": ["ocr_model_1"],
     "embedding_model_refs": ["embedding_model_1"],
     "moderation_model_refs": ["moderation_model_1"],
     "context_refs": ["context_1", "context_2"],
@@ -71,8 +73,9 @@ This makes it the ideal choice when you want to expose a single, coherent API su
 | `image_model_refs` | array of strings | `[]` | References to image model entities used for image generation and editing |
 | `embedding_model_refs` | array of strings | `[]` | References to embedding model entities used for the embeddings endpoint |
 | `moderation_model_refs` | array of strings | `[]` | References to moderation model entities used for the moderations endpoint |
+| `ocr_model_refs` | array of strings | `[]` | References to OCR model entities used for the `/ocr` endpoint |
 | `context_refs` | array of strings | `[]` | References to prompt context entities returned by the `/contexts` endpoint |
-| `max_size_upload` | number | `104857600` (100MB) | Maximum file upload size in bytes for audio and image endpoints |
+| `max_size_upload` | number | `104857600` (100MB) | Maximum file upload size in bytes for audio, image, and OCR endpoints |
 | `decode_images` | boolean | `false` | When enabled, decodes base64-encoded image results into binary responses |
 | `use_open_response_for_responses` | boolean | `false` | When enabled, the `/responses` endpoint uses the Open Responses proxy instead of the default OpenAI Responses proxy |
 
@@ -429,6 +432,36 @@ curl https://api.domain.tld/v1/moderations \
   -d '{
     "input": "Some text to check for moderation"
   }'
+```
+
+### POST /ocr
+
+OCR endpoint that extracts text from images and PDF documents. Backed by the OCR model entities referenced in `ocr_model_refs`. Accepts either a JSON body (Mistral-style document) or a `multipart/form-data` file upload. See the [OCR Models](/docs/ocr/plugins) documentation for the full request and response formats.
+
+```sh
+curl https://api.domain.tld/v1/ocr \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
+  -d '{
+    "model": "alpha-digit-max",
+    "document": {
+      "type": "document_url",
+      "document_url": "https://example.com/scan.pdf"
+    }
+  }'
+```
+
+Response:
+
+```js
+{
+  "model": "alpha-digit-max",
+  "text": "The full extracted text...",
+  "pages": [
+    { "index": 0, "markdown": "The full extracted text..." }
+  ],
+  "usage_info": { "pages_processed": 1 }
+}
 ```
 
 ## Securing the API
