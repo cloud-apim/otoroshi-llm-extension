@@ -184,7 +184,7 @@ object OpenAiCompatApiConfig {
 
 class OpenAiCompatApi extends NgBackendCall {
 
-  override def name: String = "Cloud APIM - LLM OpenAI Compatible API"
+  override def name: String = "Cloud APIM - LLM OpenAI Compatible API (unified)"
   override def description: Option[String] = "Unified OpenAI compatible API backend that routes to the appropriate handler based on the request path".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
