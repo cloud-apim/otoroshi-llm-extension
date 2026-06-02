@@ -36,6 +36,8 @@ There are three ways to call an OCR Model:
 | **Unified API** | The `OpenAI Compatible API` plugin exposes `POST /ocr` alongside chat, audio, image and embedding endpoints. See [OpenAI Compatible API](/docs/llm-gateway/openai-compat-api). |
 | **Workflow function** | The [`ocr_call`](/docs/workflows/ocr-call) function calls an OCR Model from within a workflow. |
 
+OCR can also be performed **through a regular text/LLM provider** instead of an OCR Model entity — by sending a chat completion with an image or PDF content part. See [OCR through text models](./text-models).
+
 ## OCR model entity
 
 An OCR Model entity wraps a provider connection and its options:
