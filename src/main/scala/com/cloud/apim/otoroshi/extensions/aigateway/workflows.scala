@@ -19,6 +19,7 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.llm_call", new LlmCallFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.audio_tts", new AudioTtsFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.audio_stt", new AudioSttFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.ocr_call", new OcrCallFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.compute_embedding", new ComputeEmbeddingFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.generate_image", new GenerateImageFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.generate_video", new GenerateVideoFunction())
@@ -1579,6 +1580,97 @@ class AudioSttFunction extends WorkflowFunction {
             case Right(response) =>
               //println(s"transcribe: ${response.transcribedText}")
               response.transcribedText.json.right
+          }
+        }
+      }
+    }
+  }
+}
+
+class OcrCallFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.ocr_call"
+  override def documentationDisplayName: String            = "OCR"
+  override def documentationIcon: String                   = "fas fa-file-image"
+  override def documentationDescription: String            = "This function calls an OCR model provider to extract text from an image or pdf document"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The OCR model provider id"),
+      "file_in" -> Json.obj("type" -> "string", "description" -> "An optional file path to read the document from"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The payload object", "properties" -> Json.obj(
+        "model" -> Json.obj("type" -> "string", "description" -> "The model name"),
+        "document_url" -> Json.obj("type" -> "string", "description" -> "The url of the document (image or pdf)"),
+        "image_base64" -> Json.obj("type" -> "string", "description" -> "The base64 encoded document"),
+        "content_type" -> Json.obj("type" -> "string", "description" -> "The document content type")
+      ))
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type" -> "select",
+      "description" -> "The OCR model provider",
+      "props" -> Json.obj(
+        "description" -> "The OCR model provider",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/ocr-models",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
+    ),
+    "payload" -> Json.obj(
+      "type"  -> "any",
+      "props" -> Json.obj(
+        "description" -> "The payload object",
+        "height" -> "200px"
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("text"),
+    "properties" -> Json.obj(
+      "model" -> Json.obj("type" -> "string", "description" -> "The model name"),
+      "text" -> Json.obj("type" -> "string", "description" -> "The extracted text"),
+      "pages" -> Json.obj("type" -> "array", "description" -> "The extracted pages")
+    )
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.ocr_call",
+    "args" -> Json.obj(
+      "provider" -> "ocr-provider",
+      "payload" -> Json.obj(
+        "model" -> "alpha-digit-max",
+        "document_url" -> "https://example.com/scan.pdf"
+      )
+    )
+  ))
+
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    val provider  = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val fileIn = args.select("file_in").asOpt[String]
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.ocrModel(provider) match {
+      case None => WorkflowError(s"ocr provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(ocrModel) => ocrModel.getOcrModelClient() match {
+        case None => WorkflowError(s"unable to instantiate client for ocr provider", Some(Json.obj("provider_id" -> ocrModel.id)), None).leftf
+        case Some(client) => {
+          val base = OcrModelClientInputOptions.format.reads(payload).getOrElse(OcrModelClientInputOptions())
+          val options = fileIn match {
+            case Some(file) =>
+              val bytes = ByteString(Files.readAllBytes(new File(file).toPath))
+              base.copy(bytes = bytes.some, fileContentType = base.fileContentType.orElse(payload.select("content_type").asOptString))
+            case None => base
+          }
+          client.ocr(options, payload, wfr.attrs).map {
+            case Left(error) => WorkflowError(s"error while calling ocr model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(response) => response.toJson.right
           }
         }
       }
