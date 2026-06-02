@@ -666,3 +666,65 @@ class MistralAIAudioModelClient(val api: MistralAiApi, val sttOptions: MistralAi
     }
   }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                       OCR (OcrModel client)                                    ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class MistralOcrModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse("mistral-ocr-latest")
+}
+
+object MistralOcrModelClientOptions {
+  def fromJson(raw: JsObject): MistralOcrModelClientOptions = MistralOcrModelClientOptions(raw)
+}
+
+class MistralOcrModelClient(val api: MistralAiApi, val options: MistralOcrModelClientOptions, id: String) extends OcrModelClient {
+
+  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = {
+    Right(List(
+      OcrGenModel("mistral-ocr-latest", "mistral-ocr-latest"),
+      OcrGenModel("mistral-ocr-2505", "mistral-ocr-2505"),
+    )).vfuture
+  }
+
+  override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
+    val model = opts.model.getOrElse(options.model)
+    // Build the Mistral document reference: a remote url, or an inline base64 data-uri.
+    val documentOpt: Option[JsObject] = opts.url match {
+      case Some(u) =>
+        val isImage = opts.fileContentType.exists(_.startsWith("image/"))
+        Some(if (isImage) Json.obj("type" -> "image_url", "image_url" -> Json.obj("url" -> u)) else Json.obj("type" -> "document_url", "document_url" -> u))
+      case None => opts.bytes.map { b =>
+        val ct = opts.fileContentType.getOrElse("application/pdf")
+        val dataUrl = s"data:${ct};base64,${b.encodeBase64.utf8String}"
+        if (ct.startsWith("image/")) Json.obj("type" -> "image_url", "image_url" -> Json.obj("url" -> dataUrl))
+        else Json.obj("type" -> "document_url", "document_url" -> dataUrl)
+      }
+    }
+    documentOpt match {
+      case None => Left(Json.obj("error" -> "bad_request", "error_details" -> "a document (image or pdf) is required")).vfuture
+      case Some(document) => {
+        val body = Json.obj("model" -> model, "document" -> document).applyOnWithOpt(opts.pages) {
+          case (obj, pages) => obj ++ Json.obj("pages" -> pages)
+        }
+        api.rawCall("POST", "/v1/ocr", body.some).map { resp =>
+          if (resp.status == 200) {
+            val j = resp.json
+            val pages = j.select("pages").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { p =>
+              OcrModelClientResultPage(p.select("index").asOpt[Int].getOrElse(0), p.select("markdown").asOpt[String].getOrElse(""))
+            }
+            val text = pages.map(_.markdown).mkString("\n\n")
+            val usage = OcrModelClientResultUsage(
+              j.at("usage_info.pages_processed").asOpt[Int].getOrElse(pages.size),
+              j.at("usage_info.doc_size_bytes").asOpt[Long]
+            )
+            OcrModelClientResponse(j.select("model").asOpt[String].getOrElse(model), text, pages, usage).right
+          } else {
+            Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${resp.status}: ${resp.body}"))
+          }
+        }
+      }
+    }
+  }
+}
