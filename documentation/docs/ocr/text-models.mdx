@@ -1,0 +1,136 @@
+---
+sidebar_position: 4
+---
+
+# OCR through text models
+
+Besides the dedicated [OCR Model](./introduction) entity, OCR can also be performed **through a regular LLM (text) provider**. [AlphaEdge](https://alphaedge-ai.com) 🇫🇷 🇪🇺 can be configured as a standard LLM provider: you call the OpenAI-compatible `/chat/completions` endpoint with a message that contains an **image or PDF content part**, and the assistant response is the **extracted text**.
+
+This is convenient when you already have a chat/LLM pipeline and want OCR to flow through the exact same surface: the standard `/chat/completions` endpoint, your existing OpenAI clients/SDKs, model constraints, prompt contexts, caching, budgets, and observability.
+
+## Text model vs OCR Model
+
+| | OCR through text models | [Dedicated OCR Model](./plugins) |
+|---|---|---|
+| Entity | `AiProvider` (LLM provider) | `OcrModel` |
+| Endpoint | `POST /chat/completions` | `POST /ocr` |
+| Input | A chat message with an image/pdf content part | JSON document or multipart upload |
+| Output | A standard chat completion (assistant text) | `{ pages[].markdown, usage_info, ... }` |
+| Best for | Reusing an existing chat pipeline / OpenAI clients | A purpose-built OCR API and the [`ocr_call`](/docs/workflows/ocr-call) workflow function |
+
+Both approaches use the same AlphaEdge backend; pick the one that best fits how you consume the result.
+
+## Provider configuration
+
+Create an **LLM provider** with `provider` set to `alphaedge`. Authentication uses the `X-API-Key` header (set through `connection.token`).
+
+```js
+{
+  "id": "provider_xxxxxxxxx",
+  "name": "AlphaEdge OCR",
+  "description": "AlphaEdge OCR as a text model",
+  "provider": "alphaedge",
+  "connection": {
+    "base_url": "https://api-endpoints.alphaedge-ai.com",
+    "token": "${vault://local/ALPHAEDGE_API_KEY}",
+    "timeout": 180000
+  },
+  "options": {
+    "model": "alpha-digit-max",
+    "allow_config_override": true
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `connection.base_url` | string | `https://api-endpoints.alphaedge-ai.com` | AlphaEdge base URL |
+| `connection.token` | string | — | AlphaEdge API key (sent as `X-API-Key`). Supports vault references and comma-separated rotation. |
+| `connection.timeout` | number | `180000` | Request timeout in milliseconds |
+| `options.model` | string | `alpha-digit-max` | The default OCR model (`alpha-digit-max` or `alpha-digit-medium`) |
+| `options.pdf_password` | string | — | Optional password for protected PDFs |
+| `options.allow_config_override` | boolean | `true` | Allow the request body to override options (e.g. `model`, `pdf_password`) |
+
+Expose the provider on a route with an LLM proxy (the **OpenAI Compatible API** plugin or the chat completions proxy). See [Expose a provider](/docs/llm-gateway/expose).
+
+## Usage
+
+Send a chat completion whose message contains a file content part. **A file (image or PDF) content part is required** — a request without one returns `400`.
+
+### Image input
+
+```sh
+curl https://my-llm-endpoint.example.com/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "alpha-digit-max",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "image_url", "image_url": { "url": "data:image/png;base64,iVBORw0KGgo..." } }
+        ]
+      }
+    ]
+  }'
+```
+
+The image can also be passed as a remote `https://` URL.
+
+### PDF input
+
+PDFs are passed as a `document` content part:
+
+```js
+{
+  "model": "alpha-digit-max",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "document",
+          "source": {
+            "type": "base64",
+            "media_type": "application/pdf",
+            "data": "JVBERi0xLjcK..."
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Response
+
+The result is a standard chat completion. The extracted text is the assistant message content:
+
+```js
+{
+  "id": "chatcmpl-xxxxx",
+  "object": "chat.completion",
+  "model": "alpha-digit-max",
+  "choices": [
+    {
+      "index": 0,
+      "message": { "role": "assistant", "content": "The full extracted text..." },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 }
+}
+```
+
+## Notes
+
+- **Required file part**: the call fails with `400` if no image or PDF content part is present in the messages.
+- **Streaming**: AlphaEdge OCR is not natively streamed. When `stream: true` is requested, the single extracted text is returned as one streamed chunk.
+- **PDF password**: pass `pdf_password` in `options`, or in the request body when `allow_config_override` is enabled.
+- **Token usage**: OCR does not consume LLM tokens, so usage counters are reported as `0`.
+
+## See also
+
+- [OCR Models](./introduction) — the dedicated `OcrModel` entity and `POST /ocr` API
+- [Speech-to-Text](/docs/audio-gen/stt#alphaedge) — AlphaEdge also supports audio transcription
