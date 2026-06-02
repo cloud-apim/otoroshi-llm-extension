@@ -1599,11 +1599,15 @@ class OcrCallFunction extends WorkflowFunction {
     "properties" -> Json.obj(
       "provider" -> Json.obj("type" -> "string", "description" -> "The OCR model provider id"),
       "file_in" -> Json.obj("type" -> "string", "description" -> "An optional file path to read the document from"),
-      "payload" -> Json.obj("type" -> "object", "description" -> "The payload object", "properties" -> Json.obj(
+      "payload" -> Json.obj("type" -> "object", "description" -> "The payload object. The document can be passed in any of the following ways (by priority): file_in path, raw byte array, base64 string, data-uri, or remote url.", "properties" -> Json.obj(
         "model" -> Json.obj("type" -> "string", "description" -> "The model name"),
-        "document_url" -> Json.obj("type" -> "string", "description" -> "The url of the document (image or pdf)"),
+        "document_url" -> Json.obj("type" -> "string", "description" -> "A remote url of the document (image or pdf)"),
+        "image" -> Json.obj("type" -> Seq("string", "array"), "description" -> "The document content, either as a base64 string (or data-uri) or as a raw byte array"),
+        "document" -> Json.obj("type" -> Seq("string", "array"), "description" -> "Alias of 'image'"),
+        "bytes" -> Json.obj("type" -> "array", "description" -> "The document content as a raw byte array"),
         "image_base64" -> Json.obj("type" -> "string", "description" -> "The base64 encoded document"),
-        "content_type" -> Json.obj("type" -> "string", "description" -> "The document content type")
+        "document_base64" -> Json.obj("type" -> "string", "description" -> "The base64 encoded document"),
+        "content_type" -> Json.obj("type" -> "string", "description" -> "The document content type (e.g. image/png, application/pdf)")
       ))
     )
   ))
@@ -1661,12 +1665,30 @@ class OcrCallFunction extends WorkflowFunction {
       case Some(ocrModel) => ocrModel.getOcrModelClient() match {
         case None => WorkflowError(s"unable to instantiate client for ocr provider", Some(Json.obj("provider_id" -> ocrModel.id)), None).leftf
         case Some(client) => {
+          def fieldValue(key: String): Option[JsValue] = (payload \ key).toOption
+          // raw byte array passed directly (JSON array of bytes), e.g. payload.bytes / payload.image / payload.document
+          def byteArrayField(key: String): Option[ByteString] =
+            fieldValue(key).collect { case _: JsArray => () }.flatMap(_ => payload.select(key).asOpt[Array[Byte]]).map(ByteString.apply)
+          // base64 (or data-uri) string passed in a generic content field
+          def base64StringField(key: String): Option[ByteString] =
+            fieldValue(key).collect { case JsString(s) => s }.filter(_.nonEmpty).flatMap { s =>
+              if (s.startsWith("data:") && s.contains("base64,")) Some(s.split("base64,").lift(1).getOrElse("").byteString.decodeBase64)
+              else if (s.startsWith("http://") || s.startsWith("https://")) None
+              else Some(s.byteString.decodeBase64)
+            }
+          // resolve the document bytes from the supported inputs, by priority
+          val explicitBytes: Option[ByteString] =
+            fileIn.map(file => ByteString(Files.readAllBytes(new File(file).toPath)))
+              .orElse(byteArrayField("bytes")).orElse(byteArrayField("image")).orElse(byteArrayField("document"))
+              .orElse(base64StringField("image_base64")).orElse(base64StringField("document_base64"))
+              .orElse(base64StringField("image")).orElse(base64StringField("document")).orElse(base64StringField("content"))
+          // fallback: lets the format resolve a remote url / data-uri / Mistral-style document object
           val base = OcrModelClientInputOptions.format.reads(payload).getOrElse(OcrModelClientInputOptions())
-          val options = fileIn match {
-            case Some(file) =>
-              val bytes = ByteString(Files.readAllBytes(new File(file).toPath))
-              base.copy(bytes = bytes.some, fileContentType = base.fileContentType.orElse(payload.select("content_type").asOptString))
-            case None => base
+          val contentType = payload.select("content_type").asOptString.orElse(base.fileContentType)
+          val fileName = payload.select("filename").asOptString.orElse(base.fileName)
+          val options = explicitBytes match {
+            case Some(bytes) => base.copy(bytes = bytes.some, url = None, fileContentType = contentType, fileName = fileName)
+            case None => base.copy(fileContentType = contentType, fileName = fileName)
           }
           client.ocr(options, payload, wfr.attrs).map {
             case Left(error) => WorkflowError(s"error while calling ocr model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
