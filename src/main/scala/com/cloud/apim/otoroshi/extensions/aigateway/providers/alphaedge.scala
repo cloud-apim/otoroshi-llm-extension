@@ -237,3 +237,71 @@ class AlphaEdgeChatClient(api: AlphaEdgeApi, options: AlphaEdgeChatClientOptions
     }
   }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                       OCR (OcrModel client)                                    ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+case class AlphaEdgeOcrModelClientOptions(raw: JsObject) {
+  lazy val model: String = raw.select("model").asOpt[String].getOrElse(AlphaEdgeApi.defaultOcrModel)
+  lazy val pdfPassword: Option[String] = raw.select("pdf_password").asOptString
+}
+
+object AlphaEdgeOcrModelClientOptions {
+  def fromJson(raw: JsObject): AlphaEdgeOcrModelClientOptions = AlphaEdgeOcrModelClientOptions(raw)
+}
+
+class AlphaEdgeOcrModelClient(val api: AlphaEdgeApi, val options: AlphaEdgeOcrModelClientOptions, id: String) extends OcrModelClient {
+
+  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = {
+    api.rawCall("GET", "/models", None).map { resp =>
+      if (resp.status == 200) {
+        Right(resp.json.asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+          .filter(o => o.select("type").asOpt[String].contains("ocr"))
+          .map { o =>
+            val slug = o.select("model_slug").asString
+            OcrGenModel(slug, slug)
+          }.toList)
+      } else {
+        Left(Json.obj("error" -> s"bad response code: ${resp.status}"))
+      }
+    }
+  }
+
+  private def resolveBytes(opts: OcrModelClientInputOptions)(implicit ec: ExecutionContext, env: Env): Future[Option[(ByteString, String, String)]] = {
+    val ct = opts.fileContentType.getOrElse("application/octet-stream")
+    val name = opts.fileName.getOrElse(if (ct.startsWith("image/")) s"image.${ct.split("/").lastOption.getOrElse("png")}" else "document.pdf")
+    opts.bytes match {
+      case Some(b) => Future.successful(Some((b, ct, name)))
+      case None => opts.url match {
+        case Some(u) => env.Ws.url(u).withRequestTimeout(2.minutes).get().map(r => Some((r.bodyAsBytes, opts.fileContentType.getOrElse(r.contentType), name)))
+        case None => Future.successful(None)
+      }
+    }
+  }
+
+  override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
+    val model = opts.model.getOrElse(options.model)
+    val pdfPassword = rawBody.select("pdf_password").asOptString.orElse(options.pdfPassword)
+    resolveBytes(opts).flatMap {
+      case None => Left(Json.obj("error" -> "bad_request", "error_details" -> "a document (image or pdf) is required")).vfuture
+      case Some((bytes, contentType, filename)) => {
+        val ct = ContentType.parse(contentType).toOption.getOrElse(ContentTypes.`application/octet-stream`)
+        val parts = List(
+          Multipart.FormData.BodyPart("image", HttpEntity(ct, bytes), Map("filename" -> filename))
+        ).applyOnWithOpt(pdfPassword) {
+          case (list, pwd) => list :+ Multipart.FormData.BodyPart("pdf_password", HttpEntity(pwd.byteString))
+        }
+        val form = Multipart.FormData(parts: _*)
+        api.rawCallForm("POST", s"/models/${model}/ocr", form).map { resp =>
+          if (resp.status == 200) {
+            val text = resp.json.select("text").asString
+            OcrModelClientResponse(model, text, Seq(OcrModelClientResultPage(0, text)), OcrModelClientResultUsage(1, None)).right
+          } else {
+            Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${resp.status}: ${resp.body}"))
+          }
+        }
+      }
+    }
+  }
+}
