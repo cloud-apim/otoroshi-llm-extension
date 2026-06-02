@@ -1,0 +1,125 @@
+---
+sidebar_position: 17
+---
+
+# OCR
+
+The `ocr_call` function extracts text from an image or PDF document using an [OCR Model](/docs/ocr/introduction) provider.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.ocr_call`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The OCR model entity id |
+| `file_in` | string | no | A file path on disk to read the document from |
+| `payload` | object | yes | The payload object (the document and options) |
+| `payload.model` | string | no | The model name (defaults to the model configured on the entity) |
+| `payload.document_url` | string | no | A remote URL of the document (image or pdf) |
+| `payload.image` / `payload.document` | string \| array | no | The document content, either as a base64 string (or data-uri) or as a raw byte array |
+| `payload.bytes` | array | no | The document content as a raw byte array |
+| `payload.image_base64` / `payload.document_base64` | string | no | The document content, base64 encoded |
+| `payload.content_type` | string | no | The document content type (e.g. `image/png`, `application/pdf`) |
+| `payload.filename` | string | no | The document file name |
+| `payload.pages` | array | no | Optional list of page indices to process (provider dependent) |
+| `payload.pdf_password` | string | no | Optional password for protected PDFs (AlphaEdge) |
+
+### How the document is resolved
+
+The document can be passed in several ways. They are resolved in the following priority order:
+
+1. `file_in` — a file path read from disk
+2. a **raw byte array** in `payload.bytes`, `payload.image`, or `payload.document`
+3. a **base64 string** in `payload.image_base64` or `payload.document_base64`
+4. a **base64 string or data-uri** in `payload.image`, `payload.document`, or `payload.content`
+5. a **remote URL** (or Mistral-style `document` object) resolved from the payload
+
+A field named `image` or `document` is auto-detected: a JSON array is treated as raw bytes, a string is treated as base64 (or a `data:` uri).
+
+## Output
+
+Returns the OCR result object:
+
+```json
+{
+  "model": "alpha-digit-max",
+  "text": "The full extracted text...",
+  "pages": [
+    { "index": 0, "markdown": "The full extracted text..." }
+  ],
+  "usage_info": {
+    "pages_processed": 1
+  }
+}
+```
+
+## Example with a remote URL
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.ocr_call",
+  "args": {
+    "provider": "ocr-model_xxxxx",
+    "payload": {
+      "model": "alpha-digit-max",
+      "document_url": "https://example.com/scan.pdf"
+    }
+  },
+  "result": "ocr_result"
+}
+```
+
+## Example with a file input
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.ocr_call",
+  "args": {
+    "provider": "ocr-model_xxxxx",
+    "file_in": "/path/to/scan.png",
+    "payload": {
+      "model": "alpha-digit-max",
+      "content_type": "image/png"
+    }
+  },
+  "result": "ocr_result"
+}
+```
+
+## Example with a base64 input
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.ocr_call",
+  "args": {
+    "provider": "ocr-model_xxxxx",
+    "payload": {
+      "image_base64": "JVBERi0xLjcKJ...",
+      "content_type": "application/pdf",
+      "model": "alpha-digit-max"
+    }
+  },
+  "result": "ocr_result"
+}
+```
+
+## Example with a raw byte array
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.ocr_call",
+  "args": {
+    "provider": "ocr-model_xxxxx",
+    "payload": {
+      "bytes": [37, 80, 68, 70, 45, 49, 46, 55],
+      "content_type": "application/pdf"
+    }
+  },
+  "result": "ocr_result"
+}
+```
