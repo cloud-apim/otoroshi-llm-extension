@@ -1,0 +1,122 @@
+---
+sidebar_position: 3
+---
+
+# OCR API
+
+OCR is exposed as an HTTP API through the **Cloud APIM - OCR backend** plugin. The same handler is also available through the unified [OpenAI Compatible API](/docs/llm-gateway/openai-compat-api) plugin on the `POST /ocr` path.
+
+## Plugin setup
+
+Add the **Cloud APIM - OCR backend** plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatOcr",
+  "config": {
+    "refs": ["ocr-model_xxxxxxxxx"],
+    "max_size_upload": 104857600
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refs` | array of strings | — | References to OCR model entities |
+| `max_size_upload` | number | `104857600` (100 MB) | Maximum upload file size in bytes (multipart requests) |
+
+When several OCR models are referenced, the first one is used by default. To target a specific model entity, set the `provider` field to its id in the request body.
+
+## Request
+
+The endpoint accepts the document in two transports.
+
+### JSON body (Mistral-style)
+
+```sh
+curl https://my-ocr-endpoint.example.com/ocr \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "alpha-digit-max",
+    "document": {
+      "type": "document_url",
+      "document_url": "https://example.com/scan.pdf"
+    }
+  }'
+```
+
+The document can be provided in any of the following ways:
+
+| Form | Example |
+|------|---------|
+| Remote URL (Mistral-style object) | `{ "document": { "type": "document_url", "document_url": "https://..." } }` |
+| Image URL (Mistral-style object) | `{ "document": { "type": "image_url", "image_url": { "url": "https://..." } } }` |
+| Flat URL field | `{ "document_url": "https://..." }` or `{ "image_url": "https://..." }` |
+| Base64 string | `{ "image_base64": "JVBERi0..." }` or `{ "document_base64": "..." }` |
+| Base64 data-uri | `{ "document_url": "data:application/pdf;base64,JVBERi0..." }` |
+
+### Request parameters (JSON)
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model` | string | The OCR model to use. Defaults to the model configured on the entity. |
+| `document` | object | The document reference (`type` + `document_url` / `image_url`) |
+| `document_url` / `image_url` | string | A remote url or base64 data-uri (alternative to `document`) |
+| `image_base64` / `document_base64` | string | The document content, base64 encoded |
+| `content_type` | string | The document content type (e.g. `application/pdf`, `image/png`) — useful to route image vs document with Mistral |
+| `pages` | array of numbers | Optional list of page indices to process (provider dependent) |
+| `pdf_password` | string | Optional password for protected PDFs (AlphaEdge) |
+| `provider` | string | Optional OCR model entity id to target when several `refs` are configured |
+
+### Multipart file upload
+
+The dedicated plugin also accepts a raw `multipart/form-data` file upload. Send the file in a field named `image` (`file` and `document` are also accepted):
+
+```sh
+curl https://my-ocr-endpoint.example.com/ocr \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -F "image=@scan.pdf" \
+  -F "model=alpha-digit-max"
+```
+
+Any extra form fields (e.g. `model`, `pdf_password`, `provider`) are read alongside the file.
+
+## Response
+
+The response follows a simplified, Mistral-inspired shape:
+
+```js
+{
+  "model": "alpha-digit-max",
+  "text": "The full extracted text...",
+  "pages": [
+    { "index": 0, "markdown": "The full extracted text..." }
+  ],
+  "usage_info": {
+    "pages_processed": 1
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model` | string | The model that produced the result |
+| `text` | string | The full extracted text (all pages concatenated) |
+| `pages` | array | Per-page results, each with `index` and `markdown` |
+| `usage_info.pages_processed` | number | Number of pages processed |
+
+## Unified API
+
+When using the unified [OpenAI Compatible API](/docs/llm-gateway/openai-compat-api) plugin, add your OCR model entities to `ocr_model_refs` and call the `POST /ocr` path. The request and response formats are identical to the dedicated plugin.
+
+```js
+{
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatApi",
+  "config": {
+    "ocr_model_refs": ["ocr-model_xxxxxxxxx"],
+    "max_size_upload": 104857600
+  }
+}
+```

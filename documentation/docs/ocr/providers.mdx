@@ -1,0 +1,74 @@
+---
+sidebar_position: 2
+---
+
+# OCR Providers
+
+Each OCR Model wraps a single provider. The provider is selected with the `provider` field, and configured through `config.connection` (endpoint and credentials) and `config.options` (model and provider-specific options).
+
+## AlphaEdge 🇫🇷 🇪🇺
+
+AlphaEdge exposes OCR through a `multipart/form-data` endpoint. Otoroshi resolves the document to bytes and uploads it for you.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.connection.base_url` | string | `https://api-endpoints.alphaedge-ai.com` | AlphaEdge base URL |
+| `config.connection.token` | string | — | AlphaEdge API key (sent as the `X-API-Key` header). Supports vault references and comma-separated rotation. |
+| `config.connection.timeout` | number | `180000` | Request timeout in milliseconds |
+| `config.options.model` | string | `alpha-digit-max` | The default OCR model (`alpha-digit-max` or `alpha-digit-medium`) |
+| `config.options.pdf_password` | string | — | Optional password used to open protected PDFs |
+
+### Full entity example
+
+```js
+{
+  "id": "ocr-model_xxxxxxxxx",
+  "name": "AlphaEdge OCR",
+  "description": "AlphaEdge OCR model",
+  "provider": "alphaedge",
+  "config": {
+    "connection": {
+      "base_url": "https://api-endpoints.alphaedge-ai.com",
+      "token": "${vault://local/ALPHAEDGE_API_KEY}",
+      "timeout": 180000
+    },
+    "options": {
+      "model": "alpha-digit-max"
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/OcrModel"
+}
+```
+
+## Mistral
+
+Mistral exposes a native JSON OCR endpoint (`POST /v1/ocr`) that returns page-by-page markdown. Otoroshi sends the document as a remote URL or as a base64 data-uri, depending on the input.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.connection.base_url` | string | `https://api.mistral.ai` | Mistral base URL |
+| `config.connection.token` | string | — | Mistral API key (sent as a `Bearer` token). Supports vault references and comma-separated rotation. |
+| `config.connection.timeout` | number | `180000` | Request timeout in milliseconds |
+| `config.options.model` | string | `mistral-ocr-latest` | The default OCR model (`mistral-ocr-latest` or `mistral-ocr-2505`) |
+
+### Full entity example
+
+```js
+{
+  "id": "ocr-model_xxxxxxxxx",
+  "name": "Mistral OCR",
+  "description": "Mistral OCR model",
+  "provider": "mistral",
+  "config": {
+    "connection": {
+      "base_url": "https://api.mistral.ai",
+      "token": "${vault://local/MISTRAL_API_TOKEN}",
+      "timeout": 180000
+    },
+    "options": {
+      "model": "mistral-ocr-latest"
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/OcrModel"
+}
+```

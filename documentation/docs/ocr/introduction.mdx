@@ -1,0 +1,63 @@
+---
+sidebar_position: 1
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# OCR Models
+
+Otoroshi LLM Extension provides support for **OCR** (Optical Character Recognition) models, enabling text extraction from images and PDF documents through a unified, Mistral-inspired API.
+
+OCR is exposed as a dedicated, first-class entity type — the **OCR Model** — just like Audio Models, Image Models, or Embedding Models. Each OCR Model wraps a provider and its configuration, and can be called through a dedicated plugin, the unified OpenAI-compatible API, or a workflow function.
+
+## Supported providers
+
+| Provider | Models | Input |
+|----------|--------|-------|
+| **AlphaEdge** 🇫🇷 🇪🇺 | `alpha-digit-max`, `alpha-digit-medium` | image, pdf |
+| **Mistral** | `mistral-ocr-latest`, `mistral-ocr-2505` | image, pdf |
+
+## Features
+
+- **Unified API**: All providers are exposed through a single, consistent OCR endpoint regardless of the underlying provider
+- **Multiple input formats**: Pass the document as a remote URL, a base64 data-uri, an inline base64 string, or a raw multipart file upload
+- **Two transports**: JSON body (Mistral-style) or `multipart/form-data` file upload
+- **Vault integration**: API tokens support Otoroshi vault references (e.g. `${vault://local/my-token}`)
+- **Model constraints**: Restrict which models can be used via allow/block lists
+- **Workflow integration**: OCR is available as a workflow function (`ocr_call`) for use in agentic pipelines
+
+## How to use OCR
+
+There are three ways to call an OCR Model:
+
+| Method | Description |
+|--------|-------------|
+| **Dedicated plugin** | The `Cloud APIM - OCR backend` plugin exposes a single `POST /ocr` route. See [Plugins](./plugins). |
+| **Unified API** | The `OpenAI Compatible API` plugin exposes `POST /ocr` alongside chat, audio, image and embedding endpoints. See [OpenAI Compatible API](/docs/llm-gateway/openai-compat-api). |
+| **Workflow function** | The [`ocr_call`](/docs/workflows/ocr-call) function calls an OCR Model from within a workflow. |
+
+## OCR model entity
+
+An OCR Model entity wraps a provider connection and its options:
+
+```js
+{
+  "id": "ocr-model_xxxxxxxxx",
+  "name": "My OCR Model",
+  "description": "OCR model backed by AlphaEdge",
+  "provider": "alphaedge",
+  "config": {
+    "connection": {
+      "base_url": "https://api-endpoints.alphaedge-ai.com",
+      "token": "${vault://local/ALPHAEDGE_API_KEY}",
+      "timeout": 180000
+    },
+    "options": {
+      "model": "alpha-digit-max"
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/OcrModel"
+}
+```
+
+See [Providers](./providers) for the per-provider configuration, and [Plugins](./plugins) for the full API usage.
