@@ -34,6 +34,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val mcpConnectorsDatastore: McpConnectorsDataStore = new KvMcpConnectorsDataStore(extensionId, env.datastores.redis, env)
   val moderationModelsDataStore: ModerationModelsDataStore = new KvModerationModelsDataStore(extensionId, env.datastores.redis, env)
   val AudioModelsDataStore: AudioModelsDataStore = new KvAudioModelsDataStore(extensionId, env.datastores.redis, env)
+  val ocrModelsDataStore: OcrModelsDataStore = new KvOcrModelsDataStore(extensionId, env.datastores.redis, env)
   val imageModelsDataStore: ImageModelsDataStore = new KvImageModelsDataStore(extensionId, env.datastores.redis, env)
   val videoModelsDataStore: VideoModelsDataStore = new KvVideoModelsDataStore(extensionId, env.datastores.redis, env)
   val persistentMemoriesDataStore: PersistentMemoryDataStore = new KvPersistentMemoryDataStore(extensionId, env.datastores.redis, env)
@@ -135,7 +136,14 @@ class AiGatewayExtensionState(env: Env) {
   def updateAudioModel(values: Seq[AudioModel]): Unit = {
     _audioModels.addAll(values.map(v => (v.id, v))).remAll(_audioModels.keySet.toSeq.diff(values.map(_.id)))
   }
-  
+
+  private val _ocrModels = new UnboundedTrieMap[String, OcrModel]()
+  def ocrModel(id: String): Option[OcrModel] = _ocrModels.get(id)
+  def allOcrModels(): Seq[OcrModel] = _ocrModels.values.toSeq
+  def updateOcrModels(values: Seq[OcrModel]): Unit = {
+    _ocrModels.addAll(values.map(v => (v.id, v))).remAll(_ocrModels.keySet.toSeq.diff(values.map(_.id)))
+  }
+
   private val _imageModels = new UnboundedTrieMap[String, ImageModel]()
   def imageModel(id: String): Option[ImageModel] = _imageModels.get(id)
   def allImageModels(): Seq[ImageModel]          = _imageModels.values.toSeq
@@ -252,6 +260,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val aiProvidersPageCode = getResourceCode("cloudapim/extensions/ai/AiProvidersPage.js")
   lazy val moderationModelsPage = getResourceCode("cloudapim/extensions/ai/ModerationModelsPage.js")
   lazy val audioModelsPage = getResourceCode("cloudapim/extensions/ai/AudioModelsPage.js")
+  lazy val ocrModelsPage = getResourceCode("cloudapim/extensions/ai/OcrModelsPage.js")
   lazy val imagesModelsPage = getResourceCode("cloudapim/extensions/ai/ImageModelsPage.js")
   lazy val videoModelsPage = getResourceCode("cloudapim/extensions/ai/VideoModelsPage.js")
   lazy val memoriesPage = getResourceCode("cloudapim/extensions/ai/MemoriesPage.js")
@@ -901,6 +910,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    ${imagesModelsPage}
             |    ${videoModelsPage}
             |    ${audioModelsPage}
+            |    ${ocrModelsPage}
             |    ${memoriesPage}
             |    ${budgetsPage}
             |    ${workflowNodeSwitchFile}
@@ -1070,6 +1080,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            icon: () => 'fa-brain',
             |          },
             |          {
+            |            title: 'OCR models',
+            |            description: 'All your OCR models',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/ocr-models',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
             |            title: 'Persistent memories',
             |            description: 'All your Persistent memories',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1185,6 +1203,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          icon: () => 'fa-brain',
             |        },
             |        {
+            |          title: 'OCR models',
+            |          description: 'All your OCR models',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/ocr-models',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
             |          title: 'Persistent memories',
             |          description: 'All your Persistent memories',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1272,6 +1298,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'Audio models',
             |          text: 'All your Audio models',
             |          path: 'extensions/cloud-apim/ai-gateway/audio-models',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'OCR models',
+            |          text: 'All your OCR models',
+            |          path: 'extensions/cloud-apim/ai-gateway/ocr-models',
             |          icon: 'brain'
             |        },
             |        {
@@ -1383,6 +1415,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'Audio models',
             |          value: 'audio-models',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/ocr-models`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'OCR models',
+            |          value: 'ocr-models',
             |        },
             |        {
             |          action: () => {
@@ -1619,6 +1659,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          },
             |        },
             |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/ocr-models/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(OcrModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/ocr-models/:taction',
+            |          component: (props) => {
+            |            return React.createElement(OcrModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/ocr-models',
+            |          component: (props) => {
+            |            return React.createElement(OcrModelsPage, props, null)
+            |          },
+            |        },
+            |        {
             |          path: '/extensions/cloud-apim/ai-gateway/persistent-memories/:taction/:titem',
             |          component: (props) => {
             |            return React.createElement(MemoriesPage, props, null)
@@ -1677,6 +1735,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       mcpConnectors <- datastores.mcpConnectorsDatastore.findAllAndFillSecrets()
       moderationModels <- datastores.moderationModelsDataStore.findAllAndFillSecrets()
       audioModels <- datastores.AudioModelsDataStore.findAllAndFillSecrets()
+      ocrModels <- datastores.ocrModelsDataStore.findAllAndFillSecrets()
       imageModels <- datastores.imageModelsDataStore.findAllAndFillSecrets()
       videosModels <- datastores.videoModelsDataStore.findAllAndFillSecrets()
       persistentMemories <- datastores.persistentMemoriesDataStore.findAllAndFillSecrets()
@@ -1692,6 +1751,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateMcpConnectors(mcpConnectors)
       states.updateModerationModels(moderationModels)
       states.updateAudioModel(audioModels)
+      states.updateOcrModels(ocrModels)
       states.updateImageModels(imageModels)
       states.updateVideoModels(videosModels)
       states.updatePersistentMemories(persistentMemories)
@@ -1716,6 +1776,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(McpConnector.resource(env, datastores, states)),
       AdminExtensionEntity(ModerationModel.resource(env, datastores, states)),
       AdminExtensionEntity(AudioModel.resource(env, datastores, states)),
+      AdminExtensionEntity(OcrModel.resource(env, datastores, states)),
       AdminExtensionEntity(ImageModel.resource(env, datastores, states)),
       AdminExtensionEntity(VideoModel.resource(env, datastores, states)),
       AdminExtensionEntity(PersistentMemory.resource(env, datastores, states)),
