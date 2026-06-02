@@ -527,6 +527,14 @@ class AiProvidersPage extends Component {
             { 'label': "deepseek-chat", value: 'deepseek-chat' },
           ] }
       }
+    } else if (provider === "alphaedge") {
+      return {
+        'type': 'select',
+        props: { label: 'Model', possibleValues: [
+            { 'label': "alpha-digit-max", value: 'alpha-digit-max' },
+            { 'label': "alpha-digit-medium", value: 'alpha-digit-medium' },
+          ] }
+      }
     } else {
       return {
         type: 'string',
@@ -555,6 +563,7 @@ class AiProvidersPage extends Component {
     { 'label': 'Cloudflare', value: 'cloudflare' },
     { 'label': 'Cohere', value: 'cohere' },
     { 'label': 'Gemini', value: 'gemini' },
+    { 'label': 'AlphaEdge (OCR)', value: 'alphaedge' },
     { 'label': 'JLama', value: 'jlama' },
     { 'label': 'Loadbalancer', value: 'loadbalancer' },
     ...OpenAiLikeProviders.map(p => ({ label: p.name, value: p.id })),
@@ -658,6 +667,10 @@ class AiProvidersPage extends Component {
     'options.provider_models_reload': {
       type: ModelsReloadButton,
       props: { fetchModels: this.fetchModels, provider: this.state }
+    },
+    'options.pdf_password': {
+      type: 'string',
+      props: { label: 'PDF password', placeholder: 'password for protected PDFs (optional)' },
     },
     'options.max_tokens': {
       type: 'string',
@@ -1128,6 +1141,45 @@ class AiProvidersPage extends Component {
         '>>>Context settings',
         'context.default',
         'context.contexts',
+        '>>>Models restriction settings',
+        'models.include',
+        'models.exclude',
+        '>>>Provider fallback',
+        'provider_fallback', '>>> Persistent memory', 'memory',
+        '>>>Cache',
+        'cache.strategy',
+        'cache.ttl',
+        state.cache.strategy === 'semantic' ? 'cache.score' : null,
+        state.cache.strategy === 'semantic' ? 'cache.embedding_ref' : null,
+        (state.cache.strategy === 'simple' || state.cache.strategy === 'semantic') ? 'cache.redis_url' : null,
+        '>>>Guardrails validation',
+        'guardrails_fail_on_deny',
+        'guardrails',
+        '>>>Tester',
+        'tester',
+        '>>>Metadata and tags',
+        'tags',
+        'metadata',
+      ].filter(i => !!i);
+    }
+    if (state.provider === "alphaedge") {
+      return [
+        '_loc', 'id', 'name', 'description',
+        '<<<Provider',
+        'provider',
+        '<<<API Connection',
+        'connection.base_url',
+        'connection.token',
+        'connection.timeout',
+        '>>>API Connection raw',
+        'connection',
+        '<<<OCR options',
+        'options.allow_config_override',
+        'options.model',
+        'options.provider_models_reload',
+        'options.pdf_password',
+        '>>>OCR options raw',
+        'options',
         '>>>Models restriction settings',
         'models.include',
         'models.exclude',
@@ -1876,6 +1928,24 @@ class AiProvidersPage extends Component {
                   timeout: 180000,
                 },
                 options: ClientOptions.mistral,
+              });
+            } else if (state.provider === 'alphaedge') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'alphaedge',
+                connection: {
+                  base_url: 'https://api-endpoints.alphaedge-ai.com',
+                  token: 'xxx',
+                  timeout: 180000,
+                },
+                options: {
+                  allow_config_override: true,
+                  model: 'alpha-digit-max',
+                },
               });
             }else if (state.provider === 'cohere') {
               update({
