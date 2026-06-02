@@ -310,6 +310,12 @@ case class AiProvider(
         val opts = MistralAiChatClientOptions.fromJson(options)
         new MistralAiChatClient(api, opts, id).some
       }
+      case "alphaedge" => {
+        // OCR-only provider: the chat call requires a file (image/pdf) content part and returns the extracted text
+        val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val opts = AlphaEdgeChatClientOptions.fromJson(options)
+        new AlphaEdgeChatClient(api, opts, id).some
+      }
       case "ollama" => {
         val api = new OllamaAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(3.minutes), env = env)
         val opts = OllamaAiChatClientOptions.fromJson(options)
