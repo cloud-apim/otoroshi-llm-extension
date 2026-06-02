@@ -17,7 +17,8 @@ Speech-to-Text transcribes audio files into text. Otoroshi exposes STT through a
 | **Cloud Temple** 🇫🇷 🇪🇺 | `whisper-1`, `gpt-4o-mini-transcribe` |
 | **Groq** | `whisper-large-v3`, `whisper-large-v3-turbo`, `distil-whisper-large-v3-en` |
 | **ElevenLabs** | `scribe_v1` |
-| **Mistral** | `voxtral-mini-latest`, `voxtral-mini-2507` |
+| **Mistral** 🇫🇷 🇪🇺 | `voxtral-mini-latest`, `voxtral-mini-2507` |
+| **AlphaEdge** 🇫🇷 🇪🇺 | `alpha-audio-v1` |
 
 ## STT configuration
 
@@ -98,6 +99,30 @@ Same parameters as OpenAI.
 | `language` | string | — | Language of the audio |
 | `diarize` | boolean | — | Enable speaker diarization (identifies different speakers in the audio). Mistral-specific feature. |
 | `temperature` | number | — | Sampling temperature |
+
+### AlphaEdge
+
+[AlphaEdge](https://alphaedge-ai.com) 🇫🇷 🇪🇺 is a French/EU provider specialized in speech transcription and OCR. The audio model only supports STT (no TTS, no translation). Authentication uses the `X-API-Key` header (set through `config.connection.token`).
+
+```js
+{
+  "stt": {
+    "enabled": true,
+    "model": "alpha-audio-v1",
+    "enable_diarization": false,
+    "enable_postcorrect": false
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `true` | Enable or disable STT |
+| `model` | string | `alpha-audio-v1` | The AlphaEdge transcription model |
+| `enable_diarization` | boolean | `false` | Enable speaker diarization (identifies different speakers in the audio) |
+| `enable_postcorrect` | boolean | `false` | Apply linguistic post-correction (punctuation, capitalization, spelling, stuttering removal) |
+
+`enable_diarization` and `enable_postcorrect` can also be passed per-request as form fields, overriding the entity configuration.
 
 ## API usage
 
@@ -200,6 +225,33 @@ The request is sent as multipart form data.
       "stt": {
         "enabled": true,
         "model_id": "scribe_v1"
+      }
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/AudioModel"
+}
+```
+
+## Full entity example with AlphaEdge
+
+```js
+{
+  "id": "audio-gen-model_xxxxxxxxx",
+  "name": "AlphaEdge STT",
+  "description": "AlphaEdge speech-to-text",
+  "provider": "alphaedge",
+  "config": {
+    "connection": {
+      "base_url": "https://api-endpoints.alphaedge-ai.com",
+      "token": "${vault://local/ALPHAEDGE_API_KEY}",
+      "timeout": 180000
+    },
+    "options": {
+      "stt": {
+        "enabled": true,
+        "model": "alpha-audio-v1",
+        "enable_diarization": true,
+        "enable_postcorrect": true
       }
     }
   },
