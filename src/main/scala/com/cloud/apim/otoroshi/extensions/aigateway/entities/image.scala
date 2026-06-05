@@ -98,6 +98,12 @@ case class ImageModel(
         val opts = HiveImageModelClientOptions.fromJson(genOptions)
         new HiveImageModelClient(api, opts, id).some
       }
+      case "openrouter" => {
+        val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val opts = OpenRouterImageModelClientOptions.fromJson(genOptions)
+        val editOpts = OpenRouterImageModelClientOptions.fromJson(editOptions)
+        new OpenRouterImageModelClient(api, opts, editOpts, id).some
+      }
       case _ => None
     }
     rawClient.map(c => ImageModelClientDecorators(this, c, env))
