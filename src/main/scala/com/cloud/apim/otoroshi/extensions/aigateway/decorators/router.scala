@@ -91,8 +91,8 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends ChatClient {
   //   3. unknown-score candidates, in declared order       <- last-resort fallbacks
   private def orderedCandidates(originalBody: JsValue)(implicit env: Env): Seq[AiProvider] = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    val refs: Seq[String] = provider.options.select("refs").asOpt[Seq[String]]
-      .orElse(provider.options.select("refs").asOpt[Seq[JsObject]].map(_.map(_.select("ref").asString)))
+    val refs: Seq[String] = provider.options.select("code_router_refs").asOpt[Seq[String]]
+      .orElse(provider.options.select("code_router_refs").asOpt[Seq[JsObject]].map(_.map(_.select("code_router_ref").asString)))
       .getOrElse(Seq.empty)
     val resolved: Seq[RouterCandidate] = refs.flatMap(r => ext.states.provider(r)).map { p =>
       val model = candidateModel(p)
