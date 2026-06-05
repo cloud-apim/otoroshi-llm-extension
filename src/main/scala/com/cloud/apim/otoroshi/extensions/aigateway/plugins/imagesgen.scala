@@ -189,7 +189,7 @@ object OpenAICompatImagesEditConfig {
   def configSchema: Option[JsObject] = Some(Json.obj(
     "max_size_upload" -> Json.obj(
       "type" -> "number",
-      "label" -> "Max Audio file size"
+      "label" -> "Max Image file size"
     ),
     "refs" -> Json.obj(
       "type" -> "select",
