@@ -74,7 +74,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends ChatClient {
   override def isAnthropic: Boolean = false
 
   override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
-    Right(List("code-router", "auto-router")).vfuture
+    Right(List("code-router", "auto-router", "fusion-router")).vfuture
   }
 
   private def candidateModel(p: AiProvider): String =
@@ -230,8 +230,104 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends ChatClient {
   }
 
   ////////////////////////////////////////////////////////////////////////////////////////////////////////
+  //  fusion-router : panel (parallel) -> judge (structured analysis) -> synthesizer (final answer)
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  private def fusionBody(originalBody: JsValue): JsObject =
+    originalBody.asObject - "model" - "min_coding_score" - "cost_quality_tradeoff" - "allowed_models" - "messages"
+
+  private def promptText(prompt: ChatPrompt): String =
+    prompt.messages.map(m => s"${m.role}: ${m.wholeTextContent}").mkString("\n").take(8000)
+
+  // a configured aux provider (judge or synthesizer), falling back to the highest-quality panel member
+  private def fusionAuxClient(refKey: String, panel: Seq[RouterCandidate])(implicit env: Env): Option[ChatClient] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    provider.options.select(refKey).asOptString
+      .flatMap(r => ext.states.provider(r)).filterNot(_.id == provider.id).flatMap(_.getChatClient())
+      .orElse(panel.sortBy(c => -c.score.getOrElse(0.0)).headOption.flatMap(_.provider.getChatClient()))
+  }
+
+  // run the whole fusion pipeline up to (but excluding) the final synthesis call, returning the
+  // synthesizer client + the synthesis prompt + the body to call it with.
+  private def prepareFusion(prompt: ChatPrompt, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (ChatClient, ChatPrompt, JsObject)]] = {
+    val panel = resolveCandidates("fusion_router_refs", "fusion_router_ref").take(8)
+    if (panel.isEmpty) {
+      Json.obj("error" -> "no panel provider configured for the otoroshi fusion-router").leftf
+    } else {
+      val cleanBody = fusionBody(originalBody)
+      val question = promptText(prompt)
+      // 1. panel: query all members in parallel, keep the ones that succeed
+      val panelF: Future[Seq[(String, String)]] = Future.sequence(panel.map { c =>
+        c.provider.getChatClient() match {
+          case None => Future.successful(Option.empty[(String, String)])
+          case Some(client) => client.call(prompt, TypedMap.empty, cleanBody).map {
+            case Right(resp) => Some((s"${c.provider.provider}/${c.model}", resp.headGeneration.message.content))
+            case Left(_) => None
+          }.recover { case _ => None }
+        }
+      }).map(_.flatten)
+      panelF.flatMap { panelResponses =>
+        if (panelResponses.isEmpty) {
+          Json.obj("error" -> "all fusion-router panel members failed").leftf
+        } else {
+          val panelText = panelResponses.zipWithIndex.map { case ((label, text), i) =>
+            s"### Panel response ${i + 1} (${label})\n${text.take(6000)}"
+          }.mkString("\n\n")
+          // 2. judge: structured comparison of the panel responses (best-effort, falls back to raw panel text)
+          val judgeAnalysisF: Future[String] = fusionAuxClient("fusion_router_judge_ref", panel) match {
+            case None => Future.successful(panelText)
+            case Some(judge) =>
+              val jsys = "You are an impartial judge in a multi-model deliberation. Compare the panel responses below — do NOT merge or rewrite them. Identify: (1) consensus points all/most agree on (higher confidence), (2) disagreements, (3) unique insights from individual responses, (4) gaps or blind spots none addressed. Return a concise structured analysis."
+              val juser = s"User request:\n${question}\n\nPanel responses:\n${panelText}"
+              val jprompt = ChatPrompt(Seq(
+                ChatMessage.input("system", jsys, None, Json.obj("role" -> "system", "content" -> jsys)),
+                ChatMessage.userStrInput(juser)
+              ))
+              judge.call(jprompt, TypedMap.empty, cleanBody ++ Json.obj("temperature" -> 0)).map {
+                case Right(resp) => resp.headGeneration.message.content
+                case Left(_) => panelText
+              }.recover { case _ => panelText }
+          }
+          // 3. synthesis: the outer model produces the final answer from the analysis, answering the original request
+          judgeAnalysisF.map { analysis =>
+            val result: Either[JsValue, (ChatClient, ChatPrompt, JsObject)] = fusionAuxClient("fusion_router_synthesizer_ref", panel) match {
+              case None => Left(Json.obj("error" -> "no synthesizer available for the otoroshi fusion-router"))
+              case Some(synth) =>
+                val ssys =
+                  s"""You are the final synthesizer in a multi-model deliberation. Using the structured analysis below (consensus, disagreements, unique insights, gaps) from a panel of expert models, produce the best, most accurate and complete answer to the user's request. Prefer consensus, resolve disagreements with reasoning, incorporate unique insights, and fill the gaps. Do not mention the panel, the judge, or this deliberation process — just give the answer.
+                     |
+                     |Structured analysis:
+                     |${analysis.take(12000)}""".stripMargin
+                val synthMessages = ChatMessage.input("system", ssys, None, Json.obj("role" -> "system", "content" -> ssys)) +: prompt.messages
+                Right((synth, ChatPrompt(synthMessages), cleanBody))
+            }
+            result
+          }
+        }
+      }
+    }
+  }
+
+  private def fusionCall(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    prepareFusion(prompt, originalBody).flatMap {
+      case Left(err) => err.leftf
+      case Right((client, synthPrompt, body)) => client.call(synthPrompt, attrs, body)
+    }
+  }
+
+  private def fusionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    prepareFusion(prompt, originalBody).flatMap {
+      case Left(err) => err.leftf
+      case Right((client, synthPrompt, body)) => client.stream(synthPrompt, attrs, body)
+    }
+  }
+
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////
   //  dispatch + cascade
   ////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  private def isFusion(originalBody: JsValue): Boolean =
+    originalBody.select("model").asOptString.exists(_.toLowerCase.contains("fusion"))
 
   private def execute[T](prompt: ChatPrompt, originalBody: JsValue)(f: (ChatClient, JsValue) => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val requestedModel = originalBody.select("model").asOptString.getOrElse("code-router").toLowerCase
@@ -262,18 +358,22 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends ChatClient {
   }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    execute(prompt, originalBody)((client, body) => client.call(prompt, attrs, body))
+    if (isFusion(originalBody)) fusionCall(prompt, attrs, originalBody)
+    else execute(prompt, originalBody)((client, body) => client.call(prompt, attrs, body))
   }
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    execute(prompt, originalBody)((client, body) => client.stream(prompt, attrs, body))
+    if (isFusion(originalBody)) fusionStream(prompt, attrs, originalBody)
+    else execute(prompt, originalBody)((client, body) => client.stream(prompt, attrs, body))
   }
 
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    execute(prompt, originalBody)((client, body) => client.completion(prompt, attrs, body))
+    if (isFusion(originalBody)) fusionCall(prompt, attrs, originalBody)
+    else execute(prompt, originalBody)((client, body) => client.completion(prompt, attrs, body))
   }
 
   override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    execute(prompt, originalBody)((client, body) => client.completionStream(prompt, attrs, body))
+    if (isFusion(originalBody)) fusionStream(prompt, attrs, originalBody)
+    else execute(prompt, originalBody)((client, body) => client.completionStream(prompt, attrs, body))
   }
 }
