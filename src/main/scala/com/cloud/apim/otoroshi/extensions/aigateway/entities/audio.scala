@@ -114,8 +114,9 @@ case class AudioModel(
       }
       case "openrouter" => {
         val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val ttsopts = OpenRouterAudioModelClientTtsOptions.fromJson(ttsOptions)
         val sttopts = OpenRouterAudioModelClientSttOptions.fromJson(sttOptions)
-        new OpenRouterAudioModelClient(api, sttopts, id).some
+        new OpenRouterAudioModelClient(api, ttsopts, sttopts, id).some
       }
       case _ => None
     }
