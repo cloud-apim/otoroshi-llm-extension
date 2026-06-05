@@ -313,7 +313,7 @@ object OpenAICompatImagesEdit {
                   images = form.files.filter(_.key == "image").map(file => ImageFile(
                     bytes = FileIO.fromPath(file.ref.path),
                     name = file.filename.some,
-                    contentType = file.contentType.getOrElse("audio/mp3"),
+                    contentType = file.contentType.getOrElse("image/png"),
                     length = file.fileSize,
                   )).toList
                 )
