@@ -914,6 +914,43 @@ class AiProvidersPage extends Component {
         help: 'Default target quality (0-1), relative to your candidate providers. Higher = stronger coder (more expensive). Overridable per request via the "min_coding_score" body field.',
       }
     },
+    'options.auto_router_refs': {
+      type: 'array',
+      props: {
+        label: 'Auto Router Providers',
+        placeholder: 'Select a provider',
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
+      }
+    },
+    'options.auto_router_classifier_ref': {
+      type: 'select',
+      props: {
+        label: 'Auto Router classifier provider',
+        placeholder: 'Select a provider (defaults to the cheapest candidate)',
+        isClearable: true,
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
+        help: 'The (small/cheap) provider used by the auto-router to analyze the prompt and pick the best candidate. Defaults to the cheapest candidate if unset.',
+      }
+    },
+    'options.cost_quality_tradeoff': {
+      type: 'number',
+      props: {
+        label: 'Cost / quality tradeoff',
+        placeholder: '7',
+        step: 1,
+        min: 0,
+        max: 10,
+        help: 'Auto-router default (0-10): 0 = best quality regardless of cost, 10 = cheapest, 7 = balanced. Overridable per request via the "cost_quality_tradeoff" body field.',
+      }
+    },
     'llm_validation.provider': {
       type: 'select',
       props: {
@@ -1096,10 +1133,13 @@ class AiProvidersPage extends Component {
         '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
-        '<<<Candidate providers',
+        '<<<code-router (candidates + routing)',
         'options.code_router_refs',
-        '<<<Routing (code-router)',
         'options.min_coding_score',
+        '<<<auto-router (candidates + routing)',
+        'options.auto_router_refs',
+        'options.auto_router_classifier_ref',
+        'options.cost_quality_tradeoff',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
