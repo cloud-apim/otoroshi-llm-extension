@@ -40,7 +40,8 @@ class ImageModelsPage extends Component {
           {label: 'Azure OpenAI', value: "azure-openai"},
           {label: 'Luma', value: "luma"},
           // {label: 'Leonardo AI', value: "leonardo-ai"},
-          {label: 'Hive', value: "hive"}
+          {label: 'Hive', value: "hive"},
+          {label: 'OpenRouter', value: "openrouter"}
         ], i => i.label)
       }
     },
@@ -288,6 +289,34 @@ class ImageModelsPage extends Component {
                     },
                     edition: {
                       enabled: false
+                    }
+                  }
+                },
+              });
+            } else if (state.provider === 'openrouter') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'openrouter',
+                config: {
+                  connection: {
+                    base_url: 'https://openrouter.ai/api/v1',
+                    token: 'xxxxxx',
+                    timeout: 180000
+                  },
+                  options: {
+                    generation: {
+                      enabled: true,
+                      model: 'google/gemini-2.5-flash-image',
+                      modalities: ["image", "text"]
+                    },
+                    edition: {
+                      enabled: true,
+                      model: 'google/gemini-2.5-flash-image',
+                      modalities: ["image", "text"]
                     }
                   }
                 },
