@@ -160,6 +160,24 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends ChatClient {
     "\\d+".r.findFirstIn(text.trim).flatMap(s => scala.util.Try(s.toInt).toOption).filter(i => i >= 0 && i < size)
   }
 
+  // OpenRouter-style allowed_models wildcard patterns (e.g. "anthropic/*", "openai/gpt-5*", "openai/gpt-5.1").
+  // A candidate matches if a pattern matches either "<providerKind>/<model>" or the bare "<model>".
+  private def globToRegex(glob: String): java.util.regex.Pattern = {
+    val parts = glob.trim.split("\\*", -1).map(java.util.regex.Pattern.quote)
+    java.util.regex.Pattern.compile("(?i)^" + parts.mkString(".*") + "$")
+  }
+
+  private def matchesAllowed(patterns: Seq[String], c: RouterCandidate): Boolean = {
+    if (patterns.isEmpty) true
+    else {
+      val ids = Seq(s"${c.provider.provider}/${c.model}", c.model)
+      patterns.exists { p =>
+        val rx = globToRegex(p)
+        ids.exists(id => rx.matcher(id).matches())
+      }
+    }
+  }
+
   private def pickWithJudge(prompt: ChatPrompt, cands: Seq[RouterCandidate], tradeoff: Double)(implicit ec: ExecutionContext, env: Env): Future[Option[RouterCandidate]] = {
     judgeClient(cands) match {
       case None => Future.successful(None)
@@ -190,7 +208,12 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends ChatClient {
   }
 
   private def autoOrderedCandidates(prompt: ChatPrompt, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Seq[AiProvider]] = {
-    val cands = resolveCandidates("auto_router_refs", "auto_router_ref")
+    val allCands = resolveCandidates("auto_router_refs", "auto_router_ref")
+    // optional allowed_models filter (wildcard patterns), from the request body or the provider config
+    val allowed = originalBody.select("allowed_models").asOpt[Seq[String]]
+      .orElse(provider.options.select("allowed_models").asOpt[Seq[String]])
+      .getOrElse(Seq.empty).map(_.trim).filter(_.nonEmpty)
+    val cands = if (allowed.isEmpty) allCands else allCands.filter(c => matchesAllowed(allowed, c))
     if (cands.isEmpty) {
       Future.successful(Seq.empty)
     } else {
@@ -220,7 +243,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends ChatClient {
         Json.obj("error" -> "no candidate provider configured for the otoroshi router").leftf
       } else {
         // strip router-only knobs and the router model so each candidate uses its own configured model
-        val cleanBody = originalBody.asObject - "model" - "min_coding_score" - "cost_quality_tradeoff"
+        val cleanBody = originalBody.asObject - "model" - "min_coding_score" - "cost_quality_tradeoff" - "allowed_models"
         def attempt(remaining: Seq[AiProvider], lastErr: JsValue): Future[Either[JsValue, T]] = remaining match {
           case Seq() => lastErr.leftf
           case p +: tail => p.getChatClient() match {
