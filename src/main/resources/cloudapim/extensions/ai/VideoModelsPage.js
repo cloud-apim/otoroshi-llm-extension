@@ -34,7 +34,8 @@ class VideoModelsPage extends Component {
       'type': 'select',
       props: {
         label: 'Provider', possibleValues: _.sortBy([
-          {label: 'Luma', value: "luma"}
+          {label: 'Luma', value: "luma"},
+          {label: 'OpenRouter', value: "openrouter"}
         ], i => i.label)
       }
     },
@@ -119,6 +120,32 @@ class VideoModelsPage extends Component {
                     aspect_ratio: '16:9',
                     resolution: "720p",
                     duration: "5s"
+                  }
+                },
+              });
+            } else if (state.provider === 'openrouter') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'openrouter',
+                config: {
+                  connection: {
+                    base_url: 'https://openrouter.ai/api/v1',
+                    token: 'xxxxxx',
+                    timeout: 180000
+                  },
+                  options: {
+                    enabled: true,
+                    model: 'google/veo-3.1',
+                    aspect_ratio: '16:9',
+                    resolution: "720p",
+                    duration: 8,
+                    generate_audio: true,
+                    poll_interval: 5000,
+                    max_poll_attempts: 60
                   }
                 },
               });
