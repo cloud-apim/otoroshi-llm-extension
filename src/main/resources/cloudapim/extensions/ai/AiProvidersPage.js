@@ -894,7 +894,7 @@ class AiProvidersPage extends Component {
     'options.code_router_refs': {
       type: 'array',
       props: {
-        label: 'Providers',
+        label: 'Code Router Providers',
         placeholder: 'Select a provider',
         valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
         transformer: (a) => ({
