@@ -112,6 +112,11 @@ case class AudioModel(
         val sttopts = AlphaEdgeAudioModelClientSttOptions.fromJson(sttOptions)
         new AlphaEdgeAudioModelClient(api, sttopts, id).some
       }
+      case "openrouter" => {
+        val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val sttopts = OpenRouterAudioModelClientSttOptions.fromJson(sttOptions)
+        new OpenRouterAudioModelClient(api, sttopts, id).some
+      }
       case _ => None
     }
     rawClient.map(c => AudioModelClientDecorators(this, c, env))
