@@ -24,6 +24,7 @@ object OpenRouterApi {
   val defaultTtsModel = "elevenlabs/eleven-turbo-v2"
   val defaultTtsVoice = "alloy"
   val defaultImageModel = "google/gemini-2.5-flash-image"
+  val defaultVideoModel = "google/veo-3.1"
 }
 
 class OpenRouterApi(baseUrl: String = OpenRouterApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
@@ -285,6 +286,111 @@ class OpenRouterImageModelClient(val api: OpenRouterApi, val genOptions: OpenRou
     Future.sequence(opts.images.map(imageToDataUrl)).flatMap { dataUrls =>
       val body = chatBody(finalModel, opts.prompt, dataUrls, editOptions.modalities)
       api.rawCall("POST", "/chat/completions", body.some).map(parseResponse)
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                       Video generation                                         ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// OpenRouter video generation is asynchronous: POST /videos returns 202 with a job id and a "pending"
+// status, and the result (unsigned_urls) only becomes available once the job reaches "completed". The
+// gateway's video abstraction is synchronous (generate must return the video urls), so this client polls
+// GET /videos/{id} until the job is done (bounded by max_poll_attempts * poll_interval).
+
+case class OpenRouterVideoModelClientOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
+  lazy val model: Option[String] = raw.select("model").asOptString
+  lazy val aspectRatio: Option[String] = raw.select("aspect_ratio").asOptString
+  lazy val resolution: Option[String] = raw.select("resolution").asOptString
+  lazy val duration: Option[Int] = raw.select("duration").asOptInt
+  lazy val seed: Option[Int] = raw.select("seed").asOptInt
+  lazy val generateAudio: Option[Boolean] = raw.select("generate_audio").asOptBoolean
+  lazy val pollInterval: FiniteDuration = raw.select("poll_interval").asOpt[Long].map(_.millis).getOrElse(5.seconds)
+  lazy val maxPollAttempts: Int = raw.select("max_poll_attempts").asOptInt.getOrElse(60)
+}
+
+object OpenRouterVideoModelClientOptions {
+  def fromJson(raw: JsObject): OpenRouterVideoModelClientOptions = OpenRouterVideoModelClientOptions(raw)
+}
+
+class OpenRouterVideoModelClient(val api: OpenRouterApi, val genOptions: OpenRouterVideoModelClientOptions, id: String) extends VideoModelClient {
+
+  private val terminalFailures = Set("failed", "cancelled", "expired")
+
+  override def supportsTextToVideo: Boolean = genOptions.enabled
+
+  private def buildResponse(json: JsValue, headers: Map[String, String]): Either[JsValue, VideosGenResponse] = {
+    val urls = json.select("unsigned_urls").asOpt[Seq[String]].getOrElse(Seq.empty).filter(_.nonEmpty)
+    val videos = if (urls.nonEmpty) urls.map(u => VideosGen(None, None, Some(u))) else Seq(VideosGen(None, None, None))
+    Right(VideosGenResponse(
+      created = json.select("created_at").asOpt[Long].getOrElse(-1L),
+      videos = videos,
+      metadata = VideosGenResponseMetadata(
+        rateLimit = ChatResponseMetadataRateLimit(
+          requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+          requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+          tokensLimit = headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+          tokensRemaining = headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+        ), impacts = None, costs = None,
+        usage = VideosGenResponseMetadataUsage(
+          totalTokens = -1L, tokenInput = -1L, tokenOutput = -1L, tokenText = -1L, tokenImage = -1L
+        )
+      )
+    ))
+  }
+
+  // poll GET /videos/{id} until the job completes, fails, or we run out of attempts
+  private def pollUntilDone(jobId: String, attemptsLeft: Int)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
+    if (attemptsLeft <= 0) {
+      Left(Json.obj("error" -> "video generation timed out while polling", "job_id" -> jobId)).vfuture
+    } else {
+      akka.pattern.after(genOptions.pollInterval, env.otoroshiScheduler)(Future.successful(()))(ec).flatMap { _ =>
+        api.rawCall("GET", s"/videos/${jobId}", None).flatMap { resp =>
+          if (resp.status == 200) {
+            val json = resp.json
+            json.select("status").asOptString.getOrElse("pending").toLowerCase match {
+              case "completed" => buildResponse(json, resp.headers.mapValues(_.last)).vfuture
+              case s if terminalFailures.contains(s) => Left(Json.obj("error" -> s"video generation $s", "body" -> json)).vfuture
+              case _ => pollUntilDone(jobId, attemptsLeft - 1)
+            }
+          } else {
+            Left(Json.obj("error" -> "Bad response while polling", "status" -> resp.status, "body" -> resp.json)).vfuture
+          }
+        }
+      }
+    }
+  }
+
+  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
+    val finalModel: String = opts.model.orElse(genOptions.model).getOrElse(OpenRouterApi.defaultVideoModel)
+    // gateway duration is a string (e.g. "8" or "5s"); OpenRouter wants an integer number of seconds
+    val durationOpt: Option[Int] = opts.duration.flatMap(d => "\\d+".r.findFirstIn(d.trim)).flatMap(s => scala.util.Try(s.toInt).toOption).orElse(genOptions.duration)
+    val body = Json.obj(
+      "model" -> finalModel,
+      "prompt" -> opts.prompt,
+    )
+      .applyOnWithOpt(opts.aspect_ratio.orElse(genOptions.aspectRatio)) { case (obj, ar) => obj ++ Json.obj("aspect_ratio" -> ar) }
+      .applyOnWithOpt(opts.resolution.orElse(genOptions.resolution)) { case (obj, res) => obj ++ Json.obj("resolution" -> res) }
+      .applyOnWithOpt(durationOpt) { case (obj, d) => obj ++ Json.obj("duration" -> d) }
+      .applyOnWithOpt(genOptions.seed) { case (obj, seed) => obj ++ Json.obj("seed" -> seed) }
+      .applyOnWithOpt(genOptions.generateAudio) { case (obj, ga) => obj ++ Json.obj("generate_audio" -> ga) }
+    api.rawCall("POST", "/videos", body.some).flatMap { resp =>
+      if (resp.status == 200 || resp.status == 202) {
+        val json = resp.json
+        json.select("id").asOptString match {
+          case None => Left(Json.obj("error" -> "no job id in response", "body" -> json)).vfuture
+          case Some(jobId) =>
+            json.select("status").asOptString.getOrElse("pending").toLowerCase match {
+              case "completed" => buildResponse(json, resp.headers.mapValues(_.last)).vfuture
+              case s if terminalFailures.contains(s) => Left(Json.obj("error" -> s"video generation $s", "body" -> json)).vfuture
+              case _ => pollUntilDone(jobId, genOptions.maxPollAttempts)
+            }
+        }
+      } else {
+        Left(Json.obj("error" -> "Bad response", "status" -> resp.status, "body" -> resp.body)).vfuture
+      }
     }
   }
 }
