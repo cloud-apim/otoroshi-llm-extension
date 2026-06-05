@@ -891,6 +891,18 @@ class AiProvidersPage extends Component {
         }),
       }
     },
+    'options.code_router_refs': {
+      type: 'array',
+      props: {
+        label: 'Providers',
+        placeholder: 'Select a provider',
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
+      }
+    },
     'options.min_coding_score': {
       type: 'number',
       props: {
@@ -1085,7 +1097,7 @@ class AiProvidersPage extends Component {
         '<<<Provider',
         'provider',
         '<<<Candidate providers',
-        'options.refs',
+        'options.code_router_refs',
         '<<<Routing (code-router)',
         'options.min_coding_score',
         '>>>Tester',
