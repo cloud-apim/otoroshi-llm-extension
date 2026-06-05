@@ -951,6 +951,14 @@ class AiProvidersPage extends Component {
         help: 'Auto-router default (0-10): 0 = best quality regardless of cost, 10 = cheapest, 7 = balanced. Overridable per request via the "cost_quality_tradeoff" body field.',
       }
     },
+    'options.allowed_models': {
+      type: 'array',
+      props: {
+        label: 'Allowed models',
+        placeholder: 'anthropic/*',
+        help: 'Auto-router: restrict routing to candidates matching these wildcard patterns (e.g. "anthropic/*", "openai/gpt-5*", "openai/gpt-5.1"). Matched against "<provider>/<model>" or the bare model. Empty = all candidates. Overridable per request via the "allowed_models" body field.',
+      }
+    },
     'llm_validation.provider': {
       type: 'select',
       props: {
@@ -1140,6 +1148,7 @@ class AiProvidersPage extends Component {
         'options.auto_router_refs',
         'options.auto_router_classifier_ref',
         'options.cost_quality_tradeoff',
+        'options.allowed_models',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
