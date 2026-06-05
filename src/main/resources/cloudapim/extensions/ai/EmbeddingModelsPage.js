@@ -53,7 +53,8 @@ class EmbeddingModelsPage extends Component {
     config: {
       type: "monaco-json",
       props: {
-        label: 'Configuration'
+        label: 'Configuration',
+        height: 300
       }
     }
   };
