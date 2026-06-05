@@ -959,6 +959,47 @@ class AiProvidersPage extends Component {
         help: 'Auto-router: restrict routing to candidates matching these wildcard patterns (e.g. "anthropic/*", "openai/gpt-5*", "openai/gpt-5.1"). Matched against "<provider>/<model>" or the bare model. Empty = all candidates. Overridable per request via the "allowed_models" body field.',
       }
     },
+    'options.fusion_router_refs': {
+      type: 'array',
+      props: {
+        label: 'Fusion Router panel providers',
+        placeholder: 'Select a provider',
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
+        help: 'Panel members queried in parallel (up to 8). Their answers are compared by the judge and merged by the synthesizer.',
+      }
+    },
+    'options.fusion_router_judge_ref': {
+      type: 'select',
+      props: {
+        label: 'Fusion Router judge provider',
+        placeholder: 'Select a provider (defaults to the best panel member)',
+        isClearable: true,
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
+        help: 'Compares the panel answers into a structured analysis (consensus / disagreements / unique insights / gaps). Defaults to the highest-quality panel member.',
+      }
+    },
+    'options.fusion_router_synthesizer_ref': {
+      type: 'select',
+      props: {
+        label: 'Fusion Router synthesizer provider',
+        placeholder: 'Select a provider (defaults to the best panel member)',
+        isClearable: true,
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
+        help: 'Produces the final answer from the judge analysis (this is the response streamed back to the caller). Defaults to the highest-quality panel member.',
+      }
+    },
     'llm_validation.provider': {
       type: 'select',
       props: {
@@ -1149,6 +1190,10 @@ class AiProvidersPage extends Component {
         'options.auto_router_classifier_ref',
         'options.cost_quality_tradeoff',
         'options.allowed_models',
+        '<<<fusion-router (panel + judge + synthesizer)',
+        'options.fusion_router_refs',
+        'options.fusion_router_judge_ref',
+        'options.fusion_router_synthesizer_ref',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
