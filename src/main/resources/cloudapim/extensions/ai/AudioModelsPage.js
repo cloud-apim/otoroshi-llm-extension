@@ -35,6 +35,7 @@ class AudioModelsPage extends Component {
           {label: 'ElevenLabs', value: "elevenlabs"},
           {label: 'Cloud Temple', value: "cloud-temple"},
           {label: 'AlphaEdge', value: "alphaedge"},
+          {label: 'OpenRouter', value: "openrouter"},
         ], i => i.label)
       }
     },
@@ -321,6 +322,30 @@ class AudioModelsPage extends Component {
                       model: 'alpha-audio-v1',
                       enable_diarization: false,
                       enable_postcorrect: false,
+                    }
+                  }
+                }
+              });
+            } else if (state.provider === 'openrouter') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'openrouter',
+                config: {
+                  connection: {
+                    base_url: 'https://openrouter.ai/api/v1',
+                    token: 'xxxxx',
+                    timeout: 180000,
+                  },
+                  options: {
+                    stt: {
+                      enabled: true,
+                      model: 'openai/whisper-large-v3',
+                      language: 'en',
+                      temperature: 0.0,
                     }
                   }
                 }
