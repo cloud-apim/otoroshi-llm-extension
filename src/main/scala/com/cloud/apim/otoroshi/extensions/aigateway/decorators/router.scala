@@ -252,7 +252,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends ChatClient {
   private def prepareFusion(prompt: ChatPrompt, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (ChatClient, ChatPrompt, JsObject)]] = {
     val panel = resolveCandidates("fusion_router_refs", "fusion_router_ref").take(8)
     if (panel.isEmpty) {
-      Json.obj("error" -> "no panel provider configured for the otoroshi fusion-router").leftf
+      Json.obj("error" -> "no panel provider configured for the otoroshi fusion-router (set options.fusion_router_refs)").leftf
     } else {
       val cleanBody = fusionBody(originalBody)
       val question = promptText(prompt)
@@ -336,7 +336,8 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends ChatClient {
       else Future.successful(codeOrderedCandidates(originalBody))
     orderedF.flatMap { ordered =>
       if (ordered.isEmpty) {
-        Json.obj("error" -> "no candidate provider configured for the otoroshi router").leftf
+        val (routerModel, refsField) = if (requestedModel.contains("auto")) ("auto-router", "auto_router_refs") else ("code-router", "code_router_refs")
+        Json.obj("error" -> s"no candidate provider configured for the otoroshi $routerModel (set options.$refsField)").leftf
       } else {
         // strip router-only knobs and the router model so each candidate uses its own configured model
         val cleanBody = originalBody.asObject - "model" - "min_coding_score" - "cost_quality_tradeoff" - "allowed_models"
