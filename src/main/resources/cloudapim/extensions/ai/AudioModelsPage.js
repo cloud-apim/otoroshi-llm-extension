@@ -341,6 +341,13 @@ class AudioModelsPage extends Component {
                     timeout: 180000,
                   },
                   options: {
+                    tts: {
+                      enabled: true,
+                      model: 'elevenlabs/eleven-turbo-v2',
+                      voice: 'alloy',
+                      response_format: 'mp3',
+                      speed: 1,
+                    },
                     stt: {
                       enabled: true,
                       model: 'openai/whisper-large-v3',
