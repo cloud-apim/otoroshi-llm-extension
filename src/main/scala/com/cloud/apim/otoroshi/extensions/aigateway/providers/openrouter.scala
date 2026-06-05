@@ -23,6 +23,7 @@ object OpenRouterApi {
   val defaultSttModel = "openai/whisper-large-v3"
   val defaultTtsModel = "elevenlabs/eleven-turbo-v2"
   val defaultTtsVoice = "alloy"
+  val defaultImageModel = "google/gemini-2.5-flash-image"
 }
 
 class OpenRouterApi(baseUrl: String = OpenRouterApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
@@ -182,6 +183,108 @@ class OpenRouterAudioModelClient(val api: OpenRouterApi, val ttsOptions: OpenRou
           Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
         }
       }
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                  Image generation + edition                                    ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// OpenRouter does not have a dedicated images endpoint: image generation AND editing both go through
+// /chat/completions. A request with only a text prompt does generation; adding image_url content parts
+// does editing. Output images are returned in choices[0].message.images[].image_url.url as base64 data
+// URLs. The "modalities" field (["image", "text"]) tells OpenRouter to enable image output.
+
+case class OpenRouterImageModelClientOptions(raw: JsObject) {
+  lazy val enabled: Boolean = raw.select("enabled").asOptBoolean.getOrElse(true)
+  lazy val model: Option[String] = raw.select("model").asOptString
+  lazy val modalities: Seq[String] = raw.select("modalities").asOpt[Seq[String]].filter(_.nonEmpty).getOrElse(Seq("image", "text"))
+}
+
+object OpenRouterImageModelClientOptions {
+  def fromJson(raw: JsObject): OpenRouterImageModelClientOptions = OpenRouterImageModelClientOptions(raw)
+}
+
+class OpenRouterImageModelClient(val api: OpenRouterApi, val genOptions: OpenRouterImageModelClientOptions, val editOptions: OpenRouterImageModelClientOptions, id: String) extends ImageModelClient {
+
+  override def supportsGeneration: Boolean = genOptions.enabled
+  override def supportsEdit: Boolean = editOptions.enabled
+
+  // turn an uploaded image (a streamed source of bytes) into the base64 data URL OpenRouter expects
+  private def imageToDataUrl(img: ImageFile)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+    img.bytes.runFold(ByteString.empty)(_ ++ _)(env.otoroshiMaterializer).map { bytes =>
+      val ct = Option(img.contentType).filter(_.startsWith("image/")).getOrElse("image/png")
+      s"data:${ct};base64,${bytes.encodeBase64.utf8String}"
+    }
+  }
+
+  private def chatBody(model: String, prompt: String, imageDataUrls: Seq[String], modalities: Seq[String]): JsObject = {
+    val parts: Seq[JsValue] = Json.obj("type" -> "text", "text" -> prompt) +:
+      imageDataUrls.map(u => Json.obj("type" -> "image_url", "image_url" -> Json.obj("url" -> u)))
+    Json.obj(
+      "model" -> model,
+      "messages" -> Json.arr(Json.obj("role" -> "user", "content" -> JsArray(parts))),
+      "modalities" -> modalities,
+    )
+  }
+
+  // OpenRouter returns generated images inside the assistant chat message (choices[0].message.images),
+  // each as a base64 data URL. Normalize them to the gateway's OpenAI-images shape (b64_json / url).
+  private def parseResponse(resp: WSResponse): Either[JsValue, ImagesGenResponse] = {
+    if (resp.status == 200) {
+      val json = resp.json
+      val headers = resp.headers.mapValues(_.last)
+      val message = json.select("choices").asOpt[Seq[JsObject]].flatMap(_.headOption)
+        .flatMap(_.select("message").asOpt[JsObject]).getOrElse(Json.obj())
+      val text = message.select("content").asOptString.filter(_.nonEmpty)
+      val images = message.select("images").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { img =>
+        img.at("image_url.url").asOptString match {
+          case Some(u) if u.startsWith("data:") && u.contains("base64,") =>
+            ImagesGen(b64Json = Some(u.substring(u.indexOf("base64,") + "base64,".length)), revisedPrompt = text, url = None)
+          case other =>
+            ImagesGen(b64Json = None, revisedPrompt = text, url = other)
+        }
+      }
+      if (images.isEmpty) {
+        Left(Json.obj("error" -> "no image in response", "body" -> json))
+      } else {
+        Right(ImagesGenResponse(
+          created = json.select("created").asOpt[Long].getOrElse(-1L),
+          images = images,
+          metadata = ImagesGenResponseMetadata(
+            rateLimit = ChatResponseMetadataRateLimit(
+              requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+              requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+              tokensLimit = headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+              tokensRemaining = headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+            ), impacts = None, costs = None,
+            usage = ImagesGenResponseMetadataUsage(
+              totalTokens = json.at("usage.total_tokens").asOpt[Long].getOrElse(-1L),
+              tokenInput = json.at("usage.prompt_tokens").asOpt[Long].getOrElse(-1L),
+              tokenOutput = json.at("usage.completion_tokens").asOpt[Long].getOrElse(-1L),
+              tokenText = json.at("usage.prompt_tokens_details.text_tokens").asOpt[Long].getOrElse(-1L),
+              tokenImage = json.at("usage.prompt_tokens_details.image_tokens").asOpt[Long].getOrElse(-1L),
+            )
+          )
+        ))
+      }
+    } else {
+      Left(Json.obj("status" -> resp.status, "body" -> resp.json))
+    }
+  }
+
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    val finalModel = opts.model.orElse(genOptions.model).getOrElse(OpenRouterApi.defaultImageModel)
+    val body = chatBody(finalModel, opts.prompt, Seq.empty, genOptions.modalities)
+    api.rawCall("POST", "/chat/completions", body.some).map(parseResponse)
+  }
+
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    val finalModel = opts.model.orElse(editOptions.model).getOrElse(OpenRouterApi.defaultImageModel)
+    Future.sequence(opts.images.map(imageToDataUrl)).flatMap { dataUrls =>
+      val body = chatBody(finalModel, opts.prompt, dataUrls, editOptions.modalities)
+      api.rawCall("POST", "/chat/completions", body.some).map(parseResponse)
     }
   }
 }
