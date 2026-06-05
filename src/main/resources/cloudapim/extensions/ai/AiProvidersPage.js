@@ -566,6 +566,7 @@ class AiProvidersPage extends Component {
     { 'label': 'AlphaEdge (OCR)', value: 'alphaedge' },
     { 'label': 'JLama', value: 'jlama' },
     { 'label': 'Loadbalancer', value: 'loadbalancer' },
+    { 'label': 'Otoroshi (router)', value: 'otoroshi' },
     ...OpenAiLikeProviders.map(p => ({ label: p.name, value: p.id })),
   ], a => a.label)
 
@@ -890,6 +891,17 @@ class AiProvidersPage extends Component {
         }),
       }
     },
+    'options.min_coding_score': {
+      type: 'number',
+      props: {
+        label: 'Min coding score',
+        placeholder: '0.5',
+        step: 0.05,
+        min: 0,
+        max: 1,
+        help: 'Default target quality (0-1), relative to your candidate providers. Higher = stronger coder (more expensive). Overridable per request via the "min_coding_score" body field.',
+      }
+    },
     'llm_validation.provider': {
       type: 'select',
       props: {
@@ -1060,6 +1072,22 @@ class AiProvidersPage extends Component {
         'options.refs',
         '<<<Load balancing',
         'options.loadbalancing',
+        '>>>Tester',
+        'tester',
+        '>>>Metadata and tags',
+        'tags',
+        'metadata',
+      ];
+    }
+    if (state.provider === "otoroshi") {
+      return [
+        '_loc', 'id', 'name', 'description',
+        '<<<Provider',
+        'provider',
+        '<<<Candidate providers',
+        'options.refs',
+        '<<<Routing (code-router)',
+        'options.min_coding_score',
         '>>>Tester',
         'tester',
         '>>>Metadata and tags',
