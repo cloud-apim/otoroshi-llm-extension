@@ -54,6 +54,11 @@ case class VideoModel(
         val opts = LumaVideoModelClientOptions.fromJson(options)
         new LumaVideoModelClient(api, opts, id).some
       }
+      case "openrouter" => {
+        val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val opts = OpenRouterVideoModelClientOptions.fromJson(options)
+        new OpenRouterVideoModelClient(api, opts, id).some
+      }
       case _ => None
     }
     rawClient.map(c => VideosGenModelClientDecorators(this, c, env))
