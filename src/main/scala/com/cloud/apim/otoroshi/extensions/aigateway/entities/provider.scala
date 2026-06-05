@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatClient
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientDecorators, Guardrails, LoadBalancerChatClient}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientDecorators, Guardrails, LoadBalancerChatClient, OtoroshiRouterChatClient}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
 import otoroshi.env.Env
@@ -348,6 +348,7 @@ case class AiProvider(
         new JlamaChatClient(opts, id).some
       }
       case "loadbalancer" => new LoadBalancerChatClient(this).some
+      case "otoroshi" => new OtoroshiRouterChatClient(this).some
       case p if OpenAiLikeProviders.allIds.contains(p) => {
         OpenAiLikeProviders.find(p).map { provDef =>
           val api = new OpenAiApi(
