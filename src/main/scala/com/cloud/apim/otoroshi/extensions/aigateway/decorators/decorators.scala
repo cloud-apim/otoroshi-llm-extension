@@ -13,6 +13,7 @@ import scala.concurrent.{ExecutionContext, Future}
 object ChatClientDecorators {
 
   val possibleDecorators: Seq[Function[(AiProvider, ChatClient, Env), ChatClient]] = Seq(
+    ChatClientWithMockResponse.applyIfPossible, // first: innermost decorator, stands in for the real provider call
     ChatClientWithModelConstraints.applyIfPossible,
     ChatClientWithProviderFallback.applyIfPossible,
     ChatClientWithPersistentMemory.applyIfPossible,
