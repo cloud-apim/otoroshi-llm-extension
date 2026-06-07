@@ -92,6 +92,9 @@ class AiLlmResponseHeaders extends NgRequestTransformer {
       usage.map(u => s"${prefix}total-tokens" -> u.totalTokens.toString),
       durationMs.map(d => s"${prefix}duration-ms" -> d.toString),
       costs.filter(_ => config.includeCosts).map(c => s"${prefix}cost" -> c.totalCost.bigDecimal.toPlainString),
+      costs.filter(_ => config.includeCosts).map(c => s"${prefix}input-cost" -> c.inputCost.bigDecimal.toPlainString),
+      costs.filter(_ => config.includeCosts).map(c => s"${prefix}output-cost" -> c.outputCost.bigDecimal.toPlainString),
+      costs.filter(_ => config.includeCosts).map(c => s"${prefix}reasoning-cost" -> c.reasoningCost.bigDecimal.toPlainString),
     ).flatten.toMap
 
     if (headers.isEmpty) {
