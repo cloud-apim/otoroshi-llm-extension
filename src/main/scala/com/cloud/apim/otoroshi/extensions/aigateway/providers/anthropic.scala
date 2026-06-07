@@ -75,6 +75,21 @@ object AnthropicModels {
   val CLAUDE_3_OPUS = "claude-3-opus-20240229"
   val CLAUDE_3_SONNET = "claude-3-sonnet-20240229"
   val CLAUDE_3_HAIKU = "claude-3-haiku-20240307"
+
+  // sampling parameters (temperature, top_p, top_k) are removed starting from Claude Opus 4.7.
+  // Sending any of them to such a model returns a 400, so we strip them automatically.
+  // see https://platform.claude.com/docs/en/about-claude/models/migration-guide#migrating-to-claude-opus-4-7
+  private val opusVersionRegex = """claude-opus-(\d+)-(\d+).*""".r
+
+  def dropsSamplingParams(model: String): Boolean = {
+    model.toLowerCase.trim match {
+      case opusVersionRegex(major, minor) =>
+        val maj = major.toInt
+        val min = minor.toInt
+        maj > 4 || (maj == 4 && min >= 7)
+      case _ => false
+    }
+  }
 }
 object AnthropicApi {
   val baseUrl = "https://api.anthropic.com"
@@ -407,9 +422,20 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     }
   }
 
+  // temperature, top_p and top_k are deprecated/removed starting from Claude Opus 4.7 and
+  // will make the API respond with a 400. We strip them automatically for the impacted models.
+  def cleanupDeprecatedSamplingParams(body: JsObject): JsObject = {
+    val model = body.select("model").asOptString.getOrElse("")
+    if (AnthropicModels.dropsSamplingParams(model)) {
+      body - "temperature" - "top_p" - "top_k"
+    } else {
+      body
+    }
+  }
+
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody).applyOn(cleanupDeprecatedSamplingParams)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
     val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
@@ -469,7 +495,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody).applyOn(cleanupDeprecatedSamplingParams)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
     val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
