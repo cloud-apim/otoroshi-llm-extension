@@ -33,41 +33,60 @@ object Random extends LoadBalancing {
   }
 }
 
-case class AtomicAverage(count: AtomicLong, sum: AtomicLong) {
-  def incrBy(v: Long): Unit = {
-    count.incrementAndGet()
-    sum.addAndGet(v)
+// Sliding, time-decaying window of recent response times for a single provider.
+// Old samples age out, so a provider that recovers (or degrades) is reflected within the
+// window horizon instead of being penalized/favored forever by a cumulative average.
+class LatencyWindow(maxAgeMs: Long, maxSamples: Int) {
+
+  private val samples = scala.collection.mutable.ArrayBuffer.empty[(Long, Long)] // (timestampMs, durationMs)
+
+  def record(now: Long, duration: Long): Unit = synchronized {
+    samples.append((now, duration))
+    evict(now)
   }
-  def average: Long = sum.get / count.get
+
+  private def evict(now: Long): Unit = {
+    while (samples.nonEmpty && (now - samples.head._1) > maxAgeMs) samples.remove(0)
+    while (samples.size > maxSamples) samples.remove(0)
+  }
+
+  // p-th percentile of the current window, or None when there is no recent data.
+  def percentile(now: Long, p: Double): Option[Long] = synchronized {
+    evict(now)
+    if (samples.isEmpty) {
+      None
+    } else {
+      val sorted = samples.map(_._2).toArray
+      java.util.Arrays.sort(sorted)
+      val rank = Math.ceil((p / 100.0) * sorted.length).toInt - 1
+      val idx  = Math.min(Math.max(rank, 0), sorted.length - 1)
+      Some(sorted(idx))
+    }
+  }
 }
 
 object BestResponseTime extends LoadBalancing {
 
-  private val random        = new scala.util.Random
-  private val responseTimes = new UnboundedTrieMap[String, AtomicAverage]()
+  private val windowMaxAgeMs = 5 * 60 * 1000L // only consider the last 5 minutes of samples
+  private val windowMaxSize  = 100            // ... and at most 100 samples per provider
+  private val percentile     = 95.0           // route on p95 to be robust to tail latency
+  private val responseTimes  = new UnboundedTrieMap[String, LatencyWindow]()
 
-  def incrementAverage(desc: AiProvider, responseTime: Long): Unit = {
-    val key = desc.id
-    val avg = responseTimes.getOrElseUpdate(key, AtomicAverage(new AtomicLong(0), new AtomicLong(0)))
-    avg.incrBy(responseTime)
+  def record(desc: AiProvider, responseTime: Long): Unit = {
+    val window = responseTimes.getOrElseUpdate(desc.id, new LatencyWindow(windowMaxAgeMs, windowMaxSize))
+    window.record(System.currentTimeMillis(), responseTime)
   }
 
   override def select(reqId: String, targets: Seq[AiProvider])(implicit env: Env): AiProvider = {
-    val keys                     = targets.map(t => t.id)
-    val existing                 = responseTimes.toSeq.filter(t => keys.exists(k => t._1 == k))
-    val nonExisting: Seq[String] = keys.filterNot(k => responseTimes.contains(k))
-    if (existing.size != targets.size) {
-      nonExisting.headOption.flatMap(h => targets.find(t => t.id == h)).getOrElse {
-        val index = random.nextInt(targets.length)
-        targets.apply(index)
-      }
-    } else {
-      val possibleTargets: Seq[(String, Long)] = existing.map(t => (t._1, t._2.average))
-      val (key, _)                             = possibleTargets.minBy(_._2)
-      targets.find(t => t.id == key).getOrElse {
-        val index = random.nextInt(targets.length)
-        targets.apply(index)
-      }
+    if (targets.isEmpty) throw new IllegalArgumentException("no targets to load balance on")
+    val now = System.currentTimeMillis()
+    val scored: Seq[(AiProvider, Option[Long])] = targets.map { t =>
+      (t, responseTimes.get(t.id).flatMap(_.percentile(now, percentile)))
+    }
+    // providers with no recent data are probed first — this also warms up each provider once and
+    // re-probes any provider that has been idle longer than the window horizon.
+    scored.collectFirst { case (p, None) => p }.getOrElse {
+      scored.collect { case (p, Some(p95)) => (p, p95) }.minBy(_._2)._1
     }
   }
 }
@@ -152,7 +171,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
       val start = System.currentTimeMillis()
       client.call(prompt, attrs, originalBody).map { resp =>
         val duration: Long = System.currentTimeMillis() - start
-        BestResponseTime.incrementAverage(provider, duration)
+        BestResponseTime.record(provider, duration)
         resp
       }
     }
@@ -163,7 +182,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
       val start = System.currentTimeMillis()
       client.stream(prompt, attrs, originalBody).map { resp =>
         val duration: Long = System.currentTimeMillis() - start
-        BestResponseTime.incrementAverage(provider, duration)
+        BestResponseTime.record(provider, duration)
         resp
       }
     }
@@ -174,7 +193,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
       val start = System.currentTimeMillis()
       client.completion(prompt, attrs, originalBody).map { resp =>
         val duration: Long = System.currentTimeMillis() - start
-        BestResponseTime.incrementAverage(provider, duration)
+        BestResponseTime.record(provider, duration)
         resp
       }
     }
@@ -185,7 +204,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
       val start = System.currentTimeMillis()
       client.completionStream(prompt, attrs, originalBody).map { resp =>
         val duration: Long = System.currentTimeMillis() - start
-        BestResponseTime.incrementAverage(provider, duration)
+        BestResponseTime.record(provider, duration)
         resp
       }
     }
