@@ -5,6 +5,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.ChatClient
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ChatClientWithCostsTracking
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
+import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
 import play.api.mvc.Result
@@ -46,6 +47,37 @@ object AiLlmResponseHeadersConfig {
   ))
 }
 
+object AiLlmResponseHeaders {
+
+  // Builds the x-otoroshi-llm-* headers from the LLM metadata the gateway already computed for this
+  // request (analytics "ai" entries, ApiUsageKey, cost tracking). Returns an empty map when there is
+  // no LLM data — e.g. a non-LLM route, or a streaming response whose usage isn't known yet.
+  // Shared by the standalone plugin below and the unified OpenAiCompatApi plugin.
+  def computeHeaders(attrs: TypedMap, prefix: String, includeCosts: Boolean): Map[String, String] = {
+    val aiData = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey)
+      .flatMap(_.select("ai").asOpt[Seq[JsObject]])
+      .getOrElse(Seq.empty)
+    val lastAi = aiData.lastOption
+    val usage = attrs.get(ChatClient.ApiUsageKey).map(_.usage)
+    val costs = attrs.get(ChatClientWithCostsTracking.key)
+    val durationMs = if (aiData.nonEmpty) Some(aiData.flatMap(_.select("duration").asOpt[Long]).sum) else None
+    Seq(
+      lastAi.flatMap(_.select("model").asOptString).map(v => s"${prefix}model" -> v),
+      lastAi.flatMap(_.select("provider").asOptString).map(v => s"${prefix}provider" -> v),
+      lastAi.flatMap(_.select("provider_kind").asOptString).map(v => s"${prefix}provider-kind" -> v),
+      usage.map(u => s"${prefix}prompt-tokens" -> u.promptTokens.toString),
+      usage.map(u => s"${prefix}generation-tokens" -> u.generationTokens.toString),
+      usage.map(u => s"${prefix}reasoning-tokens" -> u.reasoningTokens.toString),
+      usage.map(u => s"${prefix}total-tokens" -> u.totalTokens.toString),
+      durationMs.map(d => s"${prefix}duration-ms" -> d.toString),
+      costs.filter(_ => includeCosts).map(c => s"${prefix}cost" -> c.totalCost.bigDecimal.toPlainString),
+      costs.filter(_ => includeCosts).map(c => s"${prefix}input-cost" -> c.inputCost.bigDecimal.toPlainString),
+      costs.filter(_ => includeCosts).map(c => s"${prefix}output-cost" -> c.outputCost.bigDecimal.toPlainString),
+      costs.filter(_ => includeCosts).map(c => s"${prefix}reasoning-cost" -> c.reasoningCost.bigDecimal.toPlainString),
+    ).flatten.toMap
+  }
+}
+
 // Adds x-otoroshi-llm-* response headers exposing the LLM call metadata (model, provider, token
 // usage, latency and cost) that the gateway already computes. Handy for client-side observability
 // (curl, dashboards, logs) without parsing the response body. Inspired by litellm's x-litellm-* headers.
@@ -72,31 +104,7 @@ class AiLlmResponseHeaders extends NgRequestTransformer {
 
   override def transformResponse(ctx: NgTransformerResponseContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
     val config = ctx.cachedConfig(internalName)(AiLlmResponseHeadersConfig.format).getOrElse(AiLlmResponseHeadersConfig.default)
-    val prefix = config.prefix
-
-    val aiData = ctx.attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey)
-      .flatMap(_.select("ai").asOpt[Seq[JsObject]])
-      .getOrElse(Seq.empty)
-    val lastAi = aiData.lastOption
-    val usage = ctx.attrs.get(ChatClient.ApiUsageKey).map(_.usage)
-    val costs = ctx.attrs.get(ChatClientWithCostsTracking.key)
-    val durationMs = if (aiData.nonEmpty) Some(aiData.flatMap(_.select("duration").asOpt[Long]).sum) else None
-
-    val headers: Map[String, String] = Seq(
-      lastAi.flatMap(_.select("model").asOptString).map(v => s"${prefix}model" -> v),
-      lastAi.flatMap(_.select("provider").asOptString).map(v => s"${prefix}provider" -> v),
-      lastAi.flatMap(_.select("provider_kind").asOptString).map(v => s"${prefix}provider-kind" -> v),
-      usage.map(u => s"${prefix}prompt-tokens" -> u.promptTokens.toString),
-      usage.map(u => s"${prefix}generation-tokens" -> u.generationTokens.toString),
-      usage.map(u => s"${prefix}reasoning-tokens" -> u.reasoningTokens.toString),
-      usage.map(u => s"${prefix}total-tokens" -> u.totalTokens.toString),
-      durationMs.map(d => s"${prefix}duration-ms" -> d.toString),
-      costs.filter(_ => config.includeCosts).map(c => s"${prefix}cost" -> c.totalCost.bigDecimal.toPlainString),
-      costs.filter(_ => config.includeCosts).map(c => s"${prefix}input-cost" -> c.inputCost.bigDecimal.toPlainString),
-      costs.filter(_ => config.includeCosts).map(c => s"${prefix}output-cost" -> c.outputCost.bigDecimal.toPlainString),
-      costs.filter(_ => config.includeCosts).map(c => s"${prefix}reasoning-cost" -> c.reasoningCost.bigDecimal.toPlainString),
-    ).flatten.toMap
-
+    val headers = AiLlmResponseHeaders.computeHeaders(ctx.attrs, config.prefix, config.includeCosts)
     if (headers.isEmpty) {
       ctx.otoroshiResponse.right.vfuture
     } else {
