@@ -12,6 +12,7 @@ import play.api.libs.json.{JsBoolean, JsDefined, JsLookupResult, JsNull, JsNumbe
 
 import java.util.concurrent.atomic.{AtomicInteger, AtomicLong}
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success}
 
 trait LoadBalancing {
   def select(reqId: String, targets: Seq[AiProvider])(implicit env: Env): AiProvider
@@ -105,7 +106,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
   override def isOpenAi: Boolean = true
   override def isAnthropic: Boolean = false
 
-  def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: ChatClient => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
+  def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: (AiProvider, ChatClient) => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val refs: Seq[LoadBalancingTarget] = provider.options.select("refs")
       .asOpt[Seq[String]].map { seq =>
         seq.map(i => LoadBalancingTarget(i, 1, None))
@@ -158,53 +159,66 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
         case Some(str) if str.startsWith("JsonPath(") => filterAll(body, (o, _) => o.atPath(str.substring(9).init))
         case Some(str) => filterAll(body, (o, _) => o.at(str))
       }
-      val selectedProvider = loadBalancing.select(LoadBalancerChatClient.counter.incrementAndGet().toString, providers.map(_._1))
+      val settings = CircuitBreakerSettings.fromProvider(provider)
+      val allTargets = providers.map(_._1)
+      val candidates = if (settings.enabled) {
+        val now = System.currentTimeMillis()
+        val healthy = allTargets.filterNot(p => ProviderCircuitBreaker.isOpen(p.id, now))
+        if (healthy.nonEmpty) healthy else allTargets // every target is cooling down → try anyway rather than fail
+      } else allTargets
+      val selectedProvider = loadBalancing.select(LoadBalancerChatClient.counter.incrementAndGet().toString, candidates)
       selectedProvider.getChatClient() match {
         case None => Json.obj("error" -> "no client found").leftf
-        case Some(client) => f(client)
+        case Some(client) =>
+          val result = f(selectedProvider, client)
+          if (settings.enabled) {
+            result.andThen {
+              case Success(Right(_)) => ProviderCircuitBreaker.recordSuccess(selectedProvider.id)
+              case Success(Left(_))  => ProviderCircuitBreaker.recordFailure(selectedProvider.id, System.currentTimeMillis(), settings)
+              case Failure(_)        => ProviderCircuitBreaker.recordFailure(selectedProvider.id, System.currentTimeMillis(), settings)
+            }
+          } else {
+            result
+          }
       }
     }
   }
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    execute(prompt, attrs, originalBody) { client =>
+    execute(prompt, attrs, originalBody) { (selected, client) =>
       val start = System.currentTimeMillis()
       client.call(prompt, attrs, originalBody).map { resp =>
-        val duration: Long = System.currentTimeMillis() - start
-        BestResponseTime.record(provider, duration)
+        BestResponseTime.record(selected, System.currentTimeMillis() - start)
         resp
       }
     }
   }
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    execute(prompt, attrs, originalBody) { client =>
+    execute(prompt, attrs, originalBody) { (selected, client) =>
       val start = System.currentTimeMillis()
       client.stream(prompt, attrs, originalBody).map { resp =>
-        val duration: Long = System.currentTimeMillis() - start
-        BestResponseTime.record(provider, duration)
+        BestResponseTime.record(selected, System.currentTimeMillis() - start)
         resp
       }
     }
   }
 
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    execute(prompt, attrs, originalBody) { client =>
+    execute(prompt, attrs, originalBody) { (selected, client) =>
       val start = System.currentTimeMillis()
       client.completion(prompt, attrs, originalBody).map { resp =>
-        val duration: Long = System.currentTimeMillis() - start
-        BestResponseTime.record(provider, duration)
+        BestResponseTime.record(selected, System.currentTimeMillis() - start)
         resp
       }
     }
   }
 
   override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    execute(prompt, attrs, originalBody) { client =>
+    execute(prompt, attrs, originalBody) { (selected, client) =>
       val start = System.currentTimeMillis()
       client.completionStream(prompt, attrs, originalBody).map { resp =>
-        val duration: Long = System.currentTimeMillis() - start
-        BestResponseTime.record(provider, duration)
+        BestResponseTime.record(selected, System.currentTimeMillis() - start)
         resp
       }
     }
