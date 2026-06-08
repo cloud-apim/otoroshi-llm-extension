@@ -23,14 +23,16 @@ case class OpenAiCompatApiConfig(
   contextRefs: Seq[String],
   maxSizeUpload: Long,
   decodeImages: Boolean,
-  useOpenResponseForResponses: Boolean
+  useOpenResponseForResponses: Boolean,
+  responseHeaders: Boolean,
+  responseHeadersIncludeCosts: Boolean
 ) extends NgPluginConfig {
   def json: JsValue = OpenAiCompatApiConfig.format.writes(this)
 }
 
 object OpenAiCompatApiConfig {
 
-  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "ocr_model_refs", "embedding_model_refs", "moderation_model_refs", "context_refs", "max_size_upload", "decode_images", "use_open_response_for_responses")
+  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "ocr_model_refs", "embedding_model_refs", "moderation_model_refs", "context_refs", "max_size_upload", "decode_images", "use_open_response_for_responses", "response_headers", "response_headers_include_costs")
 
   def configSchema: Option[JsObject] = Some(Json.obj(
     "language_model_refs" -> Json.obj(
@@ -134,6 +136,16 @@ object OpenAiCompatApiConfig {
       "label" -> "Use OpenResponse proxy for /responses",
       "help" -> "Use the OpenResponse proxy instead of the default OpenAI Responses proxy for the /responses endpoint",
     ),
+    "response_headers" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Expose x-otoroshi-llm-* response headers",
+      "help" -> "Add model, provider, token usage, latency and cost as x-otoroshi-llm-* response headers (non-streaming responses only)",
+    ),
+    "response_headers_include_costs" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Include cost headers",
+      "help" -> "Include the x-otoroshi-llm-*cost headers (only used when 'Expose x-otoroshi-llm-* response headers' is on)",
+    ),
   ))
 
   val default = OpenAiCompatApiConfig(
@@ -146,7 +158,9 @@ object OpenAiCompatApiConfig {
     contextRefs = Seq.empty,
     maxSizeUpload = 100 * 1024 * 1024,
     decodeImages = false,
-    useOpenResponseForResponses = false
+    useOpenResponseForResponses = false,
+    responseHeaders = false,
+    responseHeadersIncludeCosts = true
   )
 
   val format = new Format[OpenAiCompatApiConfig] {
@@ -161,6 +175,8 @@ object OpenAiCompatApiConfig {
       "max_size_upload" -> o.maxSizeUpload,
       "decode_images" -> o.decodeImages,
       "use_open_response_for_responses" -> o.useOpenResponseForResponses,
+      "response_headers" -> o.responseHeaders,
+      "response_headers_include_costs" -> o.responseHeadersIncludeCosts,
     )
     override def reads(json: JsValue): JsResult[OpenAiCompatApiConfig] = Try {
       OpenAiCompatApiConfig(
@@ -174,6 +190,8 @@ object OpenAiCompatApiConfig {
         maxSizeUpload = json.select("max_size_upload").asOpt[Long].getOrElse(default.maxSizeUpload),
         decodeImages = json.select("decode_images").asOpt[Boolean].getOrElse(false),
         useOpenResponseForResponses = json.select("use_open_response_for_responses").asOpt[Boolean].getOrElse(false),
+        responseHeaders = json.select("response_headers").asOpt[Boolean].getOrElse(false),
+        responseHeadersIncludeCosts = json.select("response_headers_include_costs").asOpt[Boolean].getOrElse(true),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -207,7 +225,7 @@ class OpenAiCompatApi extends NgBackendCall {
     val config = ctx.cachedConfig(internalName)(OpenAiCompatApiConfig.format).getOrElse(OpenAiCompatApiConfig.default)
     val path = ctx.request.path
     val method = ctx.request.method.toUpperCase()
-    if (method == "GET" && path.endsWith("/contexts")) {
+    val result: Future[Either[NgProxyEngineError, BackendCallResponse]] = if (method == "GET" && path.endsWith("/contexts")) {
       val contexts = env.adminExtensions.extension[AiExtension].map(_.states.allContexts()).getOrElse(Seq.empty)
         .filter(c => config.contextRefs.contains(c.id))
         .map(c => Json.obj("id" -> c.id, "name" -> c.name))
@@ -275,6 +293,19 @@ class OpenAiCompatApi extends NgBackendCall {
 
     } else {
       Left(NgProxyEngineError.NgResultProxyEngineError(Results.NotFound(Json.obj("error" -> "not_found", "error_details" -> s"no handler found for ${method} ${path}")))).vfuture
+    }
+    // integrate the AiLlmResponseHeaders feature: enrich successful responses with x-otoroshi-llm-*
+    // headers (model, provider, tokens, latency, cost). No-op when there is no LLM data for the call.
+    if (config.responseHeaders) {
+      result.map {
+        case Right(bcr) =>
+          val extra = AiLlmResponseHeaders.computeHeaders(ctx.attrs, "x-otoroshi-llm-", config.responseHeadersIncludeCosts)
+          if (extra.isEmpty) Right(bcr)
+          else Right(bcr.copy(response = bcr.response.copy(headers = bcr.response.headers ++ extra)))
+        case left => left
+      }
+    } else {
+      result
     }
   }
 }
