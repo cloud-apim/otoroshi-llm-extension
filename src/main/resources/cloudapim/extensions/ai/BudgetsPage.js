@@ -14,6 +14,24 @@ function RemainingBudget(props) {
     });
   }
 
+  const reset = (all) => {
+    const what = all ? 'all cycles' : 'the current cycle';
+    const confirmFn = window.newConfirm || ((m) => Promise.resolve(window.confirm(m)));
+    confirmFn(`Are you sure you want to reset the consumption for ${what} of this budget ?`).then(ok => {
+      if (ok) {
+        fetch(`/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_reset?budget=${props.rawValue.id}&all=${all}`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        }).then(res => res.json()).then(() => {
+          update();
+        });
+      }
+    });
+  }
+
   React.useEffect(() => {
     update();
   }, [props.rawValue]);
@@ -86,9 +104,15 @@ function RemainingBudget(props) {
       ),
       React.createElement("div", { className: "row mb-3" },
         React.createElement("label", { className: "col-xs-12 col-sm-2 col-form-label" }, ''),
-        React.createElement("div", { className: "col-sm-10" },
+        React.createElement("div", { className: "col-sm-10", style: { display: 'flex', gap: '10px' } },
           React.createElement('button', { type: 'button', className: "btn btn-sm btn-primary", onClick: update },
-            'Refresh'
+            React.createElement('i', { className: 'fas fa-sync' }), ' Refresh'
+          ),
+          React.createElement('button', { type: 'button', className: "btn btn-sm btn-warning", onClick: () => reset(false) },
+            React.createElement('i', { className: 'fas fa-eraser' }), ' Reset current cycle'
+          ),
+          React.createElement('button', { type: 'button', className: "btn btn-sm btn-danger", onClick: () => reset(true) },
+            React.createElement('i', { className: 'fas fa-trash' }), ' Reset all cycles'
           )
         ),
       )
