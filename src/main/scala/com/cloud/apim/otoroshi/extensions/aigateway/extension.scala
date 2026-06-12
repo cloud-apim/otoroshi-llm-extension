@@ -597,6 +597,22 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
+  def handleRemainingBudgetReset(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
+    implicit val ec = env.otoroshiExecutionContext
+    implicit val ev = env
+    val all = req.getQueryString("all").contains("true")
+    req.getQueryString("budget") match {
+      case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
+      case Some(budgetId) => {
+        states.budget(budgetId) match {
+          case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
+          case Some(budget) if all => budget.resetAll().map(_ => Results.Ok(Json.obj("done" -> true)))
+          case Some(budget) => budget.resetCurrentCycle().map(_ => Results.Ok(Json.obj("done" -> true)))
+        }
+      }
+    }
+  }
+
   def handleBudgetClusterDeltaReceive(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val mat = env.otoroshiMaterializer
@@ -821,6 +837,12 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_remaining",
       wantsBody = false,
       handle = handleRemainingBudget
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_reset",
+      wantsBody = false,
+      handle = handleRemainingBudgetReset
     )
   )
 
