@@ -21,6 +21,7 @@ The AI Agent node is the primary way to run an AI agent within an Otoroshi workf
 | `model_options` | object | no | Override model options (temperature, etc.) |
 | `tools` | array | no | List of tool function ids the agent can use |
 | `mcp_connectors` | array | no | List of MCP connector ids the agent can use |
+| `search_engines` | array | no | List of [Search Engine](/docs/search-engines/introduction) ids the agent can use as a web `search` tool |
 | `inline_tools` | array | no | List of inline tool definitions (see below) |
 | `memory` | string | no | Persistent memory provider id for conversation history |
 | `guardrails` | array | no | List of guardrail configurations |
@@ -78,6 +79,23 @@ Reference MCP connectors to give the agent access to MCP server tools:
   "instructions": ["You help users by using available MCP tools."],
   "input": "${input.question}",
   "mcp_connectors": ["mcp-connector_xxxxx"],
+  "result": "agent_response"
+}
+```
+
+### Search engines
+
+Reference [Search Engines](/docs/search-engines/introduction) to give the agent a web `search` tool:
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.ai_agent",
+  "name": "research-assistant",
+  "provider": "provider_xxxxx",
+  "description": "An assistant with web search access",
+  "instructions": ["Answer using up-to-date web information and cite your sources."],
+  "input": "${input.question}",
+  "search_engines": ["search-engine_xxxxx"],
   "result": "agent_response"
 }
 ```
