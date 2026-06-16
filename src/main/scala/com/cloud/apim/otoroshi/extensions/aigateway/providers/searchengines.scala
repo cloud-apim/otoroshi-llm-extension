@@ -460,26 +460,30 @@ class DuckDuckGoSearchClient(api: DuckDuckGoApi, options: DuckDuckGoSearchOption
     )
     api.rawGet(s"/?${SearchEngineHelpers.queryString(params)}").map { resp =>
       if (resp.status == 200) {
-        val json = resp.json
-        val abstractResults: Seq[SearchEngineResult] = json.select("AbstractText").asOptString.filter(_.nonEmpty).map { txt =>
-          SearchEngineResult(
-            title = json.select("Heading").asOpt[String].getOrElse(opts.query),
-            url = json.select("AbstractURL").asOpt[String].getOrElse(""),
-            snippet = txt,
-            raw = Json.obj("Heading" -> json.select("Heading").asOpt[String], "AbstractSource" -> json.select("AbstractSource").asOpt[String]),
-          )
-        }.toSeq
-        val topicResults: Seq[SearchEngineResult] = flattenTopics(json.select("RelatedTopics").asOpt[Seq[JsObject]].getOrElse(Seq.empty)).map { r =>
-          SearchEngineResult(
-            title = r.select("Text").asOpt[String].getOrElse(""),
-            url = r.select("FirstURL").asOpt[String].getOrElse(""),
-            snippet = r.select("Text").asOpt[String].getOrElse(""),
-            raw = r,
-          )
-        }.filter(_.url.nonEmpty)
-        val all = abstractResults ++ topicResults
-        val results = opts.maxResults.map(n => all.take(n)).getOrElse(all)
-        SearchEngineResponse("duckduckgo", opts.query, json.select("AbstractText").asOptString.filter(_.nonEmpty), results, json.asOpt[JsObject].getOrElse(Json.obj())).right
+        try {
+          val json = resp.json
+          val abstractResults: Seq[SearchEngineResult] = json.select("AbstractText").asOptString.filter(_.nonEmpty).map { txt =>
+            SearchEngineResult(
+              title = json.select("Heading").asOpt[String].getOrElse(opts.query),
+              url = json.select("AbstractURL").asOpt[String].getOrElse(""),
+              snippet = txt,
+              raw = Json.obj("Heading" -> json.select("Heading").asOpt[String], "AbstractSource" -> json.select("AbstractSource").asOpt[String]),
+            )
+          }.toSeq
+          val topicResults: Seq[SearchEngineResult] = flattenTopics(json.select("RelatedTopics").asOpt[Seq[JsObject]].getOrElse(Seq.empty)).map { r =>
+            SearchEngineResult(
+              title = r.select("Text").asOpt[String].getOrElse(""),
+              url = r.select("FirstURL").asOpt[String].getOrElse(""),
+              snippet = r.select("Text").asOpt[String].getOrElse(""),
+              raw = r,
+            )
+          }.filter(_.url.nonEmpty)
+          val all = abstractResults ++ topicResults
+          val results = opts.maxResults.map(n => all.take(n)).getOrElse(all)
+          SearchEngineResponse("duckduckgo", opts.query, json.select("AbstractText").asOptString.filter(_.nonEmpty), results, json.asOpt[JsObject].getOrElse(Json.obj())).right
+        } catch {
+          case t: Throwable => Left(Json.obj("error" -> "bad response from duckduckgo", "status" -> resp.status, "body" -> resp.body))
+        }
       } else {
         Left(Json.obj("error" -> "bad response from duckduckgo", "status" -> resp.status, "body" -> resp.body))
       }
