@@ -490,3 +490,84 @@ class DuckDuckGoSearchClient(api: DuckDuckGoApi, options: DuckDuckGoSearchOption
     }
   }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                               Exa                                              ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+object ExaApi {
+  val baseUrl = "https://api.exa.ai"
+}
+
+class ExaApi(baseUrl: String = ExaApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${baseUrl}${path}"
+    ProviderHelpers.logCall("Exa", method, url, body)(env)
+    env.Ws
+      .url(url)
+      .withHttpHeaders(
+        "x-api-key" -> token,
+        "Accept" -> "application/json",
+      ).applyOnWithOpt(body) {
+        case (builder, b) => builder.addHttpHeaders("Content-Type" -> "application/json").withBody(b)
+      }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .execute()
+  }
+}
+
+case class ExaSearchOptions(raw: JsObject) {
+  lazy val searchType: Option[String] = raw.select("type").asOptString
+  lazy val category: Option[String] = raw.select("category").asOptString
+  lazy val numResults: Option[Int] = raw.select("num_results").asOpt[Int]
+  lazy val highlights: Boolean = raw.select("highlights").asOpt[Boolean].getOrElse(true)
+  lazy val text: Boolean = raw.select("text").asOpt[Boolean].getOrElse(false)
+}
+
+object ExaSearchOptions {
+  def fromJson(raw: JsObject): ExaSearchOptions = ExaSearchOptions(raw)
+}
+
+class ExaSearchClient(api: ExaApi, options: ExaSearchOptions, id: String) extends SearchEngineClient {
+  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
+    val contents = Json.obj()
+      .applyOnIf(options.highlights) { o => o ++ Json.obj("highlights" -> true) }
+      .applyOnIf(options.text) { o => o ++ Json.obj("text" -> true) }
+    val body = Json.obj("query" -> opts.query)
+      .applyOnWithOpt(opts.maxResults.orElse(options.numResults)) { case (o, v) => o ++ Json.obj("numResults" -> v) }
+      .applyOnWithOpt(options.searchType.orElse("auto".some)) { case (o, v) => o ++ Json.obj("type" -> v) }
+      .applyOnWithOpt(options.category) { case (o, v) => o ++ Json.obj("category" -> v) }
+      .applyOnWithOpt(opts.includeDomains.some.filter(_.nonEmpty)) { case (o, v) => o ++ Json.obj("includeDomains" -> v) }
+      .applyOnWithOpt(opts.excludeDomains.some.filter(_.nonEmpty)) { case (o, v) => o ++ Json.obj("excludeDomains" -> v) }
+      .applyOnIf(contents.value.nonEmpty) { o => o ++ Json.obj("contents" -> contents) }
+    api.rawCall("POST", "/search", body.some).map { resp =>
+      if (resp.status == 200 || resp.status == 201) {
+        try {
+          val json = resp.json
+          val results = json.select("results").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { r =>
+            val highlights = r.select("highlights").asOpt[Seq[String]].getOrElse(Seq.empty)
+            val snippet =
+              if (highlights.nonEmpty) highlights.mkString(" … ")
+              else r.select("text").asOptString.map(t => if (t.length > 600) t.take(600) + "…" else t)
+                .orElse(r.select("summary").asOptString)
+                .getOrElse("")
+            SearchEngineResult(
+              title = r.select("title").asOpt[String].getOrElse(""),
+              url = r.select("url").asOpt[String].getOrElse(""),
+              snippet = snippet,
+              score = r.select("score").asOpt[Double],
+              publishedDate = r.select("publishedDate").asOptString,
+              raw = r,
+            )
+          }
+          SearchEngineResponse("exa", opts.query, None, results, json.asOpt[JsObject].getOrElse(Json.obj())).right
+        } catch {
+          case t: Throwable => Left(Json.obj("error" -> "bad response from exa", "status" -> resp.status, "body" -> resp.body))
+        }
+      } else {
+        Left(Json.obj("error" -> "bad response from exa", "status" -> resp.status, "body" -> resp.body))
+      }
+    }
+  }
+}
