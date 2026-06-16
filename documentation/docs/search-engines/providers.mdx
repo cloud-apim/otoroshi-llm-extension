@@ -183,3 +183,29 @@ DuckDuckGo only exposes the free **Instant Answer** API, not a full web result l
   "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
 }
 ```
+
+## Exa
+
+AI / neural web search. `POST https://api.exa.ai/search`, authenticated with the `x-api-key` header (set through `connection.token`). Exa returns relevance **highlights** that are mapped to the normalized `snippet`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.connection.base_url` | string | `https://api.exa.ai` | Exa base URL |
+| `config.options.type` | string | `auto` | Search mode (`auto`, `fast`, `instant`, `deep`, …) |
+| `config.options.category` | string | — | Focus area (e.g. `news`, `research paper`, `company`, `people`) |
+| `config.options.num_results` | number | `10` | Number of results (1–100) |
+| `config.options.highlights` | boolean | `true` | Return relevance highlights used as the result `snippet` |
+| `config.options.text` | boolean | `false` | Also request the full page text (used as a fallback snippet) |
+
+```js
+{
+  "id": "search-engine_xxxxxxxxx",
+  "name": "Exa",
+  "provider": "exa",
+  "config": {
+    "connection": { "base_url": "https://api.exa.ai", "token": "${vault://local/EXA_API_KEY}", "timeout": 30000 },
+    "options": { "type": "auto", "highlights": true, "num_results": 10 }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
+}
+```
