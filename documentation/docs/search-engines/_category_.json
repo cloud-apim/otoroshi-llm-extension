@@ -1,0 +1,8 @@
+{
+  "label": "Search Engines",
+  "position": 13,
+  "link": {
+    "type": "generated-index",
+    "description": "Everything about web search engines: providers, the search API plugin, the workflow function, and using search as an LLM tool"
+  }
+}

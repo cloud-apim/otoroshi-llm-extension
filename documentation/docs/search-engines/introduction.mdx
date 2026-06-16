@@ -1,0 +1,69 @@
+---
+sidebar_position: 1
+---
+
+# Search Engines
+
+Otoroshi LLM Extension provides support for **web search engines**, enabling real-time web search through a unified, normalized API.
+
+A search engine is exposed as a dedicated, first-class entity type — the **Search Engine** — just like Audio Models, Image Models, or OCR Models. Each Search Engine wraps a provider and its configuration, and exposes a single `search(query)` operation. It can be used in three ways: as an **LLM tool** (passed to a provider or an agent), through a dedicated **HTTP plugin**, or as a **workflow function**.
+
+Every provider is implemented in **pure HTTP** (no extra dependency) and every response is **normalized** to a common shape, so the same code/prompt works regardless of the underlying engine.
+
+## Supported providers
+
+| Provider | Auth | Notes |
+|----------|------|-------|
+| **Staan.ai** (Qwant) 🇫🇷 🇪🇺 | `Bearer` | Sovereign European web search API. Default provider. |
+| **Tavily** | `Bearer` | Search API designed for LLM/RAG. Can return a synthetic `answer`. |
+| **Brave Search** | `X-Subscription-Token` | Independent web index. |
+| **SearXNG** | none (self-hosted) | Open-source metasearch engine. Point `base_url` at your instance — ideal for on-prem / sovereignty. |
+| **Google Custom Search** | `key` + `cx` | Google Programmable Search Engine. |
+| **SearchApi** | `Bearer` | SERP aggregator (`google` by default, other engines available). |
+| **DuckDuckGo** | none | Instant Answer API only (no full web result list — best effort). |
+
+## Features
+
+- **Unified, normalized results**: every provider returns the same shape — `{ provider, query, answer?, results: [{ title, url, snippet, score?, published_date? }] }`. The raw provider payload is kept internally for advanced use.
+- **Pure HTTP**: no new dependency, only standard HTTP calls.
+- **Vault integration**: API tokens support Otoroshi vault references (e.g. `${vault://local/my-token}`) and comma-separated rotation.
+- **Search controls**: `max_results`, `market`/locale, and domain `include`/`exclude` filters are passed through to providers that support them.
+- **LLM tool integration**: reference one or more Search Engines on a provider or an agent and the model gets a `search` tool it can call autonomously.
+- **Workflow integration**: search is available as a workflow function ([`search_engine_search`](/docs/workflows/search-engine-search)) for use in agentic pipelines.
+
+## How to use a Search Engine
+
+There are three ways to use a Search Engine:
+
+| Method | Description |
+|--------|-------------|
+| **LLM tool** | Reference Search Engines on an LLM provider or an AI Agent; the model is given a `search` tool and calls it when it needs fresh web information. See [Search as an LLM tool](./as-llm-tool). |
+| **Dedicated plugin** | The `Cloud APIM - Search engine backend` plugin exposes a single `POST` search route. See [Plugins](./plugins). |
+| **Workflow function** | The [`search_engine_search`](/docs/workflows/search-engine-search) function runs a search from within a workflow. |
+
+## Search Engine entity
+
+A Search Engine entity wraps a provider connection and its options:
+
+```js
+{
+  "id": "search-engine_xxxxxxxxx",
+  "name": "My Search Engine",
+  "description": "Sovereign web search backed by Staan.ai",
+  "provider": "staan",
+  "config": {
+    "connection": {
+      "base_url": "https://api.staan.ai",
+      "token": "${vault://local/STAAN_API_KEY}",
+      "timeout": 30000
+    },
+    "options": {
+      "market": "fr-FR",
+      "count": 10
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
+}
+```
+
+See [Providers](./providers) for the per-provider configuration, [Plugins](./plugins) for the HTTP API, and [Search as an LLM tool](./as-llm-tool) to wire search into your providers and agents.

@@ -1,0 +1,86 @@
+---
+sidebar_position: 4
+---
+
+# Search as an LLM tool
+
+Search Engines can be attached to an **LLM provider** or an **AI Agent** as tools. When you do, the model is given a `search` tool for each referenced engine and can call it autonomously to fetch fresh information from the web. This works exactly like [WASM tool functions](/docs/function-calling/overview) and [MCP connectors](/docs/mcp/overview): the gateway advertises the tool to the model, executes the call when the model asks for it, and feeds the normalized results back into the conversation — looping until the model produces its final answer.
+
+## On an LLM provider
+
+In the provider form, select your engines in the **Search Engines** field (under *Tools*), or set `options.search_engines` to a list of Search Engine ids:
+
+```js
+{
+  "id": "provider_xxxxxxxxx",
+  "name": "GPT-4o with web search",
+  "provider": "openai",
+  "connection": { "token": "${vault://local/OPENAI_API_KEY}" },
+  "options": {
+    "model": "gpt-4o",
+    "search_engines": ["search-engine_xxxxxxxxx"],
+    "allow_config_override": true
+  }
+}
+```
+
+Now any chat completion routed through this provider can trigger a web search:
+
+```sh
+curl https://my-llm-endpoint.example.com/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "model": "gpt-4o",
+    "messages": [
+      { "role": "user", "content": "What are the latest news about European sovereign AI? Cite your sources." }
+    ]
+  }'
+```
+
+The model decides to call the `search` tool, the gateway runs the search against the referenced engine, and the normalized results (`title`, `url`, `snippet`, …) are injected back so the model can answer with up-to-date, sourced content.
+
+### Supported providers
+
+Search-as-a-tool works on every tool-capable LLM provider: **OpenAI**, **Azure OpenAI**, **Anthropic**, **Mistral**, **Groq**, **Cohere**, **Ollama**, and **xAI (Grok)**.
+
+### Per-request override
+
+When `allow_config_override` is enabled on the provider, a request can add (or change) the referenced engines on the fly:
+
+```js
+{
+  "model": "gpt-4o",
+  "search_engines": ["search-engine_xxxxxxxxx"],
+  "messages": [ { "role": "user", "content": "…" } ]
+}
+```
+
+## On an AI Agent
+
+Agents reference Search Engines the same way they reference tools and MCP connectors. In the **AI Agent** node, fill the **Search Engines** field, or set `search_engines` in the agent config:
+
+```js
+{
+  "name": "Research assistant",
+  "provider": "provider_xxxxxxxxx",
+  "instructions": ["Answer questions using up-to-date web information and always cite your sources."],
+  "tools": [],
+  "mcp_connectors": [],
+  "search_engines": ["search-engine_xxxxxxxxx"]
+}
+```
+
+See [AI Agent node](/docs/agents/ai-agent-node) for the full agent configuration.
+
+## How it works
+
+- **One engine = one tool.** Each referenced Search Engine becomes a single `search` tool the model can call with a `query` (and an optional `max_results`). When several engines are referenced, the model is offered one tool per engine and chooses which to use — referencing a single engine usually gives the most predictable behavior.
+- **Normalized results.** Whatever the underlying provider, the tool returns the normalized JSON `{ provider, query, answer?, results: [{ title, url, snippet, … }] }`, which keeps prompts compact and provider-agnostic.
+- **Standard tool loop.** Search tool calls go through the same execution loop as WASM and MCP tools, so they compose with the rest of your pipeline (model constraints, guardrails, budgets, observability).
+
+## See also
+
+- [Search API plugin](./plugins) — call a Search Engine directly over HTTP
+- [`search_engine_search`](/docs/workflows/search-engine-search) — run a search from a workflow
+- [Function calling](/docs/function-calling/overview) and [MCP](/docs/mcp/overview) — the other tool sources that compose with search

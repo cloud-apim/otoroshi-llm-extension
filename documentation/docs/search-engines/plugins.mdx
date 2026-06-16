@@ -1,0 +1,82 @@
+---
+sidebar_position: 3
+---
+
+# Search API
+
+A Search Engine can be re-exposed as a plain HTTP search API through the **Cloud APIM - Search engine backend** plugin.
+
+## Plugin setup
+
+Add the **Cloud APIM - Search engine backend** plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.SearchEngineProxy",
+  "config": {
+    "refs": ["search-engine_xxxxxxxxx"]
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refs` | array of strings | — | References to Search Engine entities |
+
+When several Search Engines are referenced, the first one is used by default. To target a specific entity, set the `provider` field to its id in the request body.
+
+## Request
+
+Send a JSON body. Only `query` is required.
+
+```sh
+curl https://my-search-endpoint.example.com/search \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \
+  -d '{
+    "query": "European sovereign AI news",
+    "max_results": 5
+  }'
+```
+
+### Request parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `query` | string | The search query (**required**). `q` is also accepted. |
+| `max_results` | number | Maximum number of results to return. `count` is also accepted. |
+| `market` | string | Market / locale (e.g. `fr-FR`). `locale` is also accepted. |
+| `offset` | number | Pagination offset |
+| `safe_search` | string | `off`, `moderate`, or `strict` (provider dependent). `safesearch` is also accepted. |
+| `include_domains` | array of strings | Restrict results to these domains (provider dependent) |
+| `exclude_domains` | array of strings | Exclude these domains (provider dependent) |
+| `provider` | string | Optional Search Engine entity id to target when several `refs` are configured |
+
+A request with an empty `query` returns `400`.
+
+## Response
+
+The response is the normalized search result:
+
+```js
+{
+  "provider": "staan",
+  "query": "European sovereign AI news",
+  "results": [
+    {
+      "title": "…",
+      "url": "https://…",
+      "snippet": "…",
+      "published_date": "2026-01-12T09:00:00Z"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider` | string | The provider that produced the results |
+| `query` | string | The query that was searched |
+| `answer` | string | Optional synthetic answer (Tavily with `include_answer`, DuckDuckGo abstract) |
+| `results` | array | Normalized results, each with `title`, `url`, `snippet`, and optional `score` / `published_date` |

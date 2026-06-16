@@ -1,0 +1,185 @@
+---
+sidebar_position: 2
+---
+
+# Search Engine Providers
+
+Each Search Engine wraps a single provider. The provider is selected with the `provider` field, and configured through `config.connection` (endpoint and credentials) and `config.options` (provider-specific options).
+
+The `config.connection` block is common to all providers:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.connection.base_url` | string | provider default | The provider base URL (or your instance URL for SearXNG) |
+| `config.connection.token` | string | — | API key/token. Supports vault references and comma-separated rotation. Ignored by providers that don't require auth (SearXNG, DuckDuckGo). |
+| `config.connection.timeout` | number | `30000` | Request timeout in milliseconds |
+
+The normalized response is always `{ provider, query, answer?, results: [{ title, url, snippet, score?, published_date? }] }`.
+
+## Staan.ai (Qwant) 🇫🇷 🇪🇺
+
+Sovereign European web search. `POST https://api.staan.ai/v2/search/web`, authenticated with a `Bearer` token.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.connection.base_url` | string | `https://api.staan.ai` | Staan base URL |
+| `config.options.market` | string | `fr-FR` | Market / locale (e.g. `fr-FR`, `en-us`, `de-de`) |
+| `config.options.count` | number | `10` | Number of results per page |
+| `config.options.min_score` | number | — | Minimum reranker score (0–1) |
+| `config.options.extra_snippets` | boolean | — | Return additional scored chunks per result |
+| `config.options.full_content` | string | — | `markdown` or `html` to fetch full page content |
+
+```js
+{
+  "id": "search-engine_xxxxxxxxx",
+  "name": "Staan.ai",
+  "provider": "staan",
+  "config": {
+    "connection": { "base_url": "https://api.staan.ai", "token": "${vault://local/STAAN_API_KEY}", "timeout": 30000 },
+    "options": { "market": "fr-FR", "count": 10 }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
+}
+```
+
+## Tavily
+
+Search API designed for LLM/RAG. `POST https://api.tavily.com/search`, `Bearer` token. Can return a synthetic `answer`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.connection.base_url` | string | `https://api.tavily.com` | Tavily base URL |
+| `config.options.max_results` | number | `5` | Number of results (0–20) |
+| `config.options.search_depth` | string | `basic` | `basic` or `advanced` |
+| `config.options.topic` | string | — | `general`, `news`, or `finance` |
+| `config.options.include_answer` | boolean | — | Ask Tavily for an LLM-generated answer (returned in `answer`) |
+
+```js
+{
+  "id": "search-engine_xxxxxxxxx",
+  "name": "Tavily",
+  "provider": "tavily",
+  "config": {
+    "connection": { "base_url": "https://api.tavily.com", "token": "${vault://local/TAVILY_API_KEY}", "timeout": 30000 },
+    "options": { "max_results": 5, "search_depth": "basic", "include_answer": false }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
+}
+```
+
+## Brave Search
+
+`GET https://api.search.brave.com/res/v1/web/search`, authenticated with the `X-Subscription-Token` header (set through `connection.token`).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.connection.base_url` | string | `https://api.search.brave.com` | Brave base URL |
+| `config.options.country` | string | — | 2-letter country code |
+| `config.options.search_lang` | string | — | Content language (ISO 639-1) |
+| `config.options.safesearch` | string | — | `off`, `moderate`, or `strict` |
+
+```js
+{
+  "id": "search-engine_xxxxxxxxx",
+  "name": "Brave Search",
+  "provider": "brave",
+  "config": {
+    "connection": { "base_url": "https://api.search.brave.com", "token": "${vault://local/BRAVE_API_KEY}", "timeout": 30000 },
+    "options": {}
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
+}
+```
+
+## SearXNG
+
+Open-source metasearch engine — great for on-prem and sovereignty. `GET <instance>/search?format=json`. No API key: point `base_url` at your SearXNG instance.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.connection.base_url` | string | `http://localhost:8080` | Your SearXNG instance URL |
+| `config.options.engines` | string | — | Comma-separated list of upstream engines (e.g. `google,bing,duckduckgo`) |
+| `config.options.categories` | string | — | Search categories (e.g. `general`) |
+| `config.options.language` | string | — | Language code |
+
+```js
+{
+  "id": "search-engine_xxxxxxxxx",
+  "name": "SearXNG",
+  "provider": "searxng",
+  "config": {
+    "connection": { "base_url": "https://searxng.internal.example.com", "token": "", "timeout": 30000 },
+    "options": { "language": "fr" }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
+}
+```
+
+## Google Custom Search
+
+Google Programmable Search Engine. `GET https://www.googleapis.com/customsearch/v1`. Authentication uses an API `key` (set through `connection.token`) and a search engine id `cx`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.connection.base_url` | string | `https://www.googleapis.com` | Google APIs base URL |
+| `config.connection.token` | string | — | The Google API key (sent as the `key` query param) |
+| `config.options.cx` | string | — | The Programmable Search Engine id (required) |
+| `config.options.lr` | string | — | Language restrict (e.g. `lang_fr`) |
+
+```js
+{
+  "id": "search-engine_xxxxxxxxx",
+  "name": "Google Custom Search",
+  "provider": "google",
+  "config": {
+    "connection": { "base_url": "https://www.googleapis.com", "token": "${vault://local/GOOGLE_CSE_KEY}", "timeout": 30000 },
+    "options": { "cx": "0123456789abcdef0" }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
+}
+```
+
+## SearchApi
+
+SERP aggregator. `GET https://www.searchapi.io/api/v1/search`, `Bearer` token. Defaults to the `google` engine.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.connection.base_url` | string | `https://www.searchapi.io` | SearchApi base URL |
+| `config.options.engine` | string | `google` | The SERP engine to query |
+| `config.options.gl` | string | — | Country code |
+| `config.options.hl` | string | — | Language code |
+
+```js
+{
+  "id": "search-engine_xxxxxxxxx",
+  "name": "SearchApi",
+  "provider": "searchapi",
+  "config": {
+    "connection": { "base_url": "https://www.searchapi.io", "token": "${vault://local/SEARCHAPI_KEY}", "timeout": 30000 },
+    "options": { "engine": "google" }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
+}
+```
+
+## DuckDuckGo
+
+`GET https://api.duckduckgo.com/?format=json`. No API key.
+
+:::note
+DuckDuckGo only exposes the free **Instant Answer** API, not a full web result list. Results are mapped on a best-effort basis from the abstract and related topics. For full web search, prefer Staan.ai, Tavily, Brave, SearXNG, Google or SearchApi.
+:::
+
+```js
+{
+  "id": "search-engine_xxxxxxxxx",
+  "name": "DuckDuckGo",
+  "provider": "duckduckgo",
+  "config": {
+    "connection": { "base_url": "https://api.duckduckgo.com", "token": "", "timeout": 30000 },
+    "options": {}
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
+}
+```
