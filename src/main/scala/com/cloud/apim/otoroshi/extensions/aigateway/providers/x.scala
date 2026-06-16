@@ -195,6 +195,7 @@ object XAiChatClientOptions {
       topP = json.select("topP").asOpt[Float].orElse(json.select("top_p").asOpt[Float]).getOrElse(1.0f),
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].filter(_.nonEmpty).orElse(json.select("tool_functions").asOpt[Seq[String]]).getOrElse(Seq.empty),
       mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
+      searchEngines = json.select("search_engines").asOpt[Seq[String]].getOrElse(Seq.empty),
       frequency_penalty = json.select("frequency_penalty").asOpt[Double],
       logprobs = json.select("logprobs").asOpt[Boolean],
       top_logprobs = json.select("top_logprobs").asOpt[Int],
@@ -230,6 +231,7 @@ case class XAiChatClientOptions(
                                     tool_choice: Option[Seq[JsValue]] =  None,
                                     wasmTools: Seq[String] = Seq.empty,
                                     mcpConnectors: Seq[String] = Seq.empty,
+                                    searchEngines: Seq[String] = Seq.empty,
                                     allowConfigOverride: Boolean = true,
                                     mcpIncludeFunctions: Seq[String] = Seq.empty,
                                     mcpExcludeFunctions: Seq[String] = Seq.empty,
@@ -260,13 +262,14 @@ case class XAiChatClientOptions(
     "user" -> user,
     "tool_functions" -> JsArray(wasmTools.map(_.json)),
     "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
+    "search_engines" -> JsArray(searchEngines.map(_.json)),
     "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
     "max_function_calls" -> maxFunctionCalls,
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "search_engines" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
 class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: String) extends ChatClient {
@@ -297,7 +300,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     val acc = new UsageAccumulator()
     val hasToolsInRequest = body.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
+      val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
       api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
@@ -384,7 +387,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     val hasToolsInRequest = body.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
     val acc = new UsageAccumulator()
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty)) {
-      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs)
+      val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
       api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
