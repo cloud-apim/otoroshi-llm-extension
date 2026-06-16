@@ -52,6 +52,11 @@ class SearchEnginesPage extends Component {
           base_url: 'https://api.duckduckgo.com',
           options: {},
         };
+      case 'exa':
+        return {
+          base_url: 'https://api.exa.ai',
+          options: { type: 'auto', highlights: true, num_results: 10 },
+        };
       case 'staan':
       default:
         return {
@@ -106,6 +111,7 @@ class SearchEnginesPage extends Component {
           { label: 'Google Custom Search', value: 'google' },
           { label: 'SearchApi', value: 'searchapi' },
           { label: 'DuckDuckGo', value: 'duckduckgo' },
+          { label: 'Exa', value: 'exa' },
         ], i => i.label)
       }
     },
@@ -206,6 +212,30 @@ class SearchEnginesPage extends Component {
       type: 'string',
       props: { label: 'Language (hl)', placeholder: 'fr' },
     },
+    // Exa options
+    'config.options.type': {
+      type: 'select',
+      props: {
+        label: 'Search type', possibleValues: [
+          { label: 'auto', value: 'auto' },
+          { label: 'fast', value: 'fast' },
+          { label: 'instant', value: 'instant' },
+          { label: 'deep', value: 'deep' },
+        ]
+      },
+    },
+    'config.options.category': {
+      type: 'string',
+      props: { label: 'Category', placeholder: 'news, research paper, company...' },
+    },
+    'config.options.highlights': {
+      type: 'bool',
+      props: { label: 'Include highlights (snippets)' },
+    },
+    'config.options.num_results': {
+      type: 'number',
+      props: { label: 'Number of results' },
+    },
   });
 
   optionsFlow = (provider) => {
@@ -222,6 +252,8 @@ class SearchEnginesPage extends Component {
         return ['config.options.engine', 'config.options.gl', 'config.options.hl'];
       case 'duckduckgo':
         return [];
+      case 'exa':
+        return ['config.options.type', 'config.options.category', 'config.options.num_results', 'config.options.highlights'];
       case 'staan':
       default:
         return ['config.options.market', 'config.options.count', 'config.options.min_score'];
