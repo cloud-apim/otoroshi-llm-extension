@@ -85,6 +85,10 @@ case class SearchEngine(
         val api = new DuckDuckGoApi(baseUrl.getOrElse(DuckDuckGoApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
         new DuckDuckGoSearchClient(api, DuckDuckGoSearchOptions.fromJson(options), id).some
       }
+      case "exa" => {
+        val api = new ExaApi(baseUrl.getOrElse(ExaApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
+        new ExaSearchClient(api, ExaSearchOptions.fromJson(options), id).some
+      }
       case _ => None
     }
   }
@@ -127,6 +131,7 @@ object SearchEngine {
       case "google" => ("Google Custom Search", "A Google Custom Search engine", "google", GoogleCseApi.baseUrl, Json.obj("cx" -> ""))
       case "searchapi" => ("SearchApi", "A SearchApi search engine", "searchapi", SearchApiApi.baseUrl, Json.obj("engine" -> "google"))
       case "duckduckgo" => ("DuckDuckGo", "A DuckDuckGo instant answer engine", "duckduckgo", DuckDuckGoApi.baseUrl, Json.obj())
+      case "exa" => ("Exa", "An Exa neural web search engine", "exa", ExaApi.baseUrl, Json.obj("type" -> "auto", "highlights" -> true, "num_results" -> 10))
       case _ => ("Staan.ai", "A Staan.ai (Qwant) sovereign web search engine", "staan", StaanApi.baseUrl, Json.obj("market" -> "fr-FR", "count" -> 10))
     }
     SearchEngine(
