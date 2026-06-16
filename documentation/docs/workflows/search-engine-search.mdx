@@ -1,0 +1,59 @@
+---
+sidebar_position: 18
+---
+
+# Web Search
+
+The `search_engine_search` function runs a web search through a [Search Engine](/docs/search-engines/introduction) provider and returns a normalized list of results.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.search_engine_search`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The Search Engine entity id |
+| `payload` | object | yes | The search payload |
+| `payload.query` | string | yes | The search query |
+| `payload.max_results` | number | no | Maximum number of results to return |
+| `payload.market` | string | no | Market / locale (e.g. `fr-FR`) |
+| `payload.include_domains` | array of strings | no | Restrict results to these domains (provider dependent) |
+| `payload.exclude_domains` | array of strings | no | Exclude these domains (provider dependent) |
+
+## Output
+
+Returns the normalized search result object:
+
+```json
+{
+  "provider": "staan",
+  "query": "European sovereign AI news",
+  "results": [
+    {
+      "title": "…",
+      "url": "https://…",
+      "snippet": "…",
+      "published_date": "2026-01-12T09:00:00Z"
+    }
+  ]
+}
+```
+
+`answer` is also present when the provider returns a synthetic answer (e.g. Tavily with `include_answer`).
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.search_engine_search",
+  "args": {
+    "provider": "search-engine_xxxxx",
+    "payload": {
+      "query": "European sovereign AI news",
+      "max_results": 5
+    }
+  },
+  "result": "search_results"
+}
+```
