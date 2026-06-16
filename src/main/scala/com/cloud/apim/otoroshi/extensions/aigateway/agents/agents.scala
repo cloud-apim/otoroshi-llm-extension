@@ -200,6 +200,7 @@ case class AgentConfig(
   modelOptions: Option[JsObject] = None,
   tools: Seq[String] = Seq.empty,
   mcpConnectors: Seq[String],
+  searchEngines: Seq[String] = Seq.empty,
   inlineTools: Seq[InlineFunction] = Seq.empty,
   handoffs: Seq[Handoff] = Seq.empty,
   memory: Option[String] = None,
@@ -247,6 +248,7 @@ object AgentConfig {
           tool.select("mcp_ref").asString
         }
       }.getOrElse(Seq.empty),
+      searchEngines = json.select("search_engines").asOpt[Seq[String]].getOrElse(Seq.empty),
       inlineTools = json.select("inline_tools").asOpt[Seq[JsObject]].map { seq =>
         seq.filterNot(_.select("mcp_ref").isDefined).map { tool =>
           val nodeJson = tool.select("node").as[JsObject]
@@ -403,6 +405,9 @@ class AgentRunner(env: Env) {
                 }
                 .applyOnIf(agent.mcpConnectors.nonEmpty && agent.handoffs.isEmpty) { obj =>
                   obj ++ Json.obj("mcp_connectors" -> agent.mcpConnectors)
+                }
+                .applyOnIf(agent.searchEngines.nonEmpty && agent.handoffs.isEmpty) { obj =>
+                  obj ++ Json.obj("search_engines" -> agent.searchEngines)
                 }
               val hasHandoff = agent.handoffs.exists(_.enabled) && !agent.builtInTools.hasAnyEnabled
               val body = Json.obj()
@@ -842,6 +847,19 @@ class AiAgentNode(val json: JsObject) extends Node {
       "props" -> Json.obj(
         "description" -> "MCP Connector",
         "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-connectors",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
+    ),
+    "search_engines" -> Json.obj(
+      "type"  -> "select",
+      "array" -> true,
+      "label" -> "Search Engines",
+      "props" -> Json.obj(
+        "description" -> "Search Engine",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/search-engines",
         "optionsTransformer" -> Json.obj(
           "label" -> "name",
           "value" -> "id",
