@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.{SearchEngineResponse, SearchEngineResult, SearchEngineSearchOptions}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.SearchEngine
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, SearchEngine}
 import otoroshi.models.EntityLocation
 import play.api.libs.json.{JsObject, Json}
 
@@ -34,6 +34,22 @@ class SearchEngineModelSuite extends munit.FunSuite {
     assertEquals((json \ "query").as[String], "q")
     assertEquals((json \ "answer").as[String], "the answer")
     assertEquals((json \ "results").as[Seq[JsObject]].size, 1)
+  }
+
+  test("tool-call parser routes search___ tool names to the search engine path") {
+    val se = GenericApiResponseChoiceMessageToolCall(Json.obj("id" -> "call_1", "function" -> Json.obj("name" -> "search___search-engine_x", "arguments" -> """{"query":"hi"}""")))
+    assert(se.isSearchEngine, "search tool should be flagged isSearchEngine")
+    assert(!se.isWasm, "search tool must not be wasm")
+    assert(!se.isMcp, "search tool must not be mcp")
+    assertEquals(se.function.searchEngineId, "search-engine_x")
+
+    val mcp = GenericApiResponseChoiceMessageToolCall(Json.obj("id" -> "call_2", "function" -> Json.obj("name" -> "mcp___0___web_search", "arguments" -> "{}")))
+    assert(mcp.isMcp)
+    assert(!mcp.isSearchEngine)
+
+    val wasm = GenericApiResponseChoiceMessageToolCall(Json.obj("id" -> "call_3", "function" -> Json.obj("name" -> "wasm___mytool", "arguments" -> "{}")))
+    assert(wasm.isWasm)
+    assert(!wasm.isSearchEngine)
   }
 
   test("SearchEngine entity json round-trips") {
