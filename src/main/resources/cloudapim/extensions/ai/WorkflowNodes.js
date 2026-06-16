@@ -109,6 +109,19 @@ const workflowNodes = [
           }
         }
       },
+      "search_engines": {
+        "type": "select",
+        "array": true,
+        "label": "Search Engines",
+        "props": {
+          "description": "Search Engine",
+          "optionsFrom": "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/search-engines",
+          "optionsTransformer": {
+            "label": "name",
+            "value": "id"
+          }
+        }
+      },
       "memory": {
         "type": "select",
         "label": "Persistent memory",
@@ -448,6 +461,7 @@ const workflowNodes = [
       "input",
       "tools",
       "mcp_connectors",
+      "search_engines",
       "memory",
       "guardrails",
       "built_in_tools",
