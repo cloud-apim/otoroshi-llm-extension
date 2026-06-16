@@ -35,6 +35,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val moderationModelsDataStore: ModerationModelsDataStore = new KvModerationModelsDataStore(extensionId, env.datastores.redis, env)
   val AudioModelsDataStore: AudioModelsDataStore = new KvAudioModelsDataStore(extensionId, env.datastores.redis, env)
   val ocrModelsDataStore: OcrModelsDataStore = new KvOcrModelsDataStore(extensionId, env.datastores.redis, env)
+  val searchEnginesDataStore: SearchEnginesDataStore = new KvSearchEnginesDataStore(extensionId, env.datastores.redis, env)
   val imageModelsDataStore: ImageModelsDataStore = new KvImageModelsDataStore(extensionId, env.datastores.redis, env)
   val videoModelsDataStore: VideoModelsDataStore = new KvVideoModelsDataStore(extensionId, env.datastores.redis, env)
   val persistentMemoriesDataStore: PersistentMemoryDataStore = new KvPersistentMemoryDataStore(extensionId, env.datastores.redis, env)
@@ -142,6 +143,13 @@ class AiGatewayExtensionState(env: Env) {
   def allOcrModels(): Seq[OcrModel] = _ocrModels.values.toSeq
   def updateOcrModels(values: Seq[OcrModel]): Unit = {
     _ocrModels.addAll(values.map(v => (v.id, v))).remAll(_ocrModels.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _searchEngines = new UnboundedTrieMap[String, SearchEngine]()
+  def searchEngine(id: String): Option[SearchEngine] = _searchEngines.get(id)
+  def allSearchEngines(): Seq[SearchEngine] = _searchEngines.values.toSeq
+  def updateSearchEngines(values: Seq[SearchEngine]): Unit = {
+    _searchEngines.addAll(values.map(v => (v.id, v))).remAll(_searchEngines.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _imageModels = new UnboundedTrieMap[String, ImageModel]()
@@ -261,6 +269,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val moderationModelsPage = getResourceCode("cloudapim/extensions/ai/ModerationModelsPage.js")
   lazy val audioModelsPage = getResourceCode("cloudapim/extensions/ai/AudioModelsPage.js")
   lazy val ocrModelsPage = getResourceCode("cloudapim/extensions/ai/OcrModelsPage.js")
+  lazy val searchEnginesPage = getResourceCode("cloudapim/extensions/ai/SearchEnginesPage.js")
   lazy val imagesModelsPage = getResourceCode("cloudapim/extensions/ai/ImageModelsPage.js")
   lazy val videoModelsPage = getResourceCode("cloudapim/extensions/ai/VideoModelsPage.js")
   lazy val memoriesPage = getResourceCode("cloudapim/extensions/ai/MemoriesPage.js")
@@ -933,6 +942,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    ${videoModelsPage}
             |    ${audioModelsPage}
             |    ${ocrModelsPage}
+            |    ${searchEnginesPage}
             |    ${memoriesPage}
             |    ${budgetsPage}
             |    ${workflowNodeSwitchFile}
@@ -1110,6 +1120,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            icon: () => 'fa-brain',
             |          },
             |          {
+            |            title: 'Search engines',
+            |            description: 'All your Search engines',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/search-engines',
+            |            display: () => true,
+            |            icon: () => 'fa-magnifying-glass',
+            |          },
+            |          {
             |            title: 'Persistent memories',
             |            description: 'All your Persistent memories',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1233,6 +1251,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          icon: () => 'fa-brain',
             |        },
             |        {
+            |          title: 'Search engines',
+            |          description: 'All your Search engines',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/search-engines',
+            |          display: () => true,
+            |          icon: () => 'fa-magnifying-glass',
+            |        },
+            |        {
             |          title: 'Persistent memories',
             |          description: 'All your Persistent memories',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1327,6 +1353,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          text: 'All your OCR models',
             |          path: 'extensions/cloud-apim/ai-gateway/ocr-models',
             |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Search engines',
+            |          text: 'All your Search engines',
+            |          path: 'extensions/cloud-apim/ai-gateway/search-engines',
+            |          icon: 'magnifying-glass'
             |        },
             |        {
             |          title: 'Persistent memories',
@@ -1445,6 +1477,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'OCR models',
             |          value: 'ocr-models',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/search-engines`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-magnifying-glass" }, null),
+            |          label: 'Search engines',
+            |          value: 'search-engines',
             |        },
             |        {
             |          action: () => {
@@ -1699,6 +1739,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          },
             |        },
             |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/search-engines/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(SearchEnginesPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/search-engines/:taction',
+            |          component: (props) => {
+            |            return React.createElement(SearchEnginesPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/search-engines',
+            |          component: (props) => {
+            |            return React.createElement(SearchEnginesPage, props, null)
+            |          },
+            |        },
+            |        {
             |          path: '/extensions/cloud-apim/ai-gateway/persistent-memories/:taction/:titem',
             |          component: (props) => {
             |            return React.createElement(MemoriesPage, props, null)
@@ -1758,6 +1816,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       moderationModels <- datastores.moderationModelsDataStore.findAllAndFillSecrets()
       audioModels <- datastores.AudioModelsDataStore.findAllAndFillSecrets()
       ocrModels <- datastores.ocrModelsDataStore.findAllAndFillSecrets()
+      searchEngines <- datastores.searchEnginesDataStore.findAllAndFillSecrets()
       imageModels <- datastores.imageModelsDataStore.findAllAndFillSecrets()
       videosModels <- datastores.videoModelsDataStore.findAllAndFillSecrets()
       persistentMemories <- datastores.persistentMemoriesDataStore.findAllAndFillSecrets()
@@ -1774,6 +1833,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateModerationModels(moderationModels)
       states.updateAudioModel(audioModels)
       states.updateOcrModels(ocrModels)
+      states.updateSearchEngines(searchEngines)
       states.updateImageModels(imageModels)
       states.updateVideoModels(videosModels)
       states.updatePersistentMemories(persistentMemories)
@@ -1799,6 +1859,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(ModerationModel.resource(env, datastores, states)),
       AdminExtensionEntity(AudioModel.resource(env, datastores, states)),
       AdminExtensionEntity(OcrModel.resource(env, datastores, states)),
+      AdminExtensionEntity(SearchEngine.resource(env, datastores, states)),
       AdminExtensionEntity(ImageModel.resource(env, datastores, states)),
       AdminExtensionEntity(VideoModel.resource(env, datastores, states)),
       AdminExtensionEntity(PersistentMemory.resource(env, datastores, states)),
