@@ -1659,6 +1659,87 @@ object OcrModelClient {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                        Search Engine                                           ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Unified web search input. `query` is the only mandatory field. The reads is tolerant and accepts a few aliases
+// (q, count, maxResults, locale, ...) so the same payload works whatever the provider behind the entity.
+case class SearchEngineSearchOptions(
+  query: String,
+  maxResults: Option[Int] = None,
+  offset: Option[Int] = None,
+  market: Option[String] = None,        // locale / market, e.g. "fr-FR"
+  safeSearch: Option[String] = None,    // off | moderate | strict
+  includeDomains: Seq[String] = Seq.empty,
+  excludeDomains: Seq[String] = Seq.empty,
+  raw: JsObject = Json.obj()            // passthrough for provider specific params
+) {
+  def json: JsValue = SearchEngineSearchOptions.format.writes(this)
+}
+
+object SearchEngineSearchOptions {
+  val format = new Format[SearchEngineSearchOptions] {
+    override def reads(json: JsValue): JsResult[SearchEngineSearchOptions] = Try {
+      SearchEngineSearchOptions(
+        query = json.select("query").asOptString.orElse(json.select("q").asOptString).getOrElse(""),
+        maxResults = json.select("max_results").asOpt[Int].orElse(json.select("maxResults").asOpt[Int]).orElse(json.select("count").asOpt[Int]),
+        offset = json.select("offset").asOpt[Int],
+        market = json.select("market").asOptString.orElse(json.select("locale").asOptString),
+        safeSearch = json.select("safe_search").asOptString.orElse(json.select("safesearch").asOptString),
+        includeDomains = json.select("include_domains").asOpt[Seq[String]].getOrElse(Seq.empty),
+        excludeDomains = json.select("exclude_domains").asOpt[Seq[String]].getOrElse(Seq.empty),
+        raw = json.asOpt[JsObject].getOrElse(Json.obj()),
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(v) => JsSuccess(v)
+    }
+    override def writes(o: SearchEngineSearchOptions): JsValue = Json.obj("query" -> o.query)
+      .applyOnWithOpt(o.maxResults) { case (obj, v) => obj ++ Json.obj("max_results" -> v) }
+      .applyOnWithOpt(o.offset) { case (obj, v) => obj ++ Json.obj("offset" -> v) }
+      .applyOnWithOpt(o.market) { case (obj, v) => obj ++ Json.obj("market" -> v) }
+      .applyOnWithOpt(o.safeSearch) { case (obj, v) => obj ++ Json.obj("safe_search" -> v) }
+      .applyOnWithOpt(o.includeDomains.some.filter(_.nonEmpty)) { case (obj, v) => obj ++ Json.obj("include_domains" -> v) }
+      .applyOnWithOpt(o.excludeDomains.some.filter(_.nonEmpty)) { case (obj, v) => obj ++ Json.obj("exclude_domains" -> v) }
+  }
+}
+
+case class SearchEngineResult(
+  title: String,
+  url: String,
+  snippet: String,
+  score: Option[Double] = None,
+  publishedDate: Option[String] = None,
+  raw: JsObject = Json.obj()
+) {
+  def toJson: JsValue = Json.obj(
+    "title" -> title,
+    "url" -> url,
+    "snippet" -> snippet,
+  )
+    .applyOnWithOpt(score) { case (obj, v) => obj ++ Json.obj("score" -> v) }
+    .applyOnWithOpt(publishedDate) { case (obj, v) => obj ++ Json.obj("published_date" -> v) }
+}
+
+case class SearchEngineResponse(
+  provider: String,
+  query: String,
+  answer: Option[String],
+  results: Seq[SearchEngineResult],
+  raw: JsObject = Json.obj()
+) {
+  def toJson: JsValue = Json.obj(
+    "provider" -> provider,
+    "query" -> query,
+    "results" -> JsArray(results.map(_.toJson)),
+  ).applyOnWithOpt(answer) { case (obj, v) => obj ++ Json.obj("answer" -> v) }
+}
+
+trait SearchEngineClient {
+  def search(options: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]]
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////                                       Images Gen                                               ///////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
