@@ -20,6 +20,7 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.audio_tts", new AudioTtsFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.audio_stt", new AudioSttFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.ocr_call", new OcrCallFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.search_engine_search", new SearchEngineSearchFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.compute_embedding", new ComputeEmbeddingFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.generate_image", new GenerateImageFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.generate_video", new GenerateVideoFunction())
@@ -1692,6 +1693,91 @@ class OcrCallFunction extends WorkflowFunction {
           }
           client.ocr(options, payload, wfr.attrs).map {
             case Left(error) => WorkflowError(s"error while calling ocr model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(response) => response.toJson.right
+          }
+        }
+      }
+    }
+  }
+}
+
+class SearchEngineSearchFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.search_engine_search"
+  override def documentationDisplayName: String            = "Web Search"
+  override def documentationIcon: String                   = "fas fa-magnifying-glass"
+  override def documentationDescription: String            = "This function calls a search engine provider to perform a web search and return a normalized list of results"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The search engine provider id"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The search payload", "properties" -> Json.obj(
+        "query" -> Json.obj("type" -> "string", "description" -> "The search query"),
+        "max_results" -> Json.obj("type" -> "integer", "description" -> "Maximum number of results"),
+        "market" -> Json.obj("type" -> "string", "description" -> "The market / locale (e.g. fr-FR)"),
+        "include_domains" -> Json.obj("type" -> "array", "description" -> "Domains to restrict the search to"),
+        "exclude_domains" -> Json.obj("type" -> "array", "description" -> "Domains to exclude from the search")
+      ))
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type" -> "select",
+      "description" -> "The search engine provider",
+      "props" -> Json.obj(
+        "description" -> "The search engine provider",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/search-engines",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
+    ),
+    "payload" -> Json.obj(
+      "type"  -> "any",
+      "props" -> Json.obj(
+        "description" -> "The payload object",
+        "height" -> "200px"
+      ),
+      "label" -> "Payload"
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("results"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The search engine provider used"),
+      "query" -> Json.obj("type" -> "string", "description" -> "The query that was searched"),
+      "answer" -> Json.obj("type" -> "string", "description" -> "An optional synthetic answer (when supported)"),
+      "results" -> Json.obj("type" -> "array", "description" -> "The list of normalized search results")
+    )
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.search_engine_search",
+    "args" -> Json.obj(
+      "provider" -> "search-engine_xxxx",
+      "payload" -> Json.obj(
+        "query" -> "actualité IA souveraine",
+        "max_results" -> 5
+      )
+    )
+  ))
+
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    val provider  = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.searchEngine(provider) match {
+      case None => WorkflowError(s"search engine provider not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(searchEngine) => searchEngine.getSearchEngineClient() match {
+        case None => WorkflowError(s"unable to instantiate client for search engine provider", Some(Json.obj("provider_id" -> searchEngine.id)), None).leftf
+        case Some(client) => {
+          val options = SearchEngineSearchOptions.format.reads(payload).getOrElse(SearchEngineSearchOptions(payload.select("query").asOptString.getOrElse("")))
+          client.search(options, payload, wfr.attrs).map {
+            case Left(error) => WorkflowError(s"error while calling search engine", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) => response.toJson.right
           }
         }
