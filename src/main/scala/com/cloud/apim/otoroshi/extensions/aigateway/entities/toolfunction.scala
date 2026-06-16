@@ -487,6 +487,8 @@ case class GenericApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
   lazy val isInline: Boolean = raw_name.startsWith("wasm_____inline_")
   lazy val isWasm: Boolean = raw_name.startsWith("wasm___")
   lazy val isMcp: Boolean = raw_name.startsWith("mcp___")
+  lazy val isSearchEngine: Boolean = raw_name.startsWith("search___")
+  lazy val searchEngineId: String = if (isSearchEngine) raw_name.stripPrefix("search___") else name
   lazy val connectorId: Int = if (isMcp) raw_name.split("___")(1).toInt else 0
   lazy val connectorFunctionName: String = if (isMcp) raw_name.split("___")(2) else name
   lazy val arguments: String = {
@@ -504,6 +506,7 @@ case class GenericApiResponseChoiceMessageToolCall(raw: JsObject) {
   lazy val isInline: Boolean = function.isInline
   lazy val isWasm: Boolean = function.isWasm
   lazy val isMcp: Boolean = function.isMcp
+  lazy val isSearchEngine: Boolean = function.isSearchEngine
 }
 
 case class AnthropicApiResponseChoiceMessageToolCall(raw: JsObject) {
@@ -513,6 +516,8 @@ case class AnthropicApiResponseChoiceMessageToolCall(raw: JsObject) {
   lazy val isInline: Boolean = raw_name.startsWith("wasm_____inline_")
   lazy val isWasm: Boolean = raw_name.startsWith("wasm___")
   lazy val isMcp: Boolean = raw_name.startsWith("mcp___")
+  lazy val isSearchEngine: Boolean = raw_name.startsWith("search___")
+  lazy val searchEngineId: String = if (isSearchEngine) raw_name.stripPrefix("search___") else name
   lazy val connectorId: Int = if (isMcp) raw_name.split("___")(1).toInt else 0
   lazy val connectorFunctionName: String = if (isMcp) raw_name.split("___")(2) else name
   lazy val input: JsObject = raw.select("input").asObject
