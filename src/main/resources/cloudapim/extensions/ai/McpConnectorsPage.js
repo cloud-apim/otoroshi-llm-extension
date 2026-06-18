@@ -44,6 +44,7 @@ class McpConnectorsPage extends Component {
           { label: 'HTTP (Langchain, deprecated)', value: "http_langchain" },
           { label: 'WebSocket (not standard, experimental)', value: "ws" },
           { label: 'Meta (aggregate other MCP Connectors)', value: "meta" },
+          { label: 'OpenAPI (expose an OpenAPI spec as MCP tools)', value: "openapi" },
         ] }
     },
     'transport.options': {
@@ -108,6 +109,48 @@ class McpConnectorsPage extends Component {
         label: 'Semantic search',
         help: 'When enabled, search_tools fuses BM25 with embedding-based similarity (MiniLM-L6-v2). Loads a ~25MB ONNX model on first use.',
       }
+    },
+
+    // --- openapi options ---
+    'transport.options.spec_url': {
+      type: 'string',
+      props: { label: 'OpenAPI spec URL', placeholder: 'https://api.example.com/openapi.json', help: 'URL of the OpenAPI spec (JSON or YAML). Fetched and cached. Ignored when an inline spec is provided.' },
+    },
+    'transport.options.spec': {
+      type: 'code',
+      props: { label: 'Inline OpenAPI spec', help: 'OpenAPI spec pasted directly (JSON or YAML). Takes precedence over the spec URL.' },
+    },
+    'transport.options.base_url': {
+      type: 'string',
+      props: { label: 'Target base URL', placeholder: 'https://api.example.com', help: "Base URL of the target API. Defaults to the spec's first servers[].url when empty." },
+    },
+    'transport.options.include_operation_ids': {
+      type: 'array',
+      props: { label: 'Included operationIds', placeholder: 'getPetById', help: 'Allowlist of operationIds to expose (glob/regex). Empty = all.' },
+    },
+    'transport.options.exclude_operation_ids': {
+      type: 'array',
+      props: { label: 'Excluded operationIds', placeholder: 'deletePet', help: 'Blocklist of operationIds to hide (glob/regex).' },
+    },
+    'transport.options.include_tags': {
+      type: 'array',
+      props: { label: 'Included tags', placeholder: 'public', help: 'Only expose operations carrying at least one of these OpenAPI tags. Empty = all.' },
+    },
+    'transport.options.exclude_tags': {
+      type: 'array',
+      props: { label: 'Excluded tags', placeholder: 'internal', help: 'Hide operations carrying any of these OpenAPI tags.' },
+    },
+    'transport.options.expose_as_meta': {
+      type: 'bool',
+      props: { label: 'Expose as meta server', help: 'When enabled, expose 3 meta tools (search_operations, get_operation_schema, execute) instead of one tool per operation. Recommended when the spec has many endpoints.' },
+    },
+    'transport.options.cache_ttl': {
+      type: 'number',
+      props: { label: 'Spec cache TTL (ms)', placeholder: '600000', help: 'How long a spec fetched from a URL is cached. Defaults to 600000 (10 minutes).' },
+    },
+    'transport.options.allowed_hosts': {
+      type: 'array',
+      props: { label: 'Allowed target hosts', placeholder: 'api.example.com', help: 'Optional allow-list of target hosts. Empty = no restriction.' },
     },
     'strict': {
       type: 'bool',
@@ -233,6 +276,7 @@ class McpConnectorsPage extends Component {
           ws: 'bg-dark',
           stdio: 'bg-secondary',
           meta: 'bg-warning',
+          openapi: 'bg-success',
         })[kind] ?? 'bg-secondary';
         return React.createElement('span', { className: `badge ${cls}` }, kind);
       },
@@ -265,6 +309,13 @@ class McpConnectorsPage extends Component {
         return ['transport.options.url', 'transport.options.headers', 'transport.options.timeout', 'transport.options.log'];
       case 'meta':
         return ['transport.options.connectors', 'transport.options.semantic_search_enabled'];
+      case 'openapi':
+        return ['transport.options.spec_url', 'transport.options.spec', 'transport.options.base_url',
+                'transport.options.headers', 'transport.options.timeout', 'transport.options.log',
+                'transport.options.include_operation_ids', 'transport.options.exclude_operation_ids',
+                'transport.options.include_tags', 'transport.options.exclude_tags',
+                'transport.options.expose_as_meta', 'transport.options.cache_ttl',
+                'transport.options.allowed_hosts'];
       default:
         return ['transport.options'];
     }
