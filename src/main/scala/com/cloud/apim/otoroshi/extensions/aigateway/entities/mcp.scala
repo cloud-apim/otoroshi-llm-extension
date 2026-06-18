@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.agents.InlineFunctions
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorTransportKind.Stdio
-import com.cloud.apim.otoroshi.extensions.aigateway.mcp.{MetaMcpClient, WsMcpTransport}
+import com.cloud.apim.otoroshi.extensions.aigateway.mcp.{MetaMcpClient, OpenApiMcpClient, WsMcpTransport}
 import com.google.gson.Gson
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
 import dev.langchain4j.mcp.client.transport.http.{HttpMcpTransport, StreamableHttpMcpTransport}
@@ -43,6 +43,7 @@ object McpConnectorTransportKind {
     case "http_langchain" => HttpLangchain
     case "http" => Http
     case "meta" => Meta
+    case "openapi" => Openapi
     case _ => Stdio
   }
 
@@ -69,6 +70,10 @@ object McpConnectorTransportKind {
   case object Meta extends McpConnectorTransportKind {
     def name: String = "meta"
   }
+
+  case object Openapi extends McpConnectorTransportKind {
+    def name: String = "openapi"
+  }
 }
 
 case class McpConnectorTransportStdioOption(raw: JsObject) {
@@ -90,13 +95,41 @@ case class McpConnectorTransportMetaOption(raw: JsObject) {
   lazy val semanticSearchEnabled: Boolean = raw.select("semantic_search_enabled").asOpt[Boolean].getOrElse(false)
 }
 
+case class McpConnectorTransportOpenApiOption(raw: JsObject) {
+  // OpenAPI spec source: a URL to fetch (cached) OR an inline spec (JsObject, or a JsString of JSON/YAML)
+  lazy val specUrl: Option[String] = raw.select("spec_url").asOpt[String].map(_.trim).filter(_.nonEmpty)
+  lazy val spec: Option[JsValue] = raw.value.get("spec").filterNot(_ == JsNull).filterNot {
+    case JsString(s) => s.trim.isEmpty
+    case _ => false
+  }
+  // base URL of the target API. Defaults to the spec's first `servers[].url` when not set.
+  lazy val baseUrl: Option[String] = raw.select("base_url").asOpt[String].map(_.trim).filter(_.nonEmpty)
+  // static headers (downstream auth) sent on every call to the target API
+  lazy val headers: Map[String, String] = raw.select("headers").asOpt[Map[String, String]].getOrElse(Map.empty)
+  lazy val timeout: FiniteDuration = raw.select("timeout").asOpt[Long].map(_.millis).getOrElse(3.minutes)
+  lazy val log: Boolean = raw.select("log").asOptBoolean.getOrElse(false)
+  // operation filtering (glob/regex via RegexPool, like include/exclude functions)
+  lazy val includeOperationIds: Seq[String] = raw.select("include_operation_ids").asOpt[Seq[String]].getOrElse(Seq.empty)
+  lazy val excludeOperationIds: Seq[String] = raw.select("exclude_operation_ids").asOpt[Seq[String]].getOrElse(Seq.empty)
+  lazy val includeTags: Seq[String] = raw.select("include_tags").asOpt[Seq[String]].getOrElse(Seq.empty)
+  lazy val excludeTags: Seq[String] = raw.select("exclude_tags").asOpt[Seq[String]].getOrElse(Seq.empty)
+  // when true, expose a small meta-style surface (search_operations/get_operation_schema/execute) instead of N tools
+  lazy val exposeAsMeta: Boolean = raw.select("expose_as_meta").asOptBoolean.getOrElse(false)
+  // TTL of the cached parsed spec when fetched from a URL
+  lazy val cacheTtl: FiniteDuration = raw.select("cache_ttl").asOpt[Long].map(_.millis).getOrElse(10.minutes)
+  // optional allow-list of target hosts (empty = no restriction, base URL is operator-configured)
+  lazy val allowedHosts: Seq[String] = raw.select("allowed_hosts").asOpt[Seq[String]].getOrElse(Seq.empty)
+}
+
 case class McpConnectorTransport(kind: McpConnectorTransportKind = McpConnectorTransportKind.Stdio, options: JsObject = Json.obj()) {
   lazy val isStdio: Boolean = kind == McpConnectorTransportKind.Stdio
   lazy val isSse: Boolean = kind == McpConnectorTransportKind.Sse
   lazy val isMeta: Boolean = kind == McpConnectorTransportKind.Meta
+  lazy val isOpenapi: Boolean = kind == McpConnectorTransportKind.Openapi
   lazy val stdioOptions: McpConnectorTransportStdioOption = McpConnectorTransportStdioOption(options)
   lazy val sseOptions: McpConnectorTransportSseOption = McpConnectorTransportSseOption(options)
   lazy val metaOptions: McpConnectorTransportMetaOption = McpConnectorTransportMetaOption(options)
+  lazy val openapiOptions: McpConnectorTransportOpenApiOption = McpConnectorTransportOpenApiOption(options)
 
   def json: JsValue = McpConnectorTransport.format.writes(this)
 }
@@ -284,6 +317,9 @@ case class McpConnector(
     if (transport.kind == McpConnectorTransportKind.Meta) {
       return new MetaMcpClient(this, env, ec)
     }
+    if (transport.kind == McpConnectorTransportKind.Openapi) {
+      return new OpenApiMcpClient(this, env, ec)
+    }
     val finaltransport = {
       Try(McpConnectorTransport.format.reads(transport.json.stringify.evaluateEl(attrs).parseJson).getOrElse(transport)).getOrElse(transport)
     }
@@ -348,6 +384,7 @@ case class McpConnector(
         )
       }
       case McpConnectorTransportKind.Meta => throw new IllegalStateException("unreachable")
+      case McpConnectorTransportKind.Openapi => throw new IllegalStateException("unreachable")
     }
     new DefaultMcpClient.Builder()
       .transport(trsprt)
