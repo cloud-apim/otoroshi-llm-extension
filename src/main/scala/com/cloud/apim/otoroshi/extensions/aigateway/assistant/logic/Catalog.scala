@@ -266,11 +266,11 @@ object Catalog {
     )
   }
 
-  def parse(doc: JsObject): Document = {
+  def parse(doc: JsObject, dropBulk: Boolean = true): Document = {
     val info = doc.select("info").asOpt[JsObject].getOrElse(Json.obj())
     val paths = doc.select("paths").asOpt[JsObject].map(_.value).getOrElse(Map.empty)
     val seenIds = scala.collection.mutable.Set.empty[String]
-    val operations = paths.toSeq.flatMap { case (pathStr, pathItem) =>
+    val allOperations = paths.toSeq.flatMap { case (pathStr, pathItem) =>
       pathItem.asOpt[JsObject].toSeq.flatMap { item =>
         item.value.toSeq.flatMap { case (method, opVal) =>
           val m = method.toLowerCase
@@ -278,7 +278,10 @@ object Catalog {
           else None
         }
       }
-    }.filterNot(op => op.operationId.toLowerCase.contains("bulk"))
+    }
+    // `bulk` operations are an Otoroshi admin-API convenience; hide them for the assistant but keep
+    // them for generic OpenAPI exposure (dropBulk = false).
+    val operations = if (dropBulk) allOperations.filterNot(op => op.operationId.toLowerCase.contains("bulk")) else allOperations
     val tagSet = scala.collection.mutable.SortedSet.empty[String]
     operations.foreach(_.tags.foreach(tagSet.add))
     Document(
