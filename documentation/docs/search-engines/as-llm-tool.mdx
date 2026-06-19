@@ -4,7 +4,9 @@ sidebar_position: 4
 
 # Search as an LLM tool
 
-Search Engines can be attached to an **LLM provider** or an **AI Agent** as tools. When you do, the model is given a `search` tool for each referenced engine and can call it autonomously to fetch fresh information from the web. This works exactly like [WASM tool functions](/docs/function-calling/overview) and [MCP connectors](/docs/mcp/overview): the gateway advertises the tool to the model, executes the call when the model asks for it, and feeds the normalized results back into the conversation — looping until the model produces its final answer.
+Search Engines can be attached to an **LLM provider** or an **AI Agent** as tools. When you do, the model is given a `search` tool for each referenced engine and can call it autonomously to fetch fresh information — from the web, or from your own [RAG knowledge base](./providers#rag-knowledge-base). This works exactly like [WASM tool functions](/docs/function-calling/overview) and [MCP connectors](/docs/mcp/overview): the gateway advertises the tool to the model, executes the call when the model asks for it, and feeds the normalized results back into the conversation — looping until the model produces its final answer.
+
+A [`rag`](./providers#rag-knowledge-base) Search Engine is referenced exactly the same way as a web engine — just put its id in `search_engines`. The model still sees a single `search` tool; behind it, the gateway embeds the query and retrieves the most relevant passages from your embedding store. This is the simplest way to give a provider or agent **Retrieval-Augmented Generation** over your own data, with no extra wiring.
 
 ## On an LLM provider
 
@@ -75,8 +77,9 @@ See [AI Agent node](/docs/agents/ai-agent-node) for the full agent configuration
 
 ## How it works
 
-- **One engine = one tool.** Each referenced Search Engine becomes a single `search` tool the model can call with a `query` (and an optional `max_results`). When several engines are referenced, the model is offered one tool per engine and chooses which to use — referencing a single engine usually gives the most predictable behavior.
-- **Normalized results.** Whatever the underlying provider, the tool returns the normalized JSON `{ provider, query, answer?, results: [{ title, url, snippet, … }] }`, which keeps prompts compact and provider-agnostic.
+- **One engine = one tool.** Each referenced Search Engine becomes a single `search` tool the model can call with a `query` (and an optional `max_results`). When several engines are referenced, the model is offered one tool per engine and chooses which to use — referencing a single engine usually gives the most predictable behavior. You can mix web engines and RAG knowledge bases, and the model picks the right source per question.
+- **Tool description matters for RAG.** For a [`rag`](./providers#rag-knowledge-base) engine, the engine's `description` is used as the tool description the model reads to decide when to query it — so describe what the knowledge base contains (e.g. *"Search the internal product documentation"*). Web engines get a generic web-search description.
+- **Normalized results.** Whatever the underlying provider, the tool returns the normalized JSON `{ provider, query, answer?, results: [{ title, url, snippet, … }] }`, which keeps prompts compact and provider-agnostic. For a RAG knowledge base, `snippet` holds the retrieved passage and `url` is empty.
 - **Standard tool loop.** Search tool calls go through the same execution loop as WASM and MCP tools, so they compose with the rest of your pipeline (model constraints, guardrails, budgets, observability).
 
 ## See also
