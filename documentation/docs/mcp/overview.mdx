@@ -45,6 +45,8 @@ Otoroshi provides full support for the MCP specification, both as a client (conn
 - **Resource Templates** (`resources/templates/list`) - List parameterized resource templates
 - **Prompts** (`prompts/list`, `prompts/get`) - List and retrieve prompt templates with their arguments
 
+Connectors support several [transport kinds](/docs/mcp/mcp-connectors#transport-kinds) (stdio, SSE, Streamable HTTP, WebSocket, and a meta connector that aggregates others). In addition, the [**OpenAPI** connector](/docs/mcp/mcp-connectors#expose-an-openapi-spec-as-mcp-tools) needs no MCP server at all: it turns any OpenAPI / Swagger spec into MCP tools and calls the target REST API directly.
+
 All these features support [filtering](/docs/mcp/mcp-connectors#filtering-tools-resources-and-prompts) (include/exclude patterns) and [advanced rules](/docs/mcp/mcp-connectors#advanced-rules) (JsonPath-based access control).
 
 ### As an MCP server (MCP Plugins)
