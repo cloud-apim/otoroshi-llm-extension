@@ -4,13 +4,22 @@ sidebar_position: 1
 
 # Search Engines
 
-Otoroshi LLM Extension provides support for **web search engines**, enabling real-time web search through a unified, normalized API.
+Otoroshi LLM Extension provides support for **search engines**, enabling real-time **web search** — and semantic search over your own data with **RAG knowledge bases** — through a unified, normalized API.
 
 A search engine is exposed as a dedicated, first-class entity type — the **Search Engine** — just like Audio Models, Image Models, or OCR Models. Each Search Engine wraps a provider and its configuration, and exposes a single `search(query)` operation. It can be used in three ways: as an **LLM tool** (passed to a provider or an agent), through a dedicated **HTTP plugin**, or as a **workflow function**.
 
-Every provider is implemented in **pure HTTP** (no extra dependency) and every response is **normalized** to a common shape, so the same code/prompt works regardless of the underlying engine.
+Every web provider is implemented in **pure HTTP** (no extra dependency) and every response is **normalized** to a common shape, so the same code/prompt works regardless of the underlying engine.
 
-## Supported providers
+## Two kinds of Search Engine
+
+| Kind | Providers | What it searches |
+|------|-----------|------------------|
+| **Web search** | Staan.ai, Tavily, Brave, SearXNG, Google, SearchApi, DuckDuckGo, Exa | The public web, through a third-party search API |
+| **RAG knowledge base** | `rag` | Your own documents, by semantic similarity over an [embedding store](/docs/embeddings/overview#embedding-stores) using an [embedding model](/docs/embeddings/embedding-models) |
+
+Both kinds share the same entity, the same `search(query)` operation, and the same normalized result shape — so a [RAG knowledge base](./providers#rag-knowledge-base) can be wired into a provider, agent, plugin, or workflow exactly like a web engine. The only difference is what sits behind the query: a web API, or a vector similarity search over your embeddings.
+
+## Supported web providers
 
 | Provider | Auth | Notes |
 |----------|------|-------|
@@ -23,6 +32,8 @@ Every provider is implemented in **pure HTTP** (no extra dependency) and every r
 | **DuckDuckGo** | none | Instant Answer API only (no full web result list — best effort). |
 | **Exa** | `x-api-key` | AI / neural search. Returns relevance highlights — well suited to research and RAG. |
 
+In addition to these web providers, the **`rag`** provider turns a Search Engine into a retriever over your own data — see [RAG knowledge base](./providers#rag-knowledge-base).
+
 ## Features
 
 - **Unified, normalized results**: every provider returns the same shape — `{ provider, query, answer?, results: [{ title, url, snippet, score?, published_date? }] }`. The raw provider payload is kept internally for advanced use.
@@ -30,6 +41,7 @@ Every provider is implemented in **pure HTTP** (no extra dependency) and every r
 - **Vault integration**: API tokens support Otoroshi vault references (e.g. `${vault://local/my-token}`) and comma-separated rotation.
 - **Search controls**: `max_results`, `market`/locale, and domain `include`/`exclude` filters are passed through to providers that support them.
 - **LLM tool integration**: reference one or more Search Engines on a provider or an agent and the model gets a `search` tool it can call autonomously.
+- **RAG knowledge bases**: back a Search Engine with an [embedding store](/docs/embeddings/overview#embedding-stores) and an [embedding model](/docs/embeddings/embedding-models) (`rag` provider) to retrieve from your own data through the very same API — see [RAG knowledge base](./providers#rag-knowledge-base).
 - **Workflow integration**: search is available as a workflow function ([`search_engine_search`](/docs/workflows/search-engine-search)) for use in agentic pipelines.
 
 ## How to use a Search Engine
@@ -61,6 +73,26 @@ A Search Engine entity wraps a provider connection and its options:
     "options": {
       "market": "fr-FR",
       "count": 10
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
+}
+```
+
+A **RAG knowledge base** uses the same entity, but instead of a `connection` block it references an embedding store and an embedding model:
+
+```js
+{
+  "id": "search-engine_xxxxxxxxx",
+  "name": "Product docs",
+  "description": "Search the internal product documentation",
+  "provider": "rag",
+  "config": {
+    "embedding_store": "embedding-store_xxxxxxxxx",
+    "embedding_model": "embedding-model_xxxxxxxxx",
+    "options": {
+      "max_results": 5,
+      "min_score": 0.5
     }
   },
   "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
