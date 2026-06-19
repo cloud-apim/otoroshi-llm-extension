@@ -4,6 +4,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway._
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
 import play.api.libs.json._
 import play.api.libs.ws.WSResponse
 
@@ -567,6 +568,51 @@ class ExaSearchClient(api: ExaApi, options: ExaSearchOptions, id: String) extend
         }
       } else {
         Left(Json.obj("error" -> "bad response from exa", "status" -> resp.status, "body" -> resp.body))
+      }
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                     RAG (embedding store)                                      ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// A "search engine" backed by a RAG retriever: it embeds the query with the referenced embedding model, then runs a
+// vector similarity search against the referenced embedding store. The (store, model) pair lives in the entity config
+// and is never exposed to the LLM (the tool is still named after the single, id-safe SearchEngine id, like web engines).
+class RagSearchClient(embeddingStoreId: String, embeddingModelId: String, maxResults: Int, minScore: Double, id: String) extends SearchEngineClient {
+  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
+    val ext = env.adminExtensions.extension[AiExtension]
+    val modelClientOpt = ext.flatMap(_.states.embeddingModel(embeddingModelId)).flatMap(_.getEmbeddingModelClient())
+    val storeClientOpt = ext.flatMap(_.states.embeddingStore(embeddingStoreId)).flatMap(_.getEmbeddingStoreClient())
+    (modelClientOpt, storeClientOpt) match {
+      case (None, _) => Left(Json.obj("error" -> s"unknown or unavailable embedding model: ${embeddingModelId}")).vfuture
+      case (_, None) => Left(Json.obj("error" -> s"unknown or unavailable embedding store: ${embeddingStoreId}")).vfuture
+      case (Some(modelClient), Some(storeClient)) => {
+        val limit = opts.maxResults.getOrElse(maxResults)
+        // min_score is config-driven by default but the LLM may override it through the tool arguments passthrough
+        val score = rawBody.select("min_score").asOpt[Double].getOrElse(minScore)
+        modelClient.embed(EmbeddingClientInputOptions(input = Seq(opts.query)), Json.obj(), attrs).flatMap {
+          case Left(err) => Left(Json.obj("error" -> "unable to compute query embedding", "details" -> err)).vfuture
+          case Right(embRes) if embRes.embeddings.isEmpty => Left(Json.obj("error" -> "embedding model returned no vector")).vfuture
+          case Right(embRes) => {
+            storeClient.search(EmbeddingSearchOptions(embRes.embeddings.head, limit, score), Json.obj()).map {
+              case Left(err) => Left(Json.obj("error" -> "unable to search embedding store", "details" -> err))
+              case Right(searchRes) => {
+                val results = searchRes.matches.map { m =>
+                  SearchEngineResult(
+                    title = m.id,
+                    url = "",
+                    snippet = m.embedded,
+                    score = Some(m.score),
+                    raw = Json.obj("id" -> m.id, "score" -> m.score),
+                  )
+                }
+                SearchEngineResponse("rag", opts.query, None, results, Json.obj()).right
+              }
+            }
+          }
+        }
       }
     }
   }
