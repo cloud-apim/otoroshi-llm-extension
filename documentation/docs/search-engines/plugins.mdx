@@ -55,6 +55,10 @@ curl https://my-search-endpoint.example.com/search \
 
 A request with an empty `query` returns `400`.
 
+:::note RAG knowledge base
+When the referenced engine is a [`rag`](./providers#rag-knowledge-base) knowledge base, the same endpoint runs a semantic search over your embedding store: `query` is embedded and matched against the store, `max_results` caps the number of passages, and `min_score` (0–1) overrides the engine's minimum similarity threshold. The web-specific parameters (`market`, `safe_search`, `include_domains`, …) are ignored.
+:::
+
 ## Response
 
 The response is the normalized search result:
@@ -80,3 +84,5 @@ The response is the normalized search result:
 | `query` | string | The query that was searched |
 | `answer` | string | Optional synthetic answer (Tavily with `include_answer`, DuckDuckGo abstract) |
 | `results` | array | Normalized results, each with `title`, `url`, `snippet`, and optional `score` / `published_date` |
+
+For a [`rag`](./providers#rag-knowledge-base) engine, `provider` is `rag`, each result's `title` is the matched document id, `url` is empty, `snippet` holds the retrieved passage, and `score` is the vector similarity.
