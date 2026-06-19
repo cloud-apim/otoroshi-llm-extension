@@ -6,7 +6,11 @@ sidebar_position: 2
 
 Each Search Engine wraps a single provider. The provider is selected with the `provider` field, and configured through `config.connection` (endpoint and credentials) and `config.options` (provider-specific options).
 
-The `config.connection` block is common to all providers:
+:::note RAG knowledge base
+The `config.connection` block below applies to the **web** providers. The [`rag` provider](#rag-knowledge-base) is configured differently — it has no connection, and instead references an embedding store and an embedding model.
+:::
+
+The `config.connection` block is common to all web providers:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -209,3 +213,49 @@ AI / neural web search. `POST https://api.exa.ai/search`, authenticated with the
   "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
 }
 ```
+
+## RAG knowledge base
+
+Instead of the public web, the **`rag`** provider searches **your own data**: it embeds the query with a referenced [embedding model](/docs/embeddings/embedding-models), then runs a vector similarity search against a referenced [embedding store](/docs/embeddings/overview#embedding-stores) (your vector database). The most relevant passages are returned in the same normalized result shape, so a RAG knowledge base plugs into providers, agents, the HTTP plugin and workflows exactly like a web engine.
+
+This makes Retrieval-Augmented Generation a first-class, reusable entity: populate an embedding store (for example with the [`vector_store_add`](/docs/workflows/vector-store-add) workflow function), point a `rag` Search Engine at it, and [attach it to an LLM provider or agent as a tool](./as-llm-tool) so the model can retrieve from your knowledge base on demand.
+
+Unlike the web providers, the `rag` provider has **no `connection` block**. It is configured with two references and a couple of search options:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.embedding_store` | string | — | Id of the [embedding store](/docs/embeddings/overview#embedding-stores) (vector database) to search (**required**) |
+| `config.embedding_model` | string | — | Id of the [embedding model](/docs/embeddings/embedding-models) used to embed the query (**required**) |
+| `config.options.max_results` | number | `5` | Maximum number of passages to return. Overridable per request via `max_results`. |
+| `config.options.min_score` | number | `0.5` | Minimum similarity score (0–1); passages below it are dropped. Overridable per request via `min_score`. |
+
+```js
+{
+  "id": "search-engine_xxxxxxxxx",
+  "name": "Product docs",
+  "description": "Search the internal product documentation",
+  "provider": "rag",
+  "config": {
+    "embedding_store": "embedding-store_xxxxxxxxx",
+    "embedding_model": "embedding-model_xxxxxxxxx",
+    "options": { "max_results": 5, "min_score": 0.5 }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/SearchEngine"
+}
+```
+
+The embedding model and store are referenced by id and are **never exposed to the LLM** — the model only ever sees a single `search` tool named after the Search Engine, just like a web engine.
+
+The results map onto the normalized shape as follows:
+
+| Normalized field | Value |
+|------------------|-------|
+| `provider` | `rag` |
+| `results[].title` | The matched document / chunk id from the store |
+| `results[].url` | Empty (a knowledge-base passage has no URL) |
+| `results[].snippet` | The stored passage text |
+| `results[].score` | The vector similarity score |
+
+:::tip
+Give the Search Engine a clear `description` (e.g. *"Search the internal product documentation"*). When the engine is used [as an LLM tool](./as-llm-tool), that description becomes the tool description the model reads to decide when to query your knowledge base. With no description, a generic *"Search the knowledge base … using semantic similarity"* prompt is generated for you.
+:::
