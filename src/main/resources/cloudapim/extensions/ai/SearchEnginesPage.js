@@ -67,6 +67,13 @@ class SearchEnginesPage extends Component {
   };
 
   configFor = (provider) => {
+    if (provider === 'rag') {
+      return {
+        embedding_store: '',
+        embedding_model: '',
+        options: { max_results: 5, min_score: 0.5 },
+      };
+    }
     const defs = this.providerDefaults(provider);
     return {
       connection: {
@@ -112,6 +119,7 @@ class SearchEnginesPage extends Component {
           { label: 'SearchApi', value: 'searchapi' },
           { label: 'DuckDuckGo', value: 'duckduckgo' },
           { label: 'Exa', value: 'exa' },
+          { label: 'RAG (knowledge base)', value: 'rag' },
         ], i => i.label)
       }
     },
@@ -139,6 +147,25 @@ class SearchEnginesPage extends Component {
     'config.options.min_score': {
       type: 'number',
       props: { label: 'Min score', placeholder: '0.10' },
+    },
+    // RAG (knowledge base) options
+    'config.embedding_store': {
+      type: 'select',
+      props: {
+        label: 'Embedding store',
+        placeholder: 'Select the vector store to search',
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/embedding-stores',
+        transformer: (a) => ({ value: a.id, label: a.name }),
+      },
+    },
+    'config.embedding_model': {
+      type: 'select',
+      props: {
+        label: 'Embedding model',
+        placeholder: 'Select the model used to embed the query',
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/embedding-models',
+        transformer: (a) => ({ value: a.id, label: a.name }),
+      },
     },
     // Tavily options
     'config.options.max_results': {
@@ -263,6 +290,19 @@ class SearchEnginesPage extends Component {
   formFlow = (state) => {
     if (!state.provider) {
       return ['_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider'];
+    }
+    if (state.provider === 'rag') {
+      return [
+        '_loc', 'id', 'name', 'description', 'tags', 'metadata',
+        '<<<Provider',
+        'provider',
+        '<<<Knowledge base',
+        'config.embedding_store',
+        'config.embedding_model',
+        '<<<Search options',
+        'config.options.max_results',
+        'config.options.min_score',
+      ];
     }
     return [
       '_loc', 'id', 'name', 'description', 'tags', 'metadata',
