@@ -89,6 +89,13 @@ case class SearchEngine(
         val api = new ExaApi(baseUrl.getOrElse(ExaApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
         new ExaSearchClient(api, ExaSearchOptions.fromJson(options), id).some
       }
+      case "rag" | "vector" => {
+        val storeId = config.select("embedding_store").asOpt[String].getOrElse("")
+        val modelId = config.select("embedding_model").asOpt[String].getOrElse("")
+        val maxResults = options.select("max_results").asOpt[Int].getOrElse(5)
+        val minScore = options.select("min_score").asOpt[Double].getOrElse(0.5)
+        new RagSearchClient(storeId, modelId, maxResults, minScore, id).some
+      }
       case _ => None
     }
   }
@@ -132,7 +139,24 @@ object SearchEngine {
       case "searchapi" => ("SearchApi", "A SearchApi search engine", "searchapi", SearchApiApi.baseUrl, Json.obj("engine" -> "google"))
       case "duckduckgo" => ("DuckDuckGo", "A DuckDuckGo instant answer engine", "duckduckgo", DuckDuckGoApi.baseUrl, Json.obj())
       case "exa" => ("Exa", "An Exa neural web search engine", "exa", ExaApi.baseUrl, Json.obj("type" -> "auto", "highlights" -> true, "num_results" -> 10))
+      case "rag" | "vector" => ("RAG knowledge base", "A RAG retriever over an embedding store", "rag", "", Json.obj("max_results" -> 5, "min_score" -> 0.5))
       case _ => ("Staan.ai", "A Staan.ai (Qwant) sovereign web search engine", "staan", StaanApi.baseUrl, Json.obj("market" -> "fr-FR", "count" -> 10))
+    }
+    val config = if (theProvider == "rag") {
+      Json.obj(
+        "embedding_store" -> "",
+        "embedding_model" -> "",
+        "options" -> options,
+      )
+    } else {
+      Json.obj(
+        "connection" -> Json.obj(
+          "base_url" -> baseUrl,
+          "token" -> "xxxxx",
+          "timeout" -> 30.seconds.toMillis,
+        ),
+        "options" -> options
+      )
     }
     SearchEngine(
       id = IdGenerator.namedId("search-engine", env),
@@ -142,14 +166,7 @@ object SearchEngine {
       tags = Seq.empty,
       location = EntityLocation.default,
       provider = theProvider,
-      config = Json.obj(
-        "connection" -> Json.obj(
-          "base_url" -> baseUrl,
-          "token" -> "xxxxx",
-          "timeout" -> 30.seconds.toMillis,
-        ),
-        "options" -> options
-      ),
+      config = config,
     )
   }
 
@@ -197,7 +214,12 @@ object SearchEngineSupport {
   )
 
   private def decl(se: SearchEngine, anthropic: Boolean): JsObject = {
-    val desc = s"Search the web using ${se.name}. Returns a list of relevant web results (title, url, snippet) for the given query."
+    val desc = se.provider.toLowerCase() match {
+      case "rag" | "vector" =>
+        if (se.description.trim.nonEmpty) se.description
+        else s"""Search the knowledge base "${se.name}" using semantic similarity and return the most relevant passages for the given query."""
+      case _ => s"Search the web using ${se.name}. Returns a list of relevant web results (title, url, snippet) for the given query."
+    }
     if (anthropic) {
       Json.obj("name" -> s"search___${se.id}", "description" -> desc, "input_schema" -> paramsSchema)
     } else {
