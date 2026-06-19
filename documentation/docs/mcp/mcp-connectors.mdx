@@ -25,6 +25,20 @@ MCP connectors support the full MCP protocol:
 
 All capabilities support filtering via include/exclude patterns and advanced rules. See the [Filtering](#filtering-tools-resources-and-prompts) and [Advanced rules](#advanced-rules) sections below.
 
+## Transport kinds
+
+The connector's `transport.kind` selects how Otoroshi reaches the tools:
+
+| Kind | Value | Description |
+|------|-------|-------------|
+| **stdio** | `stdio` | Launch a local MCP server process and talk to it over stdin/stdout. |
+| **SSE** | `sse` | Connect to a remote MCP server over Server-Sent Events. |
+| **Streamable HTTP** | `http` | Connect to a remote MCP server over the Streamable HTTP transport. |
+| **HTTP (Langchain)** | `http_langchain` | Legacy HTTP transport (deprecated). |
+| **WebSocket** | `ws` | Full-duplex transport (non-standard, experimental). |
+| **Meta** | `meta` | Aggregate several other MCP connectors behind a single connector. |
+| **OpenAPI** | `openapi` | No MCP server at all — turn any [OpenAPI / Swagger spec](#expose-an-openapi-spec-as-mcp-tools) into MCP tools and call the target REST API directly. |
+
 ## Configuration
 
 Here is the `MCP connector` configuration :
@@ -486,6 +500,124 @@ In the transport headers configuration, use the `{input_token}` placeholder to i
 ```
 
 The `{input_token}` placeholder is replaced at runtime with the Bearer token from the incoming request's `Authorization` header. This works with SSE, WebSocket, and Streamable HTTP transports.
+
+## Expose an OpenAPI spec as MCP tools
+
+The **`openapi`** transport kind turns any **OpenAPI / Swagger specification** into a set of MCP tools — **without any MCP server**. You point the connector at a spec (by URL or inline), and every operation becomes a tool an LLM can call; Otoroshi then performs the corresponding HTTP request against the target REST API and returns the response. This is the fastest way to give a model a REST API as tools when no MCP server exists for it.
+
+The spec is fetched once and **cached** (parsed into operations), so listing tools is cheap. This connector exposes **tools only** — no resources, resource templates, or prompts.
+
+### How operations become tools
+
+In the default mode, **each OpenAPI operation becomes one MCP tool**:
+
+- The **tool name** is the operation's `operationId`, slugified to a valid tool name (`[a-zA-Z0-9_-]`); duplicates are de-duplicated with a numeric suffix.
+- The **tool description** is the operation `summary` (or `description`), followed by `HTTP <METHOD> <path>`.
+- The **tool parameters** are built from the operation's `path`, `query` and `header` parameters, plus a `body` property for the request body. `$ref`, `enum`, `anyOf`/`oneOf`, `allOf` and arrays in the spec schemas are resolved into the tool's JSON Schema. Path parameters (and any parameter marked `required`) are required.
+
+When the model calls a tool, Otoroshi resolves the path template, builds the query string, sends configured + per-call headers, attaches the JSON `body` for non-`GET`/`HEAD` methods, and returns the result as a JSON string of shape `{ "status": <http status>, "body": <json or text> }`. A non-2xx status is reported back to the model as an error.
+
+### Configuration
+
+```js
+{
+  "id": "mcp-connector_xxxxx",
+  "name": "petstore-openapi",
+  "transport": {
+    "kind": "openapi",
+    "options": {
+      "spec_url": "https://petstore3.swagger.io/api/v3/openapi.json",
+      "base_url": "https://petstore3.swagger.io/api/v3",
+      "headers": {
+        "Authorization": "Bearer ${vault://local/petstore-token}"
+      },
+      "include_tags": ["pet"],
+      "exclude_operation_ids": ["deletePet"]
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/McpConnector"
+}
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `transport.options.spec_url` | string | — | URL of the OpenAPI spec (JSON or YAML). Fetched and cached. Ignored when `spec` is provided. |
+| `transport.options.spec` | object \| string | — | Inline OpenAPI spec — a JSON object, or a JSON/YAML string. **Takes precedence** over `spec_url`. |
+| `transport.options.base_url` | string | spec's first `servers[].url` | Base URL of the target API the tools call. |
+| `transport.options.headers` | object | `{}` | Static headers sent on **every** call to the target API (downstream auth). Supports [vault references](#example-with-github-mcp-server) and the `{input_token}` passthrough placeholder. |
+| `transport.options.timeout` | number (ms) | `180000` | Per-call request timeout. |
+| `transport.options.include_operation_ids` | string[] | `[]` | Allow-list of `operationId`s to expose (glob/regex). Empty = all. |
+| `transport.options.exclude_operation_ids` | string[] | `[]` | Block-list of `operationId`s to hide (glob/regex). |
+| `transport.options.include_tags` | string[] | `[]` | Only expose operations carrying at least one of these OpenAPI tags. Empty = all. |
+| `transport.options.exclude_tags` | string[] | `[]` | Hide operations carrying any of these OpenAPI tags. |
+| `transport.options.expose_as_meta` | bool | `false` | Expose 3 meta tools instead of one tool per operation (see below). |
+| `transport.options.cache_ttl` | number (ms) | `600000` | How long a spec fetched from a URL is cached (10 minutes by default). An inline `spec` is re-parsed only when it changes. |
+| `transport.options.allowed_hosts` | string[] | `[]` | Optional allow-list of target hosts. Empty = no restriction. A host matches exactly or as a subdomain (`api.example.com` also allows `eu.api.example.com`). |
+| `transport.options.log` | bool | `false` | Log the underlying HTTP calls. |
+
+:::tip Filtering operations
+`include_operation_ids` / `exclude_operation_ids` / `include_tags` / `exclude_tags` select which operations are exposed **at the OpenAPI level**. The generic [`include_functions` / `exclude_functions`](#filtering-tools-functions) connector filters (matching on the resulting tool name) and the [advanced rules](#advanced-rules) still apply on top, so you can combine spec-level filtering with per-consumer access control.
+:::
+
+### Meta mode for large APIs
+
+A spec with dozens or hundreds of endpoints would flood the model's tool list. Set **`expose_as_meta: true`** to expose just **three** tools instead, letting the model discover and call operations on demand:
+
+| Tool | Purpose |
+|------|---------|
+| `search_operations` | Keyword search over `operationId`, path, tags and summary. Returns `{ operationId, method, path, summary, tags }` ranked by relevance. |
+| `get_operation_schema` | Return one operation's JSON schema: `{ operationId, method, path, description, parameters }`. |
+| `execute` | Call one operation. Takes `operationId` and `arguments` (a JSON-encoded string of the args object; the request body goes under a `body` key). Returns `{ status, body }`. |
+
+```js
+{
+  "id": "mcp-connector_xxxxx",
+  "name": "big-api-openapi",
+  "transport": {
+    "kind": "openapi",
+    "options": {
+      "spec_url": "https://api.example.com/openapi.json",
+      "base_url": "https://api.example.com",
+      "expose_as_meta": true,
+      "allowed_hosts": ["api.example.com"]
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/McpConnector"
+}
+```
+
+### Inline spec
+
+For small or private APIs you can paste the spec directly with `spec` (no fetch). It takes precedence over `spec_url`:
+
+```js
+{
+  "transport": {
+    "kind": "openapi",
+    "options": {
+      "base_url": "https://api.example.com",
+      "spec": {
+        "openapi": "3.0.0",
+        "info": { "title": "Pets", "version": "1.0.0" },
+        "servers": [{ "url": "https://api.example.com" }],
+        "paths": {
+          "/pets/{petId}": {
+            "get": {
+              "operationId": "getPetById",
+              "summary": "Get a pet by id",
+              "parameters": [
+                { "name": "petId", "in": "path", "required": true, "schema": { "type": "string" } }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Once created, reference the connector on a provider or agent exactly like any other MCP connector (`options.mcp_connectors`), and the model gets the operations as callable tools.
 
 ## Postgres MCP Server
 
