@@ -43,6 +43,36 @@ The LLM extension emits several dedicated audit event types. They are standard O
 
 LLM-specific data is also added to the standard Otoroshi `GatewayEvent` (see [Reporting — extra analytics data](/docs/reporting#extra-analytics-data-in-gatewayevent)).
 
+`LLMUsageAudit`, `McpAudit` and `McpClientAudit` all carry a `request_id` field (the Otoroshi request snowflake, also exposed as the `GatewayEvent` `@id`). Within a single request you can therefore correlate the chat completion (`LLMUsageAudit`), the MCP tool calls made to upstream servers (`McpClientAudit`), and any call served by an exposed MCP server (`McpAudit`) — all by joining on `request_id`.
+
+## Real-time MCP metrics
+
+In addition to audit events, MCP calls feed Otoroshi's real-time metrics (exposed via Otoroshi's metrics endpoint — Prometheus / JSON export). Unlike audit events, **metrics are always on** when Otoroshi metrics are enabled — they do **not** require the `emit_audit_events` / `audit_events` opt-in flags (those only control the detailed audit events).
+
+Metric names are flat, with the operation encoded in the name (Otoroshi's metric API carries no tags). The `<op>` / `<method>` segment is the MCP operation with `/` replaced by `.` (e.g. `tools/call` → `tools.call`).
+
+**Client side** (calls Otoroshi makes to upstream MCP servers through a [connector](/docs/mcp/mcp-connectors)):
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp.client.calls` | counter | Total upstream MCP calls |
+| `mcp.client.errors` | counter | Total failed upstream MCP calls |
+| `mcp.client.<op>.calls` | counter | Calls for a given operation (e.g. `mcp.client.tools.call.calls`) |
+| `mcp.client.<op>.errors` | counter | Failed calls for a given operation |
+| `mcp.client.<op>.duration` | timer | Latency of a given operation |
+
+**Server side** (calls external clients make to MCP servers Otoroshi [exposes](/docs/mcp/mcp-plugins)):
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `mcp.server.calls` | counter | Total MCP method calls served |
+| `mcp.server.errors` | counter | Total failed MCP method calls |
+| `mcp.server.<method>.calls` | counter | Calls for a given method (e.g. `mcp.server.tools.list.calls`) |
+| `mcp.server.<method>.errors` | counter | Failed calls for a given method |
+| `mcp.server.<method>.duration` | timer | Latency of a given method |
+
+These are standard Otoroshi metrics: scrape them from the Otoroshi metrics endpoint and build real-time dashboards (request rate, error rate, latency) without parsing audit events.
+
 ## Using data exporters
 
 You can use [Otoroshi data exporters](https://maif.github.io/otoroshi/manual/entities/data-exporters.html) to extract LLM usage information and send it to any external system (Elasticsearch, Kafka, webhooks, etc.).
