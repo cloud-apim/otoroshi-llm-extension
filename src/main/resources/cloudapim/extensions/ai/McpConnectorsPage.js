@@ -160,6 +160,10 @@ class McpConnectorsPage extends Component {
       type: 'bool',
       props: { label: 'Forward OAuth2 authentication', help: 'When enabled, the incoming OAuth2 Bearer token will be forwarded to the MCP server by replacing {input_token} placeholders in transport headers' },
     },
+    'audit_events': {
+      type: 'bool',
+      props: { label: 'Emit audit events', help: 'When enabled, every call this connector makes to the upstream MCP server (tools/list, tools/call, resources/*, prompts/*) emits a McpClientAudit event' },
+    },
     'include_functions': {
       type: 'array',
       props: {
@@ -284,7 +288,7 @@ class McpConnectorsPage extends Component {
   ];
 
   commonFlowTail = [
-    'strict', 'forward_auth',
+    'strict', 'forward_auth', 'audit_events',
     '---',
     'include_functions', 'exclude_functions',
     '---',
@@ -361,7 +365,8 @@ class McpConnectorsPage extends Component {
             }
           },
           strict: true,
-          forward_auth: false
+          forward_auth: false,
+          audit_events: false
         }),
         itemName: "MCP Connector",
         formSchema: this.formSchema,
