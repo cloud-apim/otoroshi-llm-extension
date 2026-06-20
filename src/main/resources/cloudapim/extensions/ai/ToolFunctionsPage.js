@@ -140,6 +140,22 @@ class ToolFunctionsPage extends Component {
       type: 'array',
       props: { label: 'Required params.' },
     },
+    outputSchema: {
+      type: 'monaco',
+      props: { label: 'MCP - Output schema', language: 'javascript', height: 200 },
+    },
+    annotations: {
+      type: 'monaco',
+      props: { label: 'MCP - Annotations', language: 'javascript', height: 200 },
+    },
+    execution: {
+      type: 'monaco',
+      props: { label: 'MCP - Execution', language: 'javascript', height: 200 },
+    },
+    meta: {
+      type: 'monaco',
+      props: { label: 'MCP - Meta (_meta)', language: 'javascript', height: 200 },
+    },
     'backend.options.wasmPlugin': {
       type: 'select',
       props: {
@@ -291,6 +307,11 @@ class ToolFunctionsPage extends Component {
     'strict',
     'parameters',
     'required',
+    '<<<MCP metadata',
+    'outputSchema',
+    'annotations',
+    'execution',
+    'meta',
     '>>>Tester',
     'tester'
 
