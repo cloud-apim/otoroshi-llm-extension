@@ -420,6 +420,20 @@ object McpAuditHelper {
   }
   def recorded(attrs: TypedMap): JsValue = attrs.get(responseKey).getOrElse(JsNull)
 
+  // Real-time metrics for the MCP server/exposition side (always on when env metrics are enabled,
+  // independent of the opt-in `emit_audit_events`). Flat metric names with the method encoded in the name.
+  def markMetrics(method: String, durationMs: Long, isError: Boolean)(implicit env: Env): Unit = {
+    if (!env.metricsEnabled) return
+    val m = method.replace('/', '.')
+    env.metrics.counterInc("mcp.server.calls")
+    env.metrics.counterInc(s"mcp.server.$m.calls")
+    if (isError) {
+      env.metrics.counterInc("mcp.server.errors")
+      env.metrics.counterInc(s"mcp.server.$m.errors")
+    }
+    env.metrics.timerUpdate(s"mcp.server.$m.duration", durationMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+  }
+
   def emit(
     method: String,
     id: Long,
@@ -433,8 +447,12 @@ object McpAuditHelper {
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
+    // request_id = Otoroshi snowflake of the current request, for correlation across LLMUsageAudit /
+    // McpAudit / McpClientAudit events.
+    val requestId = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
     AuditEvent.generic("McpAudit") {
       Json.obj(
+        "request_id" -> requestId.map(JsString.apply).getOrElse(JsNull).asValue,
         "mcp_method" -> method,
         "mcp_id" -> id,
         "mcp_request_payload" -> requestPayload,
@@ -934,14 +952,18 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
                         jsonRpcResponse(id, Json.obj("error" -> "method unsupported", "error_details" -> Json.obj("method" -> method, "ready" -> session.ready.get())))
                       }
                     }
-                    if (config.emitAuditEvents) {
-                      result.onComplete {
-                        case Success(Right(_)) =>
-                          McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "sse", None, ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
-                        case Success(Left(_)) =>
-                          McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "sse", Some("proxy_engine_error"), ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
-                        case Failure(ex) =>
-                          McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "sse", Some(ex.getMessage), ctx.attrs)
+                    result.onComplete { r =>
+                      val dur = System.currentTimeMillis() - start
+                      McpAuditHelper.markMetrics(method, dur, isError = !r.toOption.exists(_.isRight))
+                      if (config.emitAuditEvents) {
+                        r match {
+                          case Success(Right(_)) =>
+                            McpAuditHelper.emit(method, id, json, dur, "sse", None, ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
+                          case Success(Left(_)) =>
+                            McpAuditHelper.emit(method, id, json, dur, "sse", Some("proxy_engine_error"), ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
+                          case Failure(ex) =>
+                            McpAuditHelper.emit(method, id, json, dur, "sse", Some(ex.getMessage), ctx.attrs)
+                        }
                       }
                     }
                     result
@@ -1182,12 +1204,16 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
             jsonRpcResponse(id, Json.obj("error" -> "method unsupported", "error_details" -> Json.obj("method" -> method, "ready" -> ready.get()))).vfuture
           }
         }
-        if (config.emitAuditEvents) {
-          resp.onComplete {
-            case Success(response) =>
-              McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "websocket", None, attrs, response)(env)
-            case Failure(ex) =>
-              McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "websocket", Some(ex.getMessage), attrs)(env)
+        resp.onComplete { r =>
+          val dur = System.currentTimeMillis() - start
+          McpAuditHelper.markMetrics(method, dur, isError = r.isFailure)(env)
+          if (config.emitAuditEvents) {
+            r match {
+              case Success(response) =>
+                McpAuditHelper.emit(method, id, json, dur, "websocket", None, attrs, response)(env)
+              case Failure(ex) =>
+                McpAuditHelper.emit(method, id, json, dur, "websocket", Some(ex.getMessage), attrs)(env)
+            }
           }
         }
         resp.map(r => send(r))(env.otoroshiExecutionContext)
@@ -1393,14 +1419,18 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
                 jsonRpcResponse(id, Json.obj("error" -> "method unsupported", "error_details" -> Json.obj("method" -> method)))
               }
             }
-            if (config.emitAuditEvents) {
-              result.onComplete {
-                case Success(Right(_)) =>
-                  McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "http", None, ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
-                case Success(Left(_)) =>
-                  McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "http", Some("proxy_engine_error"), ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
-                case Failure(ex) =>
-                  McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "http", Some(ex.getMessage), ctx.attrs)
+            result.onComplete { r =>
+              val dur = System.currentTimeMillis() - start
+              McpAuditHelper.markMetrics(method, dur, isError = !r.toOption.exists(_.isRight))
+              if (config.emitAuditEvents) {
+                r match {
+                  case Success(Right(_)) =>
+                    McpAuditHelper.emit(method, id, json, dur, "http", None, ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
+                  case Success(Left(_)) =>
+                    McpAuditHelper.emit(method, id, json, dur, "http", Some("proxy_engine_error"), ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
+                  case Failure(ex) =>
+                    McpAuditHelper.emit(method, id, json, dur, "http", Some(ex.getMessage), ctx.attrs)
+                }
               }
             }
             result
