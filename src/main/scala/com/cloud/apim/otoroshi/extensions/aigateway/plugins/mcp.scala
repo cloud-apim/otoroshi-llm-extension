@@ -463,7 +463,6 @@ object McpProxyLogic {
       ) ++
         wf.outputSchema.map(v => Json.obj("outputSchema" -> v)).getOrElse(Json.obj()) ++
         wf.annotations.map(v => Json.obj("annotations" -> v)).getOrElse(Json.obj()) ++
-        wf.execution.map(v => Json.obj("execution" -> v)).getOrElse(Json.obj()) ++
         wf.meta.map(v => Json.obj("_meta" -> v)).getOrElse(Json.obj())
     }
     Future.sequence(mcpConnectors.map { c =>
