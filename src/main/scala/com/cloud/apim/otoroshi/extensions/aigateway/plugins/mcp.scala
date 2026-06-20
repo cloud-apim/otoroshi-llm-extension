@@ -753,16 +753,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listResources(attrs))).flatMap { mcpResources =>
-      val payload = Json.obj("resources" -> Json.arr(
-        mcpResources.flatten.map { r =>
-          Json.obj(
-            "uri" -> r.uri(),
-            "name" -> r.name(),
-            "description" -> r.description(),
-            "mimeType" -> r.mimeType(),
-          )
-        }
-      ))
+      val payload = Json.obj("resources" -> JsArray(mcpResources.flatten.map(McpSupport.resourceToJson)))
       session.send(id, payload)
       jsonRpcResponse(id, payload)
     }
@@ -772,21 +763,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listPrompts(attrs))).flatMap { mcpPrompts =>
-      val payload = Json.obj("prompts" -> Json.arr(
-        mcpPrompts.flatten.map { p =>
-          Json.obj(
-            "name" -> p.name(),
-            "description" -> p.description(),
-            "arguments" -> Json.arr(Option(p.arguments()).map(_.asScala).getOrElse(Seq.empty).map { a =>
-              Json.obj(
-                "name" -> a.name(),
-                "description" -> a.description(),
-                "required" -> a.required(),
-              )
-            }),
-          )
-        }
-      ))
+      val payload = Json.obj("prompts" -> JsArray(mcpPrompts.flatten.map(McpSupport.promptToJson)))
       session.send(id, payload)
       jsonRpcResponse(id, payload)
     }
@@ -796,16 +773,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listResourceTemplates(attrs))).flatMap { mcpResources =>
-      val payload = Json.obj("templates" -> Json.arr(
-        mcpResources.flatten.map { r =>
-          Json.obj(
-            "uriTemplate" -> r.uriTemplate(),
-            "name" -> r.name(),
-            "description" -> r.description(),
-            "mimeType" -> r.mimeType(),
-          )
-        }
-      ))
+      val payload = Json.obj("templates" -> JsArray(mcpResources.flatten.map(McpSupport.resourceTemplateToJson)))
       session.send(id, payload)
       jsonRpcResponse(id, payload)
     }
@@ -823,7 +791,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
           }
           Future.sequence(matchingConnectors.map(_.readResource(uri, attrs))).flatMap { results =>
             val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
-            val payload = Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson)))
+            val payload = Json.obj("contents" -> JsArray(contents.map(McpSupport.resourceContentsToJson)))
             session.send(id, payload)
             jsonRpcResponse(id, payload)
           }
@@ -848,7 +816,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
             val result = results.flatten.headOption
             val payload = Json.obj(
               "description" -> result.map(_.description()).getOrElse("").json,
-              "messages" -> Json.arr(result.map(_.messages().asScala).getOrElse(Seq.empty).map { m =>
+              "messages" -> JsArray(result.map(_.messages().asScala).getOrElse(Seq.empty).map { m =>
                 Json.obj(
                   "role" -> m.role().name().toLowerCase,
                   "content" -> McpSupport.promptContentToJson(m.content()),
@@ -1142,14 +1110,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listResources(attrs)(ec, env))).map { all =>
-      jsonRpcResponse(id, Json.obj("resources" -> Json.arr(all.flatten.map { r =>
-        Json.obj(
-          "uri" -> r.uri(),
-          "name" -> r.name(),
-          "description" -> r.description(),
-          "mimeType" -> r.mimeType(),
-        )
-      })))
+      jsonRpcResponse(id, Json.obj("resources" -> JsArray(all.flatten.map(McpSupport.resourceToJson))))
     }(ec)
   }
 
@@ -1157,19 +1118,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listPrompts(attrs)(ec, env))).map { all =>
-      jsonRpcResponse(id, Json.obj("prompts" -> Json.arr(all.flatten.map { p =>
-        Json.obj(
-          "name" -> p.name(),
-          "description" -> p.description(),
-          "arguments" -> Json.arr(Option(p.arguments()).map(_.asScala).getOrElse(Seq.empty).map { a =>
-            Json.obj(
-              "name" -> a.name(),
-              "description" -> a.description(),
-              "required" -> a.required(),
-            )
-          }),
-        )
-      })))
+      jsonRpcResponse(id, Json.obj("prompts" -> JsArray(all.flatten.map(McpSupport.promptToJson))))
     }(ec)
   }
 
@@ -1177,14 +1126,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listResourceTemplates(attrs)(ec, env))).map { all =>
-      jsonRpcResponse(id, Json.obj("templates" -> Json.arr(all.flatten.map { r =>
-        Json.obj(
-          "uriTemplate" -> r.uriTemplate(),
-          "name" -> r.name(),
-          "description" -> r.description(),
-          "mimeType" -> r.mimeType(),
-        )
-      })))
+      jsonRpcResponse(id, Json.obj("templates" -> JsArray(all.flatten.map(McpSupport.resourceTemplateToJson))))
     }(ec)
   }
 
@@ -1200,7 +1142,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
           }
           Future.sequence(matchingConnectors.map(_.readResource(uri, attrs)(ec, env))).map { results =>
             val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
-            jsonRpcResponse(id, Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson))))
+            jsonRpcResponse(id, Json.obj("contents" -> JsArray(contents.map(McpSupport.resourceContentsToJson))))
           }(ec)
         }(ec)
     }
@@ -1223,7 +1165,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
             val result = results.flatten.headOption
             jsonRpcResponse(id, Json.obj(
               "description" -> result.map(_.description()).getOrElse("").json,
-              "messages" -> Json.arr(result.map(_.messages().asScala).getOrElse(Seq.empty).map { m =>
+              "messages" -> JsArray(result.map(_.messages().asScala).getOrElse(Seq.empty).map { m =>
                 Json.obj(
                   "role" -> m.role().name().toLowerCase,
                   "content" -> McpSupport.promptContentToJson(m.content()),
@@ -1434,16 +1376,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listResources(attrs))).flatMap { mcpResources =>
-      jsonRpcResponse(id, Json.obj("resources" -> Json.arr(
-        mcpResources.flatten.map { r =>
-          Json.obj(
-            "uri" -> r.uri(),
-            "name" -> r.name(),
-            "description" -> r.description(),
-            "mimeType" -> r.mimeType(),
-          )
-        }
-      )))
+      jsonRpcResponse(id, Json.obj("resources" -> JsArray(mcpResources.flatten.map(McpSupport.resourceToJson))))
     }
   }
 
@@ -1451,21 +1384,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listPrompts(attrs))).flatMap { mcpPrompts =>
-      jsonRpcResponse(id, Json.obj("prompts" -> Json.arr(
-        mcpPrompts.flatten.map { p =>
-          Json.obj(
-            "name" -> p.name(),
-            "description" -> p.description(),
-            "arguments" -> Json.arr(Option(p.arguments()).map(_.asScala).getOrElse(Seq.empty).map { a =>
-              Json.obj(
-                "name" -> a.name(),
-                "description" -> a.description(),
-                "required" -> a.required(),
-              )
-            }),
-          )
-        }
-      )))
+      jsonRpcResponse(id, Json.obj("prompts" -> JsArray(mcpPrompts.flatten.map(McpSupport.promptToJson))))
     }
   }
 
@@ -1473,16 +1392,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listResourceTemplates(attrs))).flatMap { mcpResources =>
-      jsonRpcResponse(id, Json.obj("templates" -> Json.arr(
-        mcpResources.flatten.map { r =>
-          Json.obj(
-            "uriTemplate" -> r.uriTemplate(),
-            "name" -> r.name(),
-            "description" -> r.description(),
-            "mimeType" -> r.mimeType(),
-          )
-        }
-      )))
+      jsonRpcResponse(id, Json.obj("templates" -> JsArray(mcpResources.flatten.map(McpSupport.resourceTemplateToJson))))
     }
   }
 
@@ -1498,7 +1408,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
           }
           Future.sequence(matchingConnectors.map(_.readResource(uri, attrs))).flatMap { results =>
             val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
-            jsonRpcResponse(id, Json.obj("contents" -> Json.arr(contents.map(McpSupport.resourceContentsToJson))))
+            jsonRpcResponse(id, Json.obj("contents" -> JsArray(contents.map(McpSupport.resourceContentsToJson))))
           }
         }
     }
@@ -1521,7 +1431,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
             val result = results.flatten.headOption
             jsonRpcResponse(id, Json.obj(
               "description" -> result.map(_.description()).getOrElse("").json,
-              "messages" -> Json.arr(result.map(_.messages().asScala).getOrElse(Seq.empty).map { m =>
+              "messages" -> JsArray(result.map(_.messages().asScala).getOrElse(Seq.empty).map { m =>
                 Json.obj(
                   "role" -> m.role().name().toLowerCase,
                   "content" -> McpSupport.promptContentToJson(m.content()),
