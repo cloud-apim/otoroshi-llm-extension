@@ -403,6 +403,11 @@ case class LlmToolFunction(
                            strict: Boolean = true,
                            parameters: JsObject,
                            required: Option[Seq[String]] = None,
+                           // -------------------- MCP specific tool metadata (forwarded as-is by the MCP exposure proxy)
+                           outputSchema: Option[JsObject] = None,
+                           annotations: Option[JsObject] = None,
+                           execution: Option[JsObject] = None,
+                           meta: Option[JsObject] = None,
                            // --------------------
                            backend: LlmToolFunctionBackend
                          ) extends EntityLocationSupport {
@@ -969,6 +974,10 @@ object LlmToolFunction {
       "strict" -> o.strict,
       "parameters" -> o.parameters,
       "required" -> o.required.map(v => JsArray(v.map(_.json))).getOrElse(JsNull).asValue,
+      "outputSchema" -> o.outputSchema.getOrElse(JsNull).asValue,
+      "annotations" -> o.annotations.getOrElse(JsNull).asValue,
+      "execution" -> o.execution.getOrElse(JsNull).asValue,
+      "meta" -> o.meta.getOrElse(JsNull).asValue,
       "backend" -> o.backend.json
     )
     override def reads(json: JsValue): JsResult[LlmToolFunction] = Try {
@@ -984,6 +993,10 @@ object LlmToolFunction {
         strict = json.select("strict").asOpt[Boolean].getOrElse(true),
         parameters = json.select("parameters").asOpt[JsObject].getOrElse(Json.obj()),
         required = json.select("required").asOpt[Seq[String]],
+        outputSchema = json.select("outputSchema").asOpt[JsObject],
+        annotations = json.select("annotations").asOpt[JsObject],
+        execution = json.select("execution").asOpt[JsObject],
+        meta = json.select("meta").asOpt[JsObject],
         backend = LlmToolFunctionBackend(
           kind = kind,
           options = kind match {
