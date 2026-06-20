@@ -148,10 +148,6 @@ class ToolFunctionsPage extends Component {
       type: 'monaco',
       props: { label: 'MCP - Annotations', language: 'javascript', height: 200 },
     },
-    execution: {
-      type: 'monaco',
-      props: { label: 'MCP - Execution', language: 'javascript', height: 200 },
-    },
     meta: {
       type: 'monaco',
       props: { label: 'MCP - Meta (_meta)', language: 'javascript', height: 200 },
@@ -310,7 +306,6 @@ class ToolFunctionsPage extends Component {
     '<<<MCP metadata',
     'outputSchema',
     'annotations',
-    'execution',
     'meta',
     '>>>Tester',
     'tester'
