@@ -119,6 +119,10 @@ All MCP server exposition plugins (HTTP, SSE, WebSocket) can emit audit events f
 `McpAudit` documented here covers the **server/exposition** side — calls that external clients make to the MCP servers Otoroshi exposes. The **client** side — calls Otoroshi makes to upstream MCP servers through an [MCP connector](/docs/mcp/mcp-connectors#audit-events) — is covered by a separate `McpClientAudit` event.
 :::
 
+:::tip Real-time metrics (always on)
+Independently of these (opt-in) audit events, every served MCP method also feeds Otoroshi's real-time metrics: `mcp.server.calls`, `mcp.server.errors`, and per-method `mcp.server.<method>.calls` / `.errors` / `.duration`. These are emitted whenever Otoroshi metrics are enabled — no flag required. See [Observability — Real-time MCP metrics](/docs/llm-gateway/observability-reporting#real-time-mcp-metrics).
+:::
+
 ### Enabling audit events
 
 Set `emit_audit_events` to `true` in the plugin configuration:
@@ -141,6 +145,7 @@ Each MCP method call will produce an `AuditEvent` with the audit type `McpAudit`
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `request_id` | string \| null | The Otoroshi request id (snowflake) of the current request, for correlation with `LLMUsageAudit` and [`McpClientAudit`](/docs/mcp/mcp-connectors#audit-events) events |
 | `mcp_method` | string | The MCP JSON-RPC method called (e.g. `tools/call`, `resources/list`, `initialize`) |
 | `mcp_id` | number | The JSON-RPC request id |
 | `mcp_request_payload` | object | The full JSON-RPC request payload |
@@ -159,6 +164,7 @@ Each MCP method call will produce an `AuditEvent` with the audit type `McpAudit`
 {
   "@type": "AuditEvent",
   "audit": "McpAudit",
+  "request_id": "1905616593920983819",
   "mcp_method": "tools/call",
   "mcp_id": 3,
   "mcp_request_payload": {
