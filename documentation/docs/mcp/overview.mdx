@@ -71,6 +71,17 @@ All three transports support the full MCP protocol:
 
 Resources are returned with their `uri`, `name`, `description`, and `mimeType`. Resource contents can be text or binary (blob). Prompts include their `name`, `description`, and `arguments` (with `name`, `description`, and `required` for each argument). When getting a prompt, the response includes the prompt `description` and its `messages` (each with a `role` and `content`).
 
+## Observability & auditability
+
+Both sides of MCP can be audited, each with its own opt-in audit event:
+
+| Audit event | Side | Emitted when | Enabled by |
+|-------------|------|--------------|------------|
+| [`McpAudit`](/docs/mcp/mcp-plugins#audit-events) | Server / exposition | An external client calls an MCP server Otoroshi exposes | `emit_audit_events` on the MCP server plugin |
+| [`McpClientAudit`](/docs/mcp/mcp-connectors#audit-events) | Client / connector | Otoroshi calls an upstream MCP server through a connector | `audit_events` on the MCP connector |
+
+Both produce standard Otoroshi `AuditEvent`s that can be shipped anywhere with [data exporters](/docs/llm-gateway/observability-reporting). See the [Observability](/docs/llm-gateway/observability-reporting) documentation for the full picture.
+
 ## Otoroshi + MCP = ❤️
 
 With Otoroshi you can use many tools to interact with MCP.
