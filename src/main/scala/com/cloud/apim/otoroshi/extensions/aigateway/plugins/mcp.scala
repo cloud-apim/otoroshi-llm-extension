@@ -410,6 +410,16 @@ object McpProxyEndpointConfig {
 }
 
 object McpAuditHelper {
+
+  // per-request holder for the json-rpc response envelope, so the audit event can log the actual
+  // response (mcp_response) instead of null. attrs is mutable and shared for the whole request.
+  val responseKey: TypedKey[JsValue] = TypedKey[JsValue]("cloud-apim.ai-gateway.mcp.response")
+  def record(attrs: TypedMap, response: JsValue): Unit = {
+    attrs.put(responseKey -> response)
+    ()
+  }
+  def recorded(attrs: TypedMap): JsValue = attrs.get(responseKey).getOrElse(JsNull)
+
   def emit(
     method: String,
     id: Long,
@@ -697,19 +707,22 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     NgProxyEngineError.NgResultProxyEngineError(Results.Status(status)(Json.obj("error" -> msg))).leftf
   }
 
-  def jsonRpcResponse(id: Long, payload: JsValue): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(Json.obj(
+  def jsonRpcResponse(id: Long, payload: JsValue)(implicit attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val envelope = Json.obj(
       "jsonrpc" -> "2.0",
       "id" -> id,
       "result" -> payload
-    ))), None).rightf
+    )
+    McpAuditHelper.record(attrs, envelope)
+    BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(envelope)), None).rightf
   }
 
-  def emptyResp(id: Long): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def emptyResp(id: Long)(implicit attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     jsonRpcResponse(id, Json.obj())
   }
 
   def initialize(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     config.computeCapabilities(attrs, includeLogging = false).flatMap { capabilities =>
       val response = Json.obj(
         "protocolVersion" -> "2025-06-18", //"2024-11-05",
@@ -725,6 +738,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def getToolList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     McpProxyLogic.toolsList(config, attrs).flatMap { tools =>
       val response = Json.obj("tools" -> JsArray(tools))
       session.send(id, response)
@@ -733,6 +747,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def toolsCall(id: Long, session: SseSession, request: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val name = params.select("name").asString
     val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
@@ -747,6 +762,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def getResourcesList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listResources(attrs))).flatMap { mcpResources =>
@@ -757,6 +773,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def getPromptsList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listPrompts(attrs))).flatMap { mcpPrompts =>
@@ -767,6 +784,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def getTemplatesList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listResourceTemplates(attrs))).flatMap { mcpResources =>
@@ -777,6 +795,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def readResource(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     json.select("params").select("uri").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter"))
       case Some(uri) =>
@@ -797,6 +816,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def getPromptHandler(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     json.select("params").select("name").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter"))
       case Some(name) =>
@@ -871,6 +891,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
                 Try(bodyRaw.utf8String.parseJson) match {
                   case Failure(e) => error(400,"error while parsing json-rpc payload")
                   case Success(json) => {
+                    implicit val _attrs: TypedMap = ctx.attrs
                     val id = json.select("id").asOpt[Long].getOrElse(0L)
                     val method = json.select("method").asOpt[String].getOrElse("--")
                     val start = System.currentTimeMillis()
@@ -916,9 +937,9 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
                     if (config.emitAuditEvents) {
                       result.onComplete {
                         case Success(Right(_)) =>
-                          McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "sse", None, ctx.attrs)
+                          McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "sse", None, ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
                         case Success(Left(_)) =>
-                          McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "sse", Some("proxy_engine_error"), ctx.attrs)
+                          McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "sse", Some("proxy_engine_error"), ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
                         case Failure(ex) =>
                           McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "sse", Some(ex.getMessage), ctx.attrs)
                       }
@@ -1214,19 +1235,22 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     NgProxyEngineError.NgResultProxyEngineError(Results.Status(status)(Json.obj("error" -> msg))).leftf
   }
 
-  def jsonRpcResponse(id: Long, payload: JsValue): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(Json.obj(
+  def jsonRpcResponse(id: Long, payload: JsValue)(implicit attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val envelope = Json.obj(
       "jsonrpc" -> "2.0",
       "id" -> id,
       "result" -> payload
-    ))), None).rightf
+    )
+    McpAuditHelper.record(attrs, envelope)
+    BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(envelope)), None).rightf
   }
 
-  def emptyResp(id: Long): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def emptyResp(id: Long)(implicit attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     jsonRpcResponse(id, Json.obj())
   }
 
   def initialize(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     config.computeCapabilities(attrs, includeLogging = false).flatMap { capabilities =>
       val response = Json.obj(
         "protocolVersion" -> "2025-06-18", //"2024-11-05",
@@ -1241,12 +1265,14 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def getToolList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     McpProxyLogic.toolsList(config, attrs).flatMap { tools =>
       jsonRpcResponse(id, Json.obj("tools" -> JsArray(tools)))
     }
   }
 
   def toolsCall(id: Long, request: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val name = params.select("name").asString
     val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
@@ -1257,6 +1283,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def getResourcesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listResources(attrs))).flatMap { mcpResources =>
@@ -1265,6 +1292,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def getPromptsList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listPrompts(attrs))).flatMap { mcpPrompts =>
@@ -1273,6 +1301,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def getTemplatesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     Future.sequence(mcpConnectors.map(_.listResourceTemplates(attrs))).flatMap { mcpResources =>
@@ -1281,6 +1310,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def readResource(id: Long, json: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     json.select("params").select("uri").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter"))
       case Some(uri) =>
@@ -1299,6 +1329,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   def getPromptHandler(id: Long, json: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    implicit val _attrs: TypedMap = attrs
     json.select("params").select("name").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter"))
       case Some(name) =>
@@ -1338,6 +1369,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
         Try(bodyRaw.utf8String.parseJson) match {
           case Failure(e) => error(400,"error while parsing json-rpc payload")
           case Success(json) => {
+            implicit val _attrs: TypedMap = ctx.attrs
             // println(s"mcp in >>> ${json.prettify}")
             val id = json.select("id").asOpt[Long].getOrElse(0L)
             val method = json.select("method").asOpt[String].getOrElse("--")
@@ -1364,9 +1396,9 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
             if (config.emitAuditEvents) {
               result.onComplete {
                 case Success(Right(_)) =>
-                  McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "http", None, ctx.attrs)
+                  McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "http", None, ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
                 case Success(Left(_)) =>
-                  McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "http", Some("proxy_engine_error"), ctx.attrs)
+                  McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "http", Some("proxy_engine_error"), ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
                 case Failure(ex) =>
                   McpAuditHelper.emit(method, id, json, System.currentTimeMillis() - start, "http", Some(ex.getMessage), ctx.attrs)
               }
