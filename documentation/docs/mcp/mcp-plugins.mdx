@@ -23,6 +23,24 @@ All three transport plugins (HTTP, SSE, WebSocket) implement the full MCP protoc
 | `prompts/list` | List all available prompts with their arguments |
 | `prompts/get` | Get a prompt by name with arguments. Returns the prompt description and messages (each with role and content). |
 
+### Tools
+
+When listing tools, each tool includes at least:
+- `name` - The tool name
+- `description` - A description of the tool
+- `inputSchema` - The JSON schema of the tool arguments (`type`, `properties`, `required`)
+
+Tools coming from a **tool function** entity can also carry extra MCP metadata when configured on the entity (see [tool function entity](/docs/function-calling/overview#tool-function-entity)):
+- `outputSchema` - JSON schema describing the tool result (MCP `outputSchema`)
+- `annotations` - MCP tool annotations (e.g. `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`)
+- `_meta` - Free-form metadata object, used by MCP apps and hybrid-auth scenarios
+
+These fields are only emitted when set on the tool function; they are omitted (not `null`) otherwise.
+
+For tools coming from an **MCP connector**, the fidelity depends on the connector transport:
+- connectors using the **Streamable HTTP** transport (`transport.kind: "http"`) are proxied with a **raw, full-fidelity passthrough**: the upstream tool definitions are forwarded as-is, preserving `outputSchema`, `annotations`, `_meta`, `title` and rich `tools/call` results (`structuredContent`, resource links, images, ...). This is what MCP apps need.
+- for every other connector transport, tool definitions go through the langchain4j abstraction: `_meta`, `annotations` and `title` are recovered and re-emitted, but `outputSchema` is not available on that path.
+
 ### Resources
 
 When listing resources, each resource includes:
@@ -97,6 +115,10 @@ These plugin-level filters are merged with the filters defined on each MCP conne
 
 All MCP server exposition plugins (HTTP, SSE, WebSocket) can emit audit events for every MCP method call. This is useful for monitoring, debugging, and auditing MCP usage across your infrastructure.
 
+:::info Two complementary audit streams
+`McpAudit` documented here covers the **server/exposition** side — calls that external clients make to the MCP servers Otoroshi exposes. The **client** side — calls Otoroshi makes to upstream MCP servers through an [MCP connector](/docs/mcp/mcp-connectors#audit-events) — is covered by a separate `McpClientAudit` event.
+:::
+
 ### Enabling audit events
 
 Set `emit_audit_events` to `true` in the plugin configuration:
@@ -122,7 +144,7 @@ Each MCP method call will produce an `AuditEvent` with the audit type `McpAudit`
 | `mcp_method` | string | The MCP JSON-RPC method called (e.g. `tools/call`, `resources/list`, `initialize`) |
 | `mcp_id` | number | The JSON-RPC request id |
 | `mcp_request_payload` | object | The full JSON-RPC request payload |
-| `mcp_response` | object | The JSON-RPC response (available for WebSocket transport, `null` for HTTP and SSE) |
+| `mcp_response` | object | The JSON-RPC response envelope (`jsonrpc`, `id`, `result`). Captured for all three transports (HTTP, SSE, WebSocket). `null` only on failures that produce no response. |
 | `transport` | string | The transport protocol used: `http`, `sse`, or `websocket` |
 | `duration` | number | The request duration in milliseconds |
 | `status` | string | `success` or `error` |
@@ -148,7 +170,15 @@ Each MCP method call will produce an `AuditEvent` with the audit type `McpAudit`
       "arguments": { "city": "Paris" }
     }
   },
-  "mcp_response": null,
+  "mcp_response": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "result": {
+      "content": [
+        { "type": "text", "text": "It is 21°C and sunny in Paris." }
+      ]
+    }
+  },
   "transport": "http",
   "duration": 142,
   "status": "success",
