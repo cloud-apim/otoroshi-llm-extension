@@ -31,6 +31,18 @@ Every LLM request logs critical telemetry data, including:
 - **Ecological Impact** - Estimate energy consumption and CO2 emissions
 - **Budget Consumption** - Track spending against defined budget limits
 
+## Audit event types
+
+The LLM extension emits several dedicated audit event types. They are standard Otoroshi `AuditEvent`s and can be filtered by their `audit` field in data exporters:
+
+| `audit` type | Emitted for | Always on? | Reference |
+|--------------|-------------|-----------|-----------|
+| `LLMUsageAudit` | Every LLM provider interaction (chat, completion, embedding, audio, image, moderation, video) | Yes | [Reporting](/docs/reporting) |
+| `McpAudit` | Calls to MCP servers Otoroshi **exposes** (server side) | Opt-in (`emit_audit_events` on the MCP server plugin) | [MCP server exposition](/docs/mcp/mcp-plugins#audit-events) |
+| `McpClientAudit` | Calls Otoroshi makes to **upstream** MCP servers through a connector (client side) | Opt-in (`audit_events` on the MCP connector) | [MCP connectors](/docs/mcp/mcp-connectors#audit-events) |
+
+LLM-specific data is also added to the standard Otoroshi `GatewayEvent` (see [Reporting — extra analytics data](/docs/reporting#extra-analytics-data-in-gatewayevent)).
+
 ## Using data exporters
 
 You can use [Otoroshi data exporters](https://maif.github.io/otoroshi/manual/entities/data-exporters.html) to extract LLM usage information and send it to any external system (Elasticsearch, Kafka, webhooks, etc.).
