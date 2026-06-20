@@ -807,6 +807,30 @@ object McpSupport {
     }
   }
 
+  // optional fields (description, mimeType, ...) MUST be omitted when null, the MCP spec uses
+  // optional fields and clients (e.g. the TS SDK zod schemas) reject an explicit `null` value.
+  def resourceToJson(r: McpResource): JsObject = {
+    Json.obj("uri" -> r.uri(), "name" -> r.name()) ++
+      Option(r.description()).map(d => Json.obj("description" -> d)).getOrElse(Json.obj()) ++
+      Option(r.mimeType()).map(m => Json.obj("mimeType" -> m)).getOrElse(Json.obj())
+  }
+
+  def resourceTemplateToJson(r: McpResourceTemplate): JsObject = {
+    Json.obj("uriTemplate" -> r.uriTemplate(), "name" -> r.name()) ++
+      Option(r.description()).map(d => Json.obj("description" -> d)).getOrElse(Json.obj()) ++
+      Option(r.mimeType()).map(m => Json.obj("mimeType" -> m)).getOrElse(Json.obj())
+  }
+
+  def promptToJson(p: McpPrompt): JsObject = {
+    Json.obj(
+      "name" -> p.name(),
+      "arguments" -> JsArray(Option(p.arguments()).map(_.asScala.toSeq).getOrElse(Seq.empty).map { a =>
+        Json.obj("name" -> a.name(), "required" -> a.required()) ++
+          Option(a.description()).map(d => Json.obj("description" -> d)).getOrElse(Json.obj())
+      })
+    ) ++ Option(p.description()).map(d => Json.obj("description" -> d)).getOrElse(Json.obj())
+  }
+
   def schemaToJson(el: JsonSchemaElement): JsObject = {
     el match {
       case s: JsonBooleanSchema => Json.obj("description" -> s.safeDescription(), "type" -> "boolean")
