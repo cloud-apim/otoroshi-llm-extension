@@ -406,7 +406,6 @@ case class LlmToolFunction(
                            // -------------------- MCP specific tool metadata (forwarded as-is by the MCP exposure proxy)
                            outputSchema: Option[JsObject] = None,
                            annotations: Option[JsObject] = None,
-                           execution: Option[JsObject] = None,
                            meta: Option[JsObject] = None,
                            // --------------------
                            backend: LlmToolFunctionBackend
@@ -976,7 +975,6 @@ object LlmToolFunction {
       "required" -> o.required.map(v => JsArray(v.map(_.json))).getOrElse(JsNull).asValue,
       "outputSchema" -> o.outputSchema.getOrElse(JsNull).asValue,
       "annotations" -> o.annotations.getOrElse(JsNull).asValue,
-      "execution" -> o.execution.getOrElse(JsNull).asValue,
       "meta" -> o.meta.getOrElse(JsNull).asValue,
       "backend" -> o.backend.json
     )
@@ -995,7 +993,6 @@ object LlmToolFunction {
         required = json.select("required").asOpt[Seq[String]],
         outputSchema = json.select("outputSchema").asOpt[JsObject],
         annotations = json.select("annotations").asOpt[JsObject],
-        execution = json.select("execution").asOpt[JsObject],
         meta = json.select("meta").asOpt[JsObject],
         backend = LlmToolFunctionBackend(
           kind = kind,
