@@ -312,17 +312,10 @@ case class McpConnector(
 
   override def json: JsValue = McpConnector.format.writes(this)
 
-  private def buildClient(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): McpClient = {
-    println(s"building McpClient for ${name}")
-    if (transport.kind == McpConnectorTransportKind.Meta) {
-      return new MetaMcpClient(this, env, ec)
-    }
-    if (transport.kind == McpConnectorTransportKind.Openapi) {
-      return new OpenApiMcpClient(this, env, ec)
-    }
-    val finaltransport = {
-      Try(McpConnectorTransport.format.reads(transport.json.stringify.evaluateEl(attrs).parseJson).getOrElse(transport)).getOrElse(transport)
-    }
+  // EL-evaluated transport + computed headers (incl. forwardAuth / {input_token} substitution).
+  // Shared by buildClient (langchain4j path) and the raw JSON-RPC passthrough (Http kind).
+  private def resolvedTransportAndHeaders(attrs: TypedMap)(implicit env: Env): (McpConnectorTransport, Map[String, String]) = {
+    val finaltransport = Try(McpConnectorTransport.format.reads(transport.json.stringify.evaluateEl(attrs).parseJson).getOrElse(transport)).getOrElse(transport)
     val inputToken: String = if (forwardAuth) {
       attrs.get(McpOAuthFilterUtils.McpUserAuthTokenKey)
         // .orElse(attrs.get(otoroshi.plugins.Keys.MatchedRawInputTokenKey)) // TODO: use MatchedRawInputTokenKey
@@ -333,6 +326,114 @@ case class McpConnector(
         .getOrElse("--")
     } else "--"
     val headers: Map[String, String] = if (forwardAuth) finaltransport.sseOptions.headers.mapValues(_.applyOnWithPredicate(_.contains("{input_token}"))(_.replace("{input_token}", inputToken))) else transport.sseOptions.headers
+    (finaltransport, headers)
+  }
+
+  // true when this connector talks to an upstream MCP server over our own streamable-HTTP transport.
+  // For those we can proxy the raw JSON-RPC payloads and keep full fidelity (_meta, annotations,
+  // outputSchema, structuredContent, rich content blocks) instead of going through the lossy
+  // langchain4j McpClient/ToolSpecification abstraction.
+  def isRawHttpTransport: Boolean = transport.kind == McpConnectorTransportKind.Http
+
+  private def parseSseRaw(body: String): Seq[JsValue] = {
+    body.split("\\r?\\n\\r?\\n").toSeq.flatMap { event =>
+      val data = event.split("\\r?\\n").iterator
+        .filter(_.startsWith("data:"))
+        .map(_.stripPrefix("data:").stripPrefix(" "))
+        .mkString("\n")
+      if (data.isEmpty) None else Try(Json.parse(data)).toOption
+    }
+  }
+
+  private def rawHttpPost(url: String, headers: Seq[(String, String)], timeout: FiniteDuration, body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[(Option[String], Seq[JsValue])] = {
+    env.Ws.url(url)
+      .withHttpHeaders(headers: _*)
+      .withRequestTimeout(timeout)
+      .withMethod("POST")
+      .withBody(body.stringify)
+      .execute()
+      .map { resp =>
+        val sid = resp.headers.find { case (k, _) => k.equalsIgnoreCase("Mcp-Session-Id") }.flatMap(_._2.headOption)
+        val ctype = resp.headers.collectFirst { case (k, v) if k.equalsIgnoreCase("Content-Type") => v.headOption.getOrElse("") }.getOrElse("")
+        val nodes: Seq[JsValue] =
+          if (ctype.contains("text/event-stream")) parseSseRaw(resp.body)
+          else if (resp.body.trim.nonEmpty) Try(Json.parse(resp.body)).toOption.toSeq
+          else Seq.empty
+        (sid, nodes)
+      }
+  }
+
+  // raw JSON-RPC call to the upstream streamable-HTTP MCP server: initialize handshake (to obtain the
+  // Mcp-Session-Id), then the actual request. Returns the raw `result` object of the response.
+  def rawHttpRpc(method: String, params: JsValue, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[JsValue] = {
+    val (finaltransport, hdrs) = resolvedTransportAndHeaders(attrs)
+    val opts = finaltransport.sseOptions
+    val url = opts.url
+    val timeout = opts.timeout
+    val baseHeaders: Seq[(String, String)] = Seq(
+      "Content-Type" -> "application/json",
+      "Accept" -> "application/json, text/event-stream",
+    ) ++ hdrs.toSeq
+    val protocolVersion: String = metadata.getOrElse("protocol_version", "2025-06-18").toString
+    val clientVersion: String = metadata.getOrElse("version", "1.0").toString
+    val initBody = Json.obj(
+      "jsonrpc" -> "2.0", "id" -> 0, "method" -> "initialize",
+      "params" -> Json.obj(
+        "protocolVersion" -> protocolVersion,
+        "capabilities" -> Json.obj(),
+        "clientInfo" -> Json.obj("name" -> name, "version" -> clientVersion),
+      ),
+    )
+    rawHttpPost(url, baseHeaders, timeout, initBody).flatMap { case (sid, _) =>
+      val sessHeaders = baseHeaders ++ sid.map(s => "Mcp-Session-Id" -> s).toSeq
+      rawHttpPost(url, sessHeaders, timeout, Json.obj("jsonrpc" -> "2.0", "method" -> "notifications/initialized")).flatMap { _ =>
+        rawHttpPost(url, sessHeaders, timeout, Json.obj("jsonrpc" -> "2.0", "id" -> 1, "method" -> method, "params" -> params)).map { case (_, nodes) =>
+          val envelope = nodes.find(n => (n \ "result").toOption.isDefined || (n \ "error").toOption.isDefined).orElse(nodes.lastOption).getOrElse(Json.obj())
+          (envelope \ "result").asOpt[JsValue].getOrElse {
+            (envelope \ "error").asOpt[JsValue] match {
+              case Some(err) => throw new RuntimeException(s"upstream mcp error: ${err.stringify}")
+              case None => Json.obj()
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // raw, full-fidelity tools/list for Http connectors (preserves _meta/annotations/outputSchema/title).
+  def rawListTools(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsObject]] = {
+    val ctx = attrs.json
+    rawHttpRpc("tools/list", Json.obj(), attrs).map { result =>
+      (result \ "tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty).filter { tool =>
+        val tname = (tool \ "name").asOpt[String].getOrElse("")
+        matchesByName(tname, includeFunctions, excludeFunctions) && matchesRules(tname, ctx, allowRules.toolRules, disallowRules.toolRules)
+      }
+    }
+  }
+
+  // raw, full-fidelity tools/call for Http connectors (preserves content/structuredContent/_meta/isError).
+  def rawCallTool(name: String, args: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[JsObject] = {
+    val ctx = attrs.json
+    if (matchesByName(name, includeFunctions, excludeFunctions) && matchesRules(name, ctx, allowRules.toolRules, disallowRules.toolRules)) {
+      val argsJson: JsValue = Try(Json.parse(args)).getOrElse(Json.obj())
+      rawHttpRpc("tools/call", Json.obj("name" -> name, "arguments" -> argsJson), attrs).map {
+        case o: JsObject => o
+        case other => Json.obj("content" -> Json.arr(Json.obj("type" -> "text", "text" -> other.stringify)))
+      }
+    } else {
+      Future.successful(Json.obj("isError" -> true, "content" -> Json.arr(Json.obj("type" -> "text", "text" -> s"you cannot call tool named: '${name}'"))))
+    }
+  }
+
+  private def buildClient(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): McpClient = {
+    println(s"building McpClient for ${name}")
+    if (transport.kind == McpConnectorTransportKind.Meta) {
+      return new MetaMcpClient(this, env, ec)
+    }
+    if (transport.kind == McpConnectorTransportKind.Openapi) {
+      return new OpenApiMcpClient(this, env, ec)
+    }
+    val (finaltransport, headers) = resolvedTransportAndHeaders(attrs)
     val trsprt = finaltransport.kind match {
       case McpConnectorTransportKind.Stdio => {
         val opts = finaltransport.stdioOptions
@@ -829,6 +930,45 @@ object McpSupport {
           Option(a.description()).map(d => Json.obj("description" -> d)).getOrElse(Json.obj())
       })
     ) ++ Option(p.description()).map(d => Json.obj("description" -> d)).getOrElse(Json.obj())
+  }
+
+  // converts an arbitrary value coming from langchain4j's ToolSpecification.metadata() (Jackson-produced
+  // Map/List/primitives) back to a play-json value.
+  def anyRefToJsValue(o: Any): JsValue = o match {
+    case null => JsNull
+    case v: JsValue => v
+    case v => scala.util.Try(Json.parse(gson.toJson(v))).getOrElse(JsString(v.toString))
+  }
+
+  // langchain4j folds the MCP tool `annotations` hints + top-level `title` into the same flat metadata()
+  // map as the `_meta` properties. We reconstruct the original shape: known annotation/title keys go back
+  // into `annotations`/`title`, everything else is considered part of `_meta`.
+  private val ToolAnnotationKeys: Set[String] = Set("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint")
+  private val ToolMetaExcludedKeys: Set[String] = ToolAnnotationKeys ++ Set("title", "title-annotation")
+
+  // Faithful-ish tools/list entry built from a parsed ToolSpecification. Used for non-Http connectors
+  // (Http connectors use the raw passthrough which preserves the full upstream payload incl. outputSchema).
+  // NOTE: langchain4j never parses the MCP `outputSchema`, so it cannot be recovered through this path.
+  def toolSpecToJson(desc: ToolSpecification): JsObject = {
+    val required: Seq[String] = Option(desc.parameters()).flatMap(p => Option(p.required())).map(_.asScala.toSeq).getOrElse(Seq.empty)
+    val properties: JsObject = JsObject(Option(desc.parameters()).flatMap(p => Option(p.properties())).map(_.asScala).getOrElse(Map.empty[String, JsonSchemaElement]).mapValues(schemaToJson).toMap)
+    val base = Json.obj(
+      "name" -> desc.name(),
+      "description" -> desc.description(),
+      "inputSchema" -> Json.obj(
+        "type" -> "object",
+        "properties" -> properties,
+        "required" -> required,
+      ),
+    )
+    val md: Map[String, AnyRef] = Option(desc.metadata()).map(_.asScala.toMap).getOrElse(Map.empty)
+    val titleObj = md.get("title").map(v => Json.obj("title" -> anyRefToJsValue(v))).getOrElse(Json.obj())
+    val annotations = ToolAnnotationKeys.toSeq.flatMap(k => md.get(k).map(v => k -> anyRefToJsValue(v))) ++
+      md.get("title-annotation").map(v => "title" -> anyRefToJsValue(v)).toSeq
+    val annotationsObj = if (annotations.nonEmpty) Json.obj("annotations" -> JsObject(annotations.toMap)) else Json.obj()
+    val metaEntries = md.filterKeys(k => !ToolMetaExcludedKeys.contains(k)).toMap
+    val metaObj = if (metaEntries.nonEmpty) Json.obj("_meta" -> JsObject(metaEntries.mapValues(anyRefToJsValue).toMap)) else Json.obj()
+    base ++ titleObj ++ annotationsObj ++ metaObj
   }
 
   def schemaToJson(el: JsonSchemaElement): JsObject = {
