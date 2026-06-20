@@ -509,6 +509,10 @@ The `{input_token}` placeholder is replaced at runtime with the Bearer token fro
 
 A connector can emit an audit event for **every call Otoroshi makes to the upstream MCP server** (tools, resources, resource templates, prompts). This is the client-side counterpart of the [`McpAudit` events](/docs/mcp/mcp-plugins#audit-events) emitted by the MCP server exposition plugins.
 
+:::tip Real-time metrics (always on)
+Independently of these (opt-in) audit events, every upstream MCP call also feeds Otoroshi's real-time metrics: `mcp.client.calls`, `mcp.client.errors`, and per-operation `mcp.client.<op>.calls` / `.errors` / `.duration`. These are emitted whenever Otoroshi metrics are enabled — no flag required. See [Observability — Real-time MCP metrics](/docs/llm-gateway/observability-reporting#real-time-mcp-metrics).
+:::
+
 ### Enabling audit events
 
 Set `audit_events` to `true` on the connector (default: `false`):
@@ -528,12 +532,13 @@ Each upstream operation produces an `AuditEvent` with the audit type `McpClientA
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `request_id` | string \| null | The Otoroshi request id (snowflake) of the triggering request, for correlation with `LLMUsageAudit` and [`McpAudit`](/docs/mcp/mcp-plugins#audit-events) events. `null` when the call happens outside a request context. |
 | `mcp_connector_id` | string | The connector entity id |
 | `mcp_connector_name` | string | The connector name |
 | `mcp_connector_kind` | string | The transport kind (`stdio`, `sse`, `ws`, `http`, `http_langchain`, `meta`, `openapi`) |
 | `mcp_operation` | string | The operation performed: `tools/list`, `tools/call`, `resources/list`, `resources/read`, `resources/templates/list`, `prompts/list`, `prompts/get` |
-| `mcp_request` | object | A summary of the request (e.g. tool name and arguments for `tools/call`, uri for `resources/read`) |
-| `mcp_response` | object | A summary of the upstream response (e.g. item counts for list operations, the result for `tools/call`) |
+| `mcp_request` | object | The request (e.g. tool name and arguments for `tools/call`, uri for `resources/read`) |
+| `mcp_response` | object | The full upstream response payload (e.g. the list of tools/resources/prompts, the `tools/call` result with its content) |
 | `duration` | number | The upstream call duration in milliseconds |
 | `status` | string | `success` or `error` |
 | `error` | string | Error message if the upstream call failed, `null` otherwise |
@@ -547,12 +552,17 @@ Each upstream operation produces an `AuditEvent` with the audit type `McpClientA
 {
   "@type": "AuditEvent",
   "audit": "McpClientAudit",
+  "request_id": "1905616593920983819",
   "mcp_connector_id": "mcp-connector_xxxxx",
   "mcp_connector_name": "github-mcp",
   "mcp_connector_kind": "http",
   "mcp_operation": "tools/call",
   "mcp_request": { "name": "create_issue", "arguments": { "repo": "demo", "title": "bug" } },
-  "mcp_response": { "result": "issue #42 created" },
+  "mcp_response": {
+    "content": [
+      { "type": "text", "text": "issue #42 created" }
+    ]
+  },
   "duration": 318,
   "status": "success",
   "error": null,
