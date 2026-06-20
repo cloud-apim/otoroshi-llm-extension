@@ -23,6 +23,7 @@ This page documents the `LLMUsageAudit` event. MCP usage is covered by two dedic
 | `@type` | string | Always `"AuditEvent"` |
 | `@product` | string | Always `"otoroshi"` |
 | `audit` | string | Always `"LLMUsageAudit"` |
+| `request_id` | string \| null | The Otoroshi request id (snowflake) — same value as the `GatewayEvent` `@id`, and as the `request_id` of the [`McpAudit`](/docs/mcp/mcp-plugins#audit-events) / [`McpClientAudit`](/docs/mcp/mcp-connectors#audit-events) events emitted during the same request. Use it to correlate a chat completion with the MCP tool calls it triggered. |
 | `provider_kind` | string | The LLM provider type (e.g., `openai`, `anthropic`, `mistral`, etc.) |
 | `provider` | string | The provider entity ID |
 | `duration` | number | Request duration in milliseconds |
@@ -270,6 +271,7 @@ Here is a full example of a `LLMUsageAudit` event for a chat completion request:
   "@service": "Otoroshi",
   "@env": "dev",
   "audit": "LLMUsageAudit",
+  "request_id": "1905616593920983819",
   "provider_kind": "openai",
   "provider": "provider_10bbc76d-7cd8-4cb7-b760-61e749a1b691",
   "duration": 415,
