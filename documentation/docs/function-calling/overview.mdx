@@ -103,6 +103,9 @@ A tool function entity defines a callable tool with its JSON schema and backend:
     }
   },
   "required": ["location"],
+  "outputSchema": null,
+  "annotations": null,
+  "meta": null,
   "backend": {
     "kind": "QuickJs",
     "options": {
@@ -119,7 +122,14 @@ A tool function entity defines a callable tool with its JSON schema and backend:
 | `strict` | boolean | Whether to enforce strict JSON schema validation |
 | `parameters` | object | JSON schema of the function parameters |
 | `required` | array | List of required parameter names |
+| `outputSchema` | object \| null | Optional MCP output schema, forwarded as `outputSchema` when this tool is exposed through an [MCP server plugin](/docs/mcp/mcp-plugins) |
+| `annotations` | object \| null | Optional MCP tool annotations (e.g. `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`, `title`), forwarded as `annotations` |
+| `meta` | object \| null | Optional free-form metadata, forwarded as `_meta` (used by MCP apps and hybrid-auth scenarios) |
 | `backend` | object | Backend configuration (kind + options) |
+
+:::note MCP metadata fields
+`outputSchema`, `annotations` and `meta` are **optional** and only relevant when the tool function is exposed through an [MCP server plugin](/docs/mcp/mcp-plugins). They have no effect on the standard LLM tool-calling loop. When unset they are omitted from the `tools/list` output (no `null` value is emitted).
+:::
 
 ## Tool naming convention
 
