@@ -32,6 +32,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val embeddingModelsDataStore: EmbeddingModelsDataStore = new KvEmbeddingModelsDataStore(extensionId, env.datastores.redis, env)
   val embeddingStoresDataStore: EmbeddingStoresDataStore = new KvEmbeddingStoresDataStore(extensionId, env.datastores.redis, env)
   val mcpConnectorsDatastore: McpConnectorsDataStore = new KvMcpConnectorsDataStore(extensionId, env.datastores.redis, env)
+  val mcpVirtualServersDataStore: McpVirtualServersDataStore = new KvMcpVirtualServersDataStore(extensionId, env.datastores.redis, env)
   val moderationModelsDataStore: ModerationModelsDataStore = new KvModerationModelsDataStore(extensionId, env.datastores.redis, env)
   val AudioModelsDataStore: AudioModelsDataStore = new KvAudioModelsDataStore(extensionId, env.datastores.redis, env)
   val ocrModelsDataStore: OcrModelsDataStore = new KvOcrModelsDataStore(extensionId, env.datastores.redis, env)
@@ -122,6 +123,16 @@ class AiGatewayExtensionState(env: Env) {
 
   def updateMcpConnectors(values: Seq[McpConnector]): Unit = {
     _mcpConnectors.addAll(values.map(v => (v.id, v))).remAll(_mcpConnectors.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _mcpVirtualServers = new UnboundedTrieMap[String, McpVirtualServer]()
+
+  def mcpVirtualServer(id: String): Option[McpVirtualServer] = _mcpVirtualServers.get(id)
+
+  def allMcpVirtualServers(): Seq[McpVirtualServer] = _mcpVirtualServers.values.toSeq
+
+  def updateMcpVirtualServers(values: Seq[McpVirtualServer]): Unit = {
+    _mcpVirtualServers.addAll(values.map(v => (v.id, v))).remAll(_mcpVirtualServers.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _moderationModels = new UnboundedTrieMap[String, ModerationModel]()
@@ -260,6 +271,7 @@ class AiExtension(val env: Env) extends AdminExtension {
 
   lazy val promptPageCode = getResourceCode("cloudapim/extensions/ai/PromptPage.js")
   lazy val mcpConnectorsPageCode = getResourceCode("cloudapim/extensions/ai/McpConnectorsPage.js")
+  lazy val mcpVirtualServersPageCode = getResourceCode("cloudapim/extensions/ai/McpVirtualServersPage.js")
   lazy val embeddingModelsPageCode = getResourceCode("cloudapim/extensions/ai/EmbeddingModelsPage.js")
   lazy val embeddingStoresPageCode = getResourceCode("cloudapim/extensions/ai/EmbeddingStoresPage.js")
   lazy val toolFunctionPageCode = getResourceCode("cloudapim/extensions/ai/ToolFunctionsPage.js")
@@ -930,6 +942,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    const canExecuteJlamaMsg = "${JlamaChatClient.errorMsg}";
             |
             |    ${mcpConnectorsPageCode}
+            |    ${mcpVirtualServersPageCode}
             |    ${embeddingModelsPageCode}
             |    ${embeddingStoresPageCode}
             |    ${toolFunctionPageCode}
@@ -1080,6 +1093,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            icon: () => 'fa-brain',
             |          },
             |          {
+            |            title: 'MCP Virtual Servers',
+            |            description: 'All your MCP Virtual Servers',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/mcp-virtual-servers',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
             |            title: 'Moderation Models',
             |            description: 'All your Moderation Models',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1211,6 +1232,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          icon: () => 'fa-brain',
             |        },
             |        {
+            |          title: 'MCP Virtual Servers',
+            |          description: 'All your MCP Virtual Servers',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/mcp-virtual-servers',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
             |          title: 'Moderation Models',
             |          description: 'All your Moderation models',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1322,6 +1351,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'MCP Connectors',
             |          text: 'All your MCP Connectors',
             |          path: 'extensions/cloud-apim/ai-gateway/mcp-connectors',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'MCP Virtual Servers',
+            |          text: 'All your MCP Virtual Servers',
+            |          path: 'extensions/cloud-apim/ai-gateway/mcp-virtual-servers',
             |          icon: 'brain'
             |        },
             |        {
@@ -1437,6 +1472,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'MCP Connectors',
             |          value: 'mcp-connectors',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/mcp-virtual-servers`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'MCP Virtual Servers',
+            |          value: 'mcp-virtual-servers',
             |        },
             |        {
             |          action: () => {
@@ -1648,6 +1691,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            return React.createElement(McpConnectorsPage, props, null)
             |          }
             |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/mcp-virtual-servers/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(McpVirtualServersPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/mcp-virtual-servers/:taction',
+            |          component: (props) => {
+            |            return React.createElement(McpVirtualServersPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/mcp-virtual-servers',
+            |          component: (props) => {
+            |            return React.createElement(McpVirtualServersPage, props, null)
+            |          }
+            |        },
             |          {
             |          path: '/extensions/cloud-apim/ai-gateway/moderation-models/:taction/:titem',
             |          component: (props) => {
@@ -1813,6 +1874,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       embeddingModels <- datastores.embeddingModelsDataStore.findAllAndFillSecrets()
       embeddingStores <- datastores.embeddingStoresDataStore.findAllAndFillSecrets()
       mcpConnectors <- datastores.mcpConnectorsDatastore.findAllAndFillSecrets()
+      mcpVirtualServers <- datastores.mcpVirtualServersDataStore.findAllAndFillSecrets()
       moderationModels <- datastores.moderationModelsDataStore.findAllAndFillSecrets()
       audioModels <- datastores.AudioModelsDataStore.findAllAndFillSecrets()
       ocrModels <- datastores.ocrModelsDataStore.findAllAndFillSecrets()
@@ -1830,6 +1892,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateEmbeddingModels(embeddingModels)
       states.updateEmbeddingStores(embeddingStores)
       states.updateMcpConnectors(mcpConnectors)
+      states.updateMcpVirtualServers(mcpVirtualServers)
       states.updateModerationModels(moderationModels)
       states.updateAudioModel(audioModels)
       states.updateOcrModels(ocrModels)
@@ -1856,6 +1919,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(EmbeddingModel.resource(env, datastores, states)),
       AdminExtensionEntity(EmbeddingStore.resource(env, datastores, states)),
       AdminExtensionEntity(McpConnector.resource(env, datastores, states)),
+      AdminExtensionEntity(McpVirtualServer.resource(env, datastores, states)),
       AdminExtensionEntity(ModerationModel.resource(env, datastores, states)),
       AdminExtensionEntity(AudioModel.resource(env, datastores, states)),
       AdminExtensionEntity(OcrModel.resource(env, datastores, states)),
