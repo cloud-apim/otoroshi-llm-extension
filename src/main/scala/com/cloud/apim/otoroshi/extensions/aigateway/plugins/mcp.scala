@@ -49,7 +49,7 @@ object McpOAuthFilterUtils {
   }
 
   def access(ctx: NgAccessContext, internalName: String)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
-    val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default)
+    val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default).resolve()
     config.authModuleRef match {
       case None if !config.enforceOAuth => NgAccess.NgAllowed.vfuture
       case None if config.enforceOAuth  => NgAccess.NgDenied(Results.BadRequest(Json.obj("error" -> "no auth. module setup"))).vfuture
@@ -119,6 +119,7 @@ object McpOAuthFilterUtils {
 }
 
 case class McpProxyEndpointConfig(
+  serverRef: Option[String] = None,
   name: Option[String],
   version: Option[String],
   enforceOAuth: Boolean = false,
@@ -141,6 +142,42 @@ case class McpProxyEndpointConfig(
   disallowRules: McpConnectorRules = McpConnectorRules.empty,
 ) extends NgPluginConfig {
   def json: JsValue = McpProxyEndpointConfig.format.writes(this)
+
+  // Merge this config (treated as the override/plugin side) on top of `base` (the McpVirtualServer entity).
+  // Hybrid rule: a field overrides the base only when it carries a meaningful value — Option => Some wins,
+  // Seq => non-empty wins, the two enable-flags are OR'd, and allow/disallow rules are merged additively.
+  def overriddenBy(o: McpProxyEndpointConfig): McpProxyEndpointConfig = copy(
+    serverRef = None,
+    name = o.name.orElse(name),
+    version = o.version.orElse(version),
+    enforceOAuth = enforceOAuth || o.enforceOAuth,
+    authModuleRef = o.authModuleRef.orElse(authModuleRef),
+    authPrmUrl = o.authPrmUrl.orElse(authPrmUrl),
+    functionRefs = if (o.functionRefs.nonEmpty) o.functionRefs else functionRefs,
+    mcpRefs = if (o.mcpRefs.nonEmpty) o.mcpRefs else mcpRefs,
+    emitAuditEvents = emitAuditEvents || o.emitAuditEvents,
+    includeFunctions = if (o.includeFunctions.nonEmpty) o.includeFunctions else includeFunctions,
+    excludeFunctions = if (o.excludeFunctions.nonEmpty) o.excludeFunctions else excludeFunctions,
+    includeResources = if (o.includeResources.nonEmpty) o.includeResources else includeResources,
+    excludeResources = if (o.excludeResources.nonEmpty) o.excludeResources else excludeResources,
+    includeResourceTemplates = if (o.includeResourceTemplates.nonEmpty) o.includeResourceTemplates else includeResourceTemplates,
+    excludeResourceTemplates = if (o.excludeResourceTemplates.nonEmpty) o.excludeResourceTemplates else excludeResourceTemplates,
+    includeResourceTemplateUris = if (o.includeResourceTemplateUris.nonEmpty) o.includeResourceTemplateUris else includeResourceTemplateUris,
+    excludeResourceTemplateUris = if (o.excludeResourceTemplateUris.nonEmpty) o.excludeResourceTemplateUris else excludeResourceTemplateUris,
+    includePrompts = if (o.includePrompts.nonEmpty) o.includePrompts else includePrompts,
+    excludePrompts = if (o.excludePrompts.nonEmpty) o.excludePrompts else excludePrompts,
+    allowRules = allowRules.merge(o.allowRules),
+    disallowRules = disallowRules.merge(o.disallowRules),
+  )
+
+  // When `serverRef` points to an existing McpVirtualServer, start from its config and overlay these inline
+  // overrides. Otherwise return this config unchanged (full backward compatibility for ref-less routes).
+  def resolve()(implicit env: Env): McpProxyEndpointConfig = {
+    serverRef.flatMap(r => env.adminExtensions.extension[AiExtension].get.states.mcpVirtualServer(r)) match {
+      case Some(server) => server.config.overriddenBy(this)
+      case None => this
+    }
+  }
   private def matchesByName(name: String, include: Seq[String], exclude: Seq[String]): Boolean = {
     if (include.isEmpty && exclude.isEmpty) {
       true
@@ -211,6 +248,7 @@ case class McpProxyEndpointConfig(
 
 object McpProxyEndpointConfig {
   val configFlow: Seq[String] = Seq(
+    "server_ref",
     "name", "version",
     "refs", "mcp_refs",
     "enforce_oauth",
@@ -225,6 +263,17 @@ object McpProxyEndpointConfig {
     "allow_rules", "disallow_rules",
   )
   val configSchema: Option[JsObject] = Some(Json.obj(
+    "server_ref" -> Json.obj(
+      "type" -> "select",
+      "label" -> "MCP Virtual Server",
+      "props" -> Json.obj(
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-virtual-servers",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      ),
+    ),
     "name" -> Json.obj(
       "type" -> "string",
       "label" -> "MCP server name"
@@ -355,6 +404,7 @@ object McpProxyEndpointConfig {
   )
   val format = new Format[McpProxyEndpointConfig] {
     override def writes(o: McpProxyEndpointConfig): JsValue = Json.obj(
+      "server_ref" -> o.serverRef.map(_.json).getOrElse(JsNull).asValue,
       "name" -> o.name.map(_.json).getOrElse(JsNull).asValue,
       "version" -> o.version.map(_.json).getOrElse(JsNull).asValue,
       "enforce_oauth" -> o.enforceOAuth,
@@ -381,6 +431,7 @@ object McpProxyEndpointConfig {
       val refs = json.select("refs").asOpt[Seq[String]].getOrElse(Seq.empty)
       val allRefs = refs ++ singleRef
       McpProxyEndpointConfig(
+        serverRef = json.select("server_ref").asOptString.filter(_.trim.nonEmpty),
         name = json.select("name").asOptString.filter(_.trim.nonEmpty),
         version = json.select("version").asOptString.filter(_.trim.nonEmpty),
         enforceOAuth = json.select("enforce_oauth").asOptBoolean.getOrElse(false),
@@ -866,7 +917,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default)
+    val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default).resolve()
     if (ctx.request.method.toLowerCase() == "get") {
       val sessionId = if (env.isDev) ctx.request.queryParam("sessionId").getOrElse(IdGenerator.token(16)) else IdGenerator.token(16)
       val session = SseSession(sessionId)
@@ -1007,7 +1058,7 @@ class McpWebsocketEndpoint extends NgWebsocketBackendPlugin with NgAccessValidat
   }
 
   override def callBackend(ctx: NgWebsocketPluginContext)(implicit env: Env, ec: ExecutionContext): Flow[Message, Message, _] = {
-    val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default)
+    val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default).resolve()
     ActorFlow
       .actorRef(out => McpActor.props(out, config, env, ctx.attrs))(env.otoroshiActorSystem, env.otoroshiMaterializer)
   }
@@ -1389,7 +1440,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
   }
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default)
+    val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default).resolve()
     if (ctx.request.hasBody && ctx.request.method.toLowerCase() == "post") {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         Try(bodyRaw.utf8String.parseJson) match {
