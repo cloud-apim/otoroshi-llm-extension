@@ -1,6 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
+import com.cloud.apim.otoroshi.extensions.aigateway.AiMetrics
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import otoroshi.env.Env
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits._
 
@@ -41,14 +43,17 @@ object ProviderCircuitBreaker {
     states.get(providerId).exists(_.openUntil > now)
   }
 
-  def recordSuccess(providerId: String): Unit = states.synchronized {
+  def recordSuccess(providerId: String)(implicit env: Env): Unit = states.synchronized {
+    val wasOpen = states.get(providerId).exists(_.openUntil > 0L)
     states.remove(providerId)
+    if (wasOpen) AiMetrics.markCircuit("close")
   }
 
-  def recordFailure(providerId: String, now: Long, settings: CircuitBreakerSettings): Unit = states.synchronized {
+  def recordFailure(providerId: String, now: Long, settings: CircuitBreakerSettings)(implicit env: Env): Unit = states.synchronized {
     val failures = states.get(providerId).map(_.failures).getOrElse(0) + 1
     val openUntil = if (failures >= settings.consecutiveFailures) now + settings.cooldownMs else 0L
     states.update(providerId, State(failures, openUntil))
+    if (openUntil > 0L) AiMetrics.markCircuit("open")
   }
 
   // visible for tests / observability
