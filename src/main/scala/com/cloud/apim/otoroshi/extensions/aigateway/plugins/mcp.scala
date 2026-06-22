@@ -162,7 +162,8 @@ case class McpStaticResource(
   }
 
   // contents entry returned by resources/read for this resource (a single content block).
-  def read(attrs: TypedMap, allowedHosts: Seq[String])(implicit env: Env, ec: ExecutionContext): Future[JsObject] = {
+  // emitAudit gates the McpResourceFetchAudit event for the outbound url fetch (metrics are always recorded).
+  def read(attrs: TypedMap, allowedHosts: Seq[String], emitAudit: Boolean = false)(implicit env: Env, ec: ExecutionContext): Future[JsObject] = {
     val base = Json.obj("uri" -> uri)
     url match {
       case Some(rawUrl) =>
@@ -178,13 +179,25 @@ case class McpStaticResource(
         val finalUrl = render(rawUrl)
         val finalHeaders = headers.mapValues(render).toSeq
         if (!hostAllowed(finalUrl, allowedHosts)) {
+          McpStaticResource.markFetchMetrics(0L, isError = true)
+          if (emitAudit) McpStaticResource.emitFetch(uri, finalUrl, 0L, None, Some("host not allowed"), attrs)
           Future.successful(withMime(base, None) ++ Json.obj("text" -> s"fetching resource is not allowed for this host") ++ metaJson)
         } else {
+          val start = System.currentTimeMillis()
           env.Ws.url(finalUrl).withHttpHeaders(finalHeaders: _*).withRequestTimeout(timeout).get().map { resp =>
+            val dur = System.currentTimeMillis() - start
+            val isErr = resp.status >= 400
+            McpStaticResource.markFetchMetrics(dur, isErr)
+            if (emitAudit) McpStaticResource.emitFetch(uri, finalUrl, dur, Some(resp.status), if (isErr) Some(s"status ${resp.status}") else None, attrs)
             val ct = Option(resp.contentType)
             if (urlAs == "blob") withMime(base, ct) ++ Json.obj("blob" -> resp.bodyAsBytes.encodeBase64.utf8String) ++ metaJson
             else withMime(base, ct) ++ Json.obj("text" -> resp.body) ++ metaJson
-          }.recover { case e => withMime(base, None) ++ Json.obj("text" -> s"error fetching resource: ${e.getMessage}") ++ metaJson }
+          }.recover { case e =>
+            val dur = System.currentTimeMillis() - start
+            McpStaticResource.markFetchMetrics(dur, isError = true)
+            if (emitAudit) McpStaticResource.emitFetch(uri, finalUrl, dur, None, Some(e.getMessage), attrs)
+            withMime(base, None) ++ Json.obj("text" -> s"error fetching resource: ${e.getMessage}") ++ metaJson
+          }
         }
       case None => blob match {
         case Some(b) => Future.successful(withMime(base, None) ++ Json.obj("blob" -> b) ++ metaJson)
@@ -197,6 +210,39 @@ case class McpStaticResource(
 }
 
 object McpStaticResource {
+
+  // Real-time metrics for the outbound fetch of a managed resource served from a `url` (always on when env
+  // metrics are enabled, independent of the audit flag). Namespaced apart from mcp.client.* (connectors).
+  def markFetchMetrics(durationMs: Long, isError: Boolean)(implicit env: Env): Unit = {
+    if (!env.metricsEnabled) return
+    env.metrics.counterInc("mcp.resource.fetch.calls")
+    if (isError) env.metrics.counterInc("mcp.resource.fetch.errors")
+    env.metrics.timerUpdate("mcp.resource.fetch.duration", durationMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+  }
+
+  // Audit event for the outbound fetch of a managed resource (mirrors McpClientAudit but for the env.Ws fetch
+  // that does not go through an McpConnector). Gated by the virtual server's emit_audit_events flag.
+  def emitFetch(uri: String, url: String, duration: Long, httpStatus: Option[Int], error: Option[String], attrs: TypedMap)(implicit env: Env): Unit = {
+    val user = attrs.get(otoroshi.plugins.Keys.UserKey)
+    val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
+    val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
+    val requestId = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
+    AuditEvent.generic("McpResourceFetchAudit") {
+      Json.obj(
+        "request_id" -> requestId.map(JsString.apply).getOrElse(JsNull).asValue,
+        "resource_uri" -> uri,
+        "fetch_url" -> url,
+        "http_status" -> httpStatus.map(s => JsNumber(BigDecimal(s))).getOrElse(JsNull).asValue,
+        "duration" -> duration,
+        "status" -> (if (error.isEmpty) "success" else "error"),
+        "error" -> error.map(_.json).getOrElse(JsNull).asValue,
+        "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+        "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+        "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+      )
+    }.toAnalytics()
+  }
+
   val format = new Format[McpStaticResource] {
     override def writes(o: McpStaticResource): JsValue = Json.obj(
       "uri" -> o.uri,
@@ -845,7 +891,7 @@ object McpProxyLogic {
   // upstream connectors. Returns the `contents` array (empty when nothing matches).
   def readResource(config: McpProxyEndpointConfig, uri: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsObject]] = {
     config.resources.find(_.uri == uri) match {
-      case Some(res) => res.read(attrs, config.resourceFetchAllowedHosts).map(Seq(_))
+      case Some(res) => res.read(attrs, config.resourceFetchAllowedHosts, config.emitAuditEvents).map(Seq(_))
       case None =>
         val ext = env.adminExtensions.extension[AiExtension].get
         val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
