@@ -386,6 +386,79 @@ object McpStaticPrompt {
   }
 }
 
+// Per-item overlays deep-merged onto the JSON of tools/prompts/resources/resource-templates at list time,
+// whether the item comes from a connector or is managed. Keys are the item identity (tool/prompt/resource
+// name, resource-template uriTemplate; resources also match by uri). The special key "*" applies to every item
+// in the category (merged first, then the specific key on top). Lets you inject _meta/annotations (e.g. an
+// mcp-app resource on a tool), tweak CSP, etc. without touching the upstream server. deepMerge semantics:
+// nested objects are merged recursively, scalars and arrays are replaced.
+case class McpItemOverlays(
+  tools: Map[String, JsObject] = Map.empty,
+  prompts: Map[String, JsObject] = Map.empty,
+  resources: Map[String, JsObject] = Map.empty,
+  resourceTemplates: Map[String, JsObject] = Map.empty,
+) {
+  def isEmpty: Boolean = tools.isEmpty && prompts.isEmpty && resources.isEmpty && resourceTemplates.isEmpty
+  def json: JsValue = McpItemOverlays.format.writes(this)
+
+  private def applyOverlay(m: Map[String, JsObject], keys: Seq[String], js: JsObject): JsObject = {
+    if (m.isEmpty) js else {
+      val patches = m.get("*").toSeq ++ keys.distinct.flatMap(k => m.get(k))
+      patches.foldLeft(js)((acc, patch) => acc.deepMerge(patch))
+    }
+  }
+  def applyTool(js: JsObject): JsObject = applyOverlay(tools, (js \ "name").asOpt[String].toSeq, js)
+  def applyPrompt(js: JsObject): JsObject = applyOverlay(prompts, (js \ "name").asOpt[String].toSeq, js)
+  def applyResource(js: JsObject): JsObject = applyOverlay(resources, Seq((js \ "name").asOpt[String], (js \ "uri").asOpt[String]).flatten, js)
+  def applyResourceTemplate(js: JsObject): JsObject = applyOverlay(resourceTemplates, Seq((js \ "name").asOpt[String], (js \ "uriTemplate").asOpt[String]).flatten, js)
+
+  // merge another set of overlays on top of this one (other wins, deep-merged on shared keys)
+  def merge(other: McpItemOverlays): McpItemOverlays = {
+    def mergeMaps(a: Map[String, JsObject], b: Map[String, JsObject]): Map[String, JsObject] = {
+      (a.keySet ++ b.keySet).toSeq.map { k =>
+        val merged = (a.get(k), b.get(k)) match {
+          case (Some(x), Some(y)) => x.deepMerge(y)
+          case (Some(x), None) => x
+          case (None, Some(y)) => y
+          case (None, None) => Json.obj()
+        }
+        k -> merged
+      }.toMap
+    }
+    McpItemOverlays(
+      tools = mergeMaps(tools, other.tools),
+      prompts = mergeMaps(prompts, other.prompts),
+      resources = mergeMaps(resources, other.resources),
+      resourceTemplates = mergeMaps(resourceTemplates, other.resourceTemplates),
+    )
+  }
+}
+
+object McpItemOverlays {
+  val empty = McpItemOverlays()
+  private def readMap(json: JsValue, key: String): Map[String, JsObject] =
+    (json \ key).asOpt[JsObject].map(_.value.flatMap { case (k, v) => v.asOpt[JsObject].map(o => (k, o)) }.toMap).getOrElse(Map.empty)
+  val format = new Format[McpItemOverlays] {
+    override def writes(o: McpItemOverlays): JsValue = Json.obj(
+      "tools" -> JsObject(o.tools.toSeq),
+      "prompts" -> JsObject(o.prompts.toSeq),
+      "resources" -> JsObject(o.resources.toSeq),
+      "resource_templates" -> JsObject(o.resourceTemplates.toSeq),
+    )
+    override def reads(json: JsValue): JsResult[McpItemOverlays] = Try {
+      McpItemOverlays(
+        tools = readMap(json, "tools"),
+        prompts = readMap(json, "prompts"),
+        resources = readMap(json, "resources"),
+        resourceTemplates = readMap(json, "resource_templates"),
+      )
+    } match {
+      case Failure(ex) => JsError(ex.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+  }
+}
+
 case class McpProxyEndpointConfig(
   serverRef: Option[String] = None,
   name: Option[String],
@@ -411,6 +484,7 @@ case class McpProxyEndpointConfig(
   resources: Seq[McpStaticResource] = Seq.empty,
   resourceFetchAllowedHosts: Seq[String] = Seq.empty,
   prompts: Seq[McpStaticPrompt] = Seq.empty,
+  overlays: McpItemOverlays = McpItemOverlays.empty,
 ) extends NgPluginConfig {
   def json: JsValue = McpProxyEndpointConfig.format.writes(this)
 
@@ -444,6 +518,8 @@ case class McpProxyEndpointConfig(
     resourceFetchAllowedHosts = if (o.resourceFetchAllowedHosts.nonEmpty) o.resourceFetchAllowedHosts else resourceFetchAllowedHosts,
     // prompts are additive: override entries win, then base entries whose name isn't overridden
     prompts = o.prompts ++ prompts.filterNot(p => o.prompts.exists(_.name == p.name)),
+    // overlays are deep-merged (override wins on shared keys)
+    overlays = overlays.merge(o.overlays),
   )
 
   // When `serverRef` points to an existing McpVirtualServer, start from its config and overlay these inline
@@ -539,6 +615,7 @@ object McpProxyEndpointConfig {
     "allow_rules", "disallow_rules",
     "resources", "resource_fetch_allowed_hosts",
     "prompts",
+    "overlays",
   )
   val configSchema: Option[JsObject] = Some(Json.obj(
     "server_ref" -> Json.obj(
@@ -693,6 +770,14 @@ object McpProxyEndpointConfig {
         "language" -> "json",
         "height" -> "300px"
       )
+    ),
+    "overlays" -> Json.obj(
+      "type" -> "any",
+      "label" -> "Item overlays",
+      "props" -> Json.obj(
+        "language" -> "json",
+        "height" -> "300px"
+      )
     )
   ))
   val default = McpProxyEndpointConfig(
@@ -727,6 +812,7 @@ object McpProxyEndpointConfig {
       "resources" -> JsArray(o.resources.map(_.json)),
       "resource_fetch_allowed_hosts" -> o.resourceFetchAllowedHosts,
       "prompts" -> JsArray(o.prompts.map(_.json)),
+      "overlays" -> o.overlays.json,
     )
     override def reads(json: JsValue): JsResult[McpProxyEndpointConfig] = Try {
       val singleRef = json.select("ref").asOpt[String].map(r => Seq(r)).getOrElse(Seq.empty)
@@ -757,6 +843,7 @@ object McpProxyEndpointConfig {
         resources = json.select("resources").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap(v => McpStaticResource.format.reads(v).asOpt),
         resourceFetchAllowedHosts = json.select("resource_fetch_allowed_hosts").asOpt[Seq[String]].getOrElse(Seq.empty),
         prompts = json.select("prompts").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap(v => McpStaticPrompt.format.reads(v).asOpt),
+        overlays = json.select("overlays").asOpt(McpItemOverlays.format).getOrElse(McpItemOverlays.empty),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -855,7 +942,10 @@ object McpProxyLogic {
       } else {
         c.listTools(attrs).map(_.map(McpSupport.toolSpecToJson))
       }
-    }).map(perConnector => localThunks ++ perConnector.flatten)
+    }).map(perConnector => (localThunks ++ perConnector.flatten).map {
+      case o: JsObject => config.overlays.applyTool(o)
+      case other => other
+    })
   }
 
   // Resolves and executes a tool call. Left = unknown tool name, Right = the result payload.
@@ -884,7 +974,10 @@ object McpProxyLogic {
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     val staticJson: Seq[JsValue] = config.resources.filter(r => config.matchesResource(r.name)).map(_.listJson)
     // recover per connector: a connector that doesn't support resources/list (-32601) must not break the aggregate
-    Future.sequence(mcpConnectors.map(c => c.listResources(attrs).recover { case _ => Nil })).map(perConnector => staticJson ++ perConnector.flatten.map(McpSupport.resourceToJson))
+    Future.sequence(mcpConnectors.map(c => c.listResources(attrs).recover { case _ => Nil })).map(perConnector => (staticJson ++ perConnector.flatten.map(McpSupport.resourceToJson)).map {
+      case o: JsObject => config.overlays.applyResource(o)
+      case other => other
+    })
   }
 
   // Reads a resource by uri. Managed (static) resources take precedence; otherwise it falls back to the
@@ -906,13 +999,24 @@ object McpProxyLogic {
     }
   }
 
+  // Full "resourceTemplates" array: every connector's resource templates (no managed templates), overlaid.
+  def templatesList(config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
+    // recover per connector: a connector that doesn't support resources/templates/list (-32601) must not break the aggregate
+    Future.sequence(mcpConnectors.map(c => c.listResourceTemplates(attrs).recover { case _ => Nil })).map(perConnector => perConnector.flatten.map(McpSupport.resourceTemplateToJson).map(config.overlays.applyResourceTemplate).map(_.asInstanceOf[JsValue]))
+  }
+
   // Full "prompts" array: this server's managed (static) prompts + every connector's prompts.
   def promptsList(config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     val staticJson: Seq[JsValue] = config.prompts.filter(p => config.matchesPrompt(p.name)).map(_.listJson)
     // recover per connector: a connector that doesn't support prompts/list (-32601) must not break the aggregate
-    Future.sequence(mcpConnectors.map(c => c.listPrompts(attrs).recover { case _ => Nil })).map(perConnector => staticJson ++ perConnector.flatten.map(McpSupport.promptToJson))
+    Future.sequence(mcpConnectors.map(c => c.listPrompts(attrs).recover { case _ => Nil })).map(perConnector => (staticJson ++ perConnector.flatten.map(McpSupport.promptToJson)).map {
+      case o: JsObject => config.overlays.applyPrompt(o)
+      case other => other
+    })
   }
 
   // Resolves a prompts/get. Managed (static) prompts take precedence; otherwise it falls back to the upstream
@@ -1220,10 +1324,8 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
 
   def getTemplatesList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     implicit val _attrs: TypedMap = attrs
-    val ext = env.adminExtensions.extension[AiExtension].get
-    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
-    Future.sequence(mcpConnectors.map(c => c.listResourceTemplates(attrs).recover { case _ => Nil })).flatMap { mcpResources =>
-      val payload = Json.obj("templates" -> JsArray(mcpResources.flatten.map(McpSupport.resourceTemplateToJson)))
+    McpProxyLogic.templatesList(config, attrs).flatMap { templates =>
+      val payload = Json.obj("templates" -> JsArray(templates))
       session.send(id, payload)
       jsonRpcResponse(id, payload)
     }
@@ -1496,10 +1598,8 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
   }
 
   def getTemplatesList(id: Long, attrs: TypedMap): Future[JsValue] = {
-    val ext = env.adminExtensions.extension[AiExtension].get
-    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
-    Future.sequence(mcpConnectors.map(c => c.listResourceTemplates(attrs)(ec, env).recover { case _ => Nil })).map { all =>
-      jsonRpcResponse(id, Json.obj("templates" -> JsArray(all.flatten.map(McpSupport.resourceTemplateToJson))))
+    McpProxyLogic.templatesList(config, attrs)(env, ec).map { templates =>
+      jsonRpcResponse(id, Json.obj("templates" -> JsArray(templates)))
     }(ec)
   }
 
@@ -1688,10 +1788,8 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
 
   def getTemplatesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     implicit val _attrs: TypedMap = attrs
-    val ext = env.adminExtensions.extension[AiExtension].get
-    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
-    Future.sequence(mcpConnectors.map(c => c.listResourceTemplates(attrs).recover { case _ => Nil })).flatMap { mcpResources =>
-      jsonRpcResponse(id, Json.obj("templates" -> JsArray(mcpResources.flatten.map(McpSupport.resourceTemplateToJson))))
+    McpProxyLogic.templatesList(config, attrs).flatMap { templates =>
+      jsonRpcResponse(id, Json.obj("templates" -> JsArray(templates)))
     }
   }
 
