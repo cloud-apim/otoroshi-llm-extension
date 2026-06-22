@@ -141,15 +141,15 @@ class ToolFunctionsPage extends Component {
       props: { label: 'Required params.' },
     },
     outputSchema: {
-      type: 'monaco',
+      type: 'monaco-json',
       props: { label: 'MCP - Output schema', language: 'javascript', height: 200 },
     },
     annotations: {
-      type: 'monaco',
+      type: 'monaco-json',
       props: { label: 'MCP - Annotations', language: 'javascript', height: 200 },
     },
     meta: {
-      type: 'monaco',
+      type: 'monaco-json',
       props: { label: 'MCP - Meta (_meta)', language: 'javascript', height: 200 },
     },
     'backend.options.wasmPlugin': {
