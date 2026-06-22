@@ -152,6 +152,14 @@ class McpVirtualServersPage extends Component {
         help: 'Prompts served directly by this virtual server (in addition to the connectors). JSON array of objects: { "name": "...", "title?": "...", "description?": "...", "arguments?": [ { "name": "...", "description?": "...", "required?": false } ], "messages": [ { "role": "user"|"assistant"|"system", "text": "..." } ], "meta?": {} }. Message text supports {{argName}} substitution from the prompts/get arguments and expression language.',
       },
     },
+    'config.overlays': {
+      type: 'monaco-json',
+      props: {
+        label: 'Item overlays',
+        height: 300,
+        help: 'Per-item JSON patches deep-merged onto tools/prompts/resources/resource-templates at list time (managed items included). Shape: { "tools": { "<name>": { "description": "...", "_meta": {...}, "annotations": {...}, "inputSchema": {...}, "outputSchema": {...}, "title": "..." } }, "prompts": { "<name>": {...} }, "resources": { "<name-or-uri>": { "mimeType": "...", "_meta": {...} } }, "resource_templates": { "<uriTemplate>": {...} } }. Use the key "*" to patch every item in a category. deepMerge: nested objects merged, scalars/arrays replaced.',
+      },
+    },
   };
 
   columns = [
@@ -201,6 +209,8 @@ class McpVirtualServersPage extends Component {
     'config.resources', 'config.resource_fetch_allowed_hosts',
     '---',
     'config.prompts',
+    '---',
+    'config.overlays',
   ];
 
   componentDidMount() {
@@ -246,6 +256,7 @@ class McpVirtualServersPage extends Component {
             resources: [],
             resource_fetch_allowed_hosts: [],
             prompts: [],
+            overlays: { tools: {}, prompts: {}, resources: {}, resource_templates: {} },
           },
         }),
         itemName: "MCP Virtual Server",
