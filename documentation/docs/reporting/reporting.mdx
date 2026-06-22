@@ -14,6 +14,10 @@ Every interaction with an LLM provider generates a `LLMUsageAudit` event that co
 This page documents the `LLMUsageAudit` event. MCP usage is covered by two dedicated, opt-in audit events: [`McpAudit`](/docs/mcp/mcp-plugins#audit-events) (MCP servers Otoroshi exposes) and [`McpClientAudit`](/docs/mcp/mcp-connectors#audit-events) (upstream MCP servers Otoroshi calls through a connector). See the [Observability overview](/docs/llm-gateway/observability-reporting#audit-event-types) for the full list.
 :::
 
+:::tip Real-time metrics
+Beyond audit events, every AI and MCP operation also feeds Otoroshi's always-on real-time metrics (`ai.*` / `mcp.*`, scrapable via Prometheus / JSON). See [Observability — Real-time LLM metrics](/docs/llm-gateway/observability-reporting#real-time-llm-metrics).
+:::
+
 ## LLMUsageAudit event fields
 
 | Field | Type | Description |
