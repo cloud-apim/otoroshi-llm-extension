@@ -93,7 +93,7 @@ object McpOAuthFilterUtils {
                             ref = authModuleId,
                             opaque = false,
                             fetchUserProfile = true,
-                            validateAudience = false,
+                            validateAudience = config.validateAudience,
                             headerName = "Authorization"
                           ),
                           Some(token)
@@ -464,6 +464,10 @@ case class McpProxyEndpointConfig(
   name: Option[String],
   version: Option[String],
   enforceOAuth: Boolean = false,
+  // RFC 8707 audience binding: when true, the token `aud` claim must match this MCP server's URL
+  // (the core checks `currentRequestUrl.startsWith(aud)`). Prevents token-passthrough / confused-deputy.
+  // Defaults to false for backward compatibility; enable it for MCP-spec-compliant OAuth.
+  validateAudience: Boolean = false,
   authModuleRef: Option[String] = None,
   authPrmUrl: Option[String] = None,
   functionRefs: Seq[String],
@@ -496,6 +500,7 @@ case class McpProxyEndpointConfig(
     name = o.name.orElse(name),
     version = o.version.orElse(version),
     enforceOAuth = enforceOAuth || o.enforceOAuth,
+    validateAudience = validateAudience || o.validateAudience,
     authModuleRef = o.authModuleRef.orElse(authModuleRef),
     authPrmUrl = o.authPrmUrl.orElse(authPrmUrl),
     functionRefs = if (o.functionRefs.nonEmpty) o.functionRefs else functionRefs,
@@ -604,6 +609,7 @@ object McpProxyEndpointConfig {
     "name", "version",
     "refs", "mcp_refs",
     "enforce_oauth",
+    "validate_audience",
     "auth_module_ref",
     "auth_prm_url",
     "emit_audit_events",
@@ -640,6 +646,10 @@ object McpProxyEndpointConfig {
     "enforce_oauth" -> Json.obj(
       "type" -> "bool",
       "label" -> "Enforce OAuth"
+    ),
+    "validate_audience" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Validate token audience (RFC 8707)"
     ),
     "emit_audit_events" -> Json.obj(
       "type" -> "bool",
@@ -792,6 +802,7 @@ object McpProxyEndpointConfig {
       "name" -> o.name.map(_.json).getOrElse(JsNull).asValue,
       "version" -> o.version.map(_.json).getOrElse(JsNull).asValue,
       "enforce_oauth" -> o.enforceOAuth,
+      "validate_audience" -> o.validateAudience,
       "auth_module_ref" -> o.authModuleRef.map(_.json).getOrElse(JsNull).asValue,
       "auth_prm_url" -> o.authPrmUrl.map(_.json).getOrElse(JsNull).asValue,
       "refs" -> o.functionRefs,
@@ -823,6 +834,7 @@ object McpProxyEndpointConfig {
         name = json.select("name").asOptString.filter(_.trim.nonEmpty),
         version = json.select("version").asOptString.filter(_.trim.nonEmpty),
         enforceOAuth = json.select("enforce_oauth").asOptBoolean.getOrElse(false),
+        validateAudience = json.select("validate_audience").asOptBoolean.getOrElse(false),
         authModuleRef = json.select("auth_module_ref").asOptString,
         authPrmUrl = json.select("auth_prm_url").asOptString,
         functionRefs = allRefs,
