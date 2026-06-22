@@ -144,6 +144,14 @@ class McpVirtualServersPage extends Component {
         help: 'Optional allow-list of hosts (glob) the server may fetch resource URLs from. Empty = no restriction (be careful: SSRF risk).',
       },
     },
+    'config.prompts': {
+      type: 'monaco-json',
+      props: {
+        label: 'Managed prompts',
+        height: 300,
+        help: 'Prompts served directly by this virtual server (in addition to the connectors). JSON array of objects: { "name": "...", "title?": "...", "description?": "...", "arguments?": [ { "name": "...", "description?": "...", "required?": false } ], "messages": [ { "role": "user"|"assistant"|"system", "text": "..." } ], "meta?": {} }. Message text supports {{argName}} substitution from the prompts/get arguments and expression language.',
+      },
+    },
   };
 
   columns = [
@@ -191,6 +199,8 @@ class McpVirtualServersPage extends Component {
     'config.allow_rules', 'config.disallow_rules',
     '---',
     'config.resources', 'config.resource_fetch_allowed_hosts',
+    '---',
+    'config.prompts',
   ];
 
   componentDidMount() {
@@ -235,6 +245,7 @@ class McpVirtualServersPage extends Component {
             disallow_rules: { tool_rules: {}, prompt_rules: {}, resource_rules: {}, resource_templates_rules: {} },
             resources: [],
             resource_fetch_allowed_hosts: [],
+            prompts: [],
           },
         }),
         itemName: "MCP Virtual Server",
