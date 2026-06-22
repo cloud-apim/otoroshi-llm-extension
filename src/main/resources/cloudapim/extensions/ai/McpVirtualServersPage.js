@@ -114,7 +114,7 @@ class McpVirtualServersPage extends Component {
       props: { label: 'Exclude prompts' },
     },
     'config.allow_rules': {
-      type: 'monaco',
+      type: 'monaco-json',
       props: {
         label: 'Allow Rules',
         height: 300,
@@ -122,11 +122,26 @@ class McpVirtualServersPage extends Component {
       },
     },
     'config.disallow_rules': {
-      type: 'monaco',
+      type: 'monaco-json',
       props: {
         label: 'Disallow Rules',
         height: 300,
         help: 'JSON-path validators by category. Shape: { "tool_rules": { "<name>": [ { "path": "$.foo", "value": "bar" } ] }, "prompt_rules": {}, "resource_rules": {}, "resource_templates_rules": {} }',
+      },
+    },
+    'config.resources': {
+      type: 'monaco-json',
+      props: {
+        label: 'Managed resources',
+        height: 300,
+        help: 'Resources served directly by this virtual server (in addition to the connectors). JSON array of objects: { "uri": "...", "name": "...", "title?": "...", "description?": "...", "mime_type?": "...", "annotations?": {}, "meta?": {}, and one content source: "text" (inline), "blob" (inline base64), or "url" (fetched on the fly with "url_as": "text"|"blob", "headers": {}, "forward_auth": false, "timeout": 30000). url/headers/text support expression language; {input_token} is injected when forward_auth is true.',
+      },
+    },
+    'config.resource_fetch_allowed_hosts': {
+      type: 'array',
+      props: {
+        label: 'Resource fetch allowed hosts',
+        help: 'Optional allow-list of hosts (glob) the server may fetch resource URLs from. Empty = no restriction (be careful: SSRF risk).',
       },
     },
   };
@@ -174,6 +189,8 @@ class McpVirtualServersPage extends Component {
     'config.include_prompts', 'config.exclude_prompts',
     '---',
     'config.allow_rules', 'config.disallow_rules',
+    '---',
+    'config.resources', 'config.resource_fetch_allowed_hosts',
   ];
 
   componentDidMount() {
@@ -216,6 +233,8 @@ class McpVirtualServersPage extends Component {
             exclude_prompts: [],
             allow_rules: { tool_rules: {}, prompt_rules: {}, resource_rules: {}, resource_templates_rules: {} },
             disallow_rules: { tool_rules: {}, prompt_rules: {}, resource_rules: {}, resource_templates_rules: {} },
+            resources: [],
+            resource_fetch_allowed_hosts: [],
           },
         }),
         itemName: "MCP Virtual Server",
