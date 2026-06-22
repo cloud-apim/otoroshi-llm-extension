@@ -23,6 +23,7 @@ object ChatClientDecorators {
     ChatClientWithCostsTracking.applyIfPossible,
     ChatClientWithEcoImpact.applyIfPossible,
     ChatClientWithAuditing.applyIfPossible,
+    ChatClientWithMetrics.applyIfPossible, // live ai.* metrics, just outside auditing (sees final result + usage attrs)
     ChatClientWithContext.applyIfPossible,
     ChatClientWithStreamUsage.applyIfPossible,
     ChatClientWithRequestResponseLogging.applyIfPossible, // must be last: outermost decorator, first to be invoked
@@ -54,6 +55,7 @@ object EmbeddingModelClientDecorators {
   val possibleDecorators: Seq[Function[(EmbeddingModel, EmbeddingModelClient, Env), EmbeddingModelClient]] = Seq(
     EmbeddingModelClientWithModels.applyIfPossible,
     EmbeddingModelClientWithAuditing.applyIfPossible,
+    EmbeddingModelClientWithMetrics.applyIfPossible,
   )
 
   def apply(provider: EmbeddingModel, client: EmbeddingModelClient, env: Env): EmbeddingModelClient = {
@@ -74,6 +76,7 @@ object AudioModelClientDecorators {
   val possibleDecorators: Seq[Function[(AudioModel, AudioModelClient, Env), AudioModelClient]] = Seq(
     AudioModelClientWithModels.applyIfPossible,
     AudioModelClientWithAuditing.applyIfPossible,
+    AudioModelClientWithMetrics.applyIfPossible,
   )
 
   def apply(provider: AudioModel, client: AudioModelClient, env: Env): AudioModelClient = {
@@ -99,6 +102,7 @@ object ImageModelClientDecorators {
   val possibleDecorators: Seq[Function[(ImageModel, ImageModelClient, Env), ImageModelClient]] = Seq(
     ImageModelClientWithModels.applyIfPossible,
     ImageModelClientWithAuditing.applyIfPossible,
+    ImageModelClientWithMetrics.applyIfPossible,
   )
 
   def apply(provider: ImageModel, client: ImageModelClient, env: Env): ImageModelClient = {
@@ -125,6 +129,7 @@ object ModerationModelClientDecorators {
   val possibleDecorators: Seq[Function[(ModerationModel, ModerationModelClient, Env), ModerationModelClient]] = Seq(
     ModerationModelClientWithModels.applyIfPossible,
     ModerationModelClientWithAuditing.applyIfPossible,
+    ModerationModelClientWithMetrics.applyIfPossible,
   )
 
   def apply(provider: ModerationModel, client: ModerationModelClient, env: Env): ModerationModelClient = {
@@ -144,6 +149,7 @@ object VideosGenModelClientDecorators {
   val possibleDecorators: Seq[Function[(VideoModel, VideoModelClient, Env), VideoModelClient]] = Seq(
     VideoModelClientWithModels.applyIfPossible,
     VideoModelClientWithAuditing.applyIfPossible,
+    VideoModelClientWithMetrics.applyIfPossible,
   )
 
   def apply(provider: VideoModel, client: VideoModelClient, env: Env): VideoModelClient = {
