@@ -2002,7 +2002,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
 class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
 
   override def name: String = "Cloud APIM - MCP Streamable HTTP Endpoint"
-  override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official) HTTP Transport".some
+  override def description: Option[String] = "Exposes tool functions as an MCP server using the streamable HTTP Transport".some
 
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -2017,7 +2017,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
 
   override def start(env: Env): Future[Unit] = {
     env.adminExtensions.extension[AiExtension].foreach { ext =>
-      ext.logger.info("the 'MCP HTTP Endpoint' plugin is available !")
+      ext.logger.info("the 'MCP Streamable HTTP Endpoint' plugin is available !")
     }
     ().vfuture
   }
