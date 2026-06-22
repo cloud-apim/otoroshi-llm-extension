@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatClient, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata}
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails._
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -102,19 +102,20 @@ case class Guardrails(items: Seq[GuardrailItem]) {
     def nextGuardrail(seq: Seq[(GuardrailItem, Guardrail)]): Future[GuardrailResult] = {
       if (seq.nonEmpty) {
         val head = seq.head
+        val kind = head._1.guardrailId
         if (head._2.manyMessages) {
           head._2.pass(messages, head._1.config, originalProvider.some, chatClient.some, attrs).andThen {
-            case Success(GuardrailResult.GuardrailPass) => nextGuardrail(seq.tail)
-            case Success(GuardrailResult.GuardrailDenied(msg)) => GuardrailResult.GuardrailDenied(msg).vfuture
-            case Success(GuardrailResult.GuardrailError(err)) => GuardrailResult.GuardrailError(err).vfuture
-            case Failure(e) => GuardrailResult.GuardrailDenied(e.getMessage).vfuture
+            case Success(GuardrailResult.GuardrailPass) => AiMetrics.markGuardrail(kind, "pass"); nextGuardrail(seq.tail)
+            case Success(GuardrailResult.GuardrailDenied(msg)) => AiMetrics.markGuardrail(kind, "deny"); GuardrailResult.GuardrailDenied(msg).vfuture
+            case Success(GuardrailResult.GuardrailError(err)) => AiMetrics.markGuardrail(kind, "error"); GuardrailResult.GuardrailError(err).vfuture
+            case Failure(e) => AiMetrics.markGuardrail(kind, "error"); GuardrailResult.GuardrailDenied(e.getMessage).vfuture
           }
         } else {
           nextMessage(messages, head._2, head._1.config).andThen {
-            case Success(GuardrailResult.GuardrailPass) => nextGuardrail(seq.tail)
-            case Success(GuardrailResult.GuardrailError(err)) => GuardrailResult.GuardrailError(err).vfuture
-            case Success(GuardrailResult.GuardrailDenied(msg)) => GuardrailResult.GuardrailDenied(msg).vfuture
-            case Failure(e) => GuardrailResult.GuardrailDenied(e.getMessage).vfuture
+            case Success(GuardrailResult.GuardrailPass) => AiMetrics.markGuardrail(kind, "pass"); nextGuardrail(seq.tail)
+            case Success(GuardrailResult.GuardrailError(err)) => AiMetrics.markGuardrail(kind, "error"); GuardrailResult.GuardrailError(err).vfuture
+            case Success(GuardrailResult.GuardrailDenied(msg)) => AiMetrics.markGuardrail(kind, "deny"); GuardrailResult.GuardrailDenied(msg).vfuture
+            case Failure(e) => AiMetrics.markGuardrail(kind, "error"); GuardrailResult.GuardrailDenied(e.getMessage).vfuture
           }
         }
       } else {
