@@ -26,6 +26,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.http.websocket.Message
 import play.api.libs.json._
 import play.api.libs.streams.ActorFlow
+import play.api.libs.ws.DefaultBodyWritables.writeableOf_urlEncodedSimpleForm
 import play.api.libs.typedmap.TypedKey
 import play.api.mvc.{Result, Results}
 
@@ -47,6 +48,52 @@ object McpOAuthFilterUtils {
     Results.Status(401)(Json.obj("error" -> "unauthorized"))
       .withHeaders("WWW-Authenticate"-> s"""Bearer realm="${realmName}", resource_metadata="${authPrmUrl}"""")
       .as("application/json")
+  }
+
+  // RFC 7662 token introspection, implemented locally so it works against the published Otoroshi
+  // 17.11.0 (no dependency on the core `introspectTokenSafe`). Mirrors the legacy core introspection.
+  // TODO(otoroshi with introspectTokenSafe published): delete this and call oidcModule.introspectTokenSafe.
+  def introspectToken(oidcModule: OAuth2ModuleConfig, token: String)(implicit env: Env, ec: ExecutionContext): Future[Boolean] = {
+    val clientSecret = Option(oidcModule.clientSecret).filterNot(_.trim.isEmpty)
+    val builder      = env.MtlsWs.url(oidcModule.introspectionUrl, oidcModule.mtlsConfig)
+    val future       = if (oidcModule.useJson) {
+      builder.post(
+        Json.obj("token" -> token, "client_id" -> oidcModule.clientId) ++
+          clientSecret.map(s => Json.obj("client_secret" -> s)).getOrElse(Json.obj())
+      )
+    } else {
+      builder.post(
+        Map("token" -> token, "client_id" -> oidcModule.clientId) ++
+          clientSecret.toSeq.map(s => ("client_secret" -> s))
+      )(writeableOf_urlEncodedSimpleForm)
+    }
+    future
+      .map(resp => resp.status == 200 && (resp.json \ "active").asOpt[Boolean].getOrElse(false))
+      .recover { case _ => false }
+  }
+
+  // Audience binding (RFC 8707): the token `aud` claim (string OR array) must match this MCP server's
+  // URL, mirroring the core getSession check but array-aware. Used locally until the core patch ships.
+  // TODO(otoroshi with array-aware getSession published): remove and rely on getSession validateAudience.
+  def audienceMatches(token: String, ctx: NgAccessContext)(implicit env: Env): Boolean = {
+    Try {
+      val parts = token.split("\\.")
+      if (parts.length < 2) {
+        false
+      } else {
+        val profile                = parts(1).decodeBase64.parseJson
+        val audiences: Seq[String] = profile
+          .select("aud")
+          .asOpt[String]
+          .map(a => Seq(a))
+          .orElse(profile.select("aud").asOpt[Seq[String]])
+          .getOrElse(Seq.empty)
+          .map(_.trim)
+          .filter(_.nonEmpty)
+        val currentUrl             = s"${ctx.request.theProtocol}://${ctx.request.theDomain}${ctx.request.thePath}"
+        audiences.exists(aud => currentUrl.startsWith(aud))
+      }
+    }.getOrElse(false)
   }
 
   def access(ctx: NgAccessContext, internalName: String)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
@@ -71,23 +118,35 @@ object McpOAuthFilterUtils {
                     NgAccess.NgDenied(customResult).vfuture
                   case Some((_, token)) =>
                     ctx.attrs.put(McpUserAuthTokenKey -> token)
-                    OIDCAuthToken
-                      .getSession(
-                        ctx,
-                        oidcModule,
-                        OIDCAuthTokenConfig(
-                          ref = authModuleId,
-                          opaque = true,
-                          fetchUserProfile = true,
-                          validateAudience = false,
-                          headerName = "Authorization"
-                        ),
-                        Some(token)
-                      )
-                      .map {
-                        case Left(result) => NgAccess.NgDenied(customResult)
-                        case Right(r)     => r
+                    if (config.useIntrospection) {
+                      // RFC 7662 introspection, self-contained so it runs on stock Otoroshi 17.11.0.
+                      // TODO(otoroshi with introspectTokenSafe published): replace this block by delegating
+                      //   to core — add `useIntrospection = true` to OIDCAuthTokenConfig in the userinfo
+                      //   branch below and reuse it (getSession then routes to introspection).
+                      introspectToken(oidcModule, token).map {
+                        case true  => NgAccess.NgAllowed
+                        case false => NgAccess.NgDenied(customResult)
                       }
+                    } else {
+                      // opaque token validated via the IdP userinfo endpoint (works on stock Otoroshi)
+                      OIDCAuthToken
+                        .getSession(
+                          ctx,
+                          oidcModule,
+                          OIDCAuthTokenConfig(
+                            ref = authModuleId,
+                            opaque = true,
+                            fetchUserProfile = true,
+                            validateAudience = false,
+                            headerName = "Authorization"
+                          ),
+                          Some(token)
+                        )
+                        .map {
+                          case Left(result) => NgAccess.NgDenied(customResult)
+                          case Right(r)     => r
+                        }
+                    }
                 }
               }
               case oidcModule: OAuth2ModuleConfig if oidcModule.jwtVerifier.isDefined => {
@@ -116,18 +175,26 @@ object McpOAuthFilterUtils {
                         ctx.attrs
                       ) { t =>
                         ctx.attrs.put(McpUserAuthTokenKey -> token)
-                        OIDCAuthToken.getSession(
-                          ctx,
-                          oidcModule,
-                          OIDCAuthTokenConfig(
-                            ref = authModuleId,
-                            opaque = false,
-                            fetchUserProfile = true,
-                            validateAudience = config.validateAudience,
-                            headerName = "Authorization"
-                          ),
-                          Some(token)
-                        )
+                        // Audience binding (RFC 8707) done locally so it accepts `aud` as a string OR an
+                        // array on stock Otoroshi 17.11.0 (core getSession only checks a single-string aud).
+                        // TODO(otoroshi with array-aware getSession published): drop the audienceMatches
+                        //   check and pass `validateAudience = config.validateAudience` to getSession below.
+                        if (config.validateAudience && !audienceMatches(token, ctx)) {
+                          Future.successful[Either[Result, NgAccess]](Left(customResult))
+                        } else {
+                          OIDCAuthToken.getSession(
+                            ctx,
+                            oidcModule,
+                            OIDCAuthTokenConfig(
+                              ref = authModuleId,
+                              opaque = false,
+                              fetchUserProfile = true,
+                              validateAudience = false,
+                              headerName = "Authorization"
+                            ),
+                            Some(token)
+                          )
+                        }
                       }
                       .map {
                         case Left(result) => NgAccess.NgDenied(customResult)
@@ -498,10 +565,12 @@ case class McpProxyEndpointConfig(
   // (the core checks `currentRequestUrl.startsWith(aud)`). Prevents token-passthrough / confused-deputy.
   // Defaults to false for backward compatibility; enable it for MCP-spec-compliant OAuth.
   validateAudience: Boolean = false,
-  // Accept opaque (non-JWT) access tokens: validate them remotely via the auth module's userinfo
-  // endpoint (RFC 7662-style introspection) instead of local JWT signature verification. When set,
-  // audience binding is skipped (an opaque token carries no client-readable `aud` claim).
+  // Accept opaque (non-JWT) access tokens: validate them remotely (userinfo endpoint by default, or
+  // RFC 7662 introspection when `useIntrospection` is set) instead of local JWT signature verification.
+  // When set, JWT-based audience binding is skipped (an opaque token carries no readable `aud` claim).
   opaqueToken: Boolean = false,
+  // for opaque tokens, validate via the RFC 7662 introspection endpoint instead of userinfo.
+  useIntrospection: Boolean = false,
   authModuleRef: Option[String] = None,
   authPrmUrl: Option[String] = None,
   functionRefs: Seq[String],
@@ -536,6 +605,7 @@ case class McpProxyEndpointConfig(
     enforceOAuth = enforceOAuth || o.enforceOAuth,
     validateAudience = validateAudience || o.validateAudience,
     opaqueToken = opaqueToken || o.opaqueToken,
+    useIntrospection = useIntrospection || o.useIntrospection,
     authModuleRef = o.authModuleRef.orElse(authModuleRef),
     authPrmUrl = o.authPrmUrl.orElse(authPrmUrl),
     functionRefs = if (o.functionRefs.nonEmpty) o.functionRefs else functionRefs,
@@ -646,6 +716,7 @@ object McpProxyEndpointConfig {
     "enforce_oauth",
     "validate_audience",
     "opaque_token",
+    "use_introspection",
     "auth_module_ref",
     "auth_prm_url",
     "emit_audit_events",
@@ -689,7 +760,11 @@ object McpProxyEndpointConfig {
     ),
     "opaque_token" -> Json.obj(
       "type" -> "bool",
-      "label" -> "Opaque access token (validate via introspection)"
+      "label" -> "Opaque access token (validate remotely)"
+    ),
+    "use_introspection" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Use RFC 7662 introspection for opaque tokens (else userinfo)"
     ),
     "emit_audit_events" -> Json.obj(
       "type" -> "bool",
@@ -844,6 +919,7 @@ object McpProxyEndpointConfig {
       "enforce_oauth" -> o.enforceOAuth,
       "validate_audience" -> o.validateAudience,
       "opaque_token" -> o.opaqueToken,
+      "use_introspection" -> o.useIntrospection,
       "auth_module_ref" -> o.authModuleRef.map(_.json).getOrElse(JsNull).asValue,
       "auth_prm_url" -> o.authPrmUrl.map(_.json).getOrElse(JsNull).asValue,
       "refs" -> o.functionRefs,
@@ -877,6 +953,7 @@ object McpProxyEndpointConfig {
         enforceOAuth = json.select("enforce_oauth").asOptBoolean.getOrElse(false),
         validateAudience = json.select("validate_audience").asOptBoolean.getOrElse(false),
         opaqueToken = json.select("opaque_token").asOptBoolean.getOrElse(false),
+        useIntrospection = json.select("use_introspection").asOptBoolean.getOrElse(false),
         authModuleRef = json.select("auth_module_ref").asOptString,
         authPrmUrl = json.select("auth_prm_url").asOptString,
         functionRefs = allRefs,
@@ -1272,8 +1349,8 @@ case class SseSession(
 
 class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
 
-  override def name: String = "Cloud APIM - MCP SSE Endpoint"
-  override def description: Option[String] = "Exposes tool functions as an MCP server using the SSE Transport".some
+  override def name: String = "Cloud APIM - MCP SSE Endpoint (deprecated)"
+  override def description: Option[String] = "Exposes tool functions as an MCP server using the SSE Transport (deprecated)".some
 
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -1530,8 +1607,8 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
 
 class McpWebsocketEndpoint extends NgWebsocketBackendPlugin with NgAccessValidator {
 
-  override def name: String = "Cloud APIM - MCP WebSocket Endpoint"
-  override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official) WebSocket Transport".some
+  override def name: String = "Cloud APIM - MCP WebSocket Endpoint (experimental)"
+  override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official, experimental) WebSocket Transport".some
 
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -1753,7 +1830,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
 
 class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
 
-  override def name: String = "Cloud APIM - MCP HTTP Endpoint"
+  override def name: String = "Cloud APIM - MCP Streamable HTTP Endpoint"
   override def description: Option[String] = "Exposes tool functions as an MCP server using the (non-official) HTTP Transport".some
 
   override def core: Boolean = false
