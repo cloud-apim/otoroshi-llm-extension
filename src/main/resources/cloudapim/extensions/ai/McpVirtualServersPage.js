@@ -53,6 +53,14 @@ class McpVirtualServersPage extends Component {
         transformer: (a) => ({ value: a.id, label: a.name }),
       },
     },
+    'config.expose_as_meta': {
+      type: 'bool',
+      props: { label: 'Expose as meta (tool virtualization)', help: 'Expose the referenced connectors via 5 virtualization tools (list_servers, list_tools, get_tool_schema, search_tools, execute) instead of the full tool list - like the meta connector. Local functions stay listed directly.' },
+    },
+    'config.meta_semantic_search': {
+      type: 'bool',
+      props: { label: 'Meta: enable semantic tool search', help: 'When meta mode is on, fuse BM25 with embedding-based similarity (MiniLM-L6-v2) in search_tools.' },
+    },
     'config.enforce_oauth': {
       type: 'bool',
       props: { label: 'Enforce OAuth' },
@@ -211,6 +219,8 @@ class McpVirtualServersPage extends Component {
     'config.name', 'config.version',
     'config.refs', 'config.mcp_refs',
     '---',
+    'config.expose_as_meta', 'config.meta_semantic_search',
+    '---',
     'config.enforce_oauth', 'config.validate_audience', 'config.opaque_token', 'config.use_introspection',
     'config.auth_module_ref', 'config.auth_prm_url', 'config.tool_scopes',
     '---',
@@ -265,6 +275,8 @@ class McpVirtualServersPage extends Component {
             tool_scopes: {},
             refs: [],
             mcp_refs: [],
+            expose_as_meta: false,
+            meta_semantic_search: false,
             emit_audit_events: false,
             include_functions: [],
             exclude_functions: [],
