@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -34,9 +34,12 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
   private def withFallback[T](op: ChatClient => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val settings = CircuitBreakerSettings.fromProvider(originalProvider)
 
-    def callFallback(err: JsValue): Future[Either[JsValue, T]] = fallbackClient() match {
-      case None => err.leftf
-      case Some(client) => op(client)
+    def callFallback(err: JsValue): Future[Either[JsValue, T]] = {
+      AiMetrics.markFallback()
+      fallbackClient() match {
+        case None => err.leftf
+        case Some(client) => op(client)
+      }
     }
 
     if (settings.enabled && ProviderCircuitBreaker.isOpen(originalProvider.id, System.currentTimeMillis())) {
