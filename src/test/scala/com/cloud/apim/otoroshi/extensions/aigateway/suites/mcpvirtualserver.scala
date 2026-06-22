@@ -1,8 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorRules
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpProxyEndpointConfig
-import play.api.libs.json.Json
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpProxyEndpointConfig, McpStaticResource}
+import play.api.libs.json.{JsObject, Json}
 
 // Pure unit tests for the entity-ref override semantics (McpProxyEndpointConfig.overriddenBy). No Otoroshi
 // server is booted: overriddenBy is a pure function. resolve() (which needs the extension state) is covered
@@ -58,5 +58,42 @@ class McpVirtualServerMergeSuite extends munit.FunSuite {
     val merged = base.copy(allowRules = r1).overriddenBy(McpProxyEndpointConfig.default.copy(allowRules = r2))
     assert(merged.allowRules.toolRules.rules.contains("toolA"))
     assert(merged.allowRules.toolRules.rules.contains("toolB"))
+  }
+
+  test("overriddenBy concatenates resources and dedups by uri (override wins)") {
+    val baseRes = Seq(
+      McpStaticResource(uri = "res://a", name = "a", text = Some("base-a")),
+      McpStaticResource(uri = "res://b", name = "b", text = Some("base-b")),
+    )
+    val overRes = Seq(
+      McpStaticResource(uri = "res://a", name = "a", text = Some("override-a")),
+      McpStaticResource(uri = "res://c", name = "c", text = Some("override-c")),
+    )
+    val merged = base.copy(resources = baseRes).overriddenBy(McpProxyEndpointConfig.default.copy(resources = overRes))
+    assertEquals(merged.resources.map(_.uri).toSet, Set("res://a", "res://b", "res://c"))
+    assertEquals(merged.resources.find(_.uri == "res://a").flatMap(_.text), Some("override-a"))
+  }
+
+  test("McpStaticResource.listJson includes annotations and _meta when present") {
+    val r = McpStaticResource(
+      uri = "res://x", name = "x", mimeType = Some("text/plain"),
+      annotations = Some(Json.obj("audience" -> Json.arr("user"))),
+      meta = Some(Json.obj("k" -> "v")),
+    )
+    val js = r.listJson
+    assertEquals((js \ "uri").as[String], "res://x")
+    assertEquals((js \ "mimeType").as[String], "text/plain")
+    assert((js \ "annotations").asOpt[JsObject].isDefined)
+    assert((js \ "_meta").asOpt[JsObject].isDefined)
+  }
+
+  test("McpStaticResource format round-trips") {
+    val r = McpStaticResource(uri = "res://u", name = "u", url = Some("https://h/x"), urlAs = "blob",
+      headers = Map("X" -> "1"), forwardAuth = true)
+    val parsed = McpStaticResource.format.reads(r.json).get
+    assertEquals(parsed.url, Some("https://h/x"))
+    assertEquals(parsed.urlAs, "blob")
+    assertEquals(parsed.headers, Map("X" -> "1"))
+    assertEquals(parsed.forwardAuth, true)
   }
 }
