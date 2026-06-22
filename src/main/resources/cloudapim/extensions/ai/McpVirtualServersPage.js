@@ -57,6 +57,18 @@ class McpVirtualServersPage extends Component {
       type: 'bool',
       props: { label: 'Enforce OAuth' },
     },
+    'config.validate_audience': {
+      type: 'bool',
+      props: { label: 'Validate token audience (RFC 8707)', help: 'Require the token `aud` to match this MCP server URL. Prevents token passthrough / confused-deputy.' },
+    },
+    'config.opaque_token': {
+      type: 'bool',
+      props: { label: 'Opaque access token', help: 'Validate non-JWT access tokens remotely (userinfo by default, or RFC 7662 introspection) instead of local JWT verification.' },
+    },
+    'config.use_introspection': {
+      type: 'bool',
+      props: { label: 'Use RFC 7662 introspection', help: 'For opaque tokens: validate via the introspection endpoint instead of userinfo.' },
+    },
     'config.auth_module_ref': {
       type: 'select',
       props: {
@@ -68,6 +80,14 @@ class McpVirtualServersPage extends Component {
     'config.auth_prm_url': {
       type: 'string',
       props: { label: 'OAuth PRM URL' },
+    },
+    'config.tool_scopes': {
+      type: 'monaco-json',
+      props: {
+        label: 'Tool → required scopes (RBAC)',
+        height: 150,
+        help: 'Scope-based authorization per tool. Shape: { "<tool-name>": ["scope-a", "scope-b"], "*": ["base-scope"] }. The caller must have ALL listed scopes; tools with no entry are open. Filters tools/list and denies tools/call.',
+      },
     },
     'config.emit_audit_events': {
       type: 'bool',
@@ -191,7 +211,8 @@ class McpVirtualServersPage extends Component {
     'config.name', 'config.version',
     'config.refs', 'config.mcp_refs',
     '---',
-    'config.enforce_oauth', 'config.auth_module_ref', 'config.auth_prm_url',
+    'config.enforce_oauth', 'config.validate_audience', 'config.opaque_token', 'config.use_introspection',
+    'config.auth_module_ref', 'config.auth_prm_url', 'config.tool_scopes',
     '---',
     'config.emit_audit_events',
     '---',
@@ -236,8 +257,12 @@ class McpVirtualServersPage extends Component {
             name: null,
             version: null,
             enforce_oauth: false,
+            validate_audience: false,
+            opaque_token: false,
+            use_introspection: false,
             auth_module_ref: null,
             auth_prm_url: null,
+            tool_scopes: {},
             refs: [],
             mcp_refs: [],
             emit_audit_events: false,
