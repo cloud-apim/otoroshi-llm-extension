@@ -97,6 +97,22 @@ class McpVirtualServersPage extends Component {
         help: 'Scope-based authorization per tool. Shape: { "<tool-name>": ["scope-a", "scope-b"], "*": ["base-scope"] }. The caller must have ALL listed scopes; tools with no entry are open. Filters tools/list and denies tools/call.',
       },
     },
+    'config.tool_cache_ttls': {
+      type: 'monaco-json',
+      props: {
+        label: 'Tool → cache TTL (seconds)',
+        height: 120,
+        help: 'Per-tool result cache (opt-in, idempotent tools only). Shape: { "<tool-name>": 60, "*": 30 }. 0/absent = no cache. Only successful results are cached, keyed by tool + arguments.',
+      },
+    },
+    'config.tool_rate_limits': {
+      type: 'monaco-json',
+      props: {
+        label: 'Tool → rate limit (calls/min per consumer)',
+        height: 120,
+        help: 'Per-tool, per-consumer rate limit (fixed 60s window, cluster-wide). Shape: { "<tool-name>": 100, "*": 1000 }. 0/absent = no limit. Consumer = apikey > user > token.',
+      },
+    },
     'config.emit_audit_events': {
       type: 'bool',
       props: { label: 'Emit audit events' },
@@ -223,6 +239,7 @@ class McpVirtualServersPage extends Component {
     '---',
     'config.enforce_oauth', 'config.validate_audience', 'config.opaque_token', 'config.use_introspection',
     'config.auth_module_ref', 'config.auth_prm_url', 'config.tool_scopes',
+    'config.tool_cache_ttls', 'config.tool_rate_limits',
     '---',
     'config.emit_audit_events',
     '---',
@@ -273,6 +290,8 @@ class McpVirtualServersPage extends Component {
             auth_module_ref: null,
             auth_prm_url: null,
             tool_scopes: {},
+            tool_cache_ttls: {},
+            tool_rate_limits: {},
             refs: [],
             mcp_refs: [],
             expose_as_meta: false,

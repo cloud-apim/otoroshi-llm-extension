@@ -592,6 +592,11 @@ case class McpProxyEndpointConfig(
   // scope→tool authorization (RBAC): tool name (or "*" as default) → required OAuth scopes; the caller
   // is allowed iff it was granted ALL of them. Tools with no entry are open. Empty map = no scope checks.
   toolScopes: Map[String, Seq[String]] = Map.empty,
+  // per-tool result cache: tool name (or "*") → TTL in seconds. Only cacheable/idempotent tools should be
+  // listed (opt-in). 0/absent = no caching. Only successful results are cached.
+  toolCacheTtls: Map[String, Long] = Map.empty,
+  // per-tool rate limit: tool name (or "*") → max calls per minute per consumer. 0/absent = no limit.
+  toolRateLimits: Map[String, Long] = Map.empty,
   authModuleRef: Option[String] = None,
   authPrmUrl: Option[String] = None,
   functionRefs: Seq[String],
@@ -633,6 +638,8 @@ case class McpProxyEndpointConfig(
     opaqueToken = opaqueToken || o.opaqueToken,
     useIntrospection = useIntrospection || o.useIntrospection,
     toolScopes = toolScopes ++ o.toolScopes,
+    toolCacheTtls = toolCacheTtls ++ o.toolCacheTtls,
+    toolRateLimits = toolRateLimits ++ o.toolRateLimits,
     authModuleRef = o.authModuleRef.orElse(authModuleRef),
     authPrmUrl = o.authPrmUrl.orElse(authPrmUrl),
     functionRefs = if (o.functionRefs.nonEmpty) o.functionRefs else functionRefs,
@@ -754,6 +761,8 @@ object McpProxyEndpointConfig {
     "opaque_token",
     "use_introspection",
     "tool_scopes",
+    "tool_cache_ttls",
+    "tool_rate_limits",
     "auth_module_ref",
     "auth_prm_url",
     "emit_audit_events",
@@ -809,6 +818,22 @@ object McpProxyEndpointConfig {
       "props" -> Json.obj(
         "language" -> "json",
         "height" -> "150px"
+      )
+    ),
+    "tool_cache_ttls" -> Json.obj(
+      "type" -> "any",
+      "label" -> "Tool → cache TTL (seconds)",
+      "props" -> Json.obj(
+        "language" -> "json",
+        "height" -> "120px"
+      )
+    ),
+    "tool_rate_limits" -> Json.obj(
+      "type" -> "any",
+      "label" -> "Tool → rate limit (calls/min per consumer)",
+      "props" -> Json.obj(
+        "language" -> "json",
+        "height" -> "120px"
       )
     ),
     "emit_audit_events" -> Json.obj(
@@ -974,6 +999,8 @@ object McpProxyEndpointConfig {
       "opaque_token" -> o.opaqueToken,
       "use_introspection" -> o.useIntrospection,
       "tool_scopes" -> JsObject(o.toolScopes.toSeq.map { case (k, v) => (k, JsArray(v.map(JsString.apply))) }),
+      "tool_cache_ttls" -> JsObject(o.toolCacheTtls.toSeq.map { case (k, v) => (k, JsNumber(BigDecimal(v))) }),
+      "tool_rate_limits" -> JsObject(o.toolRateLimits.toSeq.map { case (k, v) => (k, JsNumber(BigDecimal(v))) }),
       "auth_module_ref" -> o.authModuleRef.map(_.json).getOrElse(JsNull).asValue,
       "auth_prm_url" -> o.authPrmUrl.map(_.json).getOrElse(JsNull).asValue,
       "refs" -> o.functionRefs,
@@ -1011,6 +1038,8 @@ object McpProxyEndpointConfig {
         opaqueToken = json.select("opaque_token").asOptBoolean.getOrElse(false),
         useIntrospection = json.select("use_introspection").asOptBoolean.getOrElse(false),
         toolScopes = json.select("tool_scopes").asOpt[Map[String, Seq[String]]].getOrElse(Map.empty),
+        toolCacheTtls = json.select("tool_cache_ttls").asOpt[Map[String, Long]].getOrElse(Map.empty),
+        toolRateLimits = json.select("tool_rate_limits").asOpt[Map[String, Long]].getOrElse(Map.empty),
         authModuleRef = json.select("auth_module_ref").asOptString,
         authPrmUrl = json.select("auth_prm_url").asOptString,
         functionRefs = allRefs,
@@ -1167,13 +1196,59 @@ object McpProxyLogic {
     }
   }
 
-  // Resolves and executes a tool call. Left = unknown tool name, Right = the result payload.
-  // scope→tool authorization: a tool the caller lacks the required scope(s) for is hidden (treated as
-  // unknown), so it is denied here as well as filtered out of tools/list.
+  // Identity of the caller for per-tool rate limiting: apikey > user > bearer token > anonymous.
+  private def consumerKey(attrs: TypedMap): String = {
+    attrs.get(otoroshi.plugins.Keys.ApiKeyKey).map(ak => s"apikey:${ak.clientId}")
+      .orElse(attrs.get(otoroshi.plugins.Keys.UserKey).map(u => s"user:${u.email}"))
+      .orElse(attrs.get(McpOAuthFilterUtils.McpUserAuthTokenKey).map(t => s"tok:${t.sha256.take(16)}"))
+      .getOrElse("anon")
+  }
+
+  // Per-tool, per-consumer fixed-window (60s) rate limit, backed by the shared datastore (cluster-wide).
+  private def rateLimitAllows(config: McpProxyEndpointConfig, name: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Boolean] = {
+    val limit = config.toolRateLimits.get(name).orElse(config.toolRateLimits.get("*")).getOrElse(0L)
+    if (limit <= 0L) Future.successful(true)
+    else {
+      val window = System.currentTimeMillis() / 60000L
+      val key = s"${env.storageRoot}:llmext:mcp:rl:${consumerKey(attrs)}:$name:$window"
+      env.datastores.rawDataStore.incrby(key, 1L).flatMap { count =>
+        (if (count == 1L) env.datastores.rawDataStore.pexpire(key, 60000L) else Future.successful(true)).map(_ => count <= limit)
+      }
+    }
+  }
+
+  // Per-tool result cache (opt-in via toolCacheTtls), backed by the shared datastore. Only successful
+  // results are cached; the key includes the config identity to avoid cross-server collisions.
+  private def cachedCallTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
+    val ttl = config.toolCacheTtls.get(name).orElse(config.toolCacheTtls.get("*")).getOrElse(0L)
+    if (ttl <= 0L) callToolInternal(config, name, arguments, attrs)
+    else {
+      val ident = config.serverRef.getOrElse(config.mcpRefs.mkString(",") + "|" + config.functionRefs.mkString(","))
+      val key = s"${env.storageRoot}:llmext:mcp:cache:${(ident + "|" + name + "|" + arguments.stringify).sha256}"
+      def computeAndStore(): Future[Either[String, JsObject]] =
+        callToolInternal(config, name, arguments, attrs).flatMap {
+          case Right(payload) => env.datastores.rawDataStore.set(key, ByteString(payload.stringify), Some(ttl * 1000L)).map(_ => Right(payload))
+          case left           => Future.successful(left)
+        }
+      env.datastores.rawDataStore.get(key).flatMap {
+        case Some(bs) => Try(Json.parse(bs.utf8String).as[JsObject]).toOption match {
+          case Some(jo) => Future.successful(Right(jo))
+          case None     => computeAndStore()
+        }
+        case None     => computeAndStore()
+      }
+    }
+  }
+
+  // Resolves and executes a tool call. Left = unknown tool / denied, Right = the result payload.
+  // Pipeline: scope→tool authorization, then per-tool rate limit, then per-tool result cache.
   def callTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
     val granted = attrs.get(McpOAuthFilterUtils.McpGrantedScopesKey).getOrElse(Set.empty[String])
     if (!config.toolAllowedForScopes(name, granted)) Future.successful(Left(name))
-    else callToolInternal(config, name, arguments, attrs)
+    else rateLimitAllows(config, name, attrs).flatMap {
+      case false => Future.successful(Left(s"rate limit exceeded for tool '$name'"))
+      case true  => cachedCallTool(config, name, arguments, attrs)
+    }
   }
 
   private def callToolInternal(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
