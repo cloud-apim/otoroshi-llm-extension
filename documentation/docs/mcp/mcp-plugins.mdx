@@ -111,6 +111,230 @@ All MCP server exposition plugins (HTTP, SSE, WebSocket) support filtering which
 
 These plugin-level filters are merged with the filters defined on each MCP connector. This means you can have broad access on the connector itself and restrict it further at the exposition level, or vice versa.
 
+## OAuth 2.0 security
+
+All MCP server exposition plugins (HTTP, SSE, WebSocket) — and the [MCP Virtual Server](#mcp-virtual-server) entity that backs them — share the same OAuth options. The [OAuth tutorial](/docs/mcp/mcp-tutorial-oauth) walks through a full setup; the options are:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enforce_oauth` | boolean | `false` | Require a valid OAuth 2.0 Bearer token on every MCP request. A missing/invalid token returns `401` with a `WWW-Authenticate: Bearer ... resource_metadata="..."` header ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) discovery). |
+| `auth_module_ref` | string | — | The OAuth2/OIDC auth module used to validate tokens. |
+| `auth_prm_url` | string | — | Override the `resource_metadata` URL advertised in the `401` (default: `<proto>://<host>/.well-known/oauth-protected-resource`). |
+| `validate_audience` | boolean | `false` | **Audience binding ([RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707))**: require the token `aud` claim to match this MCP server's URL. Prevents token-passthrough / confused-deputy. The `aud` claim may be a single string **or** an array. |
+| `opaque_token` | boolean | `false` | Accept **opaque (non-JWT) access tokens**, validated remotely (userinfo endpoint by default) instead of local JWT signature verification. |
+| `use_introspection` | boolean | `false` | For opaque tokens, validate via the auth module's **[RFC 7662](https://datatracker.ietf.org/doc/html/rfc7662) introspection endpoint** instead of userinfo. |
+
+:::tip One-click setup
+The [**Protected MCP Streamable HTTP preset**](#protected-mcp-streamable-http-preset) wires a protected MCP endpoint **and** the RFC 9728 discovery document from a single virtual server reference.
+:::
+
+## Scope-based tool authorization
+
+Beyond all-or-nothing OAuth, you can require specific OAuth **scopes per tool** with `tool_scopes`. The caller's granted scopes are read from the token (`scope` space-delimited claim and/or `scp` array — or the introspection response for opaque tokens), and a tool is allowed only when the caller has **all** the scopes it requires. Tools with no entry are open. The check filters `tools/list` (hidden) and denies `tools/call`.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `tool_scopes` | object | Map of `tool name` (or `"*"` as a default for every tool) → array of required scopes. |
+
+```js
+{
+  "name": "scoped-mcp-server",
+  "enforce_oauth": true,
+  "auth_module_ref": "auth_mod_xxxxx",
+  "mcp_refs": ["mcp-connector_xxxxx"],
+  "tool_scopes": {
+    "create_repository": ["mcp:write"],
+    "delete_repository": ["mcp:write", "mcp:admin"],
+    "*": ["mcp:tools"]
+  }
+}
+```
+
+In this example every tool requires `mcp:tools`, `create_repository` additionally requires `mcp:write`, and `delete_repository` requires both `mcp:write` and `mcp:admin`.
+
+## Meta mode (tool virtualization)
+
+When a server aggregates many connectors, exposing the full tool list bloats the model's context (every tool schema is injected into the prompt on each call). With `expose_as_meta`, the server exposes **5 virtualization tools** instead of the full list — the same surface as the [meta connector](/docs/mcp/mcp-connectors#transport-kinds), but on the server side:
+
+`list_servers` · `list_tools` · `get_tool_schema` · `search_tools` · `execute`
+
+The model discovers and calls tools dynamically through these, keeping the context small. Local tool functions (`refs`) stay listed directly; resources and prompts are unaffected.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `expose_as_meta` | boolean | `false` | Expose the referenced connectors through the 5 meta tools instead of the full tool list. |
+| `meta_semantic_search` | boolean | `false` | Also fuse BM25 with embedding-based similarity (MiniLM-L6-v2) in `search_tools`. |
+
+```js
+{
+  "name": "meta-mcp-server",
+  "mcp_refs": ["mcp-connector_a", "mcp-connector_b", "mcp-connector_c"],
+  "expose_as_meta": true,
+  "meta_semantic_search": true
+}
+```
+
+## Per-tool rate limiting and result caching
+
+Both are enforced at the `tools/call` chokepoint and backed by the shared datastore (cluster-wide).
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `tool_rate_limits` | object | Map of `tool name` (or `"*"`) → max calls **per minute per consumer** (fixed 60s window). The consumer is resolved as apikey > authenticated user > bearer token. `0`/absent = no limit. |
+| `tool_cache_ttls` | object | Map of `tool name` (or `"*"`) → cache **TTL in seconds** for the tool result. Opt-in, for idempotent tools only. Only successful results are cached, keyed by tool + arguments. `0`/absent = no cache. |
+
+```js
+{
+  "name": "throttled-mcp-server",
+  "mcp_refs": ["mcp-connector_xxxxx"],
+  "tool_rate_limits": {
+    "expensive_search": 10,
+    "*": 600
+  },
+  "tool_cache_ttls": {
+    "get_weather": 60,
+    "list_countries": 3600
+  }
+}
+```
+
+:::warning The cache is keyed by tool + arguments — not per consumer
+The result cache key is the tool name + arguments (plus the server identity), **not** the caller. Only cache tools whose result depends **solely on the arguments**. Do **not** cache tools whose result depends on the caller's identity (e.g. `forward_auth` tools that return per-user data), otherwise one consumer's cached result could be served to another.
+:::
+
+## Protected MCP Streamable HTTP preset
+
+`ProtectedMcpStreamableHttpPreset` is an Otoroshi **preset plugin**: from a single [MCP Virtual Server](#mcp-virtual-server) reference, it wires onto one route both halves of a production-ready protected MCP server:
+
+1. the **MCP Streamable HTTP endpoint** (`McpRespEndpoint`) on a customizable path (default `/mcp`), and
+2. the **Protected Resource Metadata** document ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728)) on the standard well-known path.
+
+The virtual server carries all the settings (OAuth enforcement, auth module, audience binding, scopes, meta mode, rate limits…), so both child plugins are configured from just the server ref.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `server_ref` | string | — | The MCP Virtual Server that drives both plugins. |
+| `mcp_path` | string | `/mcp` | Path of the MCP Streamable HTTP endpoint. |
+| `well_known_path` | string | `/.well-known/oauth-protected-resource` | Path of the Protected Resource Metadata document. |
+
+```js
+{
+  "server_ref": "mcp-virtual-server_xxxxx",
+  "mcp_path": "/mcp",
+  "well_known_path": "/.well-known/oauth-protected-resource"
+}
+```
+
+## MCP Virtual Server
+
+An **MCP Virtual Server** is a reusable, persisted definition of an exposed MCP server. Instead of repeating the same settings on every route, you define them once as a virtual server and reference it from one or more plugins (and from the [preset](#protected-mcp-streamable-http-preset)) through `server_ref`.
+
+A virtual server **bundles everything** an exposition needs:
+
+- `name`, `version` — advertised in the `initialize` response (`serverInfo`).
+- `refs` (tool functions) and `mcp_refs` (MCP connectors) — the tools/resources/prompts to aggregate.
+- [Filters](#available-filters) and [advanced rules](/docs/mcp/mcp-connectors#advanced-rules) (`include_*`/`exclude_*`, `allow_rules`, `disallow_rules`).
+- [OAuth 2.0](#oauth-20-security) (`enforce_oauth`, `auth_module_ref`, `auth_prm_url`, `validate_audience`, `opaque_token`, `use_introspection`).
+- [Scope-based tool authorization](#scope-based-tool-authorization) (`tool_scopes`).
+- [Meta mode](#meta-mode-tool-virtualization) (`expose_as_meta`, `meta_semantic_search`).
+- [Rate limiting & caching](#per-tool-rate-limiting-and-result-caching) (`tool_rate_limits`, `tool_cache_ttls`).
+- [Managed resources](#managed-resources) (`resources`, `resource_fetch_allowed_hosts`), [managed prompts](#managed-prompts) (`prompts`), and [item overlays](#item-overlays) (`overlays`).
+- `emit_audit_events`.
+
+Virtual servers are managed from the **MCP Virtual Servers** page (or the admin API resource `ai-gateway.extensions.cloud-apim.com/v1/mcp-virtual-servers`).
+
+### Referencing and overriding
+
+The three exposition plugins (HTTP, SSE, WebSocket) accept a `server_ref`. When set, the plugin starts from the virtual server's config and lets you **override individual fields inline** on the plugin. The merge rules are hybrid:
+
+- `Option` fields → an inline `Some` value wins;
+- array fields → a non-empty inline array wins;
+- the enable-flags (`enforce_oauth`, `emit_audit_events`, `expose_as_meta`, …) are **OR'd**;
+- `allow_rules`/`disallow_rules`, managed `resources`/`prompts`, and `overlays` are **merged additively**.
+
+This lets you keep a broad definition on the virtual server and tighten it per route, or vice-versa.
+
+```js
+{
+  "server_ref": "mcp-virtual-server_xxxxx",
+  // inline overrides (optional):
+  "emit_audit_events": true
+}
+```
+
+## Managed resources
+
+A virtual server can serve **its own** resources (in addition to those of the referenced connectors), defined inline via `resources`. Each entry has a `uri`, a `name`, optional metadata, and exactly one content source — `text` (inline), `blob` (inline base64), or `url` (fetched on the fly):
+
+| Field | Description |
+|-------|-------------|
+| `uri`, `name` | Required identifier and display name. |
+| `title`, `description`, `mime_type`, `annotations`, `meta` | Optional metadata (`meta` is the MCP `_meta` object). |
+| `text` / `blob` / `url` | Content source (priority `url` > `blob` > `text`). |
+| `url_as` | `"text"` or `"blob"` — how to return the fetched bytes (for `url`). |
+| `headers`, `timeout` | Outgoing request settings (for `url`). |
+| `forward_auth` | Inject the caller's token as `{input_token}` into `url`/`headers`. |
+
+`url`, `headers` and `text` support the expression language. The `{input_token}` placeholder is substituted with the caller's bearer token when `forward_auth` is `true`.
+
+`resource_fetch_allowed_hosts` is an optional allow-list (glob) of hosts the server may fetch resource URLs from — leave empty only if you trust the configured URLs (**SSRF risk** otherwise).
+
+```js
+{
+  "resources": [
+    { "uri": "doc://readme", "name": "Readme", "mime_type": "text/markdown", "text": "# Hello" },
+    { "uri": "api://profile", "name": "Profile", "url": "https://api.example.com/me", "url_as": "text", "forward_auth": true }
+  ],
+  "resource_fetch_allowed_hosts": ["api.example.com"]
+}
+```
+
+Outbound resource fetches (resources that use a `url`) emit a `McpResourceFetchAudit` audit event when `emit_audit_events` is enabled, and always emit `mcp.resource.fetch.calls` / `mcp.resource.fetch.errors` / `mcp.resource.fetch.duration` metrics.
+
+## Managed prompts
+
+Similarly, a virtual server can serve **its own** prompts via `prompts`. Each prompt declares its `arguments` and a list of `messages`; message `text` supports `{{argName}}` substitution (from the `prompts/get` arguments) and the expression language.
+
+| Field | Description |
+|-------|-------------|
+| `name` | Required prompt name. |
+| `title`, `description`, `meta` | Optional metadata. |
+| `arguments` | Array of `{ name, description?, required? }`. |
+| `messages` | Array of `{ role: "user"｜"assistant"｜"system", text }`. |
+
+```js
+{
+  "prompts": [
+    {
+      "name": "summarize",
+      "description": "Summarize a text in a given language",
+      "arguments": [{ "name": "lang", "required": true }],
+      "messages": [{ "role": "user", "text": "Summarize the following text in {{lang}}." }]
+    }
+  ]
+}
+```
+
+## Item overlays
+
+`overlays` lets you apply **per-item JSON patches**, deep-merged onto tools, prompts, resources and resource templates at list time (managed items included). This is handy to inject `_meta`/`annotations`, tweak a `description`, or add an `outputSchema` without touching the upstream server.
+
+The shape is keyed by category, then by item key (tool/prompt name, resource name-or-uri, template `uriTemplate`). The special key `"*"` patches **every** item in a category. Deep-merge: nested objects are merged, scalars and arrays are replaced.
+
+```js
+{
+  "overlays": {
+    "tools": {
+      "*": { "_meta": { "team": "platform" } },
+      "delete_repository": { "annotations": { "destructiveHint": true } }
+    },
+    "resources": {
+      "doc://readme": { "mimeType": "text/markdown" }
+    }
+  }
+}
+```
+
 ## Audit events
 
 All MCP server exposition plugins (HTTP, SSE, WebSocket) can emit audit events for every MCP method call. This is useful for monitoring, debugging, and auditing MCP usage across your infrastructure.
@@ -599,3 +823,9 @@ You can use Otoroshi's data exporter filtering to collect only MCP audit events:
   "kind": "proxy.otoroshi.io/Route"
 }
 ```
+
+## MCP Tools Endpoint (local proxy)
+
+The **MCP Tools Endpoint** (`McpLocalProxyEndpoint`) exposes the same tools / resources / prompts surface as the other exposition plugins, but is meant to be reached through the **local stdio proxy** `npx @cloud-apim/otoroshi-mcp-proxy`. This is handy for MCP clients that only speak the local **stdio** transport (for example desktop AI apps) and cannot connect to a remote HTTP/SSE/WebSocket MCP server directly: the proxy runs locally and bridges stdio ↔ the Otoroshi MCP route.
+
+It uses the exact same [configuration](#mcp-virtual-server) as the other exposition plugins (`refs`, `mcp_refs`, filters, OAuth, scopes, meta mode, managed resources/prompts, overlays, …), including `server_ref` to reuse an [MCP Virtual Server](#mcp-virtual-server).
