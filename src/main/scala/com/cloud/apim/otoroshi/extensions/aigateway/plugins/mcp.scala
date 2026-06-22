@@ -31,6 +31,7 @@ import play.api.mvc.{Result, Results}
 
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
 import scala.collection.concurrent.TrieMap
+import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 import scala.jdk.CollectionConverters._
 import scala.util.{Failure, Success, Try}
@@ -118,6 +119,125 @@ object McpOAuthFilterUtils {
   }
 }
 
+// A resource served directly by an MCP virtual server (as opposed to one aggregated from an upstream
+// McpConnector). The content is either inline (text or base64 blob) or fetched on the fly from a URL at
+// resources/read time. url/headers/text are EL-evaluated per request, and {input_token} can be injected when
+// forwardAuth is set (same convention as McpConnector headers).
+case class McpStaticResource(
+  uri: String,
+  name: String,
+  title: Option[String] = None,
+  description: Option[String] = None,
+  mimeType: Option[String] = None,
+  annotations: Option[JsObject] = None, // MCP `annotations`
+  meta: Option[JsObject] = None,        // MCP `_meta`
+  // content source, by priority: url > blob > text
+  text: Option[String] = None,          // inline text content
+  blob: Option[String] = None,          // inline binary content (base64)
+  url: Option[String] = None,           // content fetched on the fly
+  urlAs: String = "text",               // "text" | "blob": how to return the fetched bytes
+  headers: Map[String, String] = Map.empty,
+  forwardAuth: Boolean = false,         // inject {input_token} into url/headers
+  timeout: FiniteDuration = 30.seconds,
+) {
+  def json: JsValue = McpStaticResource.format.writes(this)
+
+  // entry returned by resources/list (optional fields omitted when absent, per MCP spec)
+  def listJson: JsObject = Json.obj("uri" -> uri, "name" -> name) ++
+    title.map(t => Json.obj("title" -> t)).getOrElse(Json.obj()) ++
+    description.map(d => Json.obj("description" -> d)).getOrElse(Json.obj()) ++
+    mimeType.map(m => Json.obj("mimeType" -> m)).getOrElse(Json.obj()) ++
+    annotations.map(a => Json.obj("annotations" -> a)).getOrElse(Json.obj()) ++
+    meta.map(m => Json.obj("_meta" -> m)).getOrElse(Json.obj())
+
+  private def metaJson: JsObject = meta.map(m => Json.obj("_meta" -> m)).getOrElse(Json.obj())
+  private def withMime(o: JsObject, contentType: Option[String]): JsObject =
+    mimeType.orElse(contentType.filter(_.nonEmpty)).map(m => o ++ Json.obj("mimeType" -> m)).getOrElse(o)
+
+  private def hostAllowed(u: String, allowedHosts: Seq[String]): Boolean = {
+    if (allowedHosts.isEmpty) true else {
+      val host = Try(Uri(u).authority.host.address()).getOrElse("")
+      allowedHosts.exists(p => otoroshi.utils.RegexPool.apply(p).matches(host))
+    }
+  }
+
+  // contents entry returned by resources/read for this resource (a single content block).
+  def read(attrs: TypedMap, allowedHosts: Seq[String])(implicit env: Env, ec: ExecutionContext): Future[JsObject] = {
+    val base = Json.obj("uri" -> uri)
+    url match {
+      case Some(rawUrl) =>
+        val inputToken: String = if (forwardAuth) {
+          attrs.get(McpOAuthFilterUtils.McpUserAuthTokenKey)
+            .orElse(attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.headers.get("Authorization")).map(_.replaceFirst("Bearer ", "")))
+            .getOrElse("--")
+        } else "--"
+        def render(s: String): String = {
+          val ev = s.evaluateEl(attrs)
+          if (forwardAuth) ev.replace("{input_token}", inputToken) else ev
+        }
+        val finalUrl = render(rawUrl)
+        val finalHeaders = headers.mapValues(render).toSeq
+        if (!hostAllowed(finalUrl, allowedHosts)) {
+          Future.successful(withMime(base, None) ++ Json.obj("text" -> s"fetching resource is not allowed for this host") ++ metaJson)
+        } else {
+          env.Ws.url(finalUrl).withHttpHeaders(finalHeaders: _*).withRequestTimeout(timeout).get().map { resp =>
+            val ct = Option(resp.contentType)
+            if (urlAs == "blob") withMime(base, ct) ++ Json.obj("blob" -> resp.bodyAsBytes.encodeBase64.utf8String) ++ metaJson
+            else withMime(base, ct) ++ Json.obj("text" -> resp.body) ++ metaJson
+          }.recover { case e => withMime(base, None) ++ Json.obj("text" -> s"error fetching resource: ${e.getMessage}") ++ metaJson }
+        }
+      case None => blob match {
+        case Some(b) => Future.successful(withMime(base, None) ++ Json.obj("blob" -> b) ++ metaJson)
+        case None =>
+          val rendered: String = text.map(_.evaluateEl(attrs)).getOrElse("")
+          Future.successful(withMime(base, None) ++ Json.obj("text" -> rendered) ++ metaJson)
+      }
+    }
+  }
+}
+
+object McpStaticResource {
+  val format = new Format[McpStaticResource] {
+    override def writes(o: McpStaticResource): JsValue = Json.obj(
+      "uri" -> o.uri,
+      "name" -> o.name,
+      "title" -> o.title.map(_.json).getOrElse(JsNull).asValue,
+      "description" -> o.description.map(_.json).getOrElse(JsNull).asValue,
+      "mime_type" -> o.mimeType.map(_.json).getOrElse(JsNull).asValue,
+      "annotations" -> o.annotations.getOrElse[JsValue](JsNull),
+      "meta" -> o.meta.getOrElse[JsValue](JsNull),
+      "text" -> o.text.map(_.json).getOrElse(JsNull).asValue,
+      "blob" -> o.blob.map(_.json).getOrElse(JsNull).asValue,
+      "url" -> o.url.map(_.json).getOrElse(JsNull).asValue,
+      "url_as" -> o.urlAs,
+      "headers" -> o.headers,
+      "forward_auth" -> o.forwardAuth,
+      "timeout" -> o.timeout.toMillis,
+    )
+    override def reads(json: JsValue): JsResult[McpStaticResource] = Try {
+      McpStaticResource(
+        uri = (json \ "uri").as[String],
+        name = (json \ "name").asOpt[String].filter(_.trim.nonEmpty).getOrElse((json \ "uri").as[String]),
+        title = (json \ "title").asOpt[String].filter(_.trim.nonEmpty),
+        description = (json \ "description").asOpt[String].filter(_.trim.nonEmpty),
+        mimeType = (json \ "mime_type").asOpt[String].filter(_.trim.nonEmpty),
+        annotations = (json \ "annotations").asOpt[JsObject],
+        meta = (json \ "meta").asOpt[JsObject].orElse((json \ "_meta").asOpt[JsObject]),
+        text = (json \ "text").asOpt[String],
+        blob = (json \ "blob").asOpt[String].filter(_.trim.nonEmpty),
+        url = (json \ "url").asOpt[String].filter(_.trim.nonEmpty),
+        urlAs = (json \ "url_as").asOpt[String].filter(_.trim.nonEmpty).getOrElse("text"),
+        headers = (json \ "headers").asOpt[Map[String, String]].getOrElse(Map.empty),
+        forwardAuth = (json \ "forward_auth").asOpt[Boolean].getOrElse(false),
+        timeout = (json \ "timeout").asOpt[Long].map(_.millis).getOrElse(30.seconds),
+      )
+    } match {
+      case Failure(ex) => JsError(ex.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+  }
+}
+
 case class McpProxyEndpointConfig(
   serverRef: Option[String] = None,
   name: Option[String],
@@ -140,6 +260,8 @@ case class McpProxyEndpointConfig(
   excludePrompts: Seq[String] = Seq.empty,
   allowRules: McpConnectorRules = McpConnectorRules.empty,
   disallowRules: McpConnectorRules = McpConnectorRules.empty,
+  resources: Seq[McpStaticResource] = Seq.empty,
+  resourceFetchAllowedHosts: Seq[String] = Seq.empty,
 ) extends NgPluginConfig {
   def json: JsValue = McpProxyEndpointConfig.format.writes(this)
 
@@ -168,6 +290,9 @@ case class McpProxyEndpointConfig(
     excludePrompts = if (o.excludePrompts.nonEmpty) o.excludePrompts else excludePrompts,
     allowRules = allowRules.merge(o.allowRules),
     disallowRules = disallowRules.merge(o.disallowRules),
+    // resources are additive: override entries win, then base entries whose uri isn't overridden
+    resources = o.resources ++ resources.filterNot(r => o.resources.exists(_.uri == r.uri)),
+    resourceFetchAllowedHosts = if (o.resourceFetchAllowedHosts.nonEmpty) o.resourceFetchAllowedHosts else resourceFetchAllowedHosts,
   )
 
   // When `serverRef` points to an existing McpVirtualServer, start from its config and overlay these inline
@@ -238,7 +363,7 @@ case class McpProxyEndpointConfig(
     } yield {
       var caps: JsObject = Json.obj()
       if (hasLocalFunctions || hasTools) caps = caps ++ Json.obj("tools" -> Json.obj())
-      if (hasResources || hasTemplates)  caps = caps ++ Json.obj("resources" -> Json.obj())
+      if (hasResources || hasTemplates || resources.nonEmpty) caps = caps ++ Json.obj("resources" -> Json.obj())
       if (hasPrompts)                    caps = caps ++ Json.obj("prompts" -> Json.obj())
       if (includeLogging)                caps = caps ++ Json.obj("logging" -> Json.obj())
       caps
@@ -261,6 +386,7 @@ object McpProxyEndpointConfig {
     "include_resource_template_uris", "exclude_resource_template_uris",
     "include_prompts", "exclude_prompts",
     "allow_rules", "disallow_rules",
+    "resources", "resource_fetch_allowed_hosts",
   )
   val configSchema: Option[JsObject] = Some(Json.obj(
     "server_ref" -> Json.obj(
@@ -394,6 +520,19 @@ object McpProxyEndpointConfig {
         "language" -> "json",
         "height" -> "150px"
       )
+    ),
+    "resources" -> Json.obj(
+      "type" -> "any",
+      "label" -> "Managed resources",
+      "props" -> Json.obj(
+        "language" -> "json",
+        "height" -> "300px"
+      )
+    ),
+    "resource_fetch_allowed_hosts" -> Json.obj(
+      "type" -> "string",
+      "array" -> true,
+      "label" -> "Resource fetch allowed hosts"
     )
   ))
   val default = McpProxyEndpointConfig(
@@ -425,6 +564,8 @@ object McpProxyEndpointConfig {
       "exclude_prompts" -> o.excludePrompts,
       "allow_rules" -> o.allowRules.json,
       "disallow_rules" -> o.disallowRules.json,
+      "resources" -> JsArray(o.resources.map(_.json)),
+      "resource_fetch_allowed_hosts" -> o.resourceFetchAllowedHosts,
     )
     override def reads(json: JsValue): JsResult[McpProxyEndpointConfig] = Try {
       val singleRef = json.select("ref").asOpt[String].map(r => Seq(r)).getOrElse(Seq.empty)
@@ -452,6 +593,8 @@ object McpProxyEndpointConfig {
         excludePrompts = json.select("exclude_prompts").asOpt[Seq[String]].getOrElse(Seq.empty),
         allowRules = json.select("allow_rules").asOpt(McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
         disallowRules = json.select("disallow_rules").asOpt(McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
+        resources = json.select("resources").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap(v => McpStaticResource.format.reads(v).asOpt),
+        resourceFetchAllowedHosts = json.select("resource_fetch_allowed_hosts").asOpt[Seq[String]].getOrElse(Seq.empty),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -569,6 +712,33 @@ object McpProxyLogic {
               c.call(name, arguments.stringify, attrs).map(res => Right(textPayload(res)))
             }
           case Some(c) => c.call(name, arguments.stringify, attrs).map(res => Right(textPayload(res)))
+        }
+    }
+  }
+
+  // Full "resources" array: this server's managed (static) resources + every connector's resources.
+  def resourcesList(config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
+    val staticJson: Seq[JsValue] = config.resources.filter(r => config.matchesResource(r.name)).map(_.listJson)
+    Future.sequence(mcpConnectors.map(_.listResources(attrs))).map(perConnector => staticJson ++ perConnector.flatten.map(McpSupport.resourceToJson))
+  }
+
+  // Reads a resource by uri. Managed (static) resources take precedence; otherwise it falls back to the
+  // upstream connectors. Returns the `contents` array (empty when nothing matches).
+  def readResource(config: McpProxyEndpointConfig, uri: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsObject]] = {
+    config.resources.find(_.uri == uri) match {
+      case Some(res) => res.read(attrs, config.resourceFetchAllowedHosts).map(Seq(_))
+      case None =>
+        val ext = env.adminExtensions.extension[AiExtension].get
+        val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
+        Future.sequence(mcpConnectors.map(c => c.listResources(attrs).map(resources => (c, resources)))).flatMap { connectorsWithResources =>
+          val matchingConnectors = connectorsWithResources.collect {
+            case (connector, resources) if resources.exists(_.uri() == uri) => connector
+          }
+          Future.sequence(matchingConnectors.map(_.readResource(uri, attrs))).map { results =>
+            results.flatten.headOption.map(_.contents().asScala.toSeq.map(McpSupport.resourceContentsToJson)).getOrElse(Seq.empty)
+          }
         }
     }
   }
@@ -832,10 +1002,8 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
 
   def getResourcesList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     implicit val _attrs: TypedMap = attrs
-    val ext = env.adminExtensions.extension[AiExtension].get
-    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
-    Future.sequence(mcpConnectors.map(_.listResources(attrs))).flatMap { mcpResources =>
-      val payload = Json.obj("resources" -> JsArray(mcpResources.flatten.map(McpSupport.resourceToJson)))
+    McpProxyLogic.resourcesList(config, attrs).flatMap { resources =>
+      val payload = Json.obj("resources" -> JsArray(resources))
       session.send(id, payload)
       jsonRpcResponse(id, payload)
     }
@@ -868,18 +1036,10 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     json.select("params").select("uri").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter"))
       case Some(uri) =>
-        val ext = env.adminExtensions.extension[AiExtension].get
-        val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
-        Future.sequence(mcpConnectors.map(c => c.listResources(attrs).map(resources => (c, resources)))).flatMap { connectorsWithResources =>
-          val matchingConnectors = connectorsWithResources.collect {
-            case (connector, resources) if resources.exists(_.uri() == uri) => connector
-          }
-          Future.sequence(matchingConnectors.map(_.readResource(uri, attrs))).flatMap { results =>
-            val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
-            val payload = Json.obj("contents" -> JsArray(contents.map(McpSupport.resourceContentsToJson)))
-            session.send(id, payload)
-            jsonRpcResponse(id, payload)
-          }
+        McpProxyLogic.readResource(config, uri, attrs).flatMap { contents =>
+          val payload = Json.obj("contents" -> JsArray(contents))
+          session.send(id, payload)
+          jsonRpcResponse(id, payload)
         }
     }
   }
@@ -1143,10 +1303,8 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
   }
 
   def getResourcesList(id: Long, attrs: TypedMap): Future[JsValue] = {
-    val ext = env.adminExtensions.extension[AiExtension].get
-    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
-    Future.sequence(mcpConnectors.map(_.listResources(attrs)(ec, env))).map { all =>
-      jsonRpcResponse(id, Json.obj("resources" -> JsArray(all.flatten.map(McpSupport.resourceToJson))))
+    McpProxyLogic.resourcesList(config, attrs)(env, ec).map { resources =>
+      jsonRpcResponse(id, Json.obj("resources" -> JsArray(resources)))
     }(ec)
   }
 
@@ -1170,16 +1328,8 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     json.select("params").select("uri").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter")).vfuture
       case Some(uri) =>
-        val ext = env.adminExtensions.extension[AiExtension].get
-        val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
-        Future.sequence(mcpConnectors.map(c => c.listResources(attrs)(ec, env).map(resources => (c, resources))(ec))).flatMap { connectorsWithResources =>
-          val matchingConnectors = connectorsWithResources.collect {
-            case (connector, resources) if resources.exists(_.uri() == uri) => connector
-          }
-          Future.sequence(matchingConnectors.map(_.readResource(uri, attrs)(ec, env))).map { results =>
-            val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
-            jsonRpcResponse(id, Json.obj("contents" -> JsArray(contents.map(McpSupport.resourceContentsToJson))))
-          }(ec)
+        McpProxyLogic.readResource(config, uri, attrs)(env, ec).map { contents =>
+          jsonRpcResponse(id, Json.obj("contents" -> JsArray(contents)))
         }(ec)
     }
   }
@@ -1361,10 +1511,8 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
 
   def getResourcesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     implicit val _attrs: TypedMap = attrs
-    val ext = env.adminExtensions.extension[AiExtension].get
-    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
-    Future.sequence(mcpConnectors.map(_.listResources(attrs))).flatMap { mcpResources =>
-      jsonRpcResponse(id, Json.obj("resources" -> JsArray(mcpResources.flatten.map(McpSupport.resourceToJson))))
+    McpProxyLogic.resourcesList(config, attrs).flatMap { resources =>
+      jsonRpcResponse(id, Json.obj("resources" -> JsArray(resources)))
     }
   }
 
@@ -1391,16 +1539,8 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     json.select("params").select("uri").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter"))
       case Some(uri) =>
-        val ext = env.adminExtensions.extension[AiExtension].get
-        val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
-        Future.sequence(mcpConnectors.map(c => c.listResources(attrs).map(resources => (c, resources)))).flatMap { connectorsWithResources =>
-          val matchingConnectors = connectorsWithResources.collect {
-            case (connector, resources) if resources.exists(_.uri() == uri) => connector
-          }
-          Future.sequence(matchingConnectors.map(_.readResource(uri, attrs))).flatMap { results =>
-            val contents = results.flatten.headOption.map(_.contents().asScala).getOrElse(Seq.empty)
-            jsonRpcResponse(id, Json.obj("contents" -> JsArray(contents.map(McpSupport.resourceContentsToJson))))
-          }
+        McpProxyLogic.readResource(config, uri, attrs).flatMap { contents =>
+          jsonRpcResponse(id, Json.obj("contents" -> JsArray(contents)))
         }
     }
   }
