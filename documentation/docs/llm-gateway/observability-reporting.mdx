@@ -73,6 +73,37 @@ Metric names are flat, with the operation encoded in the name (Otoroshi's metric
 
 These are standard Otoroshi metrics: scrape them from the Otoroshi metrics endpoint and build real-time dashboards (request rate, error rate, latency) without parsing audit events.
 
+## Real-time LLM metrics
+
+Like MCP, every AI operation also feeds Otoroshi's real-time metrics under the `ai.*` namespace. They are **always on** when Otoroshi metrics are enabled — independent of any audit opt-in. Names are flat (the metric API carries no tags); the `<op>` segment is the operation, equal to the [`consumed_using`](/docs/reporting#operation-types-consumed_using) value with `/` replaced by `.` (e.g. `chat/completion/blocking` → `chat.completion.blocking`). Covered operations: `chat.completion.blocking|streaming`, `completion.blocking|streaming`, `embedding_model.embedding`, `audio_model.translate|stt|tts`, `image_model.generate|edit`, `moderation_model.moderate`, `video_model.generate`, `ocr.extract`, `search.query`, `embedding_store.add|search|remove`.
+
+**Operations**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `ai.calls` / `ai.errors` | counter | Total AI operations / failures (all operations) |
+| `ai.<op>.calls` / `ai.<op>.errors` | counter | Calls / failures for a given operation |
+| `ai.<op>.duration` | timer | Latency of a given operation (for streaming: time-to-stream-start) |
+| `ai.provider.<kind>.calls` / `.errors` | counter | Breakdown by provider kind (e.g. `ai.provider.openai.calls`) |
+
+**Volume (chat & embedding)**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `ai.tokens.prompt` / `ai.tokens.generation` / `ai.tokens.reasoning` / `ai.tokens.total` | counter | Cumulative tokens consumed |
+| `ai.cost.micro_usd` | counter | Cumulative cost in micro-USD (1e-6 USD); precise accounting stays in `LLMUsageAudit` / budgets |
+
+**Cross-cutting**
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `ai.cache.hit` / `ai.cache.miss` (+ `ai.cache.<strategy>.hit|miss`) | counter | Prompt cache outcomes (`<strategy>` = `simple` / `semantic`) |
+| `ai.guardrail.<outcome>` (+ `ai.guardrail.<kind>.<outcome>`, `ai.guardrail.calls`) | counter | Guardrail outcomes (`<outcome>` = `pass` / `deny` / `error`, `<kind>` = `regex`, `llm`, `prompt_injection`, …) |
+| `ai.fallback.calls` | counter | Provider fallbacks triggered |
+| `ai.circuit.open` / `ai.circuit.close` | counter | Provider circuit-breaker transitions |
+| `ai.budget.exceeded` | counter | Requests blocked by a budget |
+| `ai.model_constraint.denied` | counter | Requests denied by model allow-listing |
+
 ## Using data exporters
 
 You can use [Otoroshi data exporters](https://maif.github.io/otoroshi/manual/entities/data-exporters.html) to extract LLM usage information and send it to any external system (Elasticsearch, Kafka, webhooks, etc.).
