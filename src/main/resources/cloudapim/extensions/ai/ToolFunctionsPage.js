@@ -142,15 +142,15 @@ class ToolFunctionsPage extends Component {
     },
     outputSchema: {
       type: 'monaco-json',
-      props: { label: 'MCP - Output schema', language: 'javascript', height: 200 },
+      props: { label: 'MCP - Output schema', mode: 'javascript', height: 200 },
     },
     annotations: {
       type: 'monaco-json',
-      props: { label: 'MCP - Annotations', language: 'javascript', height: 200 },
+      props: { label: 'MCP - Annotations', mode: 'javascript', height: 200 },
     },
     meta: {
       type: 'monaco-json',
-      props: { label: 'MCP - Meta (_meta)', language: 'javascript', height: 200 },
+      props: { label: 'MCP - Meta (_meta)', mode: 'javascript', height: 200 },
     },
     'backend.options.wasmPlugin': {
       type: 'select',
