@@ -15,6 +15,7 @@ import otoroshi.env.Env
 import otoroshi.events.AuditEvent
 import otoroshi.models.{InHeader, InQueryParam, JWKSAlgoSettings, JwtTokenLocation, LocalJwtVerifier}
 import otoroshi.next.plugins.{OIDCAuthToken, OIDCAuthTokenConfig, OIDCJwtVerifierConfig}
+import otoroshi.next.models.{NgPluginInstance, NgPluginInstanceConfig}
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.next.workflow.WorkflowRun
@@ -40,7 +41,21 @@ import scala.util.{Failure, Success, Try}
 object McpOAuthFilterUtils {
 
   val McpUserAuthTokenKey = TypedKey[String]("cloud-apim.ai-gateway.mcp.McpUserAuthToken")
+  val McpGrantedScopesKey = TypedKey[Set[String]]("cloud-apim.ai-gateway.mcp.McpGrantedScopes")
   val sources = Seq(InHeader("Authorization", "Bearer "), InQueryParam("access_token"))
+
+  // Extract granted OAuth scopes from token/introspection claims: `scope` (space-delimited string) and/or
+  // `scp` (array). Used for scope→tool authorization (see McpProxyEndpointConfig.toolAllowedForScopes).
+  def scopesFromClaims(claims: JsValue): Set[String] = {
+    val fromScope = claims.select("scope").asOpt[String].map(_.split("\\s+").toSeq).getOrElse(Seq.empty)
+    val fromScp   = claims.select("scp").asOpt[Seq[String]].getOrElse(Seq.empty)
+    (fromScope ++ fromScp).map(_.trim).filter(_.nonEmpty).toSet
+  }
+
+  def scopesFromJwt(token: String): Set[String] = Try {
+    val parts = token.split("\\.")
+    if (parts.length < 2) Set.empty[String] else scopesFromClaims(parts(1).decodeBase64.parseJson)
+  }.getOrElse(Set.empty)
 
   def unauthorizedResult(ctx: NgAccessContext, config: McpProxyEndpointConfig, oidcModule: OAuth2ModuleConfig)(implicit env: Env, ec: ExecutionContext): Result = {
     val realmName = oidcModule.cookieSuffix(ctx.route.legacy)
@@ -53,7 +68,7 @@ object McpOAuthFilterUtils {
   // RFC 7662 token introspection, implemented locally so it works against the published Otoroshi
   // 17.11.0 (no dependency on the core `introspectTokenSafe`). Mirrors the legacy core introspection.
   // TODO(otoroshi with introspectTokenSafe published): delete this and call oidcModule.introspectTokenSafe.
-  def introspectToken(oidcModule: OAuth2ModuleConfig, token: String)(implicit env: Env, ec: ExecutionContext): Future[Boolean] = {
+  def introspectToken(oidcModule: OAuth2ModuleConfig, token: String)(implicit env: Env, ec: ExecutionContext): Future[Option[JsValue]] = {
     val clientSecret = Option(oidcModule.clientSecret).filterNot(_.trim.isEmpty)
     val builder      = env.MtlsWs.url(oidcModule.introspectionUrl, oidcModule.mtlsConfig)
     val future       = if (oidcModule.useJson) {
@@ -68,8 +83,8 @@ object McpOAuthFilterUtils {
       )(writeableOf_urlEncodedSimpleForm)
     }
     future
-      .map(resp => resp.status == 200 && (resp.json \ "active").asOpt[Boolean].getOrElse(false))
-      .recover { case _ => false }
+      .map(resp => if (resp.status == 200 && (resp.json \ "active").asOpt[Boolean].getOrElse(false)) Some(resp.json) else None)
+      .recover { case _ => None }
   }
 
   // Audience binding (RFC 8707): the token `aud` claim (string OR array) must match this MCP server's
@@ -124,8 +139,10 @@ object McpOAuthFilterUtils {
                       //   to core — add `useIntrospection = true` to OIDCAuthTokenConfig in the userinfo
                       //   branch below and reuse it (getSession then routes to introspection).
                       introspectToken(oidcModule, token).map {
-                        case true  => NgAccess.NgAllowed
-                        case false => NgAccess.NgDenied(customResult)
+                        case Some(resp) =>
+                          ctx.attrs.put(McpGrantedScopesKey -> scopesFromClaims(resp))
+                          NgAccess.NgAllowed
+                        case None       => NgAccess.NgDenied(customResult)
                       }
                     } else {
                       // opaque token validated via the IdP userinfo endpoint (works on stock Otoroshi)
@@ -175,6 +192,7 @@ object McpOAuthFilterUtils {
                         ctx.attrs
                       ) { t =>
                         ctx.attrs.put(McpUserAuthTokenKey -> token)
+                        ctx.attrs.put(McpGrantedScopesKey -> scopesFromJwt(token))
                         // Audience binding (RFC 8707) done locally so it accepts `aud` as a string OR an
                         // array on stock Otoroshi 17.11.0 (core getSession only checks a single-string aud).
                         // TODO(otoroshi with array-aware getSession published): drop the audienceMatches
@@ -571,6 +589,9 @@ case class McpProxyEndpointConfig(
   opaqueToken: Boolean = false,
   // for opaque tokens, validate via the RFC 7662 introspection endpoint instead of userinfo.
   useIntrospection: Boolean = false,
+  // scope→tool authorization (RBAC): tool name (or "*" as default) → required OAuth scopes; the caller
+  // is allowed iff it was granted ALL of them. Tools with no entry are open. Empty map = no scope checks.
+  toolScopes: Map[String, Seq[String]] = Map.empty,
   authModuleRef: Option[String] = None,
   authPrmUrl: Option[String] = None,
   functionRefs: Seq[String],
@@ -606,6 +627,7 @@ case class McpProxyEndpointConfig(
     validateAudience = validateAudience || o.validateAudience,
     opaqueToken = opaqueToken || o.opaqueToken,
     useIntrospection = useIntrospection || o.useIntrospection,
+    toolScopes = toolScopes ++ o.toolScopes,
     authModuleRef = o.authModuleRef.orElse(authModuleRef),
     authPrmUrl = o.authPrmUrl.orElse(authPrmUrl),
     functionRefs = if (o.functionRefs.nonEmpty) o.functionRefs else functionRefs,
@@ -650,6 +672,12 @@ case class McpProxyEndpointConfig(
     }
   }
   def matchesFunction(name: String): Boolean = matchesByName(name, includeFunctions, excludeFunctions)
+  // scope→tool authorization: the tool's required scopes (its own entry, or the "*" default) must all be
+  // present in the caller's granted scopes. No entry (and no "*") => the tool is open.
+  def toolAllowedForScopes(toolName: String, granted: Set[String]): Boolean = {
+    val required = toolScopes.getOrElse(toolName, toolScopes.getOrElse("*", Seq.empty))
+    required.forall(granted.contains)
+  }
   def matchesResource(name: String): Boolean = matchesByName(name, includeResources, excludeResources)
   def matchesResourceTemplate(name: String, uri: String): Boolean = {
     matchesByName(name, includeResourceTemplates, excludeResourceTemplates) &&
@@ -717,6 +745,7 @@ object McpProxyEndpointConfig {
     "validate_audience",
     "opaque_token",
     "use_introspection",
+    "tool_scopes",
     "auth_module_ref",
     "auth_prm_url",
     "emit_audit_events",
@@ -765,6 +794,14 @@ object McpProxyEndpointConfig {
     "use_introspection" -> Json.obj(
       "type" -> "bool",
       "label" -> "Use RFC 7662 introspection for opaque tokens (else userinfo)"
+    ),
+    "tool_scopes" -> Json.obj(
+      "type" -> "any",
+      "label" -> "Tool → required scopes (RBAC)",
+      "props" -> Json.obj(
+        "language" -> "json",
+        "height" -> "150px"
+      )
     ),
     "emit_audit_events" -> Json.obj(
       "type" -> "bool",
@@ -920,6 +957,7 @@ object McpProxyEndpointConfig {
       "validate_audience" -> o.validateAudience,
       "opaque_token" -> o.opaqueToken,
       "use_introspection" -> o.useIntrospection,
+      "tool_scopes" -> JsObject(o.toolScopes.toSeq.map { case (k, v) => (k, JsArray(v.map(JsString.apply))) }),
       "auth_module_ref" -> o.authModuleRef.map(_.json).getOrElse(JsNull).asValue,
       "auth_prm_url" -> o.authPrmUrl.map(_.json).getOrElse(JsNull).asValue,
       "refs" -> o.functionRefs,
@@ -954,6 +992,7 @@ object McpProxyEndpointConfig {
         validateAudience = json.select("validate_audience").asOptBoolean.getOrElse(false),
         opaqueToken = json.select("opaque_token").asOptBoolean.getOrElse(false),
         useIntrospection = json.select("use_introspection").asOptBoolean.getOrElse(false),
+        toolScopes = json.select("tool_scopes").asOpt[Map[String, Seq[String]]].getOrElse(Map.empty),
         authModuleRef = json.select("auth_module_ref").asOptString,
         authPrmUrl = json.select("auth_prm_url").asOptString,
         functionRefs = allRefs,
@@ -1073,14 +1112,30 @@ object McpProxyLogic {
       } else {
         c.listTools(attrs).map(_.map(McpSupport.toolSpecToJson))
       }
-    }).map(perConnector => (localThunks ++ perConnector.flatten).map {
-      case o: JsObject => config.overlays.applyTool(o)
-      case other => other
-    })
+    }).map { perConnector =>
+      val granted = attrs.get(McpOAuthFilterUtils.McpGrantedScopesKey).getOrElse(Set.empty[String])
+      (localThunks ++ perConnector.flatten)
+        .filter {
+          case o: JsObject => config.toolAllowedForScopes((o \ "name").asOpt[String].getOrElse(""), granted)
+          case _           => true
+        }
+        .map {
+          case o: JsObject => config.overlays.applyTool(o)
+          case other       => other
+        }
+    }
   }
 
   // Resolves and executes a tool call. Left = unknown tool name, Right = the result payload.
+  // scope→tool authorization: a tool the caller lacks the required scope(s) for is hidden (treated as
+  // unknown), so it is denied here as well as filtered out of tools/list.
   def callTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
+    val granted = attrs.get(McpOAuthFilterUtils.McpGrantedScopesKey).getOrElse(Set.empty[String])
+    if (!config.toolAllowedForScopes(name, granted)) Future.successful(Left(name))
+    else callToolInternal(config, name, arguments, attrs)
+  }
+
+  private def callToolInternal(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val functionsMap = functions.map(f => (f.name, f)).toMap
@@ -2009,6 +2064,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
 }
 
 case class McpProtectedResourceMetadataConfig(
+  serverRef: Option[String] = None,
   authModuleRef: Option[String] = None,
   resource: Option[String] = None,
   scopesSupported: Option[Seq[String]] = None,
@@ -2016,10 +2072,18 @@ case class McpProtectedResourceMetadataConfig(
   resourceDocumentation: Option[String] = None,
 ) extends NgPluginConfig {
   def json: JsValue = McpProtectedResourceMetadataConfig.format.writes(this)
+  // effective auth module: the explicit authModuleRef, else the one configured on the referenced MCP
+  // virtual server (so the preset can drive both plugins from just a server ref).
+  def effectiveAuthModuleRef(implicit env: Env): Option[String] = authModuleRef.orElse {
+    serverRef
+      .flatMap(r => env.adminExtensions.extension[AiExtension].flatMap(_.states.mcpVirtualServer(r)))
+      .flatMap(_.config.authModuleRef)
+  }
 }
 
 object McpProtectedResourceMetadataConfig {
   val configFlow: Seq[String] = Seq(
+    "server_ref",
     "auth_module_ref",
     "resource",
     "scopes_supported",
@@ -2027,6 +2091,17 @@ object McpProtectedResourceMetadataConfig {
     "resource_documentation",
   )
   val configSchema: Option[JsObject] = Some(Json.obj(
+    "server_ref" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "MCP Virtual Server",
+      "props" -> Json.obj(
+        "optionsFrom"        -> "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-virtual-servers",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id"
+        )
+      )
+    ),
     "auth_module_ref" -> Json.obj(
       "type"  -> "select",
       "label" -> "Auth. module",
@@ -2060,6 +2135,7 @@ object McpProtectedResourceMetadataConfig {
   val default = McpProtectedResourceMetadataConfig()
   val format = new Format[McpProtectedResourceMetadataConfig] {
     override def writes(o: McpProtectedResourceMetadataConfig): JsValue = Json.obj(
+      "server_ref" -> o.serverRef.map(_.json).getOrElse(JsNull).asValue,
       "auth_module_ref" -> o.authModuleRef.map(_.json).getOrElse(JsNull).asValue,
       "resource" -> o.resource.map(_.json).getOrElse(JsNull).asValue,
       "scopes_supported" -> o.scopesSupported.map(s => JsArray(s.map(_.json))).getOrElse(JsNull).asValue,
@@ -2068,6 +2144,7 @@ object McpProtectedResourceMetadataConfig {
     )
     override def reads(json: JsValue): JsResult[McpProtectedResourceMetadataConfig] = Try {
       McpProtectedResourceMetadataConfig(
+        serverRef = json.select("server_ref").asOptString.filter(_.trim.nonEmpty),
         authModuleRef = json.select("auth_module_ref").asOptString,
         resource = json.select("resource").asOptString.filter(_.trim.nonEmpty),
         scopesSupported = json.select("scopes_supported").asOpt[Seq[String]].filter(_.nonEmpty),
@@ -2106,7 +2183,7 @@ class McpProtectedResourceMetadata extends NgBackendCall {
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpProtectedResourceMetadataConfig.format).getOrElse(McpProtectedResourceMetadataConfig.default)
-    config.authModuleRef match {
+    config.effectiveAuthModuleRef match {
       case None =>
         NgProxyEngineError.NgResultProxyEngineError(
           Results.BadRequest(Json.obj("error" -> "no auth. module configured"))
@@ -2160,5 +2237,80 @@ class McpProtectedResourceMetadata extends NgBackendCall {
             }
         }
     }
+  }
+}
+
+// Preset that wires a full "protected MCP server over Streamable HTTP" on a single route, driven by one
+// MCP virtual server reference:
+//  - the MCP Streamable HTTP endpoint (McpRespEndpoint) on a customizable path (default /mcp)
+//  - the OAuth Protected Resource Metadata document (RFC 9728) on the standard well-known path
+// The virtual server carries the OAuth settings (enforce_oauth, auth module, audience binding, scopes, ...),
+// so both child plugins are fully configured from just the server ref.
+case class ProtectedMcpStreamableHttpPresetConfig(
+  serverRef: Option[String] = None,
+  mcpPath: String = "/mcp",
+) extends NgPluginConfig {
+  def json: JsValue = ProtectedMcpStreamableHttpPresetConfig.format.writes(this)
+}
+
+object ProtectedMcpStreamableHttpPresetConfig {
+  val default = ProtectedMcpStreamableHttpPresetConfig()
+  val configFlow: Seq[String] = Seq("server_ref", "mcp_path", "well_known_path")
+  val configSchema: Option[JsObject] = Some(Json.obj(
+    "server_ref" -> Json.obj(
+      "type"  -> "select",
+      "label" -> "MCP Virtual Server",
+      "props" -> Json.obj(
+        "optionsFrom"        -> "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-virtual-servers",
+        "optionsTransformer" -> Json.obj("label" -> "name", "value" -> "id")
+      )
+    ),
+    "mcp_path" -> Json.obj("type" -> "string", "label" -> "MCP endpoint path")))
+  val format = new Format[ProtectedMcpStreamableHttpPresetConfig] {
+    override def writes(o: ProtectedMcpStreamableHttpPresetConfig): JsValue = Json.obj(
+      "server_ref" -> o.serverRef.map(_.json).getOrElse(JsNull).asValue,
+      "mcp_path" -> o.mcpPath,
+    )
+    override def reads(json: JsValue): JsResult[ProtectedMcpStreamableHttpPresetConfig] = Try {
+      ProtectedMcpStreamableHttpPresetConfig(
+        serverRef = json.select("server_ref").asOptString.filter(_.trim.nonEmpty),
+        mcpPath = json.select("mcp_path").asOptString.filter(_.trim.nonEmpty).getOrElse("/mcp"),
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(v) => JsSuccess(v)
+    }
+  }
+}
+
+class ProtectedMcpStreamableHttpPreset extends NgPresetPlugin {
+
+  override def name: String = "Cloud APIM - Protected MCP Streamable HTTP"
+  override def description: Option[String] =
+    "Preset: exposes an MCP virtual server over Streamable HTTP on a custom path (default /mcp), protected by OAuth, and serves the OAuth Protected Resource Metadata (RFC 9728) document on the well-known path - all driven by a single MCP virtual server reference.".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"), NgPluginCategory.Custom("Presets"))
+  override def steps: Seq[NgStep] = Seq(NgStep.ValidateAccess, NgStep.CallBackend)
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(ProtectedMcpStreamableHttpPresetConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = ProtectedMcpStreamableHttpPresetConfig.configFlow
+  override def configSchema: Option[JsObject] = ProtectedMcpStreamableHttpPresetConfig.configSchema
+
+  override def expand(ctx: NgPresetPluginContext): Seq[NgPluginInstance] = {
+    val config = ProtectedMcpStreamableHttpPresetConfig.format.reads(ctx.config).getOrElse(ProtectedMcpStreamableHttpPresetConfig.default)
+    Seq(
+      // 1. MCP Streamable HTTP endpoint on the (customizable) MCP path, configured from the virtual server
+      NgPluginInstance(
+        plugin = NgPluginHelper.pluginId[McpRespEndpoint],
+        include = Seq(config.mcpPath),
+        config = NgPluginInstanceConfig(McpProxyEndpointConfig.default.copy(serverRef = config.serverRef).json.asObject)
+      ),
+      // 2. OAuth Protected Resource Metadata (RFC 9728) on the standard well-known path
+      NgPluginInstance(
+        plugin = NgPluginHelper.pluginId[McpProtectedResourceMetadata],
+        config = NgPluginInstanceConfig(McpProtectedResourceMetadataConfig.default.copy(serverRef = config.serverRef).json.asObject)
+      ),
+    )
   }
 }
