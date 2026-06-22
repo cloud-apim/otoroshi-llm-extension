@@ -97,7 +97,7 @@ Like MCP, every AI operation also feeds Otoroshi's real-time metrics under the `
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `ai.cache.hit` / `ai.cache.miss` (+ `ai.cache.${strategy}.hit|miss`) | counter | Prompt cache outcomes (`<strategy>` = `simple` / `semantic`) |
+| `ai.cache.hit` / `ai.cache.miss` (+ `ai.cache.{strategy}.hit|miss`) | counter | Prompt cache outcomes (`<strategy>` = `simple` / `semantic`) |
 | `ai.guardrail.<outcome>` (+ `ai.guardrail.<kind>.<outcome>`, `ai.guardrail.calls`) | counter | Guardrail outcomes (`<outcome>` = `pass` / `deny` / `error`, `<kind>` = `regex`, `llm`, `prompt_injection`, …) |
 | `ai.fallback.calls` | counter | Provider fallbacks triggered |
 | `ai.circuit.open` / `ai.circuit.close` | counter | Provider circuit-breaker transitions |
