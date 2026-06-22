@@ -6,7 +6,7 @@ import akka.stream.scaladsl.{Flow, Sink, Source, SourceQueueWithComplete}
 import akka.stream.{Materializer, OverflowStrategy}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.agents.InlineFunction
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, McpConnector, McpConnectorRules, McpSupport}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, McpConnector, McpConnectorRules, McpConnectorTransport, McpConnectorTransportKind, McpSupport}
 import dev.langchain4j.agent.tool.ToolSpecification
 import dev.langchain4j.mcp.client.{McpBlobResourceContents, McpResourceContents, McpTextResourceContents}
 import dev.langchain4j.model.chat.request.json.JsonSchemaElement
@@ -596,6 +596,11 @@ case class McpProxyEndpointConfig(
   authPrmUrl: Option[String] = None,
   functionRefs: Seq[String],
   mcpRefs: Seq[String],
+  // meta mode: expose the referenced connectors through 5 virtualization tools instead of the full tool
+  // list (list_servers / list_tools / get_tool_schema / search_tools / execute) - like the meta connector.
+  exposeAsMeta: Boolean = false,
+  // when meta mode is on, also enable embedding-based semantic search in `search_tools`
+  metaSemanticSearch: Boolean = false,
   emitAuditEvents: Boolean = false,
   includeFunctions: Seq[String] = Seq.empty,
   excludeFunctions: Seq[String] = Seq.empty,
@@ -632,6 +637,8 @@ case class McpProxyEndpointConfig(
     authPrmUrl = o.authPrmUrl.orElse(authPrmUrl),
     functionRefs = if (o.functionRefs.nonEmpty) o.functionRefs else functionRefs,
     mcpRefs = if (o.mcpRefs.nonEmpty) o.mcpRefs else mcpRefs,
+    exposeAsMeta = exposeAsMeta || o.exposeAsMeta,
+    metaSemanticSearch = metaSemanticSearch || o.metaSemanticSearch,
     emitAuditEvents = emitAuditEvents || o.emitAuditEvents,
     includeFunctions = if (o.includeFunctions.nonEmpty) o.includeFunctions else includeFunctions,
     excludeFunctions = if (o.excludeFunctions.nonEmpty) o.excludeFunctions else excludeFunctions,
@@ -741,6 +748,7 @@ object McpProxyEndpointConfig {
     "server_ref",
     "name", "version",
     "refs", "mcp_refs",
+    "expose_as_meta", "meta_semantic_search",
     "enforce_oauth",
     "validate_audience",
     "opaque_token",
@@ -845,6 +853,14 @@ object McpProxyEndpointConfig {
           "value" -> "id",
         ),
       ),
+    ),
+    "expose_as_meta" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Expose as meta (tool virtualization)"
+    ),
+    "meta_semantic_search" -> Json.obj(
+      "type" -> "bool",
+      "label" -> "Meta: enable semantic tool search"
     ),
     "include_functions" -> Json.obj(
       "type" -> "string",
@@ -962,6 +978,8 @@ object McpProxyEndpointConfig {
       "auth_prm_url" -> o.authPrmUrl.map(_.json).getOrElse(JsNull).asValue,
       "refs" -> o.functionRefs,
       "mcp_refs" -> o.mcpRefs,
+      "expose_as_meta" -> o.exposeAsMeta,
+      "meta_semantic_search" -> o.metaSemanticSearch,
       "emit_audit_events" -> o.emitAuditEvents,
       "include_functions" -> o.includeFunctions,
       "exclude_functions" -> o.excludeFunctions,
@@ -997,6 +1015,8 @@ object McpProxyEndpointConfig {
         authPrmUrl = json.select("auth_prm_url").asOptString,
         functionRefs = allRefs,
         mcpRefs = json.select("mcp_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
+        exposeAsMeta = json.select("expose_as_meta").asOptBoolean.getOrElse(false),
+        metaSemanticSearch = json.select("meta_semantic_search").asOptBoolean.getOrElse(false),
         emitAuditEvents = json.select("emit_audit_events").asOptBoolean.getOrElse(false),
         includeFunctions = json.select("include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
         excludeFunctions = json.select("exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
@@ -1091,10 +1111,31 @@ object McpProxyLogic {
   private def textPayload(res: String): JsObject = Json.obj("content" -> Json.arr(Json.obj("type" -> "text", "text" -> res)))
 
   // Full "tools" array: local tool functions + every mcp connector's tools.
+  // Tool-surface connectors. In meta mode the referenced connectors are folded into a single synthetic
+  // Meta connector exposing the 5 virtualization tools (list_servers / list_tools / get_tool_schema /
+  // search_tools / execute) - same behavior as a Meta connector. Local functions stay listed directly,
+  // and resources/prompts are not affected.
+  private def toolConnectors(config: McpProxyEndpointConfig)(implicit env: Env): Seq[McpConnector] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    if (config.exposeAsMeta) {
+      Seq(McpConnector(
+        id = s"vs-meta-${(config.mcpRefs.mkString("|") + config.metaSemanticSearch).sha256}",
+        enabled = true,
+        name = "meta",
+        transport = McpConnectorTransport(
+          kind = McpConnectorTransportKind.Meta,
+          options = Json.obj("connectors" -> config.mcpRefs, "semantic_search_enabled" -> config.metaSemanticSearch)
+        )
+      ))
+    } else {
+      config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
+    }
+  }
+
   def toolsList(config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
-    val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
+    val mcpConnectors = toolConnectors(config)
     val localThunks: Seq[JsValue] = functions.map { wf =>
       val required: JsArray = wf.required.map(v => JsArray(v.map(_.json))).getOrElse(JsArray(wf.parameters.value.keySet.toSeq.map(_.json)))
       Json.obj(
@@ -1142,7 +1183,7 @@ object McpProxyLogic {
     functionsMap.get(name) match {
       case Some(function) => function.call(arguments.stringify, attrs).map(res => Right(textPayload(res)))
       case None =>
-        val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
+        val mcpConnectors = toolConnectors(config)
         mcpConnectors.find(c => c.listToolsBlocking(attrs).exists(_.name() == name)) match {
           case None => Future.successful(Left(name))
           case Some(c) if c.isRawHttpTransport =>
