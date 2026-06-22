@@ -700,6 +700,62 @@ For small or private APIs you can paste the spec directly with `spec` (no fetch)
 
 Once created, reference the connector on a provider or agent exactly like any other MCP connector (`options.mcp_connectors`), and the model gets the operations as callable tools.
 
+## Meta connector
+
+The **Meta** connector (`transport.kind: "meta"`) aggregates several other MCP connectors behind a single connector and exposes a small, fixed set of **5 virtualization tools** instead of the union of every child server's tools. This keeps the model's context small when you wire up many servers — the model discovers and calls tools dynamically through these meta tools.
+
+### Options
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `connectors` | array of strings | The child MCP connector ids to aggregate. |
+| `semantic_search_enabled` | boolean | When `true`, `search_tools` fuses BM25 with embedding-based similarity (MiniLM-L6-v2) via Reciprocal Rank Fusion. Default `false` (lexical BM25 only). |
+
+```js
+{
+  "name": "meta-connector",
+  "transport": {
+    "kind": "meta",
+    "options": {
+      "connectors": ["mcp-connector_a", "mcp-connector_b"],
+      "semantic_search_enabled": true
+    }
+  }
+}
+```
+
+### The 5 meta tools
+
+| Tool | Description |
+|------|-------------|
+| `list_servers` | List the aggregated servers as `{ slug, name, description }`. The `slug` is used by the other tools. |
+| `list_tools` | List a server's tools as `{ name, description }`. Takes `server` (a slug). |
+| `get_tool_schema` | Return `{ server, tool, description, parameters }` (the full JSON schema). Takes `server`, `tool`. |
+| `search_tools` | Search tools across all (or a subset of) servers by relevance. Takes `query`, optional `servers`. |
+| `execute` | Run an ordered list of tool calls in one shot (see below). |
+
+### `execute` and the inter-call expression language
+
+`execute` takes an ordered list of calls, each `{ server, tool, arguments, name? }`. Calls run **in order**, and a call can reference an earlier call's result with the placeholder `${<name>.<path>}` inside its (JSON-encoded) `arguments`:
+
+- `<name>` is the `name` of an earlier call (or `call_<index>` by default);
+- `<path>` is a dotted path with array indices, e.g. `result.items[0].id`;
+- each call result is exposed as `{ ok, result }` (or `{ error }`), so reference `….result.…` for the payload;
+- when a field's value is **exactly** one placeholder, the original type is preserved (numbers/objects/arrays stay native instead of being stringified).
+
+```js
+{
+  "calls": [
+    { "name": "find", "server": "github", "tool": "search_repos", "arguments": "{\"q\": \"otoroshi\"}" },
+    { "server": "github", "tool": "get_repo", "arguments": "{\"id\": \"${find.result.items[0].id}\"}" }
+  ]
+}
+```
+
+:::tip
+The same meta surface can be exposed **server-side** on a virtual server via [`expose_as_meta`](/docs/mcp/mcp-plugins#meta-mode-tool-virtualization), without creating a meta connector at all.
+:::
+
 ## Postgres MCP Server
 
 User prompt to the LLM
