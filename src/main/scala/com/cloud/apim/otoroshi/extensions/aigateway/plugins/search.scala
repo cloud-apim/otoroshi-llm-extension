@@ -2,7 +2,7 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.SearchEngineSearchOptions
+import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, SearchEngineSearchOptions}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.SearchEngine
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
@@ -73,7 +73,7 @@ object SearchEngineProxy {
             if (options.query.trim.isEmpty) {
               NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad_request", "error_details" -> "a 'query' is required"))).leftf
             } else {
-              client.search(options, jsonBody, ctx.attrs).map {
+              AiMetrics.around("search.query", searchEngine.provider.toLowerCase, System.currentTimeMillis(), client.search(options, jsonBody, ctx.attrs)) { _ => () }.map {
                 case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                 case Right(response) => Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(response.toJson)), None))
               }
