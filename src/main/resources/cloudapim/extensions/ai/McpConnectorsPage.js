@@ -235,7 +235,7 @@ class McpConnectorsPage extends Component {
       }
     },
     'allow_rules': {
-      type: 'monaco',
+      type: 'monaco-json',
       props: {
         label: 'Allow Rules',
         height: 300,
@@ -243,7 +243,7 @@ class McpConnectorsPage extends Component {
       }
     },
     'disallow_rules': {
-      type: 'monaco',
+      type: 'monaco-json',
       props: {
         label: 'Disallow Rules',
         height: 300,
