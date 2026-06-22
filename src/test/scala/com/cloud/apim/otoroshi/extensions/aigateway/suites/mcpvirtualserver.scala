@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorRules
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpProxyEndpointConfig, McpStaticPrompt, McpStaticPromptArgument, McpStaticPromptMessage, McpStaticResource}
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpItemOverlays, McpProxyEndpointConfig, McpStaticPrompt, McpStaticPromptArgument, McpStaticPromptMessage, McpStaticResource}
 import play.api.libs.json.{JsObject, Json}
 
 // Pure unit tests for the entity-ref override semantics (McpProxyEndpointConfig.overriddenBy). No Otoroshi
@@ -133,5 +133,58 @@ class McpVirtualServerMergeSuite extends munit.FunSuite {
     assertEquals(parsed.name, "greet")
     assertEquals(parsed.arguments.map(_.name), Seq("who"))
     assertEquals(parsed.messages.map(_.text), Seq("Hello {{who}}"))
+  }
+
+  test("overlays deep-merge onto item json (all fields), '*' applies to every item") {
+    val overlays = McpItemOverlays(
+      tools = Map(
+        "*" -> Json.obj("_meta" -> Json.obj("mcp-app" -> "shared")),
+        "calc" -> Json.obj(
+          "description" -> "patched",
+          "_meta" -> Json.obj("x" -> 1),
+          "annotations" -> Json.obj("readOnlyHint" -> true),
+          "outputSchema" -> Json.obj("type" -> "number"),
+        ),
+      )
+    )
+    val tool = Json.obj("name" -> "calc", "description" -> "orig", "inputSchema" -> Json.obj("type" -> "object"))
+    val merged = overlays.applyTool(tool)
+    assertEquals((merged \ "description").as[String], "patched")              // replaced
+    assertEquals((merged \ "_meta" \ "mcp-app").as[String], "shared")         // from '*'
+    assertEquals((merged \ "_meta" \ "x").as[Int], 1)                         // from specific (merged)
+    assertEquals((merged \ "annotations" \ "readOnlyHint").as[Boolean], true)
+    assertEquals((merged \ "outputSchema" \ "type").as[String], "number")
+    assertEquals((merged \ "inputSchema" \ "type").as[String], "object")      // untouched field preserved
+  }
+
+  test("overlays apply to resources by name or uri") {
+    val overlays = McpItemOverlays(resources = Map("file://a" -> Json.obj("mimeType" -> "text/plain")))
+    val res = Json.obj("uri" -> "file://a", "name" -> "a")
+    assertEquals((overlays.applyResource(res) \ "mimeType").as[String], "text/plain")
+  }
+
+  test("overlays merge (override wins, deep-merged)") {
+    val baseO = McpItemOverlays(tools = Map("calc" -> Json.obj("_meta" -> Json.obj("a" -> 1, "b" -> 1))))
+    val overO = McpItemOverlays(tools = Map("calc" -> Json.obj("_meta" -> Json.obj("b" -> 2, "c" -> 3)), "other" -> Json.obj("x" -> 1)))
+    val merged = baseO.merge(overO)
+    val calc = merged.tools("calc")
+    assertEquals((calc \ "_meta" \ "a").as[Int], 1)
+    assertEquals((calc \ "_meta" \ "b").as[Int], 2) // override wins
+    assertEquals((calc \ "_meta" \ "c").as[Int], 3)
+    assert(merged.tools.contains("other"))
+  }
+
+  test("overriddenBy merges overlays") {
+    val baseC = base.copy(overlays = McpItemOverlays(tools = Map("t" -> Json.obj("description" -> "base"))))
+    val overC = McpProxyEndpointConfig.default.copy(overlays = McpItemOverlays(tools = Map("t" -> Json.obj("title" -> "T"))))
+    val merged = baseC.overriddenBy(overC)
+    assertEquals((merged.overlays.tools("t") \ "description").as[String], "base")
+    assertEquals((merged.overlays.tools("t") \ "title").as[String], "T")
+  }
+
+  test("McpItemOverlays format round-trips") {
+    val o = McpItemOverlays(resources = Map("file://a" -> Json.obj("mimeType" -> "x")))
+    val parsed = McpItemOverlays.format.reads(o.json).get
+    assertEquals((parsed.resources("file://a") \ "mimeType").as[String], "x")
   }
 }
