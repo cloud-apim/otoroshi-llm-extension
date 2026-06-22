@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorRules
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpProxyEndpointConfig, McpStaticResource}
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpProxyEndpointConfig, McpStaticPrompt, McpStaticPromptArgument, McpStaticPromptMessage, McpStaticResource}
 import play.api.libs.json.{JsObject, Json}
 
 // Pure unit tests for the entity-ref override semantics (McpProxyEndpointConfig.overriddenBy). No Otoroshi
@@ -95,5 +95,43 @@ class McpVirtualServerMergeSuite extends munit.FunSuite {
     assertEquals(parsed.urlAs, "blob")
     assertEquals(parsed.headers, Map("X" -> "1"))
     assertEquals(parsed.forwardAuth, true)
+  }
+
+  test("overriddenBy concatenates prompts and dedups by name (override wins)") {
+    val baseP = Seq(
+      McpStaticPrompt(name = "greet", messages = Seq(McpStaticPromptMessage(text = "base-greet"))),
+      McpStaticPrompt(name = "bye", messages = Seq(McpStaticPromptMessage(text = "base-bye"))),
+    )
+    val overP = Seq(
+      McpStaticPrompt(name = "greet", messages = Seq(McpStaticPromptMessage(text = "override-greet"))),
+      McpStaticPrompt(name = "welcome", messages = Seq(McpStaticPromptMessage(text = "override-welcome"))),
+    )
+    val merged = base.copy(prompts = baseP).overriddenBy(McpProxyEndpointConfig.default.copy(prompts = overP))
+    assertEquals(merged.prompts.map(_.name).toSet, Set("greet", "bye", "welcome"))
+    assertEquals(merged.prompts.find(_.name == "greet").map(_.messages.head.text), Some("override-greet"))
+  }
+
+  test("McpStaticPrompt.listJson includes arguments and _meta") {
+    val p = McpStaticPrompt(
+      name = "greet", description = Some("greets the user"),
+      arguments = Seq(McpStaticPromptArgument(name = "who", required = true)),
+      meta = Some(Json.obj("k" -> "v")),
+    )
+    val js = p.listJson
+    val args = (js \ "arguments").as[Seq[JsObject]]
+    assertEquals((js \ "name").as[String], "greet")
+    assertEquals((args.head \ "name").as[String], "who")
+    assertEquals((args.head \ "required").as[Boolean], true)
+    assert((js \ "_meta").asOpt[JsObject].isDefined)
+  }
+
+  test("McpStaticPrompt format round-trips (arguments + messages)") {
+    val p = McpStaticPrompt(name = "greet", title = Some("Greeting"),
+      arguments = Seq(McpStaticPromptArgument(name = "who", description = Some("the name"), required = true)),
+      messages = Seq(McpStaticPromptMessage(role = "user", text = "Hello {{who}}")))
+    val parsed = McpStaticPrompt.format.reads(p.json).get
+    assertEquals(parsed.name, "greet")
+    assertEquals(parsed.arguments.map(_.name), Seq("who"))
+    assertEquals(parsed.messages.map(_.text), Seq("Hello {{who}}"))
   }
 }
