@@ -2,7 +2,7 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.OcrModelClientInputOptions
+import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, OcrModelClientInputOptions}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.OcrModel
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
@@ -111,7 +111,7 @@ object OpenAICompatOcr {
             case Some(b) => baseOptions.copy(bytes = b.some, fileContentType = fileContentType.orElse(baseOptions.fileContentType), fileName = fileName.orElse(baseOptions.fileName))
             case None => baseOptions
           }
-          client.ocr(options, jsonBody, ctx.attrs).map {
+          AiMetrics.around("ocr.extract", model.provider.toLowerCase, System.currentTimeMillis(), client.ocr(options, jsonBody, ctx.attrs)) { _ => () }.map {
             case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
             case Right(response) => Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Status(200).apply(response.toJson)), None))
           }
