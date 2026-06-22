@@ -595,7 +595,7 @@ class VectorStoreAddFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instantiate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = EmbeddingAddOptions.format.reads(payload).get
-          client.add(options, payload).map {
+          AiMetrics.around("embedding_store.add", provider.provider.toLowerCase, System.currentTimeMillis(), client.add(options, payload)) { _ => () }.map {
             case Left(error) => WorkflowError(s"error while calling embedding store", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(_) => JsNull.right
           }
@@ -670,7 +670,7 @@ class VectorStoreRemoveFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instantiate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = EmbeddingRemoveOptions.format.reads(payload).get
-          client.remove(options, payload).map {
+          AiMetrics.around("embedding_store.remove", provider.provider.toLowerCase, System.currentTimeMillis(), client.remove(options, payload)) { _ => () }.map {
             case Left(error) => WorkflowError(s"error while calling embedding store", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(_) => JsNull.right
           }
@@ -753,7 +753,7 @@ class VectorStoreSearchFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instantiate client for embedding store", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => {
           val options = EmbeddingSearchOptions.format.reads(payload).get
-          client.search(options, payload).map {
+          AiMetrics.around("embedding_store.search", provider.provider.toLowerCase, System.currentTimeMillis(), client.search(options, payload)) { _ => () }.map {
             case Left(error) => WorkflowError(s"error while calling embedding store", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) => response.json.right
           }
@@ -1691,7 +1691,7 @@ class OcrCallFunction extends WorkflowFunction {
             case Some(bytes) => base.copy(bytes = bytes.some, url = None, fileContentType = contentType, fileName = fileName)
             case None => base.copy(fileContentType = contentType, fileName = fileName)
           }
-          client.ocr(options, payload, wfr.attrs).map {
+          AiMetrics.around("ocr.extract", ocrModel.provider.toLowerCase, System.currentTimeMillis(), client.ocr(options, payload, wfr.attrs)) { _ => () }.map {
             case Left(error) => WorkflowError(s"error while calling ocr model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) => response.toJson.right
           }
@@ -1776,7 +1776,7 @@ class SearchEngineSearchFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instantiate client for search engine provider", Some(Json.obj("provider_id" -> searchEngine.id)), None).leftf
         case Some(client) => {
           val options = SearchEngineSearchOptions.format.reads(payload).getOrElse(SearchEngineSearchOptions(payload.select("query").asOptString.getOrElse("")))
-          client.search(options, payload, wfr.attrs).map {
+          AiMetrics.around("search.query", searchEngine.provider.toLowerCase, System.currentTimeMillis(), client.search(options, payload, wfr.attrs)) { _ => () }.map {
             case Left(error) => WorkflowError(s"error while calling search engine", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) => response.toJson.right
           }
