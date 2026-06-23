@@ -6,14 +6,15 @@ import Terminal from '@site/src/components/Terminal';
 
 # Tutorial: OAuth-protected MCP server with geocoding tools
 
-In this tutorial, you will build a complete, production-ready MCP server that exposes geocoding tools from the French national geocoding API ([Géoplateforme IGN](https://data.geopf.fr/geocodage/)). The server will be protected with OAuth 2.0 using the built-in `enforceOAuth` option of the MCP plugin and will expose the standard `.well-known/oauth-protected-resource` discovery document via the dedicated `McpProtectedResourceMetadata` plugin.
+In this tutorial, you will build a complete, production-ready MCP server that exposes geocoding tools from the French national geocoding API ([Géoplateforme IGN](https://data.geopf.fr/geocodage/)). All the exposition settings live on a reusable [**MCP Virtual Server**](/docs/mcp/mcp-virtual-servers), which the route references with `server_ref`. The server is protected with OAuth 2.0 (the built-in `enforce_oauth` option) and exposes the standard `.well-known/oauth-protected-resource` discovery document via the dedicated `McpProtectedResourceMetadata` plugin.
 
 ## What you will build
 
 - **2 tool functions** using HTTP backends that call the IGN geocoding API (no API key required)
   - `geocode_address` — convert a French address into GPS coordinates
   - `reverse_geocode` — find the nearest address from GPS coordinates
-- **1 MCP server route** exposing these tools via the MCP HTTP transport with built-in OAuth 2.0 protection
+- **1 MCP Virtual Server** bundling the tools and the OAuth settings (the reusable exposition definition)
+- **1 MCP server route** exposing the virtual server via the MCP Streamable HTTP transport with built-in OAuth 2.0 protection
 - **OAuth Protected Resource metadata** automatically derived from your OIDC auth module and served at `/.well-known/oauth-protected-resource`
 
 ## Prerequisites
@@ -57,6 +58,8 @@ In this tutorial, you will build a complete, production-ready MCP server that ex
                                               │   (OIDC provider)   │
                                               └─────────────────────┘
 ```
+
+The OAuth settings and the tool list are defined once on an **MCP Virtual Server**; the route's `McpRespEndpoint` plugin just references it with `server_ref`.
 
 ## Step 1: Create the OIDC auth module
 
@@ -187,14 +190,44 @@ curl "https://data.geopf.fr/geocodage/search?q=10+rue+de+Rivoli+Paris&limit=1"
 curl "https://data.geopf.fr/geocodage/reverse?lat=48.8584&lon=2.2945&limit=1"
 ```
 
-## Step 3: Create the MCP server route
+## Step 3: Create the MCP Virtual Server
 
-Create a new route in Otoroshi that exposes the tool functions as an MCP HTTP server, protected by OAuth 2.0.
+Create an **MCP Virtual Server** that bundles the two tool functions and the OAuth settings. The route will reference it, so all the exposition config (and access control) lives in one reusable place.
 
-This route uses two plugins:
+Go to the **MCP Virtual Servers** page (or use the admin API resource `ai-gateway.extensions.cloud-apim.com/v1/mcp-virtual-servers`) and create:
 
-1. **McpProtectedResourceMetadata** — serves the [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) Protected Resource Metadata document at `/.well-known/oauth-protected-resource`, automatically derived from your OIDC auth module (authorization server URL, JWKS URI, scopes)
-2. **McpRespEndpoint** — handles MCP protocol requests with built-in OAuth enforcement: validates the Bearer token using the same auth module and returns a `401` with `WWW-Authenticate` header pointing to the PRM document if the token is missing or invalid
+```js
+{
+  "id": "mcp-virtual-server_geocoding",
+  "name": "MCP Geocoding Server",
+  "description": "Geocoding tools, OAuth-protected",
+  "enabled": true,
+  "tags": ["mcp", "geocoding", "oauth"],
+  "metadata": {},
+  "config": {
+    "name": "mcp-geocoding",
+    "version": "1.0.0",
+    "refs": [
+      "tool-function_geocode-address",
+      "tool-function_reverse-geocode"
+    ],
+    "mcp_refs": [],
+    "enforce_oauth": true,
+    "auth_module_ref": "auth_mod_keycloak-mcp"
+  }
+}
+```
+
+The `config` block is the shared exposition config. You can later add [audience binding](/docs/mcp/mcp-virtual-servers#oauth-20-security), [scope→tool RBAC](/docs/mcp/mcp-virtual-servers#scope-based-tool-authorization), [meta mode](/docs/mcp/mcp-virtual-servers#meta-mode-tool-virtualization), or [rate limiting & caching](/docs/mcp/mcp-virtual-servers#per-tool-rate-limiting-and-result-caching) here — without touching the route.
+
+## Step 4: Create the MCP server route
+
+Create a route in Otoroshi that exposes the virtual server as an MCP Streamable HTTP server, protected by OAuth 2.0.
+
+This route uses two plugins, both pointing at the virtual server with `server_ref`:
+
+1. **McpProtectedResourceMetadata** — serves the [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) Protected Resource Metadata document at `/.well-known/oauth-protected-resource`, automatically derived from the OIDC auth module of the referenced virtual server (authorization server URL, JWKS URI, scopes)
+2. **McpRespEndpoint** — references the virtual server and handles MCP protocol requests with built-in OAuth enforcement (from the virtual server): it validates the Bearer token and returns a `401` with a `WWW-Authenticate` header pointing to the PRM document if the token is missing or invalid
 
 ```js
 {
@@ -266,7 +299,7 @@ This route uses two plugins:
       "include": ["/.well-known/oauth-protected-resource"],
       "exclude": [],
       "config": {
-        "auth_module_ref": "auth_mod_keycloak-mcp",
+        "server_ref": "mcp-virtual-server_geocoding",
         "scopes_supported": ["openid", "mcp:tools", "mcp:resources"],
         "bearer_methods_supported": ["header", "query"]
       },
@@ -280,15 +313,7 @@ This route uses two plugins:
       "include": ["/mcp"],
       "exclude": ["/.well-known/oauth-protected-resource"],
       "config": {
-        "name": "mcp-geocoding",
-        "version": "1.0.0",
-        "enforce_oauth": true,
-        "auth_module_ref": "auth_mod_keycloak-mcp",
-        "refs": [
-          "tool-function_geocode-address",
-          "tool-function_reverse-geocode"
-        ],
-        "mcp_refs": []
+        "server_ref": "mcp-virtual-server_geocoding"
       },
       "bound_listeners": [],
       "plugin_index": {}
@@ -302,7 +327,7 @@ This route uses two plugins:
 
 #### McpProtectedResourceMetadata plugin
 
-This plugin serves the [OAuth Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) document at `/.well-known/oauth-protected-resource`. Instead of hardcoding the metadata as a static JSON string, it **automatically derives** the document from your OIDC auth module:
+This plugin serves the [OAuth Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) document at `/.well-known/oauth-protected-resource`. Instead of hardcoding the metadata as a static JSON string, it **automatically derives** the document from the OIDC auth module — taken from the referenced virtual server (`server_ref`), or set directly via `auth_module_ref`:
 
 | Field | Source | Description |
 |-------|--------|-------------|
@@ -332,10 +357,11 @@ If you change your OIDC provider or its configuration, the PRM document updates 
 
 #### McpRespEndpoint plugin (with OAuth enforcement)
 
+OAuth enforcement (`enforce_oauth`) and the auth module live on the [virtual server](#step-3-create-the-mcp-virtual-server); the plugin only needs `server_ref`.
+
 | Field | Value | Description |
 |-------|-------|-------------|
-| `enforce_oauth` | `true` | Enables built-in OAuth 2.0 token validation on all MCP requests |
-| `auth_module_ref` | `auth_mod_keycloak-mcp` | References the OIDC auth module created in step 1. The plugin uses its JWKS settings to verify Bearer tokens. |
+| `server_ref` | `mcp-virtual-server_geocoding` | References the virtual server, which carries the tools, `enforce_oauth`, and the auth module used to verify Bearer tokens. |
 | `exclude` | `["/.well-known/oauth-protected-resource"]` | The discovery endpoint is handled by the McpProtectedResourceMetadata plugin |
 
 When a request arrives without a valid token, the plugin returns:
@@ -351,7 +377,7 @@ Content-Type: application/json
 
 The `resource_metadata` URL in the `WWW-Authenticate` header is automatically constructed from the request's protocol and host, pointing to the path served by the McpProtectedResourceMetadata plugin. This follows the [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) standard, enabling MCP clients to automatically discover the authorization server and obtain a token.
 
-## Step 4: Test the MCP server
+## Step 5: Test the MCP server
 
 ### 1. Discover the OAuth metadata
 
@@ -538,7 +564,7 @@ MCP Client                           Otoroshi                          Keycloak
     │                                    │                                │
 ```
 
-## Step 5: Test with MCP Inspector
+## Step 6: Test with MCP Inspector
 
 The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is an interactive developer tool for testing and debugging MCP servers. You can use it to connect to your OAuth-protected MCP server with a visual UI.
 
@@ -561,7 +587,7 @@ This opens the Inspector UI at [http://localhost:6274](http://localhost:6274).
 | `Authorization` | `Bearer <your-access-token>` |
 
 :::tip
-To quickly get a token, run the curl command from Step 4.3 and copy the resulting `access_token` value.
+To quickly get a token, run the curl command from Step 5.3 and copy the resulting `access_token` value.
 :::
 
 4. Click **Connect**
@@ -627,7 +653,7 @@ npx @modelcontextprotocol/inspector \
 
 ## Going further
 
-- **Add more tools**: Create additional tool functions (e.g., cadastral parcel search using the IGN `?index=parcel` parameter) and add their IDs to the `refs` array in the McpRespEndpoint config
+- **Add more tools**: Create additional tool functions (e.g., cadastral parcel search using the IGN `?index=parcel` parameter) and add their IDs to the `refs` array of the virtual server
 - **Add MCP connectors**: Combine your HTTP tool functions with [MCP connectors](/docs/mcp/mcp-connectors) by adding connector IDs to the `mcp_refs` array
 - **Fine-tune access control**: Use the [MCP virtual server filters](/docs/mcp/mcp-virtual-servers#filtering) to control which tools are exposed to which clients
 - **Connect to an LLM provider**: Attach these same tool functions to an [LLM provider](/docs/function-calling/overview#provider-configuration) so the LLM can call them during chat completions
