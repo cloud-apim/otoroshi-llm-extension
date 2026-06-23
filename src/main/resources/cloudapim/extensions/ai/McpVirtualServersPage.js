@@ -214,6 +214,14 @@ class McpVirtualServersPage extends Component {
         help: 'Per-item JSON patches deep-merged onto tools/prompts/resources/resource-templates at list time (managed items included). Shape: { "tools": { "<name>": { "description": "...", "_meta": {...}, "annotations": {...}, "inputSchema": {...}, "outputSchema": {...}, "title": "..." } }, "prompts": { "<name>": {...} }, "resources": { "<name-or-uri>": { "mimeType": "...", "_meta": {...} } }, "resource_templates": { "<uriTemplate>": {...} } }. Use the key "*" to patch every item in a category. deepMerge: nested objects merged, scalars/arrays replaced.',
       },
     },
+    'config.zero_trust': {
+      type: 'monaco-json',
+      props: {
+        label: 'Zero-Trust controls',
+        height: 320,
+        help: 'Zero-Trust MCP gateway controls (all opt-in, blocking is opt-in too). Shape: { "pinning_enabled": false, "pinning_enforce": false, "pinned_hashes": { "<tool>": "<sha256>" }, "pinning_epoch": 0, "description_guardrails": [ { "enabled": true, "id": "prompt_injection|pif|secrets_leakage|regex|contains|...", "config": {} } ], "result_guardrails": [ ... ], "guardrails_enforce": false, "redact_arguments": false, "redact_results": false, "redaction_builtins": ["email","credit_card","ssn","ipv4","jwt","aws_key","private_key","generic_api_key"], "redaction_rules": [ { "name": "...", "regex": "...", "replacement": "«redacted»" } ] }. A. anti-rug-pull: fingerprints + pins each tool description/inputSchema (Trust-On-First-Use); a later mutation is alerted (and blocked when pinning_enforce). Bump pinning_epoch to re-pin after a legitimate change. B. guardrail scanning of tool descriptions (at tools/list) and results (at tools/call) via the guardrails engine; blocked when guardrails_enforce. C. deterministic PII/secrets redaction of arguments and/or results.',
+      },
+    },
   };
 
   columns = [
@@ -270,6 +278,8 @@ class McpVirtualServersPage extends Component {
     'config.prompts',
     '---',
     'config.overlays',
+    '---',
+    'config.zero_trust',
   ];
 
   componentDidMount() {
@@ -324,6 +334,19 @@ class McpVirtualServersPage extends Component {
             resource_fetch_allowed_hosts: [],
             prompts: [],
             overlays: { tools: {}, prompts: {}, resources: {}, resource_templates: {} },
+            zero_trust: {
+              pinning_enabled: false,
+              pinning_enforce: false,
+              pinned_hashes: {},
+              pinning_epoch: 0,
+              description_guardrails: [],
+              result_guardrails: [],
+              guardrails_enforce: false,
+              redact_arguments: false,
+              redact_results: false,
+              redaction_builtins: [],
+              redaction_rules: [],
+            },
           },
         }),
         itemName: "MCP Virtual Server",
