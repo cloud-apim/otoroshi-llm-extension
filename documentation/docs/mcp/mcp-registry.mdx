@@ -108,14 +108,4 @@ The exact `.well-known` path/format for an MCP *registry* is not strongly standa
 
 The discovery endpoint funnels clients onto the governed path: instead of each team hand-configuring connections, a client just needs the registry URL and auto-discovers every sanctioned server (with its auth requirements).
 
-## Scope & limits
 
-A note on the URL: the **"Detect from route" assistant** suggests `registry.url` (and the auth) by scanning the routes that expose the server, but the value is **stored and human-confirmed** — a gateway can't always know its own public URL behind a proxy/LB, and a server may be exposed on several routes. The projection itself never scans.
-
-Deferred for a later iteration:
-
-- **Fully-automatic remote `url`** resolved live at projection time (no stored value).
-- **Identity-aware filtering** of the listing (a team only sees what its RBAC/scopes allow).
-- **Cursor pagination** (`metadata.next_cursor`).
-- An **approval workflow** (we stay on `published` + admin role).
-- **Import / federation** from a remote registry, and **multi-kind** catalogue (APIs, workflows).
