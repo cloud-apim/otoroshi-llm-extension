@@ -311,6 +311,31 @@ class McpVirtualServersPage extends Component {
         component: McpRedactionRule,
       },
     },
+    // ── Registry / publication (entity-level, projected to standard server.json) ──────────────────────────
+    'registry.published': {
+      type: 'bool',
+      props: { label: 'Publish to MCP registry', help: 'When on, this server is listed by the MCP registry endpoints (GET /v0/servers) so registry-aware MCP clients can discover it. Flip it as the approval gate (admin role).' },
+    },
+    'registry.name': {
+      type: 'string',
+      props: { label: 'Registry name (namespaced)', placeholder: 'io.acme/github', help: 'Reverse-DNS namespaced name in the registry. Defaults to a slug of the server name (io.cloud-apim/<slug>).' },
+    },
+    'registry.version': {
+      type: 'string',
+      props: { label: 'Version', placeholder: '1.0.0', help: 'Semantic version advertised in server.json.' },
+    },
+    'registry.title': {
+      type: 'string',
+      props: { label: 'Title', help: 'Human-readable title. Defaults to the server name.' },
+    },
+    'registry.url': {
+      type: 'string',
+      props: { label: 'Public streamable-http URL', placeholder: 'https://gw.acme/mcp/github', help: 'The public URL of the exposed server (server.json remote). Set manually for now — auto-deriving it from the routes is not done yet. If empty, no remote is published (clients still discover via the server’s own .well-known).' },
+    },
+    'registry.deprecated': {
+      type: 'bool',
+      props: { label: 'Deprecated', help: 'Marks the entry status as "deprecated" in the registry while keeping it listed.' },
+    },
   };
 
   columns = [
@@ -373,6 +398,8 @@ class McpVirtualServersPage extends Component {
     'config.zero_trust.description_guardrails', 'config.zero_trust.result_guardrails', 'config.zero_trust.guardrails_enforce',
     '---',
     'config.zero_trust.redact_arguments', 'config.zero_trust.redact_results', 'config.zero_trust.redaction_builtins', 'config.zero_trust.redaction_rules',
+    '---',
+    'registry.published', 'registry.name', 'registry.version', 'registry.title', 'registry.url', 'registry.deprecated',
   ];
 
   componentDidMount() {
@@ -441,6 +468,7 @@ class McpVirtualServersPage extends Component {
               redaction_rules: [],
             },
           },
+          registry: { published: false, name: null, version: '1.0.0', deprecated: false, url: null, title: null },
         }),
         itemName: "MCP Virtual Server",
         formSchema: this.formSchema,
@@ -463,6 +491,10 @@ class McpVirtualServersPage extends Component {
               description_guardrails: [], result_guardrails: [], guardrails_enforce: false,
               redact_arguments: false, redact_results: false, redaction_builtins: [], redaction_rules: [],
             }, i.config.zero_trust || {});
+            // registry block lives at the entity level (not under config); default it for older entities.
+            i.registry = Object.assign({
+              published: false, name: null, version: '1.0.0', deprecated: false, url: null, title: null,
+            }, i.registry || {});
             return i;
           })
         }),
