@@ -53,7 +53,9 @@ All these features support [filtering](/docs/mcp/mcp-connectors#filtering-tools-
 
 Otoroshi can [**expose**](/docs/mcp/mcp-plugins) your tool functions and MCP connectors as an MCP server. The recommended transport is **Streamable HTTP**; SSE (deprecated), WebSocket (experimental) and a local stdio proxy are also available.
 
-All the exposition settings — filtering, OAuth, scopes, meta mode, rate limiting & caching, managed resources/prompts, overlays, and [zero-trust controls](/docs/mcp/mcp-virtual-servers#zero-trust-controls) (anti-rug-pull pinning, prompt-injection scanning, PII/secrets redaction) — are bundled in a reusable [**MCP Virtual Server**](/docs/mcp/mcp-virtual-servers) that the plugins reference with `server_ref`.
+All the exposition settings — filtering, OAuth, scopes, meta mode, rate limiting & caching, managed resources/prompts, overlays, [zero-trust controls](/docs/mcp/mcp-virtual-servers#zero-trust-controls) (anti-rug-pull pinning, prompt-injection scanning, PII/secrets redaction), and [registry publication](/docs/mcp/mcp-registry) — are bundled in a reusable [**MCP Virtual Server**](/docs/mcp/mcp-virtual-servers) that the plugins reference with `server_ref`.
+
+A published virtual server is exposed through the standard **[MCP registry](/docs/mcp/mcp-registry)** endpoints (`GET /v0/servers`, projecting each server to the official `server.json`), so registry-aware MCP clients discover the governed servers and connect through the gateway.
 
 All transports support the full MCP protocol:
 
