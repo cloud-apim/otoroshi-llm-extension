@@ -55,6 +55,19 @@ A published server is projected to the official `server.json` format (schema `20
 - `status` is `active`, or `deprecated` when `registry.deprecated` is on.
 - Governance metadata (entity id, tags) is added under our own reverse-DNS `_meta` key, which does not break the standard.
 
+## One-click setup — the registry preset
+
+The simplest way to expose the registry is the **`Cloud APIM - MCP Registry`** preset. Add it to a route and it wires both plugins at once:
+
+| Option | Default | Wires |
+| --- | --- | --- |
+| `well_known_path` | `/.well-known/mcp-registry` | the discovery document |
+| `api_base_path` | `/v0` | the registry API on `/v0/.*` |
+| `registry_url` | — | base URL advertised by the discovery doc (defaults to this host + base path) |
+| `schema_version` | `2025-12-11` | the `server.json` schema version |
+
+So out of the box the discovery doc is served on **`/.well-known/mcp-registry`** and the API on **`/v0/servers`**. If you'd rather wire the plugins by hand, the two are described below.
+
 ## Exposing the registry — two plugins
 
 Both are standard `NgBackendCall` plugins; put them on routes on your gateway. They are **publish-only**: only enabled + `published` servers are listed.
