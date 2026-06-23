@@ -2844,3 +2844,79 @@ class McpRegistryApi extends NgBackendCall {
     BackendCallResponse(NgPluginHttpResponse.fromResult(result), None).rightf
   }
 }
+
+// Preset that wires the full MCP registry on a single route in one click:
+//  - the discovery document (McpRegistryWellKnown) on the .well-known path (default /.well-known/mcp-registry)
+//  - the standard registry REST API (McpRegistryApi) on the API base path (default /v0, matching /v0/.*)
+// Both serve the published MCP virtual servers as standard server.json.
+case class McpRegistryPresetConfig(
+  wellKnownPath: String = "/.well-known/mcp-registry",
+  apiBasePath: String = "/v0",
+  registryUrl: Option[String] = None,
+  schemaVersion: String = "2025-12-11",
+) extends NgPluginConfig {
+  def json: JsValue = McpRegistryPresetConfig.format.writes(this)
+}
+
+object McpRegistryPresetConfig {
+  val default = McpRegistryPresetConfig()
+  val configFlow: Seq[String] = Seq("well_known_path", "api_base_path", "registry_url", "schema_version")
+  val configSchema: Option[JsObject] = Some(Json.obj(
+    "well_known_path" -> Json.obj("type" -> "string", "label" -> "Discovery .well-known path"),
+    "api_base_path" -> Json.obj("type" -> "string", "label" -> "Registry API base path"),
+    "registry_url" -> Json.obj("type" -> "string", "label" -> "Registry API base URL (optional, default: this host + base path)"),
+    "schema_version" -> Json.obj("type" -> "string", "label" -> "server.json schema version"),
+  ))
+  val format = new Format[McpRegistryPresetConfig] {
+    override def writes(o: McpRegistryPresetConfig): JsValue = Json.obj(
+      "well_known_path" -> o.wellKnownPath,
+      "api_base_path" -> o.apiBasePath,
+      "registry_url" -> o.registryUrl.map(_.json).getOrElse(JsNull).asValue,
+      "schema_version" -> o.schemaVersion,
+    )
+    override def reads(json: JsValue): JsResult[McpRegistryPresetConfig] = Try {
+      McpRegistryPresetConfig(
+        wellKnownPath = json.select("well_known_path").asOptString.filter(_.trim.nonEmpty).getOrElse("/.well-known/mcp-registry"),
+        apiBasePath = json.select("api_base_path").asOptString.filter(_.trim.nonEmpty).getOrElse("/v0"),
+        registryUrl = json.select("registry_url").asOptString.filter(_.trim.nonEmpty),
+        schemaVersion = json.select("schema_version").asOptString.filter(_.trim.nonEmpty).getOrElse("2025-12-11"),
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(v) => JsSuccess(v)
+    }
+  }
+}
+
+class McpRegistryPreset extends NgPresetPlugin {
+
+  override def name: String = "Cloud APIM - MCP Registry"
+  override def description: Option[String] =
+    "Preset: serves the MCP registry in one click - the discovery .well-known document and the standard /v0/servers API - projecting the published MCP virtual servers to server.json.".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"), NgPluginCategory.Custom("Presets"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(McpRegistryPresetConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = McpRegistryPresetConfig.configFlow
+  override def configSchema: Option[JsObject] = McpRegistryPresetConfig.configSchema
+
+  override def expand(ctx: NgPresetPluginContext): Seq[NgPluginInstance] = {
+    val config = McpRegistryPresetConfig.format.reads(ctx.config).getOrElse(McpRegistryPresetConfig.default)
+    Seq(
+      // 1. discovery document on the .well-known path
+      NgPluginInstance(
+        plugin = NgPluginHelper.pluginId[McpRegistryWellKnown],
+        include = Seq(config.wellKnownPath),
+        config = NgPluginInstanceConfig(McpRegistryWellKnownConfig.default.copy(registryUrl = config.registryUrl, schemaVersion = config.schemaVersion).json.asObject)
+      ),
+      // 2. standard registry REST API on the base path (matches /<base>/.*)
+      NgPluginInstance(
+        plugin = NgPluginHelper.pluginId[McpRegistryApi],
+        include = Seq(s"${config.apiBasePath}/.*"),
+        config = NgPluginInstanceConfig(McpRegistryApiConfig.default.copy(basePath = config.apiBasePath).json.asObject)
+      ),
+    )
+  }
+}
