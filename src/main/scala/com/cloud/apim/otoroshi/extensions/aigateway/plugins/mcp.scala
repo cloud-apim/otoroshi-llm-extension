@@ -5,7 +5,9 @@ import akka.http.scaladsl.model.Uri
 import akka.stream.scaladsl.{Flow, Sink, Source, SourceQueueWithComplete}
 import akka.stream.{Materializer, OverflowStrategy}
 import akka.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.ChatMessage
 import com.cloud.apim.otoroshi.extensions.aigateway.agents.InlineFunction
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailItem, GuardrailResult, Guardrails}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, McpConnector, McpConnectorRules, McpConnectorTransport, McpConnectorTransportKind, McpSupport}
 import dev.langchain4j.agent.tool.ToolSpecification
 import dev.langchain4j.mcp.client.{McpBlobResourceContents, McpResourceContents, McpTextResourceContents}
@@ -574,6 +576,115 @@ object McpItemOverlays {
   }
 }
 
+// A single user-defined redaction rule: every match of `regex` in the targeted text is replaced by
+// `replacement`. `name` is only used for documentation/UI. Applied deterministically (no LLM), so it can
+// run on every tool argument and result without latency/cost.
+case class McpRedactionRule(name: String, regex: String, replacement: String) {
+  def json: JsValue = Json.obj("name" -> name, "regex" -> regex, "replacement" -> replacement)
+}
+object McpRedactionRule {
+  val format = new Format[McpRedactionRule] {
+    override def writes(o: McpRedactionRule): JsValue = o.json
+    override def reads(json: JsValue): JsResult[McpRedactionRule] = Try {
+      McpRedactionRule(
+        name = json.select("name").asOpt[String].getOrElse(""),
+        regex = json.select("regex").asString,
+        replacement = json.select("replacement").asOpt[String].getOrElse("«redacted»"),
+      )
+    } match {
+      case Failure(ex) => JsError(ex.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+  }
+}
+
+// Zero-Trust MCP gateway controls, all opt-in. Three independent sub-features:
+//   A. anti-rug-pull: fingerprint (hash) each tool's description/inputSchema and pin it (Trust-On-First-Use).
+//      A later mutation of an already-pinned tool is flagged. `pinningEnforce` switches alert -> block.
+//   B. guardrail scanning: run the existing guardrails engine against tool descriptions (at tools/list) and
+//      tool results (at tools/call) to catch tool-poisoning / prompt-injection. `guardrailsEnforce` blocks.
+//   C. redaction: deterministically mask PII/secrets in tool arguments (inbound) and results (outbound),
+//      via built-in patterns and/or user rules.
+// Each sub-feature defaults to OFF; blocking is always opt-in (default = monitor: alert + audit, non-breaking).
+case class McpZeroTrustConfig(
+  // A. anti-rug-pull
+  pinningEnabled: Boolean = false,
+  pinningEnforce: Boolean = false,
+  pinnedHashes: Map[String, String] = Map.empty,
+  pinningEpoch: Long = 0L,
+  // B. guardrail scanning (reuses decorators.GuardrailItem: {id, config})
+  descriptionGuardrails: Seq[GuardrailItem] = Seq.empty,
+  resultGuardrails: Seq[GuardrailItem] = Seq.empty,
+  guardrailsEnforce: Boolean = false,
+  // C. redaction
+  redactArguments: Boolean = false,
+  redactResults: Boolean = false,
+  redactionBuiltins: Seq[String] = Seq.empty,
+  redactionRules: Seq[McpRedactionRule] = Seq.empty,
+) {
+  def isEmpty: Boolean = !pinningEnabled && descriptionGuardrails.isEmpty && resultGuardrails.isEmpty &&
+    !redactArguments && !redactResults
+  def json: JsValue = McpZeroTrustConfig.format.writes(this)
+  def scanDescriptions: Boolean = descriptionGuardrails.nonEmpty
+  def scanResults: Boolean = resultGuardrails.nonEmpty
+  def redactionActive: Boolean = redactionBuiltins.nonEmpty || redactionRules.nonEmpty
+
+  // merge another config on top of this one (override side wins): bools are OR'd, maps/seqs concatenated,
+  // epoch takes the max. Mirrors the additive merge of the surrounding McpProxyEndpointConfig.
+  def merge(o: McpZeroTrustConfig): McpZeroTrustConfig = McpZeroTrustConfig(
+    pinningEnabled = pinningEnabled || o.pinningEnabled,
+    pinningEnforce = pinningEnforce || o.pinningEnforce,
+    pinnedHashes = pinnedHashes ++ o.pinnedHashes,
+    pinningEpoch = math.max(pinningEpoch, o.pinningEpoch),
+    descriptionGuardrails = if (o.descriptionGuardrails.nonEmpty) o.descriptionGuardrails else descriptionGuardrails,
+    resultGuardrails = if (o.resultGuardrails.nonEmpty) o.resultGuardrails else resultGuardrails,
+    guardrailsEnforce = guardrailsEnforce || o.guardrailsEnforce,
+    redactArguments = redactArguments || o.redactArguments,
+    redactResults = redactResults || o.redactResults,
+    redactionBuiltins = (redactionBuiltins ++ o.redactionBuiltins).distinct,
+    redactionRules = if (o.redactionRules.nonEmpty) o.redactionRules else redactionRules,
+  )
+}
+
+object McpZeroTrustConfig {
+  val empty = McpZeroTrustConfig()
+  private def readGuardrails(json: JsValue, key: String): Seq[GuardrailItem] =
+    json.select(key).asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap(v => GuardrailItem.format.reads(v).asOpt)
+  val format = new Format[McpZeroTrustConfig] {
+    override def writes(o: McpZeroTrustConfig): JsValue = Json.obj(
+      "pinning_enabled" -> o.pinningEnabled,
+      "pinning_enforce" -> o.pinningEnforce,
+      "pinned_hashes" -> JsObject(o.pinnedHashes.toSeq.map { case (k, v) => (k, JsString(v)) }),
+      "pinning_epoch" -> o.pinningEpoch,
+      "description_guardrails" -> JsArray(o.descriptionGuardrails.map(_.json)),
+      "result_guardrails" -> JsArray(o.resultGuardrails.map(_.json)),
+      "guardrails_enforce" -> o.guardrailsEnforce,
+      "redact_arguments" -> o.redactArguments,
+      "redact_results" -> o.redactResults,
+      "redaction_builtins" -> o.redactionBuiltins,
+      "redaction_rules" -> JsArray(o.redactionRules.map(_.json)),
+    )
+    override def reads(json: JsValue): JsResult[McpZeroTrustConfig] = Try {
+      McpZeroTrustConfig(
+        pinningEnabled = json.select("pinning_enabled").asOptBoolean.getOrElse(false),
+        pinningEnforce = json.select("pinning_enforce").asOptBoolean.getOrElse(false),
+        pinnedHashes = json.select("pinned_hashes").asOpt[Map[String, String]].getOrElse(Map.empty),
+        pinningEpoch = json.select("pinning_epoch").asOpt[Long].getOrElse(0L),
+        descriptionGuardrails = readGuardrails(json, "description_guardrails"),
+        resultGuardrails = readGuardrails(json, "result_guardrails"),
+        guardrailsEnforce = json.select("guardrails_enforce").asOptBoolean.getOrElse(false),
+        redactArguments = json.select("redact_arguments").asOptBoolean.getOrElse(false),
+        redactResults = json.select("redact_results").asOptBoolean.getOrElse(false),
+        redactionBuiltins = json.select("redaction_builtins").asOpt[Seq[String]].getOrElse(Seq.empty),
+        redactionRules = json.select("redaction_rules").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap(v => McpRedactionRule.format.reads(v).asOpt),
+      )
+    } match {
+      case Failure(ex) => JsError(ex.getMessage)
+      case Success(value) => JsSuccess(value)
+    }
+  }
+}
+
 case class McpProxyEndpointConfig(
   serverRef: Option[String] = None,
   name: Option[String],
@@ -623,6 +734,7 @@ case class McpProxyEndpointConfig(
   resourceFetchAllowedHosts: Seq[String] = Seq.empty,
   prompts: Seq[McpStaticPrompt] = Seq.empty,
   overlays: McpItemOverlays = McpItemOverlays.empty,
+  zeroTrust: McpZeroTrustConfig = McpZeroTrustConfig.empty,
 ) extends NgPluginConfig {
   def json: JsValue = McpProxyEndpointConfig.format.writes(this)
 
@@ -666,6 +778,8 @@ case class McpProxyEndpointConfig(
     prompts = o.prompts ++ prompts.filterNot(p => o.prompts.exists(_.name == p.name)),
     // overlays are deep-merged (override wins on shared keys)
     overlays = overlays.merge(o.overlays),
+    // zero-trust controls are merged additively (bools OR'd, maps/seqs concatenated, epoch maxed)
+    zeroTrust = zeroTrust.merge(o.zeroTrust),
   )
 
   // When `serverRef` points to an existing McpVirtualServer, start from its config and overlay these inline
@@ -775,6 +889,7 @@ object McpProxyEndpointConfig {
     "resources", "resource_fetch_allowed_hosts",
     "prompts",
     "overlays",
+    "zero_trust",
   )
   val configSchema: Option[JsObject] = Some(Json.obj(
     "server_ref" -> Json.obj(
@@ -981,6 +1096,14 @@ object McpProxyEndpointConfig {
         "language" -> "json",
         "height" -> "300px"
       )
+    ),
+    "zero_trust" -> Json.obj(
+      "type" -> "any",
+      "label" -> "Zero-Trust controls (pinning / guardrails / redaction)",
+      "props" -> Json.obj(
+        "language" -> "json",
+        "height" -> "300px"
+      )
     )
   ))
   val default = McpProxyEndpointConfig(
@@ -1024,6 +1147,7 @@ object McpProxyEndpointConfig {
       "resource_fetch_allowed_hosts" -> o.resourceFetchAllowedHosts,
       "prompts" -> JsArray(o.prompts.map(_.json)),
       "overlays" -> o.overlays.json,
+      "zero_trust" -> o.zeroTrust.json,
     )
     override def reads(json: JsValue): JsResult[McpProxyEndpointConfig] = Try {
       val singleRef = json.select("ref").asOpt[String].map(r => Seq(r)).getOrElse(Seq.empty)
@@ -1065,6 +1189,7 @@ object McpProxyEndpointConfig {
         resourceFetchAllowedHosts = json.select("resource_fetch_allowed_hosts").asOpt[Seq[String]].getOrElse(Seq.empty),
         prompts = json.select("prompts").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap(v => McpStaticPrompt.format.reads(v).asOpt),
         overlays = json.select("overlays").asOpt(McpItemOverlays.format).getOrElse(McpItemOverlays.empty),
+        zeroTrust = json.select("zero_trust").asOpt(McpZeroTrustConfig.format).getOrElse(McpZeroTrustConfig.empty),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -1133,6 +1258,146 @@ object McpAuditHelper {
   }
 }
 
+// ── Zero-Trust MCP ────────────────────────────────────────────────────────────────────────────────────────
+// A. Anti-rug-pull: fingerprint a tool's security-relevant fields and pin them (Trust-On-First-Use), backed by
+// the cluster-wide rawDataStore. A later mutation of an already-pinned tool is detected. Self-contained, no LLM.
+
+sealed trait PinVerdict
+object PinVerdict {
+  case object Ok extends PinVerdict
+  case object FirstSeen extends PinVerdict
+  case class Mutated(previous: String, current: String) extends PinVerdict
+}
+
+object McpToolPinning {
+
+  // Stable, canonical string for a JSON value: object keys are sorted recursively so the fingerprint is
+  // insensitive to upstream key ordering (only real content changes flip the hash).
+  def canonicalize(v: JsValue): String = v match {
+    case o: JsObject => o.fields.sortBy(_._1).map { case (k, vv) => Json.stringify(JsString(k)) + ":" + canonicalize(vv) }.mkString("{", ",", "}")
+    case a: JsArray  => a.value.map(canonicalize).mkString("[", ",", "]")
+    case other       => Json.stringify(other)
+  }
+
+  // Fingerprint only the fields an attacker would mutate in a rug-pull: name, description, inputSchema,
+  // annotations. Other volatile fields (e.g. _meta) are intentionally excluded.
+  def fingerprint(toolJson: JsObject): String = {
+    def field(name: String): JsValue = (toolJson \ name).asOpt[JsValue].getOrElse(JsNull)
+    val relevant = Json.obj(
+      "name" -> field("name"),
+      "description" -> field("description"),
+      "inputSchema" -> field("inputSchema"),
+      "annotations" -> field("annotations"),
+    )
+    canonicalize(relevant).sha256
+  }
+
+  private def pinKey(ident: String, epoch: Long, tool: String)(implicit env: Env): String =
+    s"${env.storageRoot}:llmext:mcp:pin:$epoch:${ident.sha256}:$tool"
+
+  // TOFU check: an explicit pinned hash (config) is authoritative; otherwise the first sighting is pinned in
+  // the datastore and subsequent sightings are compared against it.
+  def check(z: McpZeroTrustConfig, ident: String, toolJson: JsObject)(implicit env: Env, ec: ExecutionContext): Future[PinVerdict] = {
+    val tool = (toolJson \ "name").asOpt[String].getOrElse("")
+    val fp = fingerprint(toolJson)
+    z.pinnedHashes.get(tool) match {
+      case Some(expected) => Future.successful(if (expected == fp) PinVerdict.Ok else PinVerdict.Mutated(expected, fp))
+      case None =>
+        val key = pinKey(ident, z.pinningEpoch, tool)
+        env.datastores.rawDataStore.get(key).flatMap {
+          case Some(bs) =>
+            val prev = bs.utf8String
+            Future.successful(if (prev == fp) PinVerdict.Ok else PinVerdict.Mutated(prev, fp))
+          case None =>
+            env.datastores.rawDataStore.set(key, ByteString(fp), None).map(_ => PinVerdict.FirstSeen)
+        }
+    }
+  }
+}
+
+// B. Guardrail scanning: run the existing guardrails engine against an arbitrary piece of text (a tool
+// description or a tool result), sourced from an explicit list of GuardrailItems instead of a provider's
+// guardrails. Short-circuits on the first Denied; an erroring guardrail is skipped (never blocks).
+object McpZeroTrust {
+  def scan(items: Seq[GuardrailItem], text: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[GuardrailResult] = {
+    val msg = ChatMessage.userStrInput(text)
+    def loop(seq: Seq[GuardrailItem]): Future[GuardrailResult] = seq.headOption match {
+      case None => Future.successful(GuardrailResult.GuardrailPass)
+      case Some(item) if !item.enabled => loop(seq.tail)
+      case Some(item) => Guardrails.get(item.guardrailId) match {
+        case None => loop(seq.tail) // unknown guardrail id => skip
+        case Some(g) => g.pass(Seq(msg), item.config, None, None, attrs).flatMap {
+          case GuardrailResult.GuardrailPass => loop(seq.tail)
+          case denied @ GuardrailResult.GuardrailDenied(_) => Future.successful(denied)
+          case GuardrailResult.GuardrailError(_) => loop(seq.tail) // an internal guardrail error must not block
+        }.recoverWith { case _ => loop(seq.tail) }
+      }
+    }
+    loop(items)
+  }
+}
+
+// C. Redaction: deterministic (no LLM) masking of PII/secrets in tool arguments and results.
+object McpRedaction {
+  // (kind -> (regex, replacement)). Applied in this fixed precedence order so specific patterns (jwt, keys)
+  // run before the greedy generic_api_key one; only the kinds the user enabled are applied.
+  private val builtinOrder: Seq[String] = Seq("private_key", "jwt", "aws_key", "email", "credit_card", "ssn", "ipv4", "generic_api_key")
+  private val builtins: Map[String, (scala.util.matching.Regex, String)] = Map(
+    "private_key" -> ("""-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----""".r, "«redacted:private_key»"),
+    "jwt" -> ("""eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+""".r, "«redacted:jwt»"),
+    "aws_key" -> ("""\b(?:AKIA|ASIA)[0-9A-Z]{16}\b""".r, "«redacted:aws_key»"),
+    "email" -> ("""[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}""".r, "«redacted:email»"),
+    "credit_card" -> ("""\b\d(?:[ -]?\d){12,15}\b""".r, "«redacted:card»"),
+    "ssn" -> ("""\b\d{3}-\d{2}-\d{4}\b""".r, "«redacted:ssn»"),
+    "ipv4" -> ("""\b(?:\d{1,3}\.){3}\d{1,3}\b""".r, "«redacted:ip»"),
+    "generic_api_key" -> ("""\b[A-Za-z0-9_\-]{32,}\b""".r, "«redacted:secret»"),
+  )
+  def redactText(text: String, z: McpZeroTrustConfig): String = {
+    var out = text
+    builtinOrder.filter(z.redactionBuiltins.contains).foreach { k =>
+      builtins.get(k).foreach { case (rx, rep) => out = rx.replaceAllIn(out, java.util.regex.Matcher.quoteReplacement(rep)) }
+    }
+    z.redactionRules.foreach { r =>
+      Try(r.regex.r).toOption.foreach { rx => out = rx.replaceAllIn(out, java.util.regex.Matcher.quoteReplacement(r.replacement)) }
+    }
+    out
+  }
+  // recursively redact every string leaf of a JSON value
+  def redactJson(v: JsValue, z: McpZeroTrustConfig): JsValue = v match {
+    case JsString(s)      => JsString(redactText(s, z))
+    case o: JsObject      => JsObject(o.fields.map { case (k, vv) => (k, redactJson(vv, z)) })
+    case a: JsArray       => JsArray(a.value.map(vv => redactJson(vv, z)))
+    case other            => other
+  }
+}
+
+// Emits a correlated audit/analytics event (+ metrics) whenever a zero-trust control fires. Routes through the
+// existing data-exporter pipeline (SIEM/Kafka/ES/...) like McpAudit. `blocked` distinguishes monitor vs enforce.
+object McpZeroTrustAudit {
+  def alert(kind: String, tool: String, detail: JsObject, blocked: Boolean, attrs: TypedMap)(implicit env: Env): Unit = {
+    if (env.metricsEnabled) {
+      env.metrics.counterInc(s"mcp.zerotrust.$kind.alerts")
+      if (blocked) env.metrics.counterInc(s"mcp.zerotrust.$kind.blocks")
+    }
+    val user = attrs.get(otoroshi.plugins.Keys.UserKey)
+    val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
+    val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
+    val requestId = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
+    AuditEvent.generic("McpZeroTrustAlert") {
+      Json.obj(
+        "request_id" -> requestId.map(JsString.apply).getOrElse(JsNull).asValue,
+        "zerotrust_kind" -> kind, // rugpull | guardrail | redaction
+        "mcp_tool" -> tool,
+        "blocked" -> blocked,
+        "detail" -> detail,
+        "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+        "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+        "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+      )
+    }.toAnalytics()
+  }
+}
+
 // Shared tools/list + tools/call logic for the 3 MCP exposure transports (sse / websocket / streamable-http).
 // For Http connectors it forwards the raw upstream JSON-RPC payloads (full fidelity: _meta, annotations,
 // outputSchema, structuredContent, rich content). For every other connector it falls back to the langchain4j
@@ -1184,17 +1449,58 @@ object McpProxyLogic {
       } else {
         c.listTools(attrs).map(_.map(McpSupport.toolSpecToJson))
       }
-    }).map { perConnector =>
+    }).flatMap { perConnector =>
       val granted = attrs.get(McpOAuthFilterUtils.McpGrantedScopesKey).getOrElse(Set.empty[String])
-      (localThunks ++ perConnector.flatten)
-        .filter {
-          case o: JsObject => config.toolAllowedForScopes((o \ "name").asOpt[String].getOrElse(""), granted)
-          case _           => true
-        }
-        .map {
+      val afterScope = (localThunks ++ perConnector.flatten).filter {
+        case o: JsObject => config.toolAllowedForScopes((o \ "name").asOpt[String].getOrElse(""), granted)
+        case _           => true
+      }
+      // Zero-Trust: anti-rug-pull pinning + description guardrail scan, before overlays are applied.
+      applyZeroTrustToList(config, afterScope, attrs).map { kept =>
+        kept.map {
           case o: JsObject => config.overlays.applyTool(o)
           case other       => other
         }
+      }
+    }
+  }
+
+  // Config identity used to namespace per-config datastore keys (pins, cache). Matches the cache `ident`.
+  private def ztIdent(config: McpProxyEndpointConfig): String =
+    config.serverRef.getOrElse(config.mcpRefs.mkString(",") + "|" + config.functionRefs.mkString(","))
+
+  // Applies the two list-time zero-trust controls (A. pinning, B. description scan) to the tool list. A tool is
+  // dropped only when the corresponding `*Enforce` flag is on; otherwise it stays and only an alert is emitted.
+  private def applyZeroTrustToList(config: McpProxyEndpointConfig, tools: Seq[JsValue], attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
+    val z = config.zeroTrust
+    if (!z.pinningEnabled && !z.scanDescriptions) Future.successful(tools)
+    else {
+      val ident = ztIdent(config)
+      Future.traverse(tools) {
+        case o: JsObject =>
+          val tool = (o \ "name").asOpt[String].getOrElse("")
+          val pinF: Future[Boolean] =
+            if (z.pinningEnabled) McpToolPinning.check(z, ident, o).map {
+              case PinVerdict.Mutated(prev, curr) =>
+                McpZeroTrustAudit.alert("rugpull", tool, Json.obj("previous" -> prev, "current" -> curr, "phase" -> "list"), z.pinningEnforce, attrs)
+                !z.pinningEnforce
+              case _ => true
+            } else Future.successful(true)
+          pinF.flatMap {
+            case false => Future.successful(Option.empty[JsValue]) // dropped by pinning enforce
+            case true =>
+              if (z.scanDescriptions) {
+                val text = Seq((o \ "name").asOpt[String], (o \ "description").asOpt[String]).flatten.mkString("\n")
+                McpZeroTrust.scan(z.descriptionGuardrails, text, attrs).map {
+                  case GuardrailResult.GuardrailDenied(msg) =>
+                    McpZeroTrustAudit.alert("guardrail", tool, Json.obj("phase" -> "description", "reason" -> msg), z.guardrailsEnforce, attrs)
+                    if (z.guardrailsEnforce) Option.empty[JsValue] else Some(o: JsValue)
+                  case _ => Some(o: JsValue)
+                }
+              } else Future.successful(Some(o: JsValue))
+          }
+        case other => Future.successful(Some(other))
+      }.map(_.flatten)
     }
   }
 
@@ -1220,17 +1526,19 @@ object McpProxyLogic {
   }
 
   // Per-tool result cache (opt-in via toolCacheTtls), backed by the shared datastore. Only successful
-  // results are cached; the key includes the config identity to avoid cross-server collisions.
+  // results are cached; the key includes the config identity to avoid cross-server collisions. The cached
+  // value is the already-secured payload (post result-scan + redaction), so cache hits stay clean and the
+  // guardrails don't re-run on every hit.
   private def cachedCallTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
     val ttl = config.toolCacheTtls.get(name).orElse(config.toolCacheTtls.get("*")).getOrElse(0L)
-    if (ttl <= 0L) callToolInternal(config, name, arguments, attrs)
+    if (ttl <= 0L) securedCallTool(config, name, arguments, attrs)
     else {
-      val ident = config.serverRef.getOrElse(config.mcpRefs.mkString(",") + "|" + config.functionRefs.mkString(","))
+      val ident = ztIdent(config)
       val key = s"${env.storageRoot}:llmext:mcp:cache:${(ident + "|" + name + "|" + arguments.stringify).sha256}"
       def computeAndStore(): Future[Either[String, JsObject]] =
-        callToolInternal(config, name, arguments, attrs).flatMap {
+        securedCallTool(config, name, arguments, attrs).flatMap {
           case Right(payload) => env.datastores.rawDataStore.set(key, ByteString(payload.stringify), Some(ttl * 1000L)).map(_ => Right(payload))
-          case left           => Future.successful(left)
+          case left           => Future.successful(left) // denied/blocked results are never cached
         }
       env.datastores.rawDataStore.get(key).flatMap {
         case Some(bs) => Try(Json.parse(bs.utf8String).as[JsObject]).toOption match {
@@ -1242,14 +1550,62 @@ object McpProxyLogic {
     }
   }
 
-  // Resolves and executes a tool call. Left = unknown tool / denied, Right = the result payload.
-  // Pipeline: scope→tool authorization, then per-tool rate limit, then per-tool result cache.
+  // Text content of a tool result payload (the main prompt-injection vector seen by the LLM).
+  private def resultText(payload: JsObject): String =
+    (payload \ "content").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap(c => (c \ "text").asOpt[String]).mkString("\n")
+
+  // Executes the tool then applies the two result-time zero-trust controls (B. result guardrail scan,
+  // C. result redaction). A scan denial under enforce returns Left (blocked, never cached).
+  private def securedCallTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
+    val z = config.zeroTrust
+    callToolInternal(config, name, arguments, attrs).flatMap {
+      case Right(payload) =>
+        val scanned: Future[Either[String, JsObject]] =
+          if (z.scanResults) McpZeroTrust.scan(z.resultGuardrails, resultText(payload), attrs).map {
+            case GuardrailResult.GuardrailDenied(msg) =>
+              McpZeroTrustAudit.alert("guardrail", name, Json.obj("phase" -> "result", "reason" -> msg), z.guardrailsEnforce, attrs)
+              if (z.guardrailsEnforce) Left(s"tool result blocked: $msg") else Right(payload)
+            case _ => Right(payload)
+          } else Future.successful(Right(payload))
+        scanned.map {
+          case Right(p) if z.redactResults && z.redactionActive =>
+            val redacted = McpRedaction.redactJson(p, z).asOpt[JsObject].getOrElse(p)
+            if (redacted != p) McpZeroTrustAudit.alert("redaction", name, Json.obj("phase" -> "result"), blocked = false, attrs)
+            Right(redacted)
+          case other => other
+        }
+      case left => Future.successful(left)
+    }
+  }
+
+  // At call time (defense in depth): if any list-time control is in enforce mode, the tool must still be a
+  // member of the secured tools/list. This blocks direct calls to a tool that pinning or a description
+  // guardrail removed — even from a client that never issued tools/list.
+  private def pinningCallCheck(config: McpProxyEndpointConfig, name: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Option[String]] = {
+    val z = config.zeroTrust
+    val enforcesListMembership = (z.pinningEnabled && z.pinningEnforce) || (z.scanDescriptions && z.guardrailsEnforce)
+    if (!enforcesListMembership) Future.successful(None)
+    else toolsList(config, attrs).map { secured =>
+      val present = secured.exists { case o: JsObject => (o \ "name").asOpt[String].contains(name); case _ => false }
+      if (present) None else Some(s"tool '$name' blocked: failed zero-trust list checks")
+    }
+  }
+
+  // Resolves and executes a tool call. Left = unknown tool / denied, Right = the result payload. Pipeline:
+  // scope→tool authorization → zero-trust list re-check (enforce) → argument redaction → per-tool rate limit
+  // → per-tool result cache (wrapping execution + result scan + result redaction).
   def callTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
+    val z = config.zeroTrust
     val granted = attrs.get(McpOAuthFilterUtils.McpGrantedScopesKey).getOrElse(Set.empty[String])
     if (!config.toolAllowedForScopes(name, granted)) Future.successful(Left(name))
-    else rateLimitAllows(config, name, attrs).flatMap {
-      case false => Future.successful(Left(s"rate limit exceeded for tool '$name'"))
-      case true  => cachedCallTool(config, name, arguments, attrs)
+    else pinningCallCheck(config, name, attrs).flatMap {
+      case Some(deny) => Future.successful(Left(deny))
+      case None =>
+        val redactedArgs = if (z.redactArguments && z.redactionActive) McpRedaction.redactJson(arguments, z).asOpt[JsObject].getOrElse(arguments) else arguments
+        rateLimitAllows(config, name, attrs).flatMap {
+          case false => Future.successful(Left(s"rate limit exceeded for tool '$name'"))
+          case true  => cachedCallTool(config, name, redactedArgs, attrs)
+        }
     }
   }
 
