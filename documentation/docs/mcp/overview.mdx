@@ -53,7 +53,7 @@ All these features support [filtering](/docs/mcp/mcp-connectors#filtering-tools-
 
 Otoroshi can [**expose**](/docs/mcp/mcp-plugins) your tool functions and MCP connectors as an MCP server. The recommended transport is **Streamable HTTP**; SSE (deprecated), WebSocket (experimental) and a local stdio proxy are also available.
 
-All the exposition settings — filtering, OAuth, scopes, meta mode, rate limiting & caching, managed resources/prompts, overlays — are bundled in a reusable [**MCP Virtual Server**](/docs/mcp/mcp-virtual-servers) that the plugins reference with `server_ref`.
+All the exposition settings — filtering, OAuth, scopes, meta mode, rate limiting & caching, managed resources/prompts, overlays, and [zero-trust controls](/docs/mcp/mcp-virtual-servers#zero-trust-controls) (anti-rug-pull pinning, prompt-injection scanning, PII/secrets redaction) — are bundled in a reusable [**MCP Virtual Server**](/docs/mcp/mcp-virtual-servers) that the plugins reference with `server_ref`.
 
 All transports support the full MCP protocol:
 
@@ -77,6 +77,7 @@ Both sides of MCP can be audited, each with its own opt-in audit event:
 |-------------|------|--------------|------------|
 | [`McpAudit`](/docs/mcp/mcp-plugins#audit-events) | Server / exposition | An external client calls an MCP server Otoroshi exposes | `emit_audit_events` on the MCP server plugin |
 | [`McpClientAudit`](/docs/mcp/mcp-connectors#audit-events) | Client / connector | Otoroshi calls an upstream MCP server through a connector | `audit_events` on the MCP connector |
+| [`McpZeroTrustAlert`](/docs/mcp/mcp-virtual-servers#zero-trust-controls) | Server / exposition | A [zero-trust control](/docs/mcp/mcp-virtual-servers#zero-trust-controls) fires (rug-pull mutation, guardrail denial, or redaction) | `zero_trust` controls on the MCP virtual server |
 
 Both produce standard Otoroshi `AuditEvent`s that can be shipped anywhere with [data exporters](/docs/llm-gateway/observability-reporting). See the [Observability](/docs/llm-gateway/observability-reporting) documentation for the full picture.
 
