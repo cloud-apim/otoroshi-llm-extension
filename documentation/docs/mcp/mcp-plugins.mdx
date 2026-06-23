@@ -6,9 +6,13 @@ import Terminal from '@site/src/components/Terminal';
 
 # MCP server exposition
 
-Otoroshi can expose tool functions and MCP connectors as an MCP server that external MCP clients connect to. The **recommended transport is Streamable HTTP**; the other transports still exist but are deprecated, experimental, or utility-only.
+Otoroshi can expose tool functions and MCP connectors as an MCP server that external MCP clients connect to.
 
-All exposition plugins share the **same configuration** — documented on the [**MCP Virtual Server**](/docs/mcp/mcp-virtual-servers) page (tools/connectors, filtering, OAuth, scopes, meta mode, rate limiting & caching, managed resources/prompts, overlays). You can set it inline on a plugin, or define it once as a virtual server and reference it with `server_ref`.
+**The way to go is to define an [MCP Virtual Server](/docs/mcp/mcp-virtual-servers) and expose it.** A virtual server is a single, reusable, persisted definition that carries the **whole exposition complexity** in one place: which tool functions / MCP connectors to serve, plus filtering, OAuth, **RBAC (scope → tool)**, audience binding, meta mode, rate limiting & caching, managed resources/prompts and overlays. The exposition plugin then simply references it with `server_ref` — so your access control and settings live on the virtual server, not scattered across routes.
+
+You _can_ set the same settings inline on a plugin, or override individual fields on top of a referenced virtual server, but for anything beyond a quick test, **expose a virtual server**.
+
+The **recommended transport is Streamable HTTP**; the other transports still exist but are deprecated or experimental.
 
 ## Transports
 
@@ -17,7 +21,6 @@ All exposition plugins share the **same configuration** — documented on the [*
 | **Streamable HTTP** | `McpRespEndpoint` | ✅ **Recommended** — the current MCP HTTP transport (POST + SSE). What MCP clients and MCP apps use. |
 | SSE | `McpSseEndpoint` | ⚠️ **Deprecated** — the legacy HTTP+SSE transport, kept for backward compatibility. |
 | WebSocket | `McpWebsocketEndpoint` | 🧪 **Experimental** — not part of the MCP standard; use only if you specifically need it. |
-| Local stdio proxy | `McpLocalProxyEndpoint` | 🔌 **Non-official utility** — bridges local stdio MCP clients to an Otoroshi MCP route. |
 
 > Unless you have a specific reason, expose your MCP servers over **Streamable HTTP**.
 
@@ -87,7 +90,7 @@ When getting a prompt, the response includes:
 
 The **`McpRespEndpoint`** plugin exposes your tools and connectors over the standard MCP **Streamable HTTP** transport (a single endpoint handling POST requests and SSE streams). This is the transport MCP clients and MCP apps expect — use it by default.
 
-Its configuration is the shared exposition config (see [MCP Virtual Server](/docs/mcp/mcp-virtual-servers)): set it inline, or reference a virtual server with `server_ref`.
+Point it at an [MCP Virtual Server](/docs/mcp/mcp-virtual-servers) with `server_ref` (the recommended way — the virtual server carries all the config and access control), or set the same configuration inline.
 
 ![](/img/mcp-http-server-exposition-plugins-list.png)
 
