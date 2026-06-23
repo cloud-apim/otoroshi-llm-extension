@@ -49,15 +49,13 @@ Connectors support several [transport kinds](/docs/mcp/mcp-connectors#transport-
 
 All these features support [filtering](/docs/mcp/mcp-connectors#filtering-tools-resources-and-prompts) (include/exclude patterns) and [advanced rules](/docs/mcp/mcp-connectors#advanced-rules) (JsonPath-based access control).
 
-### As an MCP server (MCP Plugins)
+### As an MCP server
 
-[MCP Server Plugins](/docs/mcp/mcp-plugins) allow Otoroshi to expose tool functions and MCP connector capabilities as an MCP server, supporting three transport protocols:
+Otoroshi can [**expose**](/docs/mcp/mcp-plugins) your tool functions and MCP connectors as an MCP server. The recommended transport is **Streamable HTTP**; SSE (deprecated), WebSocket (experimental) and a local stdio proxy are also available.
 
-- **HTTP** - Simple request/response MCP server
-- **SSE** (Server-Sent Events) - Streaming MCP server for long-lived connections
-- **WebSocket** - Full-duplex MCP server
+All the exposition settings — filtering, OAuth, scopes, meta mode, rate limiting & caching, managed resources/prompts, overlays — are bundled in a reusable [**MCP Virtual Server**](/docs/mcp/mcp-virtual-servers) that the plugins reference with `server_ref`.
 
-All three transports support the full MCP protocol:
+All transports support the full MCP protocol:
 
 | Method | Description |
 |--------|-------------|
