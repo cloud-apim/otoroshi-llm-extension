@@ -90,27 +90,37 @@ class McpVirtualServersPage extends Component {
       props: { label: 'OAuth PRM URL' },
     },
     'config.tool_scopes': {
-      type: 'monaco-json',
+      type: 'object',
       props: {
         label: 'Tool → required scopes (RBAC)',
         height: 150,
-        help: 'Scope-based authorization per tool. Shape: { "<tool-name>": ["scope-a", "scope-b"], "*": ["base-scope"] }. The caller must have ALL listed scopes; tools with no entry are open. Filters tools/list and denies tools/call.',
+        help: 'Scope-based authorization per tool. The caller must have ALL listed scopes; tools with no entry are open. Filters tools/list and denies tools/call.',
       },
     },
     'config.tool_cache_ttls': {
-      type: 'monaco-json',
+      type: 'object',
       props: {
         label: 'Tool → cache TTL (seconds)',
         height: 120,
-        help: 'Per-tool result cache (opt-in, idempotent tools only). Shape: { "<tool-name>": 60, "*": 30 }. 0/absent = no cache. Only successful results are cached, keyed by tool + arguments.',
+        help: 'Per-tool result cache (opt-in, idempotent tools only). 0/absent = no cache. Only successful results are cached, keyed by tool + arguments.',
+        valueRenderer: (key, value, idx, onChange) => {
+          return React.createElement('input', { type: "number", className: "form-control", value, onChange: (e) => {
+              typeof e.target.value === 'number' ? onChange(e) : onChange({ target: { value: parseInt(e.target.value, 10) } });
+            }}, null);
+        }
       },
     },
     'config.tool_rate_limits': {
-      type: 'monaco-json',
+      type: 'object',
       props: {
         label: 'Tool → rate limit (calls/min per consumer)',
         height: 120,
-        help: 'Per-tool, per-consumer rate limit (fixed 60s window, cluster-wide). Shape: { "<tool-name>": 100, "*": 1000 }. 0/absent = no limit. Consumer = apikey > user > token.',
+        help: 'Per-tool, per-consumer rate limit (fixed 60s window, cluster-wide). 0/absent = no limit. Consumer = apikey > user > token.',
+        valueRenderer: (key, value, idx, onChange) => {
+          return React.createElement('input', { type: "number", className: "form-control", value, onChange: (e) => {
+            typeof e.target.value === 'number' ? onChange(e) : onChange({ target: { value: parseInt(e.target.value, 10) } });
+          }}, null);
+        }
       },
     },
     'config.emit_audit_events': {
@@ -320,7 +330,18 @@ class McpVirtualServersPage extends Component {
         formFlow: this.formFlow,
         columns: this.columns,
         stayAfterSave: true,
-        fetchItems: (paginationState) => this.client.findAll(),
+        fetchItems: (paginationState) => this.client.findAll().then(all => {
+          return all.map(i => {
+            const scopes = {};
+            i.config = i.config || {};
+            i.config.tool_scopes = i.config.tool_scopes || {};
+            Object.keys(i.config.tool_scopes).map(key => {
+              scopes[key] = i.config.tool_scopes[key].join(', ')
+            });
+            i.config.tool_scopes = scopes;
+            return i;
+          })
+        }),
         updateItem: this.client.update,
         deleteItem: this.client.delete,
         createItem: this.client.create,

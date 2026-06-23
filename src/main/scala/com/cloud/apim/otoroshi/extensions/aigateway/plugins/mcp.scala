@@ -1037,7 +1037,9 @@ object McpProxyEndpointConfig {
         validateAudience = json.select("validate_audience").asOptBoolean.getOrElse(false),
         opaqueToken = json.select("opaque_token").asOptBoolean.getOrElse(false),
         useIntrospection = json.select("use_introspection").asOptBoolean.getOrElse(false),
-        toolScopes = json.select("tool_scopes").asOpt[Map[String, Seq[String]]].getOrElse(Map.empty),
+        toolScopes = json.select("tool_scopes").asOpt[Map[String, Seq[String]]].orElse(
+          json.select("tool_scopes").asOpt[Map[String, String]].map(_.mapValues(_.split(",").map(_.trim).toSeq)),
+        ).getOrElse(Map.empty),
         toolCacheTtls = json.select("tool_cache_ttls").asOpt[Map[String, Long]].getOrElse(Map.empty),
         toolRateLimits = json.select("tool_rate_limits").asOpt[Map[String, Long]].getOrElse(Map.empty),
         authModuleRef = json.select("auth_module_ref").asOptString,
