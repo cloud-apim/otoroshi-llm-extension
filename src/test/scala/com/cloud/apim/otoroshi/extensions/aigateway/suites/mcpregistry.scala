@@ -1,8 +1,9 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{McpRegistryConfig, McpVirtualServer}
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpRegistry
-import play.api.libs.json.JsObject
+import otoroshi.next.plugins.api.NgPluginHelper
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpExpositionScanner, McpRegistry, McpRespEndpoint, ProtectedMcpStreamableHttpPreset}
+import play.api.libs.json.{Json, JsObject}
 
 // Pure unit tests for the MCP registry projection (publish-only). No Otoroshi server is booted: the server.json
 // projection, the name slugging and the listing/lookup are pure functions over McpVirtualServer entities. The
@@ -106,5 +107,48 @@ class McpRegistrySuite extends munit.FunSuite {
     assertEquals(McpRegistry.slugifyName("Hello World"), "io.cloud-apim/hello-world")
     assertEquals(McpRegistry.slugifyName("a__b--c"), "io.cloud-apim/a-b-c")
     assertEquals(McpRegistry.slugifyName("  !!!  "), "io.cloud-apim/server")
+  }
+
+  // ── exposition scanner (pure helpers behind the registry.url assistant) ──────────────────────────────────
+
+  private val mcpId = NgPluginHelper.pluginId[McpRespEndpoint]
+  private val presetId = NgPluginHelper.pluginId[ProtectedMcpStreamableHttpPreset]
+
+  test("deriveUrl assumes https and normalizes slashes between host and exposition path") {
+    assertEquals(McpExpositionScanner.deriveUrl("gw.acme", Some("/mcp")), "https://gw.acme/mcp")
+    assertEquals(McpExpositionScanner.deriveUrl("gw.acme/", Some("mcp")), "https://gw.acme/mcp")
+    assertEquals(McpExpositionScanner.deriveUrl("gw.acme/base", Some("/mcp")), "https://gw.acme/base/mcp")
+    assertEquals(McpExpositionScanner.deriveUrl("gw.acme", None), "https://gw.acme")
+    assertEquals(McpExpositionScanner.deriveUrl("gw.acme", Some("")), "https://gw.acme")
+  }
+
+  test("detectAuth maps oauth/apikey/mtls/none and warns when not oauth") {
+    assertEquals(McpExpositionScanner.detectAuth(enforceOauth = true, isProtectedPreset = false, hasApikey = false, hasMtls = false)._1, "oauth")
+    assertEquals(McpExpositionScanner.detectAuth(enforceOauth = false, isProtectedPreset = true, hasApikey = false, hasMtls = false)._1, "oauth")
+    // oauth wins over a co-present apikey plugin
+    assertEquals(McpExpositionScanner.detectAuth(enforceOauth = true, isProtectedPreset = false, hasApikey = true, hasMtls = false)._1, "oauth")
+    assert(McpExpositionScanner.detectAuth(enforceOauth = true, isProtectedPreset = false, hasApikey = false, hasMtls = false)._2.isEmpty)
+
+    val (apikey, w1) = McpExpositionScanner.detectAuth(enforceOauth = false, isProtectedPreset = false, hasApikey = true, hasMtls = false)
+    assertEquals(apikey, "apikey"); assert(w1.nonEmpty)
+    val (mtls, w2) = McpExpositionScanner.detectAuth(enforceOauth = false, isProtectedPreset = false, hasApikey = false, hasMtls = true)
+    assertEquals(mtls, "mtls"); assert(w2.nonEmpty)
+    val (none, w3) = McpExpositionScanner.detectAuth(enforceOauth = false, isProtectedPreset = false, hasApikey = false, hasMtls = false)
+    assertEquals(none, "none"); assert(w3.nonEmpty)
+  }
+
+  test("slotReferences matches only MCP exposition/preset plugins that point at the server") {
+    assert(McpExpositionScanner.slotReferences(mcpId, Json.obj("server_ref" -> "vs1"), "vs1"))
+    assert(McpExpositionScanner.slotReferences(presetId, Json.obj("server_ref" -> "vs1"), "vs1"))
+    assert(!McpExpositionScanner.slotReferences(mcpId, Json.obj("server_ref" -> "vs2"), "vs1")) // other server
+    assert(!McpExpositionScanner.slotReferences("cp:otoroshi.next.plugins.OverrideHost", Json.obj("server_ref" -> "vs1"), "vs1")) // not an MCP plugin
+    assert(!McpExpositionScanner.slotReferences(mcpId, Json.obj(), "vs1")) // no server_ref
+  }
+
+  test("slotPath reads mcp_path for the preset and the include head for a raw endpoint") {
+    assertEquals(McpExpositionScanner.slotPath(presetId, Json.obj("mcp_path" -> "/custom"), Seq.empty), Some("/custom"))
+    assertEquals(McpExpositionScanner.slotPath(presetId, Json.obj(), Seq.empty), Some("/mcp"))
+    assertEquals(McpExpositionScanner.slotPath(mcpId, Json.obj(), Seq("/mcp/gh")), Some("/mcp/gh"))
+    assertEquals(McpExpositionScanner.slotPath(mcpId, Json.obj(), Seq.empty), Some("/mcp"))
   }
 }
