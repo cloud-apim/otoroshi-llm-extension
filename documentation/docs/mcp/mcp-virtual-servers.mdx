@@ -17,6 +17,7 @@ A virtual server **bundles everything** an exposition needs:
 - [Rate limiting & caching](#per-tool-rate-limiting-and-result-caching) (`tool_rate_limits`, `tool_cache_ttls`).
 - [Managed resources](#managed-resources) (`resources`, `resource_fetch_allowed_hosts`), [managed prompts](#managed-prompts) (`prompts`), and [item overlays](#item-overlays) (`overlays`).
 - [Zero-Trust controls](#zero-trust-controls) (`zero_trust`): anti-rug-pull pinning, tool-poisoning / prompt-injection scanning, and PII/secrets redaction.
+- [Registry / publication](#registry--publication) (`registry`): publish this server to the standard MCP registry so registry-aware clients discover it.
 - `emit_audit_events` — see [audit events](/docs/mcp/mcp-plugins#audit-events).
 
 Virtual servers are managed from the **MCP Virtual Servers** page (or the admin API resource `ai-gateway.extensions.cloud-apim.com/v1/mcp-virtual-servers`).
@@ -294,3 +295,9 @@ The two **enforce** controls are also re-checked at call time: a tool that pinni
 :::tip
 Start in monitor mode (`*_enforce: false`) and watch the `McpZeroTrustAlert` events / `mcp.zerotrust.*` metrics to size the impact, then enable enforcement once the baseline is clean. After a legitimate upstream change, bump `pinning_epoch` to re-pin.
 :::
+
+## Registry / publication
+
+A virtual server carries a `registry` block (entity-level metadata) that lets you **publish it to the standard MCP registry** so registry-aware clients discover it. The fields — `published`, `name`, `version`, `title`, `url`, `deprecated` — and the two exposition plugins are documented on the dedicated **[MCP Registry](/docs/mcp/mcp-registry)** page.
+
+In short: set `registry.published = true` (your approval gate, gated by RBAC) and the server is projected to the official `server.json` and served over `GET /v0/servers`.
