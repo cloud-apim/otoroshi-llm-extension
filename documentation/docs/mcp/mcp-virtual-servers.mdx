@@ -16,6 +16,7 @@ A virtual server **bundles everything** an exposition needs:
 - [Meta mode](#meta-mode-tool-virtualization) (`expose_as_meta`, `meta_semantic_search`).
 - [Rate limiting & caching](#per-tool-rate-limiting-and-result-caching) (`tool_rate_limits`, `tool_cache_ttls`).
 - [Managed resources](#managed-resources) (`resources`, `resource_fetch_allowed_hosts`), [managed prompts](#managed-prompts) (`prompts`), and [item overlays](#item-overlays) (`overlays`).
+- [Zero-Trust controls](#zero-trust-controls) (`zero_trust`): anti-rug-pull pinning, tool-poisoning / prompt-injection scanning, and PII/secrets redaction.
 - `emit_audit_events` — see [audit events](/docs/mcp/mcp-plugins#audit-events).
 
 Virtual servers are managed from the **MCP Virtual Servers** page (or the admin API resource `ai-gateway.extensions.cloud-apim.com/v1/mcp-virtual-servers`).
@@ -31,7 +32,7 @@ The [exposition plugins](/docs/mcp/mcp-plugins) accept a `server_ref`. When set,
 - `Option` fields → an inline `Some` value wins;
 - array fields → a non-empty inline array wins;
 - the enable-flags (`enforce_oauth`, `emit_audit_events`, `expose_as_meta`, …) are **OR'd**;
-- `allow_rules`/`disallow_rules`, managed `resources`/`prompts`, and `overlays` are **merged additively**.
+- `allow_rules`/`disallow_rules`, managed `resources`/`prompts`, `overlays`, and `zero_trust` are **merged additively**.
 
 This lets you keep a broad definition on the virtual server and tighten it per route, or vice-versa.
 
@@ -242,3 +243,54 @@ The shape is keyed by category, then by item key (tool/prompt name, resource nam
   }
 }
 ```
+
+## Zero-Trust controls
+
+The `zero_trust` block adds three independent, **opt-in** security controls on top of an exposed server. Each defaults to OFF, and **blocking is itself opt-in**: by default a control runs in *monitor* mode (it emits a correlated `McpZeroTrustAlert` audit event + metrics, but lets traffic through). Flip the matching `*_enforce` flag to switch to *block*. Alerts route through the usual [data exporters](/docs/observability/observability-reporting) (Kafka/ES/S3/SIEM…), correlated with `McpAudit`/`McpClientAudit` by `request_id`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `pinning_enabled` | boolean | `false` | **A. Anti-rug-pull.** Fingerprint (sha256 over `name`+`description`+`inputSchema`+`annotations`) and pin each tool the first time it is seen (Trust-On-First-Use). A later mutation of an already-pinned tool is detected. |
+| `pinning_enforce` | boolean | `false` | When a mutation is detected: `false` = alert only (tool still served), `true` = drop the tool from `tools/list` and deny `tools/call`. |
+| `pinned_hashes` | object | `{}` | Optional explicit map `tool name → expected fingerprint`. An entry is authoritative (overrides TOFU) — useful to pin a known-good hash declaratively. |
+| `pinning_epoch` | number | `0` | Bump this to **re-pin everything** after a legitimate description change (it namespaces the stored pins). |
+| `description_guardrails` | array | `[]` | **B. Tool-poisoning / prompt-injection scanning** of tool **descriptions** at `tools/list`. Reuses the [guardrails](/docs/guardrails) engine — each item is `{ "enabled": true, "id": "<guardrail>", "config": {...} }` (e.g. `prompt_injection`, `pif`, `secrets_leakage`, `regex`, `contains`, `wasm`). |
+| `result_guardrails` | array | `[]` | Same, applied to tool **results** at `tools/call`. |
+| `guardrails_enforce` | boolean | `false` | When a guardrail denies: `false` = alert only, `true` = drop the offending tool (description scan) / block the result (result scan). |
+| `redact_arguments` | boolean | `false` | **C. Redaction.** Mask PII/secrets in tool **arguments** before forwarding them upstream. |
+| `redact_results` | boolean | `false` | Mask PII/secrets in tool **results** before returning them to the model. |
+| `redaction_builtins` | array | `[]` | Built-in patterns to enable: `email`, `credit_card`, `ssn`, `ipv4`, `jwt`, `aws_key`, `private_key`, `generic_api_key`. Deterministic (no LLM), so they run on every call with no added latency/cost. |
+| `redaction_rules` | array | `[]` | Custom rules `{ "name": "...", "regex": "...", "replacement": "«redacted»" }`, applied after the built-ins. |
+
+The two **enforce** controls are also re-checked at call time: a tool that pinning or a description guardrail removed from the secured `tools/list` cannot be called directly, even by a client that never issued `tools/list`.
+
+```js
+{
+  "zero_trust": {
+    // A. anti-rug-pull — alert on mutation, then block once you trust the baseline
+    "pinning_enabled": true,
+    "pinning_enforce": false,
+    "pinning_epoch": 0,
+
+    // B. scan descriptions and results for prompt-injection / tool-poisoning
+    "description_guardrails": [
+      { "enabled": true, "id": "prompt_injection", "config": { "provider": "provider_xxx", "threshold": 90 } }
+    ],
+    "result_guardrails": [
+      { "enabled": true, "id": "contains", "config": { "contains_none": ["BEGIN PRIVATE KEY"] } }
+    ],
+    "guardrails_enforce": true,
+
+    // C. redact secrets/PII on the way in and out
+    "redact_results": true,
+    "redaction_builtins": ["email", "jwt", "aws_key", "private_key"],
+    "redaction_rules": [
+      { "name": "internal-ticket", "regex": "TICKET-\\d+", "replacement": "«ticket»" }
+    ]
+  }
+}
+```
+
+:::tip
+Start in monitor mode (`*_enforce: false`) and watch the `McpZeroTrustAlert` events / `mcp.zerotrust.*` metrics to size the impact, then enable enforcement once the baseline is clean. After a legitimate upstream change, bump `pinning_epoch` to re-pin.
+:::
