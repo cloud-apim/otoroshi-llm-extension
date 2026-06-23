@@ -1,16 +1,29 @@
 ---
-sidebar_position: 2
+sidebar_position: 3
 ---
 
 import Terminal from '@site/src/components/Terminal';
 
 # MCP server exposition
 
-Otoroshi can expose tool functions and MCP connectors as MCP servers using three different transport protocols: HTTP, SSE, and WebSocket. This allows external MCP clients to connect to your Otoroshi-managed tools.
+Otoroshi can expose tool functions and MCP connectors as an MCP server that external MCP clients connect to. The **recommended transport is Streamable HTTP**; the other transports still exist but are deprecated, experimental, or utility-only.
+
+All exposition plugins share the **same configuration** — documented on the [**MCP Virtual Server**](/docs/mcp/mcp-virtual-servers) page (tools/connectors, filtering, OAuth, scopes, meta mode, rate limiting & caching, managed resources/prompts, overlays). You can set it inline on a plugin, or define it once as a virtual server and reference it with `server_ref`.
+
+## Transports
+
+| Transport | Plugin | Status |
+|-----------|--------|--------|
+| **Streamable HTTP** | `McpRespEndpoint` | ✅ **Recommended** — the current MCP HTTP transport (POST + SSE). What MCP clients and MCP apps use. |
+| SSE | `McpSseEndpoint` | ⚠️ **Deprecated** — the legacy HTTP+SSE transport, kept for backward compatibility. |
+| WebSocket | `McpWebsocketEndpoint` | 🧪 **Experimental** — not part of the MCP standard; use only if you specifically need it. |
+| Local stdio proxy | `McpLocalProxyEndpoint` | 🔌 **Non-official utility** — bridges local stdio MCP clients to an Otoroshi MCP route. |
+
+> Unless you have a specific reason, expose your MCP servers over **Streamable HTTP**.
 
 ## Supported MCP methods
 
-All three transport plugins (HTTP, SSE, WebSocket) implement the full MCP protocol:
+All exposition plugins implement the full MCP protocol:
 
 | Method | Description |
 |--------|-------------|
@@ -70,371 +83,11 @@ When getting a prompt, the response includes:
 - `description` - The prompt description
 - `messages` - An array of messages, each with `role` (e.g. `user`, `assistant`) and `content` (text or image)
 
-## Filtering at the plugin level
+## Streamable HTTP plugin (recommended)
 
-All MCP server exposition plugins (HTTP, SSE, WebSocket) support filtering which tools, resources, resource templates, and prompts are exposed to clients. These filters are applied on top of any filters already configured on the MCP connectors themselves.
+The **`McpRespEndpoint`** plugin exposes your tools and connectors over the standard MCP **Streamable HTTP** transport (a single endpoint handling POST requests and SSE streams). This is the transport MCP clients and MCP apps expect — use it by default.
 
-### Available filters
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `include_functions` | array of strings | Only expose functions matching these regex patterns |
-| `exclude_functions` | array of strings | Hide functions matching these regex patterns |
-| `include_resources` | array of strings | Only expose resources matching these patterns |
-| `exclude_resources` | array of strings | Hide resources matching these patterns |
-| `include_resource_templates` | array of strings | Only expose resource templates matching these patterns |
-| `exclude_resource_templates` | array of strings | Hide resource templates matching these patterns |
-| `include_resource_template_uris` | array of strings | Only expose resource template URIs matching these patterns |
-| `exclude_resource_template_uris` | array of strings | Hide resource template URIs matching these patterns |
-| `include_prompts` | array of strings | Only expose prompts matching these patterns |
-| `exclude_prompts` | array of strings | Hide prompts matching these patterns |
-| `allow_rules` | object | Advanced JsonPath-based allow rules (see [MCP Connectors - Advanced rules](/docs/mcp/mcp-connectors#advanced-rules)) |
-| `disallow_rules` | object | Advanced JsonPath-based disallow rules |
-| `emit_audit_events` | boolean | Emit audit events for every MCP method call (default: `false`) |
-
-### Example plugin configuration with filters
-
-```js
-{
-  "name": "filtered-mcp-server",
-  "version": "1.0.0",
-  "refs": ["tool-function_xxxxx"],
-  "mcp_refs": ["mcp-connector_xxxxx"],
-  "include_functions": ["get_.*", "list_.*"],
-  "exclude_functions": ["delete_.*"],
-  "include_prompts": ["summarize"],
-  "exclude_prompts": [],
-  "include_resources": [],
-  "exclude_resources": ["admin_.*"]
-}
-```
-
-These plugin-level filters are merged with the filters defined on each MCP connector. This means you can have broad access on the connector itself and restrict it further at the exposition level, or vice versa.
-
-## OAuth 2.0 security
-
-All MCP server exposition plugins (HTTP, SSE, WebSocket) — and the [MCP Virtual Server](#mcp-virtual-server) entity that backs them — share the same OAuth options. The [OAuth tutorial](/docs/mcp/mcp-tutorial-oauth) walks through a full setup; the options are:
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `enforce_oauth` | boolean | `false` | Require a valid OAuth 2.0 Bearer token on every MCP request. A missing/invalid token returns `401` with a `WWW-Authenticate: Bearer ... resource_metadata="..."` header ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) discovery). |
-| `auth_module_ref` | string | — | The OAuth2/OIDC auth module used to validate tokens. |
-| `auth_prm_url` | string | — | Override the `resource_metadata` URL advertised in the `401` (default: `<proto>://<host>/.well-known/oauth-protected-resource`). |
-| `validate_audience` | boolean | `false` | **Audience binding ([RFC 8707](https://datatracker.ietf.org/doc/html/rfc8707))**: require the token `aud` claim to match this MCP server's URL. Prevents token-passthrough / confused-deputy. The `aud` claim may be a single string **or** an array. |
-| `opaque_token` | boolean | `false` | Accept **opaque (non-JWT) access tokens**, validated remotely (userinfo endpoint by default) instead of local JWT signature verification. |
-| `use_introspection` | boolean | `false` | For opaque tokens, validate via the auth module's **[RFC 7662](https://datatracker.ietf.org/doc/html/rfc7662) introspection endpoint** instead of userinfo. |
-
-:::tip One-click setup
-The [**Protected MCP Streamable HTTP preset**](#protected-mcp-streamable-http-preset) wires a protected MCP endpoint **and** the RFC 9728 discovery document from a single virtual server reference.
-:::
-
-## Scope-based tool authorization
-
-Beyond all-or-nothing OAuth, you can require specific OAuth **scopes per tool** with `tool_scopes`. The caller's granted scopes are read from the token (`scope` space-delimited claim and/or `scp` array — or the introspection response for opaque tokens), and a tool is allowed only when the caller has **all** the scopes it requires. Tools with no entry are open. The check filters `tools/list` (hidden) and denies `tools/call`.
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `tool_scopes` | object | Map of `tool name` (or `"*"` as a default for every tool) → array of required scopes. |
-
-```js
-{
-  "name": "scoped-mcp-server",
-  "enforce_oauth": true,
-  "auth_module_ref": "auth_mod_xxxxx",
-  "mcp_refs": ["mcp-connector_xxxxx"],
-  "tool_scopes": {
-    "create_repository": ["mcp:write"],
-    "delete_repository": ["mcp:write", "mcp:admin"],
-    "*": ["mcp:tools"]
-  }
-}
-```
-
-In this example every tool requires `mcp:tools`, `create_repository` additionally requires `mcp:write`, and `delete_repository` requires both `mcp:write` and `mcp:admin`.
-
-## Meta mode (tool virtualization)
-
-When a server aggregates many connectors, exposing the full tool list bloats the model's context (every tool schema is injected into the prompt on each call). With `expose_as_meta`, the server exposes **5 virtualization tools** instead of the full list — the same surface as the [meta connector](/docs/mcp/mcp-connectors#transport-kinds), but on the server side:
-
-`list_servers` · `list_tools` · `get_tool_schema` · `search_tools` · `execute`
-
-The model discovers and calls tools dynamically through these, keeping the context small. Local tool functions (`refs`) stay listed directly; resources and prompts are unaffected.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `expose_as_meta` | boolean | `false` | Expose the referenced connectors through the 5 meta tools instead of the full tool list. |
-| `meta_semantic_search` | boolean | `false` | Also fuse BM25 with embedding-based similarity (MiniLM-L6-v2) in `search_tools`. |
-
-```js
-{
-  "name": "meta-mcp-server",
-  "mcp_refs": ["mcp-connector_a", "mcp-connector_b", "mcp-connector_c"],
-  "expose_as_meta": true,
-  "meta_semantic_search": true
-}
-```
-
-## Per-tool rate limiting and result caching
-
-Both are enforced at the `tools/call` chokepoint and backed by the shared datastore (cluster-wide).
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `tool_rate_limits` | object | Map of `tool name` (or `"*"`) → max calls **per minute per consumer** (fixed 60s window). The consumer is resolved as apikey > authenticated user > bearer token. `0`/absent = no limit. |
-| `tool_cache_ttls` | object | Map of `tool name` (or `"*"`) → cache **TTL in seconds** for the tool result. Opt-in, for idempotent tools only. Only successful results are cached, keyed by tool + arguments. `0`/absent = no cache. |
-
-```js
-{
-  "name": "throttled-mcp-server",
-  "mcp_refs": ["mcp-connector_xxxxx"],
-  "tool_rate_limits": {
-    "expensive_search": 10,
-    "*": 600
-  },
-  "tool_cache_ttls": {
-    "get_weather": 60,
-    "list_countries": 3600
-  }
-}
-```
-
-:::warning The cache is keyed by tool + arguments — not per consumer
-The result cache key is the tool name + arguments (plus the server identity), **not** the caller. Only cache tools whose result depends **solely on the arguments**. Do **not** cache tools whose result depends on the caller's identity (e.g. `forward_auth` tools that return per-user data), otherwise one consumer's cached result could be served to another.
-:::
-
-## Protected MCP Streamable HTTP preset
-
-`ProtectedMcpStreamableHttpPreset` is an Otoroshi **preset plugin**: from a single [MCP Virtual Server](#mcp-virtual-server) reference, it wires onto one route both halves of a production-ready protected MCP server:
-
-1. the **MCP Streamable HTTP endpoint** (`McpRespEndpoint`) on a customizable path (default `/mcp`), and
-2. the **Protected Resource Metadata** document ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728)) on the standard well-known path.
-
-The virtual server carries all the settings (OAuth enforcement, auth module, audience binding, scopes, meta mode, rate limits…), so both child plugins are configured from just the server ref.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `server_ref` | string | — | The MCP Virtual Server that drives both plugins. |
-| `mcp_path` | string | `/mcp` | Path of the MCP Streamable HTTP endpoint. |
-| `well_known_path` | string | `/.well-known/oauth-protected-resource` | Path of the Protected Resource Metadata document. |
-
-```js
-{
-  "server_ref": "mcp-virtual-server_xxxxx",
-  "mcp_path": "/mcp",
-  "well_known_path": "/.well-known/oauth-protected-resource"
-}
-```
-
-## MCP Virtual Server
-
-An **MCP Virtual Server** is a reusable, persisted definition of an exposed MCP server. Instead of repeating the same settings on every route, you define them once as a virtual server and reference it from one or more plugins (and from the [preset](#protected-mcp-streamable-http-preset)) through `server_ref`.
-
-A virtual server **bundles everything** an exposition needs:
-
-- `name`, `version` — advertised in the `initialize` response (`serverInfo`).
-- `refs` (tool functions) and `mcp_refs` (MCP connectors) — the tools/resources/prompts to aggregate.
-- [Filters](#available-filters) and [advanced rules](/docs/mcp/mcp-connectors#advanced-rules) (`include_*`/`exclude_*`, `allow_rules`, `disallow_rules`).
-- [OAuth 2.0](#oauth-20-security) (`enforce_oauth`, `auth_module_ref`, `auth_prm_url`, `validate_audience`, `opaque_token`, `use_introspection`).
-- [Scope-based tool authorization](#scope-based-tool-authorization) (`tool_scopes`).
-- [Meta mode](#meta-mode-tool-virtualization) (`expose_as_meta`, `meta_semantic_search`).
-- [Rate limiting & caching](#per-tool-rate-limiting-and-result-caching) (`tool_rate_limits`, `tool_cache_ttls`).
-- [Managed resources](#managed-resources) (`resources`, `resource_fetch_allowed_hosts`), [managed prompts](#managed-prompts) (`prompts`), and [item overlays](#item-overlays) (`overlays`).
-- `emit_audit_events`.
-
-Virtual servers are managed from the **MCP Virtual Servers** page (or the admin API resource `ai-gateway.extensions.cloud-apim.com/v1/mcp-virtual-servers`).
-
-### Referencing and overriding
-
-The three exposition plugins (HTTP, SSE, WebSocket) accept a `server_ref`. When set, the plugin starts from the virtual server's config and lets you **override individual fields inline** on the plugin. The merge rules are hybrid:
-
-- `Option` fields → an inline `Some` value wins;
-- array fields → a non-empty inline array wins;
-- the enable-flags (`enforce_oauth`, `emit_audit_events`, `expose_as_meta`, …) are **OR'd**;
-- `allow_rules`/`disallow_rules`, managed `resources`/`prompts`, and `overlays` are **merged additively**.
-
-This lets you keep a broad definition on the virtual server and tighten it per route, or vice-versa.
-
-```js
-{
-  "server_ref": "mcp-virtual-server_xxxxx",
-  // inline overrides (optional):
-  "emit_audit_events": true
-}
-```
-
-## Managed resources
-
-A virtual server can serve **its own** resources (in addition to those of the referenced connectors), defined inline via `resources`. Each entry has a `uri`, a `name`, optional metadata, and exactly one content source — `text` (inline), `blob` (inline base64), or `url` (fetched on the fly):
-
-| Field | Description |
-|-------|-------------|
-| `uri`, `name` | Required identifier and display name. |
-| `title`, `description`, `mime_type`, `annotations`, `meta` | Optional metadata (`meta` is the MCP `_meta` object). |
-| `text` / `blob` / `url` | Content source (priority `url` > `blob` > `text`). |
-| `url_as` | `"text"` or `"blob"` — how to return the fetched bytes (for `url`). |
-| `headers`, `timeout` | Outgoing request settings (for `url`). |
-| `forward_auth` | Inject the caller's token as `{input_token}` into `url`/`headers`. |
-
-`url`, `headers` and `text` support the expression language. The `{input_token}` placeholder is substituted with the caller's bearer token when `forward_auth` is `true`.
-
-`resource_fetch_allowed_hosts` is an optional allow-list (glob) of hosts the server may fetch resource URLs from — leave empty only if you trust the configured URLs (**SSRF risk** otherwise).
-
-```js
-{
-  "resources": [
-    { "uri": "doc://readme", "name": "Readme", "mime_type": "text/markdown", "text": "# Hello" },
-    { "uri": "api://profile", "name": "Profile", "url": "https://api.example.com/me", "url_as": "text", "forward_auth": true }
-  ],
-  "resource_fetch_allowed_hosts": ["api.example.com"]
-}
-```
-
-Outbound resource fetches (resources that use a `url`) emit a `McpResourceFetchAudit` audit event when `emit_audit_events` is enabled, and always emit `mcp.resource.fetch.calls` / `mcp.resource.fetch.errors` / `mcp.resource.fetch.duration` metrics.
-
-## Managed prompts
-
-Similarly, a virtual server can serve **its own** prompts via `prompts`. Each prompt declares its `arguments` and a list of `messages`; message `text` supports `{{argName}}` substitution (from the `prompts/get` arguments) and the expression language.
-
-| Field | Description |
-|-------|-------------|
-| `name` | Required prompt name. |
-| `title`, `description`, `meta` | Optional metadata. |
-| `arguments` | Array of `{ name, description?, required? }`. |
-| `messages` | Array of `{ role: "user"｜"assistant"｜"system", text }`. |
-
-```js
-{
-  "prompts": [
-    {
-      "name": "summarize",
-      "description": "Summarize a text in a given language",
-      "arguments": [{ "name": "lang", "required": true }],
-      "messages": [{ "role": "user", "text": "Summarize the following text in {{lang}}." }]
-    }
-  ]
-}
-```
-
-## Item overlays
-
-`overlays` lets you apply **per-item JSON patches**, deep-merged onto tools, prompts, resources and resource templates at list time (managed items included). This is handy to inject `_meta`/`annotations`, tweak a `description`, or add an `outputSchema` without touching the upstream server.
-
-The shape is keyed by category, then by item key (tool/prompt name, resource name-or-uri, template `uriTemplate`). The special key `"*"` patches **every** item in a category. Deep-merge: nested objects are merged, scalars and arrays are replaced.
-
-```js
-{
-  "overlays": {
-    "tools": {
-      "*": { "_meta": { "team": "platform" } },
-      "delete_repository": { "annotations": { "destructiveHint": true } }
-    },
-    "resources": {
-      "doc://readme": { "mimeType": "text/markdown" }
-    }
-  }
-}
-```
-
-## Audit events
-
-All MCP server exposition plugins (HTTP, SSE, WebSocket) can emit audit events for every MCP method call. This is useful for monitoring, debugging, and auditing MCP usage across your infrastructure.
-
-:::info Two complementary audit streams
-`McpAudit` documented here covers the **server/exposition** side — calls that external clients make to the MCP servers Otoroshi exposes. The **client** side — calls Otoroshi makes to upstream MCP servers through an [MCP connector](/docs/mcp/mcp-connectors#audit-events) — is covered by a separate `McpClientAudit` event.
-:::
-
-:::tip Real-time metrics (always on)
-Independently of these (opt-in) audit events, every served MCP method also feeds Otoroshi's real-time metrics: `mcp.server.calls`, `mcp.server.errors`, and per-method `mcp.server.<method>.calls` / `.errors` / `.duration`. These are emitted whenever Otoroshi metrics are enabled — no flag required. See [Observability — Real-time MCP metrics](/docs/llm-gateway/observability-reporting#real-time-mcp-metrics).
-:::
-
-### Enabling audit events
-
-Set `emit_audit_events` to `true` in the plugin configuration:
-
-```js
-{
-  "name": "my-mcp-server",
-  "version": "1.0.0",
-  "refs": ["tool-function_xxxxx"],
-  "mcp_refs": ["mcp-connector_xxxxx"],
-  "emit_audit_events": true
-}
-```
-
-By default, this option is **disabled** (`false`).
-
-### Audit event payload
-
-Each MCP method call will produce an `AuditEvent` with the audit type `McpAudit`. The event contains the following fields:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `request_id` | string \| null | The Otoroshi request id (snowflake) of the current request, for correlation with `LLMUsageAudit` and [`McpClientAudit`](/docs/mcp/mcp-connectors#audit-events) events |
-| `mcp_method` | string | The MCP JSON-RPC method called (e.g. `tools/call`, `resources/list`, `initialize`) |
-| `mcp_id` | number | The JSON-RPC request id |
-| `mcp_request_payload` | object | The full JSON-RPC request payload |
-| `mcp_response` | object | The JSON-RPC response envelope (`jsonrpc`, `id`, `result`). Captured for all three transports (HTTP, SSE, WebSocket). `null` only on failures that produce no response. |
-| `transport` | string | The transport protocol used: `http`, `sse`, or `websocket` |
-| `duration` | number | The request duration in milliseconds |
-| `status` | string | `success` or `error` |
-| `error` | string | Error message if the request failed, `null` otherwise |
-| `user` | object | The authenticated user information (if available) |
-| `apikey` | object | The API key used for the request (if available) |
-| `route` | object | The Otoroshi route that handled the request |
-
-### Example audit event
-
-```json
-{
-  "@type": "AuditEvent",
-  "audit": "McpAudit",
-  "request_id": "1905616593920983819",
-  "mcp_method": "tools/call",
-  "mcp_id": 3,
-  "mcp_request_payload": {
-    "jsonrpc": "2.0",
-    "id": 3,
-    "method": "tools/call",
-    "params": {
-      "name": "get_weather",
-      "arguments": { "city": "Paris" }
-    }
-  },
-  "mcp_response": {
-    "jsonrpc": "2.0",
-    "id": 3,
-    "result": {
-      "content": [
-        { "type": "text", "text": "It is 21°C and sunny in Paris." }
-      ]
-    }
-  },
-  "transport": "http",
-  "duration": 142,
-  "status": "success",
-  "error": null,
-  "user": null,
-  "apikey": { "clientId": "xxx", "clientName": "my-api-key" },
-  "route": { "id": "route_xxx", "name": "mcp-server" }
-}
-```
-
-### Filtering audit events in data exporters
-
-You can use Otoroshi's data exporter filtering to collect only MCP audit events:
-
-```json
-{
-  "include": [
-    {
-      "@type": "AuditEvent",
-      "audit": "McpAudit"
-    }
-  ]
-}
-```
-
-## MCP Http Plugin
+Its configuration is the shared exposition config (see [MCP Virtual Server](/docs/mcp/mcp-virtual-servers)): set it inline, or reference a virtual server with `server_ref`.
 
 ![](/img/mcp-http-server-exposition-plugins-list.png)
 
@@ -499,31 +152,6 @@ You can use Otoroshi's data exporter filtering to collect only MCP audit events:
     "rewrite": false,
     "load_balancing": {
       "type": "RoundRobin"
-    },
-    "client": {
-      "retries": 1,
-      "max_errors": 20,
-      "retry_initial_delay": 50,
-      "backoff_factor": 2,
-      "call_timeout": 30000,
-      "call_and_stream_timeout": 120000,
-      "connection_timeout": 10000,
-      "idle_timeout": 60000,
-      "global_timeout": 30000,
-      "sample_interval": 2000,
-      "proxy": {},
-      "custom_timeouts": [],
-      "cache_connection_settings": {
-        "enabled": false,
-        "queue_size": 2048
-      }
-    },
-    "health_check": {
-      "enabled": false,
-      "url": "",
-      "timeout": 5000,
-      "healthyStatuses": [],
-      "unhealthyStatuses": []
     }
   },
   "backend_ref": null,
@@ -564,262 +192,140 @@ You can use Otoroshi's data exporter filtering to collect only MCP audit events:
 }
 ```
 
-## MCP SSE Plugin
+## Protected MCP Streamable HTTP preset
 
-![](/img/mcp-sse-exposition-plugins-list.png)
+`ProtectedMcpStreamableHttpPreset` is an Otoroshi **preset plugin**: from a single [MCP Virtual Server](/docs/mcp/mcp-virtual-servers) reference, it wires onto one route both halves of a production-ready protected MCP server:
 
-![](/img/mcp-sse-exposition-configuration.png)
+1. the **MCP Streamable HTTP endpoint** (`McpRespEndpoint`) on a customizable path (default `/mcp`), and
+2. the **Protected Resource Metadata** document ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728)) on the standard well-known path.
 
-### Configuration
+The virtual server carries all the settings (OAuth enforcement, auth module, audience binding, scopes, meta mode, rate limits…), so both child plugins are configured from just the server ref.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `server_ref` | string | — | The MCP Virtual Server that drives both plugins. |
+| `mcp_path` | string | `/mcp` | Path of the MCP Streamable HTTP endpoint. |
+| `well_known_path` | string | `/.well-known/oauth-protected-resource` | Path of the Protected Resource Metadata document. |
 
 ```js
 {
-  "_loc": {
-    "tenant": "default",
-    "teams": [
-      "default"
-    ]
-  },
-  "id": "route_73e79129a-1cc6-4473-970a-b80905e80c7b",
-  "name": "mcp-sse-exposition",
-  "description": "mcp-sse-exposition",
-  "tags": [],
-  "metadata": {},
-  "enabled": true,
-  "debug_flow": false,
-  "export_reporting": false,
-  "capture": false,
-  "groups": [
-    "default"
-  ],
-  "bound_listeners": [],
-  "frontend": {
-    "domains": [
-      "mcp-sse-exposition.oto.tools"
-    ],
-    "strip_path": true,
-    "exact": false,
-    "headers": {},
-    "query": {},
-    "methods": []
-  },
-  "backend": {
-    "targets": [
-      {
-        "id": "target_1",
-        "hostname": "request.otoroshi.io",
-        "port": 443,
-        "tls": true,
-        "weight": 1,
-        "predicate": {
-          "type": "AlwaysMatch"
-        },
-        "protocol": "HTTP/1.1",
-        "ip_address": null,
-        "tls_config": {
-          "certs": [],
-          "trusted_certs": [],
-          "enabled": false,
-          "loose": false,
-          "trust_all": false
-        }
-      }
-    ],
-    "root": "/",
-    "rewrite": false,
-    "load_balancing": {
-      "type": "RoundRobin"
-    },
-    "client": {
-      "retries": 1,
-      "max_errors": 20,
-      "retry_initial_delay": 50,
-      "backoff_factor": 2,
-      "call_timeout": 30000,
-      "call_and_stream_timeout": 120000,
-      "connection_timeout": 10000,
-      "idle_timeout": 60000,
-      "global_timeout": 30000,
-      "sample_interval": 2000,
-      "proxy": {},
-      "custom_timeouts": [],
-      "cache_connection_settings": {
-        "enabled": false,
-        "queue_size": 2048
-      }
-    },
-    "health_check": {
-      "enabled": false,
-      "url": "",
-      "timeout": 5000,
-      "healthyStatuses": [],
-      "unhealthyStatuses": []
-    }
-  },
-  "backend_ref": null,
-  "plugins": [
-    {
-      "enabled": true,
-      "debug": false,
-      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
-      "include": [],
-      "exclude": [],
-      "config": {},
-      "bound_listeners": [],
-      "nodeId": "cp:otoroshi.next.plugins.OverrideHost",
-      "plugin_index": {
-        "transform_request": 0
-      }
-    },
-    {
-      "plugin_index": {},
-      "nodeId": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpSseEndpoint-0",
-      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpSseEndpoint",
-      "enabled": true,
-      "debug": false,
-      "include": [],
-      "exclude": [],
-      "bound_listeners": [],
-      "config": {
-        "name": "mcp-sse",
-        "version": "1.0.0",
-        "refs": [
-          "tool-function_0511ff44-0ce5-487d-aa1c-d1980ac9a4b8"
-        ],
-        "mcp_refs": []
-      }
-    }
-  ],
-  "kind": "proxy.otoroshi.io/Route"
+  "server_ref": "mcp-virtual-server_xxxxx",
+  "mcp_path": "/mcp",
+  "well_known_path": "/.well-known/oauth-protected-resource"
 }
 ```
 
-## MCP WebSocket Plugin
+## Other transports
 
-![](/img/mcp-websocket-expostion-plugins-list.png)
+These plugins expose the **same surface and the same configuration** as the Streamable HTTP plugin, but over a different transport. Prefer Streamable HTTP unless you have a specific reason.
 
-![](/img/mcp-websocket-exposition-configuration.png)
+### SSE — `McpSseEndpoint` (deprecated)
 
-### Configuration
+The legacy HTTP+SSE transport (a GET SSE stream plus POSTed requests). Kept for backward compatibility with older clients. **Deprecated — migrate to Streamable HTTP.**
+
+### WebSocket — `McpWebsocketEndpoint` (experimental)
+
+Exposes the MCP JSON-RPC surface over a WebSocket. **Experimental** and not part of the MCP standard.
+
+### Local stdio proxy — `McpLocalProxyEndpoint` (non-official)
+
+The **MCP Tools Endpoint** lets MCP clients that only speak the local **stdio** transport (for example desktop AI apps) reach an Otoroshi MCP route through the local proxy `npx @cloud-apim/otoroshi-mcp-proxy`: the proxy runs locally and bridges stdio ↔ the Otoroshi MCP route. It uses the same configuration (including `server_ref`) as the other exposition plugins.
+
+## Audit events
+
+All exposition plugins can emit audit events for every MCP method call. This is useful for monitoring, debugging, and auditing MCP usage across your infrastructure.
+
+:::info Two complementary audit streams
+`McpAudit` documented here covers the **server/exposition** side — calls that external clients make to the MCP servers Otoroshi exposes. The **client** side — calls Otoroshi makes to upstream MCP servers through an [MCP connector](/docs/mcp/mcp-connectors#audit-events) — is covered by a separate `McpClientAudit` event.
+:::
+
+:::tip Real-time metrics (always on)
+Independently of these (opt-in) audit events, every served MCP method also feeds Otoroshi's real-time metrics: `mcp.server.calls`, `mcp.server.errors`, and per-method `mcp.server.<method>.calls` / `.errors` / `.duration`. These are emitted whenever Otoroshi metrics are enabled — no flag required. See [Observability — Real-time MCP metrics](/docs/llm-gateway/observability-reporting#real-time-mcp-metrics).
+:::
+
+### Enabling audit events
+
+Set `emit_audit_events` to `true` in the configuration:
 
 ```js
 {
-  "_loc": {
-    "tenant": "default",
-    "teams": [
-      "default"
-    ]
-  },
-  "id": "route_62c427cac-43c9-4d86-bab4-56cb0b61040b",
-  "name": "mcp-websocket-exposition",
-  "description": "mcp-websocket-exposition",
-  "tags": [],
-  "metadata": {},
-  "enabled": true,
-  "debug_flow": false,
-  "export_reporting": false,
-  "capture": false,
-  "groups": [
-    "default"
-  ],
-  "bound_listeners": [],
-  "frontend": {
-    "domains": [
-      "mcp-websocket-exposition.oto.tools"
-    ],
-    "strip_path": true,
-    "exact": false,
-    "headers": {},
-    "query": {},
-    "methods": []
-  },
-  "backend": {
-    "targets": [
-      {
-        "id": "target_1",
-        "hostname": "request.otoroshi.io",
-        "port": 443,
-        "tls": true,
-        "weight": 1,
-        "predicate": {
-          "type": "AlwaysMatch"
-        },
-        "protocol": "HTTP/1.1",
-        "ip_address": null,
-        "tls_config": {
-          "certs": [],
-          "trusted_certs": [],
-          "enabled": false,
-          "loose": false,
-          "trust_all": false
-        }
-      }
-    ],
-    "root": "/",
-    "rewrite": false,
-    "load_balancing": {
-      "type": "RoundRobin"
-    },
-    "client": {
-      "retries": 1,
-      "max_errors": 20,
-      "retry_initial_delay": 50,
-      "backoff_factor": 2,
-      "call_timeout": 30000,
-      "call_and_stream_timeout": 120000,
-      "connection_timeout": 10000,
-      "idle_timeout": 60000,
-      "global_timeout": 30000,
-      "sample_interval": 2000,
-      "proxy": {},
-      "custom_timeouts": [],
-      "cache_connection_settings": {
-        "enabled": false,
-        "queue_size": 2048
-      }
-    },
-    "health_check": {
-      "enabled": false,
-      "url": "",
-      "timeout": 5000,
-      "healthyStatuses": [],
-      "unhealthyStatuses": []
+  "name": "my-mcp-server",
+  "version": "1.0.0",
+  "refs": ["tool-function_xxxxx"],
+  "mcp_refs": ["mcp-connector_xxxxx"],
+  "emit_audit_events": true
+}
+```
+
+By default, this option is **disabled** (`false`).
+
+### Audit event payload
+
+Each MCP method call will produce an `AuditEvent` with the audit type `McpAudit`. The event contains the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_id` | string \| null | The Otoroshi request id (snowflake) of the current request, for correlation with `LLMUsageAudit` and [`McpClientAudit`](/docs/mcp/mcp-connectors#audit-events) events |
+| `mcp_method` | string | The MCP JSON-RPC method called (e.g. `tools/call`, `resources/list`, `initialize`) |
+| `mcp_id` | number | The JSON-RPC request id |
+| `mcp_request_payload` | object | The full JSON-RPC request payload |
+| `mcp_response` | object | The JSON-RPC response envelope (`jsonrpc`, `id`, `result`). Captured for all transports. `null` only on failures that produce no response. |
+| `transport` | string | The transport protocol used: `http`, `sse`, or `websocket` |
+| `duration` | number | The request duration in milliseconds |
+| `status` | string | `success` or `error` |
+| `error` | string | Error message if the request failed, `null` otherwise |
+| `user` | object | The authenticated user information (if available) |
+| `apikey` | object | The API key used for the request (if available) |
+| `route` | object | The Otoroshi route that handled the request |
+
+### Example audit event
+
+```json
+{
+  "@type": "AuditEvent",
+  "audit": "McpAudit",
+  "request_id": "1905616593920983819",
+  "mcp_method": "tools/call",
+  "mcp_id": 3,
+  "mcp_request_payload": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "method": "tools/call",
+    "params": {
+      "name": "get_weather",
+      "arguments": { "city": "Paris" }
     }
   },
-  "backend_ref": null,
-  "plugins": [
-    {
-      "enabled": true,
-      "debug": false,
-      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
-      "include": [],
-      "exclude": [],
-      "config": {},
-      "bound_listeners": [],
-      "nodeId": "cp:otoroshi.next.plugins.OverrideHost",
-      "plugin_index": {
-        "transform_request": 0
-      }
-    },
-    {
-      "plugin_index": {},
-      "nodeId": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpWebsocketEndpoint-0",
-      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpWebsocketEndpoint",
-      "enabled": true,
-      "debug": false,
-      "include": [],
-      "exclude": [],
-      "bound_listeners": [],
-      "config": {
-        "name": "mcp-server",
-        "version": "1.0.0",
-        "refs": [
-          "tool-function_0511ff44-0ce5-487d-aa1c-d1980ac9a4b8"
-        ],
-        "mcp_refs": []
-      }
+  "mcp_response": {
+    "jsonrpc": "2.0",
+    "id": 3,
+    "result": {
+      "content": [
+        { "type": "text", "text": "It is 21°C and sunny in Paris." }
+      ]
     }
-  ],
-  "kind": "proxy.otoroshi.io/Route"
+  },
+  "transport": "http",
+  "duration": 142,
+  "status": "success",
+  "error": null,
+  "user": null,
+  "apikey": { "clientId": "xxx", "clientName": "my-api-key" },
+  "route": { "id": "route_xxx", "name": "mcp-server" }
+}
+```
+
+### Filtering audit events in data exporters
+
+You can use Otoroshi's data exporter filtering to collect only MCP audit events:
+
+```json
+{
+  "include": [
+    {
+      "@type": "AuditEvent",
+      "audit": "McpAudit"
+    }
+  ]
 }
 ```
