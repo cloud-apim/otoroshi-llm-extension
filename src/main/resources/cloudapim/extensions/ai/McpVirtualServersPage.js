@@ -1,4 +1,26 @@
 
+// Array-item widget for a single Zero-Trust redaction rule. Mirrors the AiProvidersPage `Guardrail`
+// component contract (props.value = whole array, props.idx, props.itemValue, props.onChange).
+class McpRedactionRule extends Component {
+  render() {
+    return (
+      React.createElement(Form, {
+        flow: ['name', 'regex', 'replacement'],
+        schema: {
+          name: { type: 'string', props: { label: 'Name', placeholder: 'internal-ticket' } },
+          regex: { type: 'string', props: { label: 'Regex', placeholder: 'TICKET-\\d+' } },
+          replacement: { type: 'string', props: { label: 'Replacement', placeholder: '«redacted»' } },
+        },
+        value: this.props.itemValue,
+        onChange: (i) => {
+          this.props.value[this.props.idx] = i;
+          this.props.onChange(this.props.value);
+        }
+      }, null)
+    );
+  }
+}
+
 class McpVirtualServersPage extends Component {
 
   formSchema = {
@@ -214,12 +236,79 @@ class McpVirtualServersPage extends Component {
         help: 'Per-item JSON patches deep-merged onto tools/prompts/resources/resource-templates at list time (managed items included). Shape: { "tools": { "<name>": { "description": "...", "_meta": {...}, "annotations": {...}, "inputSchema": {...}, "outputSchema": {...}, "title": "..." } }, "prompts": { "<name>": {...} }, "resources": { "<name-or-uri>": { "mimeType": "...", "_meta": {...} } }, "resource_templates": { "<uriTemplate>": {...} } }. Use the key "*" to patch every item in a category. deepMerge: nested objects merged, scalars/arrays replaced.',
       },
     },
-    'config.zero_trust': {
-      type: 'monaco-json',
+    // ── Zero-Trust: A. anti-rug-pull (fingerprint + pinning) ──────────────────────────────────────────────
+    'config.zero_trust.pinning_enabled': {
+      type: 'bool',
+      props: { label: 'Anti-rug-pull: enable pinning', help: 'Fingerprint (sha256 of name + description + inputSchema + annotations) and pin each tool the first time it is seen (Trust-On-First-Use). A later mutation of an already-pinned tool is then detected.' },
+    },
+    'config.zero_trust.pinning_enforce': {
+      type: 'bool',
+      props: { label: 'Anti-rug-pull: block on mutation', help: 'Off = monitor (alert + audit only, tool still served). On = drop the mutated tool from tools/list and deny tools/call.' },
+    },
+    'config.zero_trust.pinning_epoch': {
+      type: 'number',
+      props: { label: 'Pinning epoch', help: 'Bump this to re-pin every tool after a legitimate description change (it namespaces the stored pins).' },
+    },
+    'config.zero_trust.pinned_hashes': {
+      type: 'object',
+      props: { label: 'Explicit pinned hashes', help: 'Optional map tool name → expected sha256 fingerprint. An entry is authoritative and overrides Trust-On-First-Use.' },
+    },
+    // ── Zero-Trust: B. tool-poisoning / prompt-injection scanning ─────────────────────────────────────────
+    'config.zero_trust.description_guardrails': {
+      type: 'array',
       props: {
-        label: 'Zero-Trust controls',
-        height: 320,
-        help: 'Zero-Trust MCP gateway controls (all opt-in, blocking is opt-in too). Shape: { "pinning_enabled": false, "pinning_enforce": false, "pinned_hashes": { "<tool>": "<sha256>" }, "pinning_epoch": 0, "description_guardrails": [ { "enabled": true, "id": "prompt_injection|pif|secrets_leakage|regex|contains|...", "config": {} } ], "result_guardrails": [ ... ], "guardrails_enforce": false, "redact_arguments": false, "redact_results": false, "redaction_builtins": ["email","credit_card","ssn","ipv4","jwt","aws_key","private_key","generic_api_key"], "redaction_rules": [ { "name": "...", "regex": "...", "replacement": "«redacted»" } ] }. A. anti-rug-pull: fingerprints + pins each tool description/inputSchema (Trust-On-First-Use); a later mutation is alerted (and blocked when pinning_enforce). Bump pinning_epoch to re-pin after a legitimate change. B. guardrail scanning of tool descriptions (at tools/list) and results (at tools/call) via the guardrails engine; blocked when guardrails_enforce. C. deterministic PII/secrets redaction of arguments and/or results.',
+        label: 'Description guardrails',
+        help: 'Guardrails run against each tool description at tools/list (catches tool-poisoning / injected instructions). Reuses the same guardrails as the LLM providers (before/after are ignored here).',
+        defaultValue: { enabled: true, before: true, after: true, id: 'prompt_injection', config: { provider: null, max_injection_score: 90 } },
+        component: Guardrail,
+      },
+    },
+    'config.zero_trust.result_guardrails': {
+      type: 'array',
+      props: {
+        label: 'Result guardrails',
+        help: 'Guardrails run against each tool result at tools/call (catches injection smuggled back through tool output).',
+        defaultValue: { enabled: true, before: true, after: true, id: 'prompt_injection', config: { provider: null, max_injection_score: 90 } },
+        component: Guardrail,
+      },
+    },
+    'config.zero_trust.guardrails_enforce': {
+      type: 'bool',
+      props: { label: 'Guardrails: block on denial', help: 'Off = monitor (alert only). On = drop the offending tool (description scan) / block the result (result scan).' },
+    },
+    // ── Zero-Trust: C. PII / secrets redaction ────────────────────────────────────────────────────────────
+    'config.zero_trust.redact_arguments': {
+      type: 'bool',
+      props: { label: 'Redact tool arguments', help: 'Deterministically mask PII/secrets in tool arguments before they are forwarded upstream.' },
+    },
+    'config.zero_trust.redact_results': {
+      type: 'bool',
+      props: { label: 'Redact tool results', help: 'Deterministically mask PII/secrets in tool results before they are returned to the model.' },
+    },
+    'config.zero_trust.redaction_builtins': {
+      type: 'array',
+      props: {
+        label: 'Built-in redaction patterns',
+        help: 'Built-in patterns to mask (no LLM, no added latency). Applied in a fixed precedence so specific patterns run before the greedy generic one.',
+        possibleValues: [
+          { label: 'Email', value: 'email' },
+          { label: 'Credit card', value: 'credit_card' },
+          { label: 'SSN', value: 'ssn' },
+          { label: 'IPv4 address', value: 'ipv4' },
+          { label: 'JWT', value: 'jwt' },
+          { label: 'AWS access key', value: 'aws_key' },
+          { label: 'Private key block', value: 'private_key' },
+          { label: 'Generic API key / high-entropy', value: 'generic_api_key' },
+        ],
+      },
+    },
+    'config.zero_trust.redaction_rules': {
+      type: 'array',
+      props: {
+        label: 'Custom redaction rules',
+        help: 'Custom regex → replacement rules, applied after the built-ins.',
+        defaultValue: { name: '', regex: '', replacement: '«redacted»' },
+        component: McpRedactionRule,
       },
     },
   };
@@ -279,7 +368,11 @@ class McpVirtualServersPage extends Component {
     '---',
     'config.overlays',
     '---',
-    'config.zero_trust',
+    'config.zero_trust.pinning_enabled', 'config.zero_trust.pinning_enforce', 'config.zero_trust.pinning_epoch', 'config.zero_trust.pinned_hashes',
+    '---',
+    'config.zero_trust.description_guardrails', 'config.zero_trust.result_guardrails', 'config.zero_trust.guardrails_enforce',
+    '---',
+    'config.zero_trust.redact_arguments', 'config.zero_trust.redact_results', 'config.zero_trust.redaction_builtins', 'config.zero_trust.redaction_rules',
   ];
 
   componentDidMount() {
@@ -363,6 +456,13 @@ class McpVirtualServersPage extends Component {
               scopes[key] = i.config.tool_scopes[key].join(', ')
             });
             i.config.tool_scopes = scopes;
+            // defensively default the zero_trust block so its widgets bind to [] / {} (not undefined) on
+            // entities created before this feature existed.
+            i.config.zero_trust = Object.assign({
+              pinning_enabled: false, pinning_enforce: false, pinned_hashes: {}, pinning_epoch: 0,
+              description_guardrails: [], result_guardrails: [], guardrails_enforce: false,
+              redact_arguments: false, redact_results: false, redaction_builtins: [], redaction_rules: [],
+            }, i.config.zero_trust || {});
             return i;
           })
         }),
