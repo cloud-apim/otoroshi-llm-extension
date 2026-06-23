@@ -600,6 +600,18 @@ class AiExtension(val env: Env) extends AdminExtension {
     Results.Ok(Json.obj("can_execute" -> JlamaChatClient.canExecuteJlama, "msg" -> JlamaChatClient.errorMsg)).vfuture
   }
 
+  // Registry UI assistant: lists the routes that expose a given MCP virtual server, with a derived public URL
+  // and detected auth, so the admin can fill `registry.url` (and validate OAuth/apikey/mTLS).
+  def handleMcpExpositionRoutesScan(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
+    implicit val ev = env
+    req.getQueryString("server") match {
+      case None => Results.BadRequest(Json.obj("error" -> "missing 'server' query param")).vfuture
+      case Some(vsId) =>
+        val candidates = otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpExpositionScanner.scan(vsId)
+        Results.Ok(Json.obj("candidates" -> JsArray(candidates.map(_.json)))).vfuture
+    }
+  }
+
   def handleRemainingBudget(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
     implicit val ec = env.otoroshiExecutionContext
     implicit val ev = env
@@ -852,6 +864,12 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/extensions/cloud-apim/extensions/ai-extension/jlama/status",
       wantsBody = false,
       handle = handleJlamaStatus
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "GET",
+      path = "/extensions/cloud-apim/extensions/ai-extension/mcp-virtual-servers/_exposition-routes",
+      wantsBody = false,
+      handle = handleMcpExpositionRoutesScan
     ),
     AdminExtensionBackofficeAuthRoute(
       method = "GET",
