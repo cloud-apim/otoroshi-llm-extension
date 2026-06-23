@@ -59,7 +59,7 @@ In this tutorial, you will build a complete, production-ready MCP server that ex
                                               └─────────────────────┘
 ```
 
-The OAuth settings and the tool list are defined once on an **MCP Virtual Server**; the route's `McpRespEndpoint` plugin just references it with `server_ref`.
+The OAuth settings and the tool list are defined once on an **MCP Virtual Server**; the route just adds the **Protected MCP Streamable HTTP preset**, which references it with `server_ref` and wires the two plugins above.
 
 ## Step 1: Create the OIDC auth module
 
@@ -80,7 +80,7 @@ First, configure an OAuth2/OIDC authentication module in Otoroshi that points to
   "loginUrl": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/auth",
   "logoutUrl": "https://your-keycloak.example.com/realms/mcp/protocol/openid-connect/logout",
   "callbackUrl": "http://your-otoroshi.oto.tools:8080/privateapps/generic/callback",
-  "scope": "openid email profile",
+  "scope": "openid mcp:tools mcp:resources",
   "readProfileFromToken": false,
   "jwtVerifier": {
     "type": "JWKSAlgoSettings",
@@ -222,12 +222,12 @@ The `config` block is the shared exposition config. You can later add [audience 
 
 ## Step 4: Create the MCP server route
 
-Create a route in Otoroshi that exposes the virtual server as an MCP Streamable HTTP server, protected by OAuth 2.0.
+Create a route in Otoroshi and add the **Protected MCP Streamable HTTP preset**. From a single `server_ref`, it wires both halves of the protected MCP server for you:
 
-This route uses two plugins, both pointing at the virtual server with `server_ref`:
+- the **MCP Streamable HTTP endpoint** on `/mcp` (customizable via `mcp_path`), and
+- the **Protected Resource Metadata** document ([RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728)) on `/.well-known/oauth-protected-resource` (customizable via `well_known_path`).
 
-1. **McpProtectedResourceMetadata** — serves the [RFC 9728](https://datatracker.ietf.org/doc/html/rfc9728) Protected Resource Metadata document at `/.well-known/oauth-protected-resource`, automatically derived from the OIDC auth module of the referenced virtual server (authorization server URL, JWKS URI, scopes)
-2. **McpRespEndpoint** — references the virtual server and handles MCP protocol requests with built-in OAuth enforcement (from the virtual server): it validates the Bearer token and returns a `401` with a `WWW-Authenticate` header pointing to the PRM document if the token is missing or invalid
+OAuth enforcement, the auth module and the tools all come from the referenced [virtual server](#step-3-create-the-mcp-virtual-server) — so the route configuration is just the preset and one `server_ref`.
 
 ```js
 {
@@ -283,37 +283,13 @@ This route uses two plugins, both pointing at the virtual server with `server_re
     {
       "enabled": true,
       "debug": false,
-      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.ProtectedMcpStreamableHttpPreset",
       "include": [],
-      "exclude": [],
-      "config": {},
-      "bound_listeners": [],
-      "plugin_index": {
-        "transform_request": 0
-      }
-    },
-    {
-      "enabled": true,
-      "debug": false,
-      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpProtectedResourceMetadata",
-      "include": ["/.well-known/oauth-protected-resource"],
       "exclude": [],
       "config": {
         "server_ref": "mcp-virtual-server_geocoding",
-        "scopes_supported": ["openid", "mcp:tools", "mcp:resources"],
-        "bearer_methods_supported": ["header", "query"]
-      },
-      "bound_listeners": [],
-      "plugin_index": {}
-    },
-    {
-      "enabled": true,
-      "debug": false,
-      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpRespEndpoint",
-      "include": ["/mcp"],
-      "exclude": ["/.well-known/oauth-protected-resource"],
-      "config": {
-        "server_ref": "mcp-virtual-server_geocoding"
+        "mcp_path": "/mcp",
+        "well_known_path": "/.well-known/oauth-protected-resource"
       },
       "bound_listeners": [],
       "plugin_index": {}
@@ -323,17 +299,23 @@ This route uses two plugins, both pointing at the virtual server with `server_re
 }
 ```
 
-### Key configuration details
+:::tip Manual wiring
+Prefer to control the plugins yourself (e.g. to add other plugins on the route)? You can add the `McpRespEndpoint` and `McpProtectedResourceMetadata` plugins manually instead of the preset — see [MCP server exposition](/docs/mcp/mcp-plugins).
+:::
 
-#### McpProtectedResourceMetadata plugin
+### What the preset wires up
 
-This plugin serves the [OAuth Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) document at `/.well-known/oauth-protected-resource`. Instead of hardcoding the metadata as a static JSON string, it **automatically derives** the document from the OIDC auth module — taken from the referenced virtual server (`server_ref`), or set directly via `auth_module_ref`:
+The preset expands into two plugins on the route. You don't configure them directly — everything comes from the virtual server — but here is what each does.
+
+#### Protected Resource Metadata (RFC 9728)
+
+It serves the [OAuth Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) document at `/.well-known/oauth-protected-resource`. Instead of hardcoding the metadata as a static JSON string, it **automatically derives** the document from the OIDC auth module of the virtual server:
 
 | Field | Source | Description |
 |-------|--------|-------------|
 | `resource` | Auto (request URL) | The resource identifier. Defaults to the current protocol and host (e.g. `http://mcp-geocoding.oto.tools:8080`). Can be overridden in config. |
 | `authorization_servers` | Auth module `oidConfig` | Derived from the OIDC discovery URL by stripping `/.well-known/openid-configuration` |
-| `scopes_supported` | Config override or auth module `scope` | If `scopes_supported` is set in the plugin config, it is used. Otherwise the scopes are extracted from the auth module's `scope` field. |
+| `scopes_supported` | Auth module `scope` | Extracted from the auth module's `scope` field (here `openid`, `mcp:tools`, `mcp:resources`). |
 | `jwks_uri` | Auth module `jwtVerifier` | Extracted from the JWKS URL in the auth module's JWT verifier settings |
 | `bearer_methods_supported` | Config | Defaults to `["header", "query"]` |
 
@@ -355,16 +337,9 @@ This document tells MCP clients how to authenticate — which authorization serv
 If you change your OIDC provider or its configuration, the PRM document updates automatically — no need to manually edit a static JSON body.
 :::
 
-#### McpRespEndpoint plugin (with OAuth enforcement)
+#### OAuth enforcement on the MCP endpoint
 
-OAuth enforcement (`enforce_oauth`) and the auth module live on the [virtual server](#step-3-create-the-mcp-virtual-server); the plugin only needs `server_ref`.
-
-| Field | Value | Description |
-|-------|-------|-------------|
-| `server_ref` | `mcp-virtual-server_geocoding` | References the virtual server, which carries the tools, `enforce_oauth`, and the auth module used to verify Bearer tokens. |
-| `exclude` | `["/.well-known/oauth-protected-resource"]` | The discovery endpoint is handled by the McpProtectedResourceMetadata plugin |
-
-When a request arrives without a valid token, the plugin returns:
+OAuth enforcement (`enforce_oauth`) and the auth module come from the [virtual server](#step-3-create-the-mcp-virtual-server). When a request arrives without a valid token, the endpoint returns:
 
 ```
 HTTP/1.1 401 Unauthorized
@@ -657,5 +632,5 @@ npx @modelcontextprotocol/inspector \
 - **Add MCP connectors**: Combine your HTTP tool functions with [MCP connectors](/docs/mcp/mcp-connectors) by adding connector IDs to the `mcp_refs` array
 - **Fine-tune access control**: Use the [MCP virtual server filters](/docs/mcp/mcp-virtual-servers#filtering) to control which tools are exposed to which clients
 - **Connect to an LLM provider**: Attach these same tool functions to an [LLM provider](/docs/function-calling/overview#provider-configuration) so the LLM can call them during chat completions
-- **Custom resource identifier**: Set the `resource` field in the McpProtectedResourceMetadata config to override the auto-detected value (useful when behind a reverse proxy or load balancer)
-- **Custom scopes**: Override `scopes_supported` in the McpProtectedResourceMetadata config to advertise specific scopes (e.g., `["openid", "mcp:tools", "mcp:resources"]`) instead of using all scopes from the auth module
+- **Custom scopes**: the advertised scopes come from the auth module's `scope` field — edit it to change which scopes the PRM document advertises
+- **Custom resource identifier**: the `resource` defaults to the request's protocol and host; to override it (e.g. behind a reverse proxy or load balancer), [wire the `McpProtectedResourceMetadata` plugin manually](/docs/mcp/mcp-plugins) instead of the preset and set its `resource` field (it also accepts a `scopes_supported` override there)
