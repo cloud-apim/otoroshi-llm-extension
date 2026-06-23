@@ -823,9 +823,3 @@ You can use Otoroshi's data exporter filtering to collect only MCP audit events:
   "kind": "proxy.otoroshi.io/Route"
 }
 ```
-
-## MCP Tools Endpoint (local proxy)
-
-The **MCP Tools Endpoint** (`McpLocalProxyEndpoint`) exposes the same tools / resources / prompts surface as the other exposition plugins, but is meant to be reached through the **local stdio proxy** `npx @cloud-apim/otoroshi-mcp-proxy`. This is handy for MCP clients that only speak the local **stdio** transport (for example desktop AI apps) and cannot connect to a remote HTTP/SSE/WebSocket MCP server directly: the proxy runs locally and bridges stdio ↔ the Otoroshi MCP route.
-
-It uses the exact same [configuration](#mcp-virtual-server) as the other exposition plugins (`refs`, `mcp_refs`, filters, OAuth, scopes, meta mode, managed resources/prompts, overlays, …), including `server_ref` to reuse an [MCP Virtual Server](#mcp-virtual-server).
