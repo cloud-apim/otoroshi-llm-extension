@@ -28,7 +28,7 @@ Configured on the [MCP Virtual Server](/docs/mcp/mcp-virtual-servers) entity (en
 | `name` | string | — | Reverse-DNS namespaced name (e.g. `io.acme/github`). Defaults to a slug of the server name (`io.cloud-apim/<slug>`). |
 | `version` | string | `1.0.0` | Semantic version advertised in `server.json`. |
 | `title` | string | — | Human-readable title. Defaults to the server name. |
-| `url` | string | — | Public streamable-http URL exposed for this server (the `server.json` remote). **Set it manually for now** — deriving it from the routes that expose the server is not done yet. If empty, no remote is published (clients still discover auth via the server's own `.well-known`). |
+| `url` | string | — | Public streamable-http URL exposed for this server (the `server.json` remote). The editor has a **"Detect from route" assistant** that scans the route(s) exposing this server, suggests the URL and shows the detected auth (OAuth / apikey / mTLS) — you confirm or override. If empty, no remote is published (clients still discover auth via the server's own `.well-known`). |
 | `deprecated` | boolean | `false` | Marks the registry status as `deprecated` while keeping the entry listed. |
 
 ## The `server.json` projection
@@ -110,9 +110,11 @@ The discovery endpoint funnels clients onto the governed path: instead of each t
 
 ## Scope & limits
 
+A note on the URL: the **"Detect from route" assistant** suggests `registry.url` (and the auth) by scanning the routes that expose the server, but the value is **stored and human-confirmed** — a gateway can't always know its own public URL behind a proxy/LB, and a server may be exposed on several routes. The projection itself never scans.
+
 Deferred for a later iteration:
 
-- **Auto-deriving the remote `url`** by scanning the routes that expose the server (manual `url` for now).
+- **Fully-automatic remote `url`** resolved live at projection time (no stored value).
 - **Identity-aware filtering** of the listing (a team only sees what its RBAC/scopes allow).
 - **Cursor pagination** (`metadata.next_cursor`).
 - An **approval workflow** (we stay on `published` + admin role).
