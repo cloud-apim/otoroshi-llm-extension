@@ -229,12 +229,12 @@ case class AiProvider(
       case "cloud-temple" => {
         val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
-        new OpenAiChatClient(api, opts, id, "cloud-temple", accumulateStreamConsumptions = true).some
+        new OpenAiChatClient(api, opts, id, "cloud-temple", accumulateStreamConsumptions = false).some
       }
       case "scaleway" => {
         val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Scaleway", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
-        new OpenAiChatClient(api, opts, id, "scaleway", accumulateStreamConsumptions = true).some
+        new OpenAiChatClient(api, opts, id, "scaleway", accumulateStreamConsumptions = false).some
       }
       case "deepseek" => {
         val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Deepseek", env = env)
@@ -294,7 +294,7 @@ case class AiProvider(
         //-------
         val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "gemini", env = env)
         val opts = OpenAiChatClientOptions.fromJson(options)
-        new OpenAiChatClient(api, opts, id, "gemini", "/models", completion = false, accumulateStreamConsumptions = true).some
+        new OpenAiChatClient(api, opts, id, "gemini", "/models", completion = false, accumulateStreamConsumptions = false).some
       }
       case "huggingface" => {
         // val modelName = connection.select("model_name").as[String]
