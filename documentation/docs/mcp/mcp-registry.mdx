@@ -8,10 +8,6 @@ Otoroshi can publish your governed [MCP virtual servers](/docs/mcp/mcp-virtual-s
 
 It is the difference between *"a pile of connection configs"* and *"a curated, approved, browsable, versioned catalogue of sanctioned MCP capabilities"*.
 
-:::info First version — publish-only
-This first version is **publish-only**: Otoroshi *exposes* its governed catalogue. Importing servers from a remote registry, identity-aware filtering of the listing, cursor pagination, and an approval *workflow* are **not** included yet — see [Scope & limits](#scope--limits).
-:::
-
 ## How it works
 
 A registry is essentially **a list of [`server.json`](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md) documents**, one per MCP server. In Otoroshi a registry-server maps **1:1 to a virtual server**: the `server.json` is a *projection* of the virtual server. There is no separate entity — publication is a small block of metadata on the virtual server itself.
