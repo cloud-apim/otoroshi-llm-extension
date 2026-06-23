@@ -8,7 +8,7 @@ import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatMessage
 import com.cloud.apim.otoroshi.extensions.aigateway.agents.InlineFunction
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailItem, GuardrailResult, Guardrails}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, McpConnector, McpConnectorRules, McpConnectorTransport, McpConnectorTransportKind, McpSupport}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, McpConnector, McpConnectorRules, McpConnectorTransport, McpConnectorTransportKind, McpRegistryConfig, McpSupport, McpVirtualServer}
 import dev.langchain4j.agent.tool.ToolSpecification
 import dev.langchain4j.mcp.client.{McpBlobResourceContents, McpResourceContents, McpTextResourceContents}
 import dev.langchain4j.model.chat.request.json.JsonSchemaElement
@@ -2663,5 +2663,184 @@ class ProtectedMcpStreamableHttpPreset extends NgPresetPlugin {
         config = NgPluginInstanceConfig(McpProtectedResourceMetadataConfig.default.copy(serverRef = config.serverRef).json.asObject)
       ),
     )
+  }
+}
+
+// ── MCP Registry (publish-only) ───────────────────────────────────────────────────────────────────────────
+// Projects governed MCP virtual servers to the official MCP registry `server.json` format, so registry-aware
+// MCP clients can discover the sanctioned servers and connect through the gateway. Publish-only: a virtual
+// server is listed iff it is enabled and `registry.published`. The `remotes.url` is taken from the manually-set
+// `registry.url` (auto-deriving it by scanning the routes that expose the server is deferred).
+object McpRegistry {
+
+  val schemaUrl = "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json"
+  val defaultNamespace = "io.cloud-apim"
+
+  // reverse-DNS-ish name "<namespace>/<slug>": keep [a-z0-9], collapse the rest to '-', trim leading/trailing '-'.
+  def slugifyName(name: String): String = {
+    val slug = name.trim.toLowerCase.replaceAll("[^a-z0-9]+", "-").replaceAll("(^-+|-+$)", "")
+    s"$defaultNamespace/${if (slug.isEmpty) "server" else slug}"
+  }
+
+  def registryName(vs: McpVirtualServer): String =
+    vs.registry.name.filter(_.trim.nonEmpty).getOrElse(slugifyName(vs.name))
+
+  // Standard server.json document (+ the registry-official `_meta` envelope that carries the status).
+  def serverJson(vs: McpVirtualServer): JsObject = {
+    val r = vs.registry
+    val title: String = r.title.filter(_.trim.nonEmpty).getOrElse(vs.name)
+    var js = Json.obj(
+      "$schema" -> schemaUrl,
+      "name" -> registryName(vs),
+      "description" -> vs.description,
+      "title" -> title,
+      "version" -> r.version,
+    )
+    r.url.filter(_.trim.nonEmpty).foreach { url =>
+      js = js ++ Json.obj("remotes" -> Json.arr(Json.obj("type" -> "streamable-http", "url" -> url)))
+    }
+    js ++ Json.obj("_meta" -> Json.obj(
+      // registry-managed metadata (server.json itself has no status field)
+      "io.modelcontextprotocol.registry/official" -> Json.obj(
+        "status" -> (if (r.deprecated) "deprecated" else "active"),
+        "isLatest" -> true,
+      ),
+      // our own governance extension (reverse-DNS namespaced, does not break the standard)
+      "com.cloud-apim.otoroshi/governance" -> Json.obj(
+        "id" -> vs.id,
+        "tags" -> JsArray(vs.tags.map(JsString.apply)),
+      ),
+    ))
+  }
+
+  private def published(servers: Seq[McpVirtualServer]): Seq[McpVirtualServer] =
+    servers.filter(s => s.enabled && s.registry.published)
+
+  // `GET /v0/servers` body: the published servers wrapped with a cursor-less metadata block.
+  def listing(servers: Seq[McpVirtualServer]): JsObject = {
+    val pub = published(servers)
+    Json.obj(
+      "servers" -> JsArray(pub.map(serverJson)),
+      "metadata" -> Json.obj("count" -> pub.size),
+    )
+  }
+
+  // `GET /v0/servers/{name}` body, by the (possibly namespaced) registry name.
+  def findByName(servers: Seq[McpVirtualServer], name: String): Option[JsObject] =
+    published(servers).find(s => registryName(s) == name).map(serverJson)
+}
+
+case class McpRegistryWellKnownConfig(
+  registryUrl: Option[String] = None,
+  schemaVersion: String = "2025-12-11",
+) extends NgPluginConfig {
+  def json: JsValue = McpRegistryWellKnownConfig.format.writes(this)
+}
+
+object McpRegistryWellKnownConfig {
+  val default = McpRegistryWellKnownConfig()
+  val configFlow: Seq[String] = Seq("registry_url", "schema_version")
+  val configSchema: Option[JsObject] = Some(Json.obj(
+    "registry_url" -> Json.obj("type" -> "string", "label" -> "Registry API base URL (default: this host + /v0)"),
+    "schema_version" -> Json.obj("type" -> "string", "label" -> "server.json schema version"),
+  ))
+  val format = new Format[McpRegistryWellKnownConfig] {
+    override def writes(o: McpRegistryWellKnownConfig): JsValue = Json.obj(
+      "registry_url" -> o.registryUrl.map(_.json).getOrElse(JsNull).asValue,
+      "schema_version" -> o.schemaVersion,
+    )
+    override def reads(json: JsValue): JsResult[McpRegistryWellKnownConfig] = Try {
+      McpRegistryWellKnownConfig(
+        registryUrl = json.select("registry_url").asOptString.filter(_.trim.nonEmpty),
+        schemaVersion = json.select("schema_version").asOptString.filter(_.trim.nonEmpty).getOrElse("2025-12-11"),
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(v) => JsSuccess(v)
+    }
+  }
+}
+
+// Discovery pointer: advertises where the registry REST API lives. The exact `.well-known` path/format for an
+// MCP *registry* is not strongly standardized yet, so the path is set on the route and the document is kept
+// minimal & configurable; we will align it if/when the spec firms up.
+class McpRegistryWellKnown extends NgBackendCall {
+  override def name: String = "Cloud APIM - MCP Registry discovery (.well-known)"
+  override def description: Option[String] = "Advertises the MCP registry REST API endpoint (discovery document).".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(McpRegistryWellKnownConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = McpRegistryWellKnownConfig.configFlow
+  override def configSchema: Option[JsObject] = McpRegistryWellKnownConfig.configSchema
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(McpRegistryWellKnownConfig.format).getOrElse(McpRegistryWellKnownConfig.default)
+    val registryUrl = config.registryUrl.filter(_.trim.nonEmpty).getOrElse(s"${ctx.rawRequest.theProtocol}://${ctx.rawRequest.theHost}/v0")
+    val doc = Json.obj(
+      "registry" -> registryUrl,
+      "servers_endpoint" -> s"$registryUrl/servers",
+      "schema_version" -> config.schemaVersion,
+      "server_json_schema" -> McpRegistry.schemaUrl,
+    )
+    BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(doc).as("application/json")), None).rightf
+  }
+}
+
+case class McpRegistryApiConfig(basePath: String = "/v0") extends NgPluginConfig {
+  def json: JsValue = McpRegistryApiConfig.format.writes(this)
+}
+
+object McpRegistryApiConfig {
+  val default = McpRegistryApiConfig()
+  val configFlow: Seq[String] = Seq("base_path")
+  val configSchema: Option[JsObject] = Some(Json.obj(
+    "base_path" -> Json.obj("type" -> "string", "label" -> "API base path (default /v0)")))
+  val format = new Format[McpRegistryApiConfig] {
+    override def writes(o: McpRegistryApiConfig): JsValue = Json.obj("base_path" -> o.basePath)
+    override def reads(json: JsValue): JsResult[McpRegistryApiConfig] = Try {
+      McpRegistryApiConfig(basePath = json.select("base_path").asOptString.filter(_.trim.nonEmpty).getOrElse("/v0"))
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(v) => JsSuccess(v)
+    }
+  }
+}
+
+// Standard MCP registry REST API (publish-only): `GET …/servers` (list) and `GET …/servers/{name}` (one),
+// projecting the published MCP virtual servers to server.json. The `{name}` segment may be namespaced (it can
+// contain a '/'), so everything after the last `/servers/` is taken as the name.
+class McpRegistryApi extends NgBackendCall {
+  override def name: String = "Cloud APIM - MCP Registry API"
+  override def description: Option[String] = "Serves the published MCP virtual servers as a standard MCP registry (server.json) over /v0/servers.".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(McpRegistryApiConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = McpRegistryApiConfig.configFlow
+  override def configSchema: Option[JsObject] = McpRegistryApiConfig.configSchema
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val servers = env.adminExtensions.extension[AiExtension].get.states.allMcpVirtualServers()
+    val path = ctx.rawRequest.thePath
+    val marker = "/servers"
+    val i = path.lastIndexOf(marker)
+    val rest = (if (i < 0) "" else path.substring(i + marker.length)).stripSuffix("/")
+    val result = rest match {
+      case "" => Results.Ok(McpRegistry.listing(servers)).as("application/json")
+      case s  =>
+        val nm = java.net.URLDecoder.decode(s.stripPrefix("/"), "UTF-8")
+        McpRegistry.findByName(servers, nm) match {
+          case Some(js) => Results.Ok(js).as("application/json")
+          case None     => Results.NotFound(Json.obj("error" -> s"server '$nm' not found")).as("application/json")
+        }
+    }
+    BackendCallResponse(NgPluginHttpResponse.fromResult(result), None).rightf
   }
 }
