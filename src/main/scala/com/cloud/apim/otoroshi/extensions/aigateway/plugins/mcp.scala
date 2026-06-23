@@ -2920,3 +2920,76 @@ class McpRegistryPreset extends NgPresetPlugin {
     )
   }
 }
+
+// Scans the gateway's routes to find where a (published) MCP virtual server is exposed, derives the public
+// streamable-http URL and detects the auth — used by the registry UI assistant to fill `registry.url` (which
+// stays the source of truth: the projection never scans). Best-effort: the gateway can't reliably know its own
+// public URL behind a proxy, so the result is a suggestion the admin confirms.
+object McpExpositionScanner {
+
+  private def mcpEndpointIds: Set[String] = Set(
+    NgPluginHelper.pluginId[McpRespEndpoint],
+    NgPluginHelper.pluginId[McpSseEndpoint],
+    NgPluginHelper.pluginId[McpWebsocketEndpoint],
+  )
+  private def protectedPresetId: String = NgPluginHelper.pluginId[ProtectedMcpStreamableHttpPreset]
+  private val apikeyPluginId = "cp:otoroshi.next.plugins.ApikeyCalls"
+  private val mtlsPluginId = "cp:otoroshi.next.plugins.NgHasClientCertValidator"
+
+  // ── pure helpers (unit-tested) ───────────────────────────────────────────────────────────────────────────
+
+  // https://<host[/frontend-path]><exposition-path>, normalizing slashes. Scheme is assumed https (Otoroshi
+  // default; it isn't stored on the route — which is exactly why the admin confirms the suggestion).
+  def deriveUrl(domainAndPathRaw: String, includePath: Option[String]): String = {
+    val base = domainAndPathRaw.trim.stripSuffix("/")
+    val p = includePath.map(_.trim).filter(_.nonEmpty).map(s => if (s.startsWith("/")) s else "/" + s).getOrElse("")
+    s"https://$base$p"
+  }
+
+  def detectAuth(enforceOauth: Boolean, isProtectedPreset: Boolean, hasApikey: Boolean, hasMtls: Boolean): (String, Seq[String]) = {
+    if (enforceOauth || isProtectedPreset) ("oauth", Seq.empty)
+    else if (hasApikey) ("apikey", Seq("Route is protected by an Otoroshi apikey, not OAuth - standard MCP clients expect OAuth discovery (RFC 9728) and won't send an apikey. Consider exposing it with OAuth."))
+    else if (hasMtls) ("mtls", Seq("Route is protected by mTLS - this can't be expressed in server.json; MCP clients must be configured with a client certificate out-of-band."))
+    else ("none", Seq("Route has no authentication - the published MCP server would be unauthenticated."))
+  }
+
+  def slotReferences(pluginId: String, configRaw: JsObject, vsId: String): Boolean =
+    (mcpEndpointIds.contains(pluginId) || pluginId == protectedPresetId) &&
+      (configRaw \ "server_ref").asOpt[String].contains(vsId)
+
+  // exposition path: the preset carries it as `mcp_path`; a raw MCP endpoint carries it as its `include` pattern.
+  def slotPath(pluginId: String, configRaw: JsObject, includePaths: Seq[String]): Option[String] =
+    if (pluginId == protectedPresetId) (configRaw \ "mcp_path").asOpt[String].filter(_.trim.nonEmpty).orElse(Some("/mcp"))
+    else includePaths.headOption.filter(_.trim.nonEmpty).orElse(Some("/mcp"))
+
+  // ── glue ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+  case class Candidate(routeId: String, routeName: String, url: String, auth: String, warnings: Seq[String]) {
+    def json: JsObject = Json.obj(
+      "route_id" -> routeId,
+      "route_name" -> routeName,
+      "url" -> url,
+      "auth" -> auth,
+      "warnings" -> warnings,
+    )
+  }
+
+  def scan(vsId: String)(implicit env: Env): Seq[Candidate] = {
+    env.proxyState.allRoutes().filter(_.enabled).flatMap { route =>
+      val slots = route.plugins.slots.filter(_.enabled)
+      val mcpSlots = slots.filter(s => slotReferences(s.plugin, s.config.raw, vsId))
+      if (mcpSlots.isEmpty) Seq.empty
+      else {
+        val hasApikey = slots.exists(_.plugin == apikeyPluginId)
+        val hasMtls = slots.exists(_.plugin == mtlsPluginId)
+        mcpSlots.flatMap { slot =>
+          val isPreset = slot.plugin == protectedPresetId
+          val enforceOauth = (slot.config.raw \ "enforce_oauth").asOpt[Boolean].getOrElse(false)
+          val (auth, warnings) = detectAuth(enforceOauth, isPreset, hasApikey, hasMtls)
+          val path = slotPath(slot.plugin, slot.config.raw, slot.include)
+          route.frontend.domains.map(dp => Candidate(route.id, route.name, deriveUrl(dp.raw, path), auth, warnings))
+        }
+      }
+    }.distinct
+  }
+}
