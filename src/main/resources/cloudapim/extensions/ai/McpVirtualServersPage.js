@@ -21,6 +21,66 @@ class McpRedactionRule extends Component {
   }
 }
 
+// Form widget bound to `registry.url`: a manual text input PLUS an assistant that scans the gateway routes
+// exposing this virtual server, derives the public streamable-http URL and detects the auth, so the admin can
+// fill the URL in one click (and see OAuth/apikey/mTLS validation). Receives props.value (current url),
+// props.onChange (sets registry.url) and props.rawValue (the whole entity, for its id).
+class McpRegistryUrlAssistant extends Component {
+  state = { loading: false, candidates: null, error: null };
+  componentDidMount() { this.scan(); }
+  scan = () => {
+    const id = (this.props.rawValue || {}).id;
+    if (!id) { this.setState({ candidates: [], error: null, loading: false }); return; }
+    this.setState({ loading: true, error: null });
+    fetch('/extensions/cloud-apim/extensions/ai-extension/mcp-virtual-servers/_exposition-routes?server=' + encodeURIComponent(id), {
+      method: 'GET', credentials: 'include', headers: { Accept: 'application/json' }
+    }).then(r => r.json())
+      .then(body => this.setState({ loading: false, candidates: body.candidates || [] }))
+      .catch(e => this.setState({ loading: false, error: String(e) }));
+  };
+  badge = (auth) => {
+    const cls = auth === 'oauth' ? 'bg-success' : (auth === 'none' ? 'bg-danger' : 'bg-warning');
+    return React.createElement('span', { className: 'badge ' + cls, style: { marginLeft: 6 } }, auth);
+  };
+  render() {
+    const value = this.props.value || '';
+    const { loading, candidates, error } = this.state;
+    return React.createElement('div', { className: 'row mb-3' },
+      React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'Public streamable-http URL'),
+      React.createElement('div', { className: 'col-sm-10' },
+        React.createElement('div', { className: 'input-group' },
+          React.createElement('input', {
+            type: 'text', className: 'form-control', placeholder: 'https://gw.acme/mcp/github',
+            value: value, onChange: (e) => this.props.onChange(e.target.value)
+          }),
+          React.createElement('button', { type: 'button', className: 'btn btn-sm btn-secondary', onClick: this.scan, disabled: loading },
+            React.createElement('i', { className: 'fas fa-sync' + (loading ? ' fa-spin' : '') }), ' Detect from route')
+        ),
+        React.createElement('div', { style: { fontSize: 12, opacity: 0.7, marginTop: 4 } },
+          'The public URL of the exposed server (the server.json remote). Use “Detect from route” to suggest it from the route(s) that expose this server, then confirm. If empty, no remote is published (clients still discover auth via the server’s own .well-known).'),
+        error ? React.createElement('div', { className: 'mt-2 text-danger' }, 'Scan error: ' + error) : null,
+        (candidates && candidates.length === 0 && !loading)
+          ? React.createElement('div', { className: 'mt-2', style: { opacity: 0.7 } }, 'No route exposes this server yet — expose it on a route (an MCP endpoint plugin or the protected preset), or type the URL above.')
+          : null,
+        (candidates && candidates.length > 0)
+          ? React.createElement('div', { className: 'mt-2', style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+              candidates.map((c, i) => React.createElement('div', {
+                key: i, style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: '1px solid #505050', borderRadius: 4, padding: '6px 10px' }
+              },
+                React.createElement('div', null,
+                  React.createElement('code', null, c.url), this.badge(c.auth),
+                  React.createElement('div', { style: { fontSize: 12, opacity: 0.7 } }, c.route_name),
+                  (c.warnings || []).map((w, j) => React.createElement('div', { key: j, className: 'text-warning', style: { fontSize: 12 } }, '⚠ ' + w))
+                ),
+                React.createElement('button', { type: 'button', className: 'btn btn-sm btn-success', onClick: () => this.props.onChange(c.url) }, 'Use')
+              ))
+            )
+          : null
+      )
+    );
+  }
+}
+
 class McpVirtualServersPage extends Component {
 
   formSchema = {
@@ -329,8 +389,7 @@ class McpVirtualServersPage extends Component {
       props: { label: 'Title', help: 'Human-readable title. Defaults to the server name.' },
     },
     'registry.url': {
-      type: 'string',
-      props: { label: 'Public streamable-http URL', placeholder: 'https://gw.acme/mcp/github', help: 'The public URL of the exposed server (server.json remote). Set manually for now — auto-deriving it from the routes is not done yet. If empty, no remote is published (clients still discover via the server’s own .well-known).' },
+      type: McpRegistryUrlAssistant,
     },
     'registry.deprecated': {
       type: 'bool',
