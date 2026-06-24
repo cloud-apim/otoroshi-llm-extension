@@ -1,0 +1,8 @@
+{
+  "label": "A2A (Agent-to-Agent)",
+  "position": 9,
+  "link": {
+    "type": "generated-index",
+    "description": "Expose your agents over the open A2A protocol, and consume remote A2A agents as tools — all governed by Otoroshi."
+  }
+}

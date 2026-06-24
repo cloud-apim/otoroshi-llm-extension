@@ -1,0 +1,127 @@
+---
+sidebar_position: 2
+---
+
+# A2A Connectors
+
+There's a brilliant agent out there that already does one thing perfectly — route planning, weather, code review, billing. **Why rebuild it?** With an A2A Connector, you point Otoroshi at that remote agent and its skills instantly become **tools your own agents can call**. 🧩
+
+It's the same idea as [MCP connectors](/docs/mcp/mcp-connectors), one level up: instead of borrowing a single tool, you borrow a **whole agent**.
+
+## How it works
+
+1. You create an **A2A Connector** pointing at a remote agent's URL.
+2. Otoroshi fetches that agent's Agent Card and turns each **skill** into a callable **tool**.
+3. You list the connector on your local agent. The model picks a skill, Otoroshi makes the A2A round-trip, and the answer comes back as a tool result. 🔁
+
+```
+   Your agent ──(picks a skill)──▶ Otoroshi ──▶ A2A Connector ──▶ Remote agent
+        ▲                                                              │
+        └──────────────────────  answer  ◀────────────────────────────┘
+```
+
+## Create a connector
+
+```js
+{
+  "_loc": { "tenant": "default", "teams": ["default"] },
+  "id": "a2a-connector_planner",
+  "name": "Route Planner",
+  "description": "A remote agent that plans optimal routes.",
+  "metadata": {},
+  "tags": [],
+  "url": "https://route-planner.example.com",
+  "agent_card_path": "/.well-known/agent-card.json",
+  "authentication": {
+    "kind": "bearer",
+    "token": "${vault://local/route-planner-token}"
+  },
+  "timeout": 30000,
+  "streaming": false,
+  "skills_filter": [],
+  "kind": "ai-gateway.extensions.cloud-apim.com/A2AConnector"
+}
+```
+
+Otoroshi reads the remote Agent Card, discovers its skills, and (optionally) keeps only the ones you allow via `skills_filter`. Every skill becomes a tool your agents can use.
+
+:::tip Keep secrets out of config
+Pull tokens and credentials from the [vault](/docs/llm-gateway/providers) with `${vault://...}` — never paste them in plain text.
+:::
+
+## Authenticate however the remote agent expects 🔑
+
+Pick the `authentication.kind` and fill only the fields it needs:
+
+| Kind | Use it for | Fields |
+|---|---|---|
+| `none` | Public agents | — |
+| `bearer` | A static bearer token | `token` |
+| `apikey` | An API key in a header | `header_name`, `value` |
+| `basic` | HTTP Basic auth | `username`, `password` |
+| `oauth2_client_credentials` | OAuth2 machine-to-machine | `token_url`, `client_id`, `client_secret`, `scope` |
+| `custom_headers` | Anything else | `headers` (a map) |
+
+With **OAuth2 client credentials**, Otoroshi fetches and caches the access token for you and refreshes it automatically — your agents never see a credential. For private TLS endpoints, configure the connector's `tls` block (enable, trust settings, client certificates).
+
+## Use it inside an agent
+
+List the connector on any local agent and its skills join the toolbox — right next to your [tool functions](/docs/function-calling/overview) and [MCP connectors](/docs/mcp/mcp-connectors):
+
+```js
+{
+  "name": "Travel Assistant",
+  "instructions": ["You help users plan trips. Delegate routing to your tools."],
+  "provider": "provider_openai",
+  "model": "gpt-4o-mini",
+  "mcp_connectors": [],
+  "a2a_connectors": ["a2a-connector_planner"]
+}
+```
+
+Ask the Travel Assistant *"What's the fastest route from Paris to Lyon avoiding tolls?"* and it will reach for the Route Planner skill on its own, call the remote agent through Otoroshi, and weave the answer into its reply. No prompt gymnastics required. ✈️
+
+See [Agents](/docs/agents/overview) for the full agent configuration, and the [AI Agent node](/docs/agents/ai-agent-node) to use one inside a [workflow](/docs/workflows/overview).
+
+## Use it inside a workflow
+
+Prefer explicit orchestration? Call a remote agent directly from a [workflow](/docs/workflows/overview) with the **Call A2A agent** function:
+
+```js
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.call_a2a_agent",
+  "args": {
+    "connector": "a2a-connector_planner",
+    "message": "Plan a route from Paris to Lyon avoiding tolls"
+  }
+}
+```
+
+The result is the remote agent's answer, ready to use in the next step.
+
+## Stream from the remote agent ⚡
+
+Flip `streaming` to `true` and Otoroshi consumes the remote agent's live stream instead of waiting for the whole answer — handy when the remote agent thinks out loud and you want the result as soon as it's ready.
+
+## Speaks every dialect 🌍
+
+A2A is young and moving fast. Otoroshi targets the modern specification but **reads older agents too**: it auto-detects an agent's protocol version from its card (and falls back to the legacy discovery path when needed), so you can connect to the broadest possible set of agents without thinking about it.
+
+## The payoff: build a network 🌟
+
+Because an agent you [expose as an A2A Server](/docs/a2a/a2a-servers) can itself use A2A Connectors, you can compose specialists into something greater:
+
+```
+   A2A client ──▶ Otoroshi ("Travel Concierge")
+                      ├──▶ A2A Connector ──▶ Weather Agent
+                      ├──▶ A2A Connector ──▶ Booking Agent
+                      └──▶ MCP Connector ──▶ Maps API
+```
+
+One concierge out front, a team of specialists behind — every hop secured, governed, and observable through Otoroshi. 🚀
+
+## Next
+
+- 👉 [**A2A Servers**](/docs/a2a/a2a-servers) — expose your own agents to the world
+- 👉 [Back to the A2A overview](/docs/a2a/overview)

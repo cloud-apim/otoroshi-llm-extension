@@ -1,0 +1,195 @@
+---
+sidebar_position: 1
+---
+
+# A2A Servers
+
+Take an agent you've already built — or an entire [workflow](/docs/workflows/overview) — and **publish it as a fully-compliant A2A agent**. External clients, partner systems, and other agents can then discover it and put it to work over plain JSON-RPC. No SDK to ship, no protocol code to write: Otoroshi does it all. ✨
+
+## What your agent gets, for free
+
+The moment you expose an agent, it speaks the whole protocol:
+
+| Capability | What clients can do |
+|---|---|
+| 🪪 **Discovery** | Read the Agent Card at `/.well-known/agent-card.json` to learn the agent's identity, skills and security |
+| 📨 **Messaging** | `SendMessage` for a synchronous answer, `SendStreamingMessage` to stream tokens live over SSE |
+| 📋 **Tasks** | `GetTask`, `ListTasks`, `CancelTask`, `SubscribeToTask` to track work |
+| 🔔 **Push notifications** | Register a webhook to receive task updates |
+| 🖼️ **Multi-modal** | Send text, images, audio, video and structured data — Otoroshi maps them straight into your agent |
+| 🧵 **Multi-turn** | A `contextId` keeps a conversation coherent across calls |
+
+And under the hood, your agent stays exactly as powerful as you built it — same [provider & model](/docs/llm-gateway/providers), same [tools, MCP & A2A connectors](/docs/mcp/overview), same [guardrails](/docs/guardrails/overview), same memory.
+
+## How it works
+
+An **A2A Server** is a reusable entity that answers one question: *what should run when a message comes in?* You then attach it to a route, and Otoroshi exposes the protocol on that route.
+
+```
+   A2A client ──▶  Otoroshi route  ──▶  A2A Server entity  ──▶  your agent (or workflow)
+                   (preset plugin)        (agent card + backend)
+```
+
+### 1. Create an A2A Server
+
+Pick what powers it: an **inline agent** or a **workflow**.
+
+```js
+{
+  "_loc": { "tenant": "default", "teams": ["default"] },
+  "id": "a2a-server_math",
+  "name": "Math Tutor",
+  "description": "A friendly tutor that helps with math problems.",
+  "metadata": {},
+  "tags": [],
+  "agent_card": {
+    "version": "1.0.0",
+    "provider": {
+      "organization": "Cloud APIM",
+      "url": "https://www.cloud-apim.com"
+    },
+    "default_input_modes": ["text/plain", "application/json"],
+    "default_output_modes": ["text/plain", "application/json"],
+    "capabilities": {
+      "streaming": true,
+      "push_notifications": true,
+      "extended_agent_card": false
+    },
+    "skills": [
+      {
+        "id": "math",
+        "name": "Math Help",
+        "description": "Solve equations, explain steps, check answers.",
+        "tags": ["math", "tutoring"],
+        "examples": ["Solve 2x + 3 = 7", "Explain the chain rule"]
+      }
+    ]
+  },
+  "backend": {
+    "kind": "agent",
+    "agent": {
+      "name": "Math Tutor",
+      "instructions": ["You are a patient math tutor. Show your steps."],
+      "provider": "provider_openai",
+      "model": "gpt-4o-mini"
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/A2AServer"
+}
+```
+
+The **Agent Card** part is what the world sees — your branding, your skills, your examples. The **backend** part is what actually runs. Otoroshi fills in the technical bits of the card (endpoint URL, transport, protocol version) automatically from the route it's attached to.
+
+:::tip Back it with a workflow instead
+Prefer to orchestrate several steps? Set the backend to a [workflow](/docs/workflows/overview):
+
+```js
+"backend": {
+  "kind": "workflow",
+  "workflow_ref": "workflow_trip_planner"
+}
+```
+Same Agent Card, same protocol — the workflow does the thinking.
+:::
+
+### 2. Expose it on a route
+
+Add the **A2A Server** preset plugin to a route and point it at your server. The preset wires up both the Agent Card endpoint and the JSON-RPC endpoint in one move.
+
+```js
+{
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.A2AServerPreset",
+  "config": {
+    "server_ref": "a2a-server_math",
+    "json_rpc_path": "/"
+  }
+}
+```
+
+That's it. Your agent is live. 🎉
+
+### 3. Talk to it
+
+Any A2A client can now discover and call your agent:
+
+```bash
+# Discover
+curl https://math-tutor.your-domain.com/.well-known/agent-card.json
+
+# Ask (synchronous)
+curl -X POST https://math-tutor.your-domain.com/ \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "SendMessage",
+    "params": {
+      "message": {
+        "messageId": "msg-1",
+        "role": "ROLE_USER",
+        "parts": [{ "text": "Solve 2x + 3 = 7" }]
+      }
+    }
+  }'
+```
+
+Want it live? Switch the method to `SendStreamingMessage` and read the Server-Sent Events as the answer is written. ⚡
+
+## Methods at a glance
+
+| Method | Purpose |
+|---|---|
+| `SendMessage` | Send a message and get a Task (or Message) back synchronously |
+| `SendStreamingMessage` | Same, but streamed live over Server-Sent Events |
+| `GetTask` | Fetch the current state of a task |
+| `ListTasks` | List tasks, filtered by context or status, with pagination |
+| `CancelTask` | Cancel a task |
+| `SubscribeToTask` | Stream a task's updates |
+| `CreateTaskPushNotificationConfig` | Register a webhook for task updates |
+| `GetTaskPushNotificationConfig` / `List…` / `Delete…` | Manage those webhooks |
+
+## Multi-modal in, naturally
+
+Clients can send rich content and Otoroshi maps each part straight into your agent's input:
+
+```js
+"parts": [
+  { "text": "What's in this picture?" },
+  { "url": "https://example.com/cat.png", "mediaType": "image/png" },
+  { "raw": "<base64-bytes>", "filename": "note.pdf", "mediaType": "application/pdf" },
+  { "data": { "lat": 48.85, "lng": 2.35 }, "mediaType": "application/json" }
+]
+```
+
+Text, image and file URLs, inline bytes, structured JSON — it all reaches your agent.
+
+## Keep conversations coherent 🧵
+
+Pass a `contextId` on your messages and Otoroshi keeps the related exchanges together, so multi-turn conversations stay on track across calls.
+
+## Get notified when work is done 🔔
+
+When push notifications are enabled on the Agent Card, a client can hand you a webhook — either inline on a message, or via the push-config methods — and Otoroshi delivers the task result to that URL with the authentication you specified. Perfect for long-running, fire-and-forget interactions.
+
+## Security is the route's job 🔐
+
+You don't bolt security onto A2A — you inherit it. Protect the route with anything Otoroshi offers:
+
+- **API keys**, **JWT verification**, **OAuth2 / OIDC**
+- **mTLS** for agent-to-agent trust
+- IP allow/deny lists, rate limiting, and more
+
+The Agent Card advertises the scheme so clients know how to authenticate, while Otoroshi does the actual enforcement.
+
+## A complete example
+
+1. Create the `Math Tutor` A2A Server above.
+2. Create a route on `math-tutor.your-domain.com`, add the **A2A Server** preset with `server_ref: a2a-server_math`, and protect it with an API key.
+3. Share `https://math-tutor.your-domain.com/.well-known/agent-card.json` with the world.
+
+Any A2A-compatible client — or [another Otoroshi agent via an A2A Connector](/docs/a2a/a2a-connectors) — can now use your tutor. 🧑‍🏫
+
+## Next
+
+- 👉 [**A2A Connectors**](/docs/a2a/a2a-connectors) — go the other way and call remote agents as tools
+- 👉 [Back to the A2A overview](/docs/a2a/overview)

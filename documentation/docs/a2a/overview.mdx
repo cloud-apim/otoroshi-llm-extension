@@ -1,0 +1,84 @@
+---
+sidebar_position: 0
+---
+
+# A2A (Agent-to-Agent)
+
+Your agents are smart. Now let them **talk to each other** — across teams, across vendors, across the internet. 🤝
+
+**A2A (Agent-to-Agent)** is the open protocol — started by Google, now under the **Linux Foundation** — that lets independent AI agents discover one another and collaborate, without ever exposing their inner workings. One agent asks, another answers. No shared codebase, no shared memory, no lock-in.
+
+🔹 **Discover** (🪪) — every agent publishes an *Agent Card* describing who it is and what it can do.
+
+🔹 **Delegate** (📨) — agents exchange messages and hand off work as stateful *tasks*.
+
+🔹 **Interoperate** (🌐) — any A2A-speaking agent can work with any other, whatever framework or model powers it.
+
+✅ Turn your private agents into services other teams and partners can call
+✅ Pull world-class remote agents into your own agents as tools
+✅ Compose specialized agents into a single, smart workflow
+
+Think of A2A as the **dial tone for agents** ☎️ — a universal way for them to reach each other and get things done.
+
+## Otoroshi speaks A2A — both ways
+
+Otoroshi gives you the **full A2A experience** as both a server and a client, with zero glue code.
+
+### Expose your agents → [A2A Servers](/docs/a2a/a2a-servers)
+
+Take any agent you've already built in Otoroshi — or a whole [workflow](/docs/workflows/overview) — and **publish it as a standards-compliant A2A agent** in two clicks. Otoroshi generates the Agent Card, handles discovery, streams responses, tracks tasks, and lets external clients and agents call your agent over plain JSON-RPC.
+
+Your agent keeps everything that makes it great: its [provider and model](/docs/llm-gateway/providers), its [tools and MCP connectors](/docs/mcp/overview), its [guardrails](/docs/guardrails/overview), its memory. A2A just opens the door. 🚪
+
+### Consume remote agents → [A2A Connectors](/docs/a2a/a2a-connectors)
+
+Point Otoroshi at any remote A2A agent and its skills instantly become **tools your local agents can call** — exactly like [MCP connectors](/docs/mcp/mcp-connectors), but for whole agents instead of single tools. Your travel agent can delegate to a remote weather agent; your support agent can ask a remote billing agent. The model just picks the right skill and Otoroshi does the round-trip. 🔁
+
+## Why route A2A through Otoroshi?
+
+Speaking the protocol is the easy part. **Doing it safely, at scale, and observably** is where Otoroshi shines.
+
+| You get | Because Otoroshi gives you |
+|---|---|
+| 🔐 **Security on every call** | API keys, JWT, OAuth2, **mTLS**, IP rules — applied at the route, the same battle-tested controls protecting your whole platform |
+| 🪪 **Clean credentials** | Outgoing auth (Bearer, API key, Basic, **OAuth2 client credentials**, custom headers) with secrets pulled from the [vault](/docs/llm-gateway/providers), never hard-coded |
+| 🛡️ **Governance for free** | Your [guardrails](/docs/guardrails/overview), [budgets & cost tracking](/docs/cost-optimizations/overview), and provider [load-balancing & fallbacks](/docs/llm-gateway/providers) apply to every exposed agent |
+| 👀 **Full observability** | Every exchange flows through Otoroshi, so you can audit, meter, and ship events anywhere with [data exporters](/docs/llm-gateway/observability-reporting) |
+| ♻️ **Reusable building blocks** | Servers and connectors are first-class entities — define once, reference everywhere |
+
+## Standards in, standards out
+
+Otoroshi implements the modern A2A specification end to end, so any compliant client or SDK just works:
+
+| Capability | What it means |
+|---|---|
+| 🪪 **Agent Cards** | Auto-published at `https://your-domain/.well-known/agent-card.json` for instant discovery |
+| 📨 **Messaging** | Synchronous `SendMessage` and live **streaming** `SendStreamingMessage` over Server-Sent Events |
+| 📋 **Tasks** | Stateful tasks you can fetch (`GetTask`), list (`ListTasks`), cancel (`CancelTask`), and subscribe to (`SubscribeToTask`) |
+| 🖼️ **Multi-modal** | Text, images, audio, video and structured data parts — in and out |
+| 🧵 **Multi-turn** | A `contextId` ties messages together so conversations stay coherent |
+| 🔔 **Push notifications** | Register a webhook and get task updates delivered to you |
+| 🌍 **Multi-tenant** | A `tenant` identifier flows through requests and Agent Cards |
+
+## The dream: a network of agents 🌟
+
+Because Otoroshi is both a server **and** a client, an agent you expose can itself reach out to other agents. Compose them freely:
+
+```
+        A2A Client ──▶ Otoroshi (A2A Server: "Travel Concierge")
+                            │
+                            ├──▶ A2A Connector ──▶ Weather Agent   (someone else's)
+                            ├──▶ A2A Connector ──▶ Booking Agent   (a partner's)
+                            └──▶ MCP Connector ──▶ Maps API        (a tool)
+```
+
+One front door. A whole ecosystem behind it. Every hop secured, governed, and observable. 🚀
+
+## Where to next
+
+- 👉 [**A2A Servers**](/docs/a2a/a2a-servers) — expose your agent or workflow to the world
+- 👉 [**A2A Connectors**](/docs/a2a/a2a-connectors) — call remote agents as tools
+
+## Otoroshi + A2A = ❤️
+
+Build agents once. Let them reach everyone — and everything — through a single, governed gateway.
