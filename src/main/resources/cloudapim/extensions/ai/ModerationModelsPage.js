@@ -87,6 +87,7 @@ class ModerationModelsPage extends Component {
                     provider: 'openai',
                     config: {
                         connection: {
+                            base_url: 'https://api.openai.com/v1',
                             token: 'xxxxxx',
                             timeout: 180000
                         },
@@ -109,6 +110,7 @@ class ModerationModelsPage extends Component {
                                 provider: 'openai',
                                 config: {
                                     connection: {
+                                        base_url: 'https://api.openai.com/v1',
                                         token: 'xxxxxx',
                                         timeout: 180000
                                     },
@@ -127,6 +129,7 @@ class ModerationModelsPage extends Component {
                                 provider: 'mistral',
                                 config: {
                                     connection: {
+                                        base_url: 'https://api.mistral.ai',
                                         token: 'xxxxxx',
                                         timeout: 180000
                                     },
