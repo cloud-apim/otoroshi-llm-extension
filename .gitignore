@@ -8,6 +8,8 @@ target/
 .env
 *.env
 .venv
+.bloop
+metals.sbt
 target
 node_modules
 /lib
