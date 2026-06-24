@@ -2716,6 +2716,22 @@ object McpRegistry {
   private def published(servers: Seq[McpVirtualServer]): Seq[McpVirtualServer] =
     servers.filter(s => s.enabled && s.registry.published)
 
+  // Applies a registry's server *selection* on top of publication, so different routes can expose different
+  // curated subsets (different registries):
+  //   "refs"   -> only the listed virtual-server ids
+  //   "tags"   -> only servers carrying at least one of the listed tags
+  //   "tenant" -> only servers in the route's tenant
+  //   anything else ("all", the default) -> every published server
+  def select(servers: Seq[McpVirtualServer], mode: String, refs: Seq[String], tags: Seq[String], routeTenant: Option[String]): Seq[McpVirtualServer] = {
+    val pub = published(servers)
+    mode match {
+      case "refs"   => pub.filter(s => refs.contains(s.id))
+      case "tags"   => pub.filter(s => s.tags.exists(tags.contains))
+      case "tenant" => routeTenant.fold(pub)(t => pub.filter(s => s.location.tenant.value == t))
+      case _        => pub
+    }
+  }
+
   // generous default so a governed (curated) catalogue fits in one page; `?limit=` can lower it, capped.
   val defaultPageSize = 200
   val maxPageSize = 1000
@@ -2803,19 +2819,58 @@ class McpRegistryWellKnown extends NgBackendCall {
   }
 }
 
-case class McpRegistryApiConfig(basePath: String = "/v0") extends NgPluginConfig {
+// `selectorMode` chooses which published servers this registry exposes: "all" (default), "refs" (the listed
+// server ids), "tags" (servers with any of the listed tags), or "tenant" (everything published in the route's
+// tenant). This lets several routes act as different registries, each exposing a curated subset.
+case class McpRegistryApiConfig(
+  basePath: String = "/v0",
+  selectorMode: String = "all",
+  selectorRefs: Seq[String] = Seq.empty,
+  selectorTags: Seq[String] = Seq.empty,
+) extends NgPluginConfig {
   def json: JsValue = McpRegistryApiConfig.format.writes(this)
 }
 
 object McpRegistryApiConfig {
   val default = McpRegistryApiConfig()
-  val configFlow: Seq[String] = Seq("base_path")
+  val configFlow: Seq[String] = Seq("base_path", "selector_mode", "selector_refs", "selector_tags")
   val configSchema: Option[JsObject] = Some(Json.obj(
-    "base_path" -> Json.obj("type" -> "string", "label" -> "API base path (default /v0)")))
+    "base_path" -> Json.obj("type" -> "string", "label" -> "API base path (default /v0)"),
+    "selector_mode" -> Json.obj(
+      "type" -> "select",
+      "label" -> "Expose",
+      "props" -> Json.obj("options" -> Json.arr(
+        Json.obj("label" -> "All published servers", "value" -> "all"),
+        Json.obj("label" -> "Selected servers (by ref)", "value" -> "refs"),
+        Json.obj("label" -> "Servers with any of these tags", "value" -> "tags"),
+        Json.obj("label" -> "All published in the route's tenant", "value" -> "tenant"),
+      ))
+    ),
+    "selector_refs" -> Json.obj(
+      "type" -> "select",
+      "array" -> true,
+      "label" -> "Servers (Expose = by ref)",
+      "props" -> Json.obj(
+        "optionsFrom" -> "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-virtual-servers",
+        "optionsTransformer" -> Json.obj("label" -> "name", "value" -> "id"),
+      )
+    ),
+    "selector_tags" -> Json.obj("type" -> "string", "array" -> true, "label" -> "Tags (Expose = by tag)"),
+  ))
   val format = new Format[McpRegistryApiConfig] {
-    override def writes(o: McpRegistryApiConfig): JsValue = Json.obj("base_path" -> o.basePath)
+    override def writes(o: McpRegistryApiConfig): JsValue = Json.obj(
+      "base_path" -> o.basePath,
+      "selector_mode" -> o.selectorMode,
+      "selector_refs" -> o.selectorRefs,
+      "selector_tags" -> o.selectorTags,
+    )
     override def reads(json: JsValue): JsResult[McpRegistryApiConfig] = Try {
-      McpRegistryApiConfig(basePath = json.select("base_path").asOptString.filter(_.trim.nonEmpty).getOrElse("/v0"))
+      McpRegistryApiConfig(
+        basePath = json.select("base_path").asOptString.filter(_.trim.nonEmpty).getOrElse("/v0"),
+        selectorMode = json.select("selector_mode").asOptString.filter(_.trim.nonEmpty).getOrElse("all"),
+        selectorRefs = json.select("selector_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
+        selectorTags = json.select("selector_tags").asOpt[Seq[String]].getOrElse(Seq.empty),
+      )
     } match {
       case Failure(e) => JsError(e.getMessage)
       case Success(v) => JsSuccess(v)
@@ -2840,7 +2895,10 @@ class McpRegistryApi extends NgBackendCall {
   override def configSchema: Option[JsObject] = McpRegistryApiConfig.configSchema
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val servers = env.adminExtensions.extension[AiExtension].get.states.allMcpVirtualServers()
+    val config = ctx.cachedConfig(internalName)(McpRegistryApiConfig.format).getOrElse(McpRegistryApiConfig.default)
+    val allServers = env.adminExtensions.extension[AiExtension].get.states.allMcpVirtualServers()
+    // restrict to the subset this registry exposes (all / by ref / by tag / route's tenant)
+    val servers = McpRegistry.select(allServers, config.selectorMode, config.selectorRefs, config.selectorTags, Some(ctx.route.location.tenant.value))
     val path = ctx.rawRequest.thePath
     val marker = "/servers"
     val i = path.lastIndexOf(marker)
@@ -2870,18 +2928,41 @@ case class McpRegistryPresetConfig(
   apiBasePath: String = "/v0",
   registryUrl: Option[String] = None,
   schemaVersion: String = "2025-12-11",
+  selectorMode: String = "all",
+  selectorRefs: Seq[String] = Seq.empty,
+  selectorTags: Seq[String] = Seq.empty,
 ) extends NgPluginConfig {
   def json: JsValue = McpRegistryPresetConfig.format.writes(this)
 }
 
 object McpRegistryPresetConfig {
   val default = McpRegistryPresetConfig()
-  val configFlow: Seq[String] = Seq("well_known_path", "api_base_path", "registry_url", "schema_version")
+  val configFlow: Seq[String] = Seq("well_known_path", "api_base_path", "registry_url", "schema_version", "selector_mode", "selector_refs", "selector_tags")
   val configSchema: Option[JsObject] = Some(Json.obj(
     "well_known_path" -> Json.obj("type" -> "string", "label" -> "Discovery .well-known path"),
     "api_base_path" -> Json.obj("type" -> "string", "label" -> "Registry API base path"),
     "registry_url" -> Json.obj("type" -> "string", "label" -> "Registry API base URL (optional, default: this host + base path)"),
     "schema_version" -> Json.obj("type" -> "string", "label" -> "server.json schema version"),
+    "selector_mode" -> Json.obj(
+      "type" -> "select",
+      "label" -> "Expose",
+      "props" -> Json.obj("possibleValues" -> Json.arr(
+        Json.obj("label" -> "All published servers", "value" -> "all"),
+        Json.obj("label" -> "Selected servers (by ref)", "value" -> "refs"),
+        Json.obj("label" -> "Servers with any of these tags", "value" -> "tags"),
+        Json.obj("label" -> "All published in the route's tenant", "value" -> "tenant"),
+      ))
+    ),
+    "selector_refs" -> Json.obj(
+      "type" -> "select",
+      "array" -> true,
+      "label" -> "Servers (Expose = by ref)",
+      "props" -> Json.obj(
+        "optionsFrom" -> "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-virtual-servers",
+        "optionsTransformer" -> Json.obj("label" -> "name", "value" -> "id"),
+      )
+    ),
+    "selector_tags" -> Json.obj("type" -> "string", "array" -> true, "label" -> "Tags (Expose = by tag)"),
   ))
   val format = new Format[McpRegistryPresetConfig] {
     override def writes(o: McpRegistryPresetConfig): JsValue = Json.obj(
@@ -2889,6 +2970,9 @@ object McpRegistryPresetConfig {
       "api_base_path" -> o.apiBasePath,
       "registry_url" -> o.registryUrl.map(_.json).getOrElse(JsNull).asValue,
       "schema_version" -> o.schemaVersion,
+      "selector_mode" -> o.selectorMode,
+      "selector_refs" -> o.selectorRefs,
+      "selector_tags" -> o.selectorTags,
     )
     override def reads(json: JsValue): JsResult[McpRegistryPresetConfig] = Try {
       McpRegistryPresetConfig(
@@ -2896,6 +2980,9 @@ object McpRegistryPresetConfig {
         apiBasePath = json.select("api_base_path").asOptString.filter(_.trim.nonEmpty).getOrElse("/v0"),
         registryUrl = json.select("registry_url").asOptString.filter(_.trim.nonEmpty),
         schemaVersion = json.select("schema_version").asOptString.filter(_.trim.nonEmpty).getOrElse("2025-12-11"),
+        selectorMode = json.select("selector_mode").asOptString.filter(_.trim.nonEmpty).getOrElse("all"),
+        selectorRefs = json.select("selector_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
+        selectorTags = json.select("selector_tags").asOpt[Seq[String]].getOrElse(Seq.empty),
       )
     } match {
       case Failure(e) => JsError(e.getMessage)
@@ -2931,7 +3018,12 @@ class McpRegistryPreset extends NgPresetPlugin {
       NgPluginInstance(
         plugin = NgPluginHelper.pluginId[McpRegistryApi],
         include = Seq(s"${config.apiBasePath}/.*"),
-        config = NgPluginInstanceConfig(McpRegistryApiConfig.default.copy(basePath = config.apiBasePath).json.asObject)
+        config = NgPluginInstanceConfig(McpRegistryApiConfig.default.copy(
+          basePath = config.apiBasePath,
+          selectorMode = config.selectorMode,
+          selectorRefs = config.selectorRefs,
+          selectorTags = config.selectorTags,
+        ).json.asObject)
       ),
     )
   }
