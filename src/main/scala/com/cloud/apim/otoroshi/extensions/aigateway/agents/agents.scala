@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.agents
 
+import akka.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.Guardrails
 import com.cloud.apim.otoroshi.extensions.aigateway._
 import otoroshi.env.Env
@@ -213,6 +214,9 @@ case class AgentConfig(
   def run(input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(implicit env: Env):  Future[Either[JsValue, AgentOutput]] = {
     new AgentRunner(env).run(this, input, rcfg, attrs, wfr)
   }
+  def stream(input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(implicit env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    new AgentRunner(env).stream(this, input, rcfg, attrs, wfr)
+  }
   def toHandoff(): Handoff = {
     Handoff(
       agent = this,
@@ -362,6 +366,63 @@ class AgentRunner(env: Env) {
 
   def run(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, AgentOutput]] = {
     internalRun(agent, input, rcfg, AgentContext(1), attrs, wfr)
+  }
+
+  // Single-pass streaming entry point. Mirrors internalRun's configured-client construction (provider options + tools
+  // + mcp_connectors + search_engines + memory + guardrails) but calls tryStream instead of call. Streaming supports
+  // wasm/mcp tools (streamWithToolSupport in providers); handoffs and built-in tools need the multi-turn run loop and
+  // are therefore not streamable here (caller should fall back to run()).
+  def stream(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    if (agent.handoffs.exists(_.enabled) || agent.builtInTools.hasAnyEnabled) {
+      Json.obj("error" -> "streaming not supported for agents with handoffs or built-in tools").leftf
+    } else {
+      agent.provider.orElse(rcfg.provider) match {
+        case None => Json.obj("error" -> "no provider ref").leftf
+        case Some(pref) => ext.states.provider(pref) match {
+          case None => Json.obj("error" -> "no provider").leftf
+          case Some(provider) => {
+            var additionToolFunctions = Seq.empty[String]
+            var inlineFunctions = Map.empty[String, InlineFunction]
+            if (agent.inlineTools.nonEmpty) {
+              additionToolFunctions = additionToolFunctions ++ agent.inlineTools.map("__inline_" + _.declaration.name)
+              inlineFunctions = inlineFunctions ++ agent.inlineTools.map(v => ("__inline_" + v.declaration.name, v)).toMap
+            }
+            if (agent.tools.nonEmpty) {
+              additionToolFunctions = additionToolFunctions ++ agent.tools
+            }
+            val over = Json.obj()
+              .applyOnWithOpt(agent.modelOptions.orElse(rcfg.modelOptions)) { case (obj, options) => obj.deepMerge(options) }
+              .applyOnWithOpt(agent.model.orElse(rcfg.model)) { case (obj, model) => obj ++ Json.obj("model" -> model) }
+              .applyOnIf(additionToolFunctions.nonEmpty) { obj => obj ++ Json.obj("tool_functions" -> additionToolFunctions) }
+              .applyOnIf(agent.mcpConnectors.nonEmpty) { obj => obj ++ Json.obj("mcp_connectors" -> agent.mcpConnectors) }
+              .applyOnIf(agent.searchEngines.nonEmpty) { obj => obj ++ Json.obj("search_engines" -> agent.searchEngines) }
+            val finalInlineFunctions = attrs.get(InlineFunctions.InlineFunctionsKey).getOrElse(Map.empty) ++ inlineFunctions
+            attrs.put(
+              InlineFunctions.InlineFunctionsKey -> finalInlineFunctions,
+              InlineFunctions.InlineFunctionWfrKey -> wfr
+            )
+            provider.copy(
+              options = provider.options.deepMerge(over),
+              memory = agent.memory,
+              guardrailsFailOnDeny = true,
+              guardrails = agent.guardrails.copy(items = agent.guardrails.items.map { it =>
+                val actualProvider = it.config.select("provider").asOptString.orElse(agent.model.orElse(rcfg.model)).get
+                it.copy(config = it.config ++ Json.obj("provider" -> actualProvider))
+              }),
+            ).getChatClient() match {
+              case None => Json.obj("error" -> "no client").leftf
+              case Some(client) =>
+                val systemPrompt = agent.instructions.mkString(" ")
+                client.tryStream(
+                  ChatPrompt(Seq(ChatMessage.input("system", systemPrompt, prefix = None, Json.obj())) ++ input.messages),
+                  attrs,
+                  Json.obj()
+                )
+            }
+          }
+        }
+      }
+    }
   }
 
   private def internalRun(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), ctx: AgentContext = AgentContext(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, AgentOutput]] = {
