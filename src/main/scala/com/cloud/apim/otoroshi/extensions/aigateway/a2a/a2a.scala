@@ -490,6 +490,51 @@ object AgentCard {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Push notifications (TaskPushNotificationConfig + AuthenticationInfo)
+// ---------------------------------------------------------------------------------------------------------------------
+case class AuthenticationInfo(scheme: String, credentials: Option[String] = None) {
+  def json: JsValue = {
+    var o = Json.obj("scheme" -> scheme)
+    credentials.foreach(c => o = o ++ Json.obj("credentials" -> c))
+    o
+  }
+  def header: Option[(String, String)] = credentials.map(c => "Authorization" -> s"$scheme $c")
+}
+object AuthenticationInfo {
+  def from(json: JsValue): AuthenticationInfo = AuthenticationInfo(
+    scheme = json.select("scheme").asOpt[String].getOrElse("Bearer"),
+    credentials = json.select("credentials").asOpt[String],
+  )
+}
+
+case class A2APushConfig(
+  id: String,
+  taskId: String,
+  url: String,
+  token: Option[String] = None,
+  authentication: Option[AuthenticationInfo] = None,
+  tenant: Option[String] = None,
+) {
+  def json: JsValue = {
+    var o = Json.obj("id" -> id, "taskId" -> taskId, "url" -> url)
+    token.foreach(t => o = o ++ Json.obj("token" -> t))
+    authentication.foreach(a => o = o ++ Json.obj("authentication" -> a.json))
+    tenant.foreach(t => o = o ++ Json.obj("tenant" -> t))
+    o
+  }
+}
+object A2APushConfig {
+  def from(json: JsValue): A2APushConfig = A2APushConfig(
+    id = json.select("id").asOpt[String].filter(_.nonEmpty).getOrElse(A2A.newId("pushcfg")),
+    taskId = json.select("taskId").asOpt[String].getOrElse(""),
+    url = json.select("url").asOpt[String].getOrElse(""),
+    token = json.select("token").asOpt[String],
+    authentication = json.select("authentication").asOpt[JsValue].map(AuthenticationInfo.from),
+    tenant = json.select("tenant").asOpt[String],
+  )
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // JSON-RPC error codes (v1.0) + google.rpc.ErrorInfo encoding
 // ---------------------------------------------------------------------------------------------------------------------
 object A2AErrors {
