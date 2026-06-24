@@ -1265,27 +1265,41 @@ case class ModerationResponse(
 
 
 case class ModerationModelClientInputOptions(
-  input: String,
+  input: Either[String, Seq[String]],
   model: Option[String] = None,
 ) {
+  def inputAsString: String = input match {
+    case Left(s) => s
+    case Right(arr) if arr.nonEmpty => arr.mkString(". ")
+    case Right(_) => ""
+  }
   def json: JsValue = ModerationModelClientInputOptions.format.writes(this)
 }
 
 object ModerationModelClientInputOptions {
   val format = new Format[ModerationModelClientInputOptions] {
     override def reads(json: JsValue): JsResult[ModerationModelClientInputOptions] = Try {
+      val inputField = json.select("input")
+      val input: Either[String, Seq[String]] = inputField.asOpt[Seq[String]] match {
+        case Some(arr) => Right(arr)
+        case None => Left(inputField.asString)
+      }
       ModerationModelClientInputOptions(
-        input = json.select("input").asString,
+        input = input,
         model = json.select("model").asOptString,
       )
     } match {
       case Failure(e) => JsError(e.getMessage)
       case Success(e) => JsSuccess(e)
     }
-    override def writes(o: ModerationModelClientInputOptions): JsValue = Json.obj(
-      "input" -> o.input
-    ).applyOnWithOpt(o.model) {
-      case (obj, model) => obj ++ Json.obj("model" -> model)
+    override def writes(o: ModerationModelClientInputOptions): JsValue = {
+      val baseObj = o.input match {
+        case Left(s) => Json.obj("input" -> s)
+        case Right(arr) => Json.obj("input" -> arr)
+      }
+      baseObj.applyOnWithOpt(o.model) {
+        case (obj, model) => obj ++ Json.obj("model" -> model)
+      }
     }
   }
 }

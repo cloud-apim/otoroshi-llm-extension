@@ -29,7 +29,7 @@ class ModerationGuardrail extends Guardrail {
           case None => GuardrailResult.GuardrailError("Moderation client not found").vfuture
           case Some(client) => {
             val message = messages.map(_.wholeTextContent).mkString(". ")
-            val opts = ModerationModelClientInputOptions(message)
+            val opts = ModerationModelClientInputOptions(Left(message))
             client.moderate(opts, Json.obj(), attrs).map {
               case Left(err) => GuardrailResult.GuardrailError(err.stringify)
               case Right(res) => {

@@ -45,6 +45,7 @@ case class ModerationModel(
   def getModerationModelClient()(implicit env: Env): Option[ModerationModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
+    val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val _token = connection.select("token").asOpt[String].getOrElse("xxx")
     val token = if (_token.contains(",")) {
       val parts = _token.split(",").map(_.trim)
@@ -61,7 +62,7 @@ case class ModerationModel(
         new OpenAiModerationModelClient(api, opts, id).some
       }
       case "mistral" => {
-        val api = new MistralAiApi(MistralAiApi.baseUrl, token, timeout.getOrElse(3.minutes), env = env)
+        val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         val opts = MistralAiModerationModelClientOptions.fromJson(options)
         new MistralAiModerationModelClient(api, opts, id).some
       }

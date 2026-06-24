@@ -818,7 +818,7 @@ class OpenAiModerationModelClient(val api: OpenAiApi, val options: OpenAiModerat
   override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
     val body = Json.obj(
-      "input" -> opts.input,
+      "input" -> opts.inputAsString,
       "model" -> finalModel
     )
     api.rawCall("POST", "/moderations", body.some).map { resp =>

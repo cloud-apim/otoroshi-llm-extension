@@ -39,7 +39,7 @@ object MistralAiModels {
 object MistralAiApi {
   val baseUrl = "https://api.mistral.ai"
 }
-class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[MistralAiApiResponse, OpenAiChatResponseChunk] {
+class MistralAiApi(val baseUrl: String = MistralAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[MistralAiApiResponse, OpenAiChatResponseChunk] {
 
   val supportsTools: Boolean = true
   val supportsStreaming: Boolean = true
@@ -560,11 +560,14 @@ object MistralAiModerationModelClientOptions {
 }
 
 class MistralAiModerationModelClient(val api: MistralAiApi, val options: MistralAiModerationModelClientOptions, id: String) extends ModerationModelClient {
-
   override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
+    val inputValue: JsValue = opts.input match {
+      case Left(s) => JsString(s)
+      case Right(arr) => JsArray(arr.map(JsString.apply))
+    }
     val body = Json.obj(
-      "input" -> opts.input,
+      "input" -> inputValue,
       "model" -> finalModel
     )
     api.rawCall("POST", "/v1/moderations", body.some).map { resp =>
