@@ -42,6 +42,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val persistentMemoriesDataStore: PersistentMemoryDataStore = new KvPersistentMemoryDataStore(extensionId, env.datastores.redis, env)
   val budgetsDataStore: AiBudgetsDataStore = new KvAiBudgetsDataStore(extensionId, env.datastores.redis, env)
   val a2aServersDatastore: A2AServersDataStore = new KvA2AServersDataStore(extensionId, env.datastores.redis, env)
+  val a2aConnectorsDatastore: A2AConnectorsDataStore = new KvA2AConnectorsDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
@@ -134,6 +135,16 @@ class AiGatewayExtensionState(env: Env) {
 
   def updateA2AServers(values: Seq[A2AServer]): Unit = {
     _a2aServers.addAll(values.map(v => (v.id, v))).remAll(_a2aServers.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _a2aConnectors = new UnboundedTrieMap[String, A2AConnector]()
+
+  def a2aConnector(id: String): Option[A2AConnector] = _a2aConnectors.get(id)
+
+  def allA2AConnectors(): Seq[A2AConnector] = _a2aConnectors.values.toSeq
+
+  def updateA2AConnectors(values: Seq[A2AConnector]): Unit = {
+    _a2aConnectors.addAll(values.map(v => (v.id, v))).remAll(_a2aConnectors.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _mcpVirtualServers = new UnboundedTrieMap[String, McpVirtualServer]()
@@ -283,6 +294,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val promptPageCode = getResourceCode("cloudapim/extensions/ai/PromptPage.js")
   lazy val mcpConnectorsPageCode = getResourceCode("cloudapim/extensions/ai/McpConnectorsPage.js")
   lazy val a2aServersPageCode = getResourceCode("cloudapim/extensions/ai/A2AServersPage.js")
+  lazy val a2aConnectorsPageCode = getResourceCode("cloudapim/extensions/ai/A2AConnectorsPage.js")
   lazy val mcpVirtualServersPageCode = getResourceCode("cloudapim/extensions/ai/McpVirtualServersPage.js")
   lazy val embeddingModelsPageCode = getResourceCode("cloudapim/extensions/ai/EmbeddingModelsPage.js")
   lazy val embeddingStoresPageCode = getResourceCode("cloudapim/extensions/ai/EmbeddingStoresPage.js")
@@ -973,6 +985,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |
             |    ${mcpConnectorsPageCode}
             |    ${a2aServersPageCode}
+            |    ${a2aConnectorsPageCode}
             |    ${mcpVirtualServersPageCode}
             |    ${embeddingModelsPageCode}
             |    ${embeddingStoresPageCode}
@@ -1132,6 +1145,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            icon: () => 'fa-brain',
             |          },
             |          {
+            |            title: 'A2A Connectors',
+            |            description: 'All your A2A Connectors',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/a2a-connectors',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
             |            title: 'MCP Virtual Servers',
             |            description: 'All your MCP Virtual Servers',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1279,6 +1300,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          icon: () => 'fa-brain',
             |        },
             |        {
+            |          title: 'A2A Connectors',
+            |          description: 'All your A2A Connectors',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/a2a-connectors',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
             |          title: 'MCP Virtual Servers',
             |          description: 'All your MCP Virtual Servers',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1404,6 +1433,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'A2A Servers',
             |          text: 'All your A2A Servers',
             |          path: 'extensions/cloud-apim/ai-gateway/a2a-servers',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'A2A Connectors',
+            |          text: 'All your A2A Connectors',
+            |          path: 'extensions/cloud-apim/ai-gateway/a2a-connectors',
             |          icon: 'brain'
             |        },
             |        {
@@ -1533,6 +1568,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'A2A Servers',
             |          value: 'a2a-servers',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/a2a-connectors`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'A2A Connectors',
+            |          value: 'a2a-connectors',
             |        },
             |        {
             |          action: () => {
@@ -1753,6 +1796,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          }
             |        },
             |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/a2a-connectors/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(A2AConnectorsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/a2a-connectors/:taction',
+            |          component: (props) => {
+            |            return React.createElement(A2AConnectorsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/a2a-connectors',
+            |          component: (props) => {
+            |            return React.createElement(A2AConnectorsPage, props, null)
+            |          }
+            |        },
+            |        {
             |          path: '/extensions/cloud-apim/ai-gateway/mcp-connectors/:taction/:titem',
             |          component: (props) => {
             |            return React.createElement(McpConnectorsPage, props, null)
@@ -1963,6 +2024,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       persistentMemories <- datastores.persistentMemoriesDataStore.findAllAndFillSecrets()
       budgets <- datastores.budgetsDataStore.findAllAndFillSecrets()
       a2aServers <- datastores.a2aServersDatastore.findAllAndFillSecrets()
+      a2aConnectors <- datastores.a2aConnectorsDatastore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
@@ -1982,6 +2044,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updatePersistentMemories(persistentMemories)
       states.updateBudgets(budgets)
       states.updateA2AServers(a2aServers)
+      states.updateA2AConnectors(a2aConnectors)
       Future {
         McpSupport.restartConnectorsIfNeeded()
         McpSupport.stopConnectorsIfNeeded()
@@ -2010,6 +2073,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(PersistentMemory.resource(env, datastores, states)),
       AdminExtensionEntity(AiBudget.resource(env, datastores, states)),
       AdminExtensionEntity(A2AServer.resource(env, datastores, states)),
+      AdminExtensionEntity(A2AConnector.resource(env, datastores, states)),
     )
   }
 }
