@@ -95,6 +95,42 @@ class McpRegistrySuite extends munit.FunSuite {
     assertEquals(names, Seq("io.cloud-apim/a"))
   }
 
+  test("listing fits a curated catalogue in one page (no cursor) by default") {
+    val servers = (1 to 5).map(i => vs("id" + i, "S" + i, registry = McpRegistryConfig(published = true)))
+    val listing = McpRegistry.listing(servers)
+    assertEquals((listing \ "servers").as[Seq[JsObject]].size, 5)
+    assertEquals((listing \ "metadata" \ "count").as[Int], 5)
+    assert((listing \ "metadata" \ "next_cursor").asOpt[String].isEmpty)
+  }
+
+  test("listing paginates with an opaque cursor when a small limit is set") {
+    val servers = (1 to 5).map(i => vs("id" + i, "S" + i, registry = McpRegistryConfig(published = true, name = Some("io.acme/s" + i))))
+    val p1 = McpRegistry.listing(servers, None, Some(2))
+    assertEquals((p1 \ "servers").as[Seq[JsObject]].map(s => (s \ "name").as[String]), Seq("io.acme/s1", "io.acme/s2"))
+    val c1 = (p1 \ "metadata" \ "next_cursor").as[String]
+
+    val p2 = McpRegistry.listing(servers, Some(c1), Some(2))
+    assertEquals((p2 \ "servers").as[Seq[JsObject]].map(s => (s \ "name").as[String]), Seq("io.acme/s3", "io.acme/s4"))
+    val c2 = (p2 \ "metadata" \ "next_cursor").as[String]
+
+    val p3 = McpRegistry.listing(servers, Some(c2), Some(2))
+    assertEquals((p3 \ "servers").as[Seq[JsObject]].map(s => (s \ "name").as[String]), Seq("io.acme/s5"))
+    assert((p3 \ "metadata" \ "next_cursor").asOpt[String].isEmpty) // last page
+  }
+
+  test("listing treats an unreadable cursor as the first page and caps a huge limit") {
+    val servers = (1 to 3).map(i => vs("id" + i, "S" + i, registry = McpRegistryConfig(published = true)))
+    assertEquals((McpRegistry.listing(servers, Some("not-a-cursor"), Some(2)) \ "servers").as[Seq[JsObject]].size, 2)
+    val huge = McpRegistry.listing(servers, None, Some(1000000))
+    assertEquals((huge \ "servers").as[Seq[JsObject]].size, 3)
+    assert((huge \ "metadata" \ "next_cursor").asOpt[String].isEmpty)
+  }
+
+  test("encodeCursor/decodeCursor round-trip; garbage decodes to None") {
+    assertEquals(McpRegistry.decodeCursor(McpRegistry.encodeCursor(42)), Some(42))
+    assertEquals(McpRegistry.decodeCursor("%%%"), None)
+  }
+
   test("findByName respects publication and matches the namespaced name") {
     val a = vs("a", "A", registry = McpRegistryConfig(published = true, name = Some("io.acme/a")))
     val b = vs("b", "B", registry = McpRegistryConfig(published = false, name = Some("io.acme/b")))
