@@ -115,7 +115,7 @@ object OpenAICompatModeration {
           provider.getModerationModelClient() match {
             case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
             case Some(client) => {
-              val options = ModerationModelClientInputOptions.format.reads(jsonBody).getOrElse(ModerationModelClientInputOptions(""))
+              val options = ModerationModelClientInputOptions.format.reads(jsonBody).getOrElse(ModerationModelClientInputOptions.text(""))
               client.moderate(options, jsonBody, ctx.attrs).map {
                 case Left(err) => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> err))).left
                 case Right(moderation) => {

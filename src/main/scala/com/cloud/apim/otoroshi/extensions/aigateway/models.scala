@@ -1263,19 +1263,59 @@ case class ModerationResponse(
   } ++ metadata.toOpenAiJson(env)
 }
 
+sealed trait ModerationInputKind {
+  def name: String
+  def json: JsValue = JsString(name)
+}
+object ModerationInputKind {
+  case object Text extends ModerationInputKind { def name: String = "text" }
+  case object ImageUrl extends ModerationInputKind { def name: String = "image_url" }
+}
+
+case class ModerationInput(kind: ModerationInputKind, value: String) {
+  def json: JsValue = Json.obj("kind" -> kind.json, "value" -> value)
+  def mistralJson: JsValue = value.json
+  def openaiJson: JsValue = kind match {
+    case ModerationInputKind.Text => Json.obj("type" -> "text", "text" -> value)
+    case ModerationInputKind.ImageUrl => Json.obj("type" -> "image_url", "image_url" -> value)
+  }
+  def isText: Boolean = kind == ModerationInputKind.Text
+  def isImageUrl: Boolean = kind == ModerationInputKind.ImageUrl
+}
+object ModerationInput {
+  def text(str: String): ModerationInput = ModerationInput(ModerationInputKind.Text, str)
+  def fromObject(obj: JsObject): Option[ModerationInput] = {
+    val value = obj.select("value").asOptString.orElse(obj.select("text").asOptString).orElse(obj.select("image_url").asOptString).getOrElse("")
+    val kindStr = obj.select("kind").asOptString.orElse(obj.select("type").asOptString).getOrElse("text").toLowerCase()
+    kindStr match {
+      case "image_url" => Some(ModerationInput(ModerationInputKind.ImageUrl, value))
+      case "text" => Some(ModerationInput(ModerationInputKind.Text, value))
+      case _ => None
+    }
+  }
+}
 
 case class ModerationModelClientInputOptions(
-  input: String,
+  input: Seq[ModerationInput],
   model: Option[String] = None,
 ) {
   def json: JsValue = ModerationModelClientInputOptions.format.writes(this)
 }
 
 object ModerationModelClientInputOptions {
+  def text(txt: String): ModerationModelClientInputOptions = ModerationModelClientInputOptions(Seq(ModerationInput.text(txt)))
+  def textArray(seq: Seq[String]): ModerationModelClientInputOptions = ModerationModelClientInputOptions(seq.map(txt => (ModerationInput.text(txt))))
   val format = new Format[ModerationModelClientInputOptions] {
     override def reads(json: JsValue): JsResult[ModerationModelClientInputOptions] = Try {
       ModerationModelClientInputOptions(
-        input = json.select("input").asString,
+        input = json.select("input").asOptString.map(str => Seq(ModerationInput(ModerationInputKind.Text, str)))
+          .orElse(
+            json.select("input").asOpt[Seq[String]].map(_.map(str => ModerationInput(ModerationInputKind.Text, str)))
+          )
+          .orElse(
+            json.select("input").asOpt[Seq[JsObject]].map(_.flatMap(obj => ModerationInput.fromObject(obj)))
+          )
+          .getOrElse(Seq.empty),
         model = json.select("model").asOptString,
       )
     } match {
@@ -1283,7 +1323,7 @@ object ModerationModelClientInputOptions {
       case Success(e) => JsSuccess(e)
     }
     override def writes(o: ModerationModelClientInputOptions): JsValue = Json.obj(
-      "input" -> o.input
+      "input" -> JsArray(o.input.map(_.json))
     ).applyOnWithOpt(o.model) {
       case (obj, model) => obj ++ Json.obj("model" -> model)
     }

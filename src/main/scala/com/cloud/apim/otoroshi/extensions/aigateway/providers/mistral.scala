@@ -564,7 +564,7 @@ class MistralAiModerationModelClient(val api: MistralAiApi, val options: Mistral
   override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
     val body = Json.obj(
-      "input" -> opts.input,
+      "input" -> JsArray(opts.input.filter(_.isText).map(_.mistralJson)),
       "model" -> finalModel
     )
     api.rawCall("POST", "/v1/moderations", body.some).map { resp =>
