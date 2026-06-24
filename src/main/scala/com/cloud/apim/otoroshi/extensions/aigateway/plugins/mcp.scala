@@ -3043,15 +3043,23 @@ object McpExpositionScanner {
   private def protectedPresetId: String = NgPluginHelper.pluginId[ProtectedMcpStreamableHttpPreset]
   private val apikeyPluginId = "cp:otoroshi.next.plugins.ApikeyCalls"
   private val mtlsPluginId = "cp:otoroshi.next.plugins.NgHasClientCertValidator"
+  private val forceHttpsPluginId = "cp:otoroshi.next.plugins.ForceHttpsTraffic"
 
   // ── pure helpers (unit-tested) ───────────────────────────────────────────────────────────────────────────
 
   // https://<host[/frontend-path]><exposition-path>, normalizing slashes. Scheme is assumed https (Otoroshi
   // default; it isn't stored on the route — which is exactly why the admin confirms the suggestion).
-  def deriveUrl(domainAndPathRaw: String, includePath: Option[String]): String = {
+  def deriveUrl(domainAndPathRaw: String, includePath: Option[String], forceHttps: Boolean)(implicit env: Env): String = {
     val base = domainAndPathRaw.trim.stripSuffix("/")
     val p = includePath.map(_.trim).filter(_.nonEmpty).map(s => if (s.startsWith("/")) s else "/" + s).getOrElse("")
-    s"https://$base$p"
+    val url = if (forceHttps) {
+      s"https://$base$p"
+    } else {
+      s"http://$base$p"
+    }
+    val uri = Uri(url)
+    val port = if (forceHttps) env.exposedHttpsPortInt else env.exposedHttpPortInt
+    uri.copy(authority = uri.authority.copy(port = port)).toString()
   }
 
   def detectAuth(enforceOauth: Boolean, isProtectedPreset: Boolean, hasApikey: Boolean, hasMtls: Boolean): (String, Seq[String]) = {
@@ -3067,8 +3075,8 @@ object McpExpositionScanner {
 
   // exposition path: the preset carries it as `mcp_path`; a raw MCP endpoint carries it as its `include` pattern.
   def slotPath(pluginId: String, configRaw: JsObject, includePaths: Seq[String]): Option[String] =
-    if (pluginId == protectedPresetId) (configRaw \ "mcp_path").asOpt[String].filter(_.trim.nonEmpty).orElse(Some("/mcp"))
-    else includePaths.headOption.filter(_.trim.nonEmpty).orElse(Some("/mcp"))
+    if (pluginId == protectedPresetId) (configRaw \ "mcp_path").asOpt[String].filter(_.trim.nonEmpty)
+    else includePaths.headOption.filter(_.trim.nonEmpty)
 
   // ── glue ─────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -3090,12 +3098,15 @@ object McpExpositionScanner {
       else {
         val hasApikey = slots.exists(_.plugin == apikeyPluginId)
         val hasMtls = slots.exists(_.plugin == mtlsPluginId)
+        val hasForceHttps = slots.exists(_.plugin == forceHttpsPluginId)
         mcpSlots.flatMap { slot =>
           val isPreset = slot.plugin == protectedPresetId
           val enforceOauth = (slot.config.raw \ "enforce_oauth").asOpt[Boolean].getOrElse(false)
           val (auth, warnings) = detectAuth(enforceOauth, isPreset, hasApikey, hasMtls)
           val path = slotPath(slot.plugin, slot.config.raw, slot.include)
-          route.frontend.domains.map(dp => Candidate(route.id, route.name, deriveUrl(dp.raw, path), auth, warnings))
+          route.frontend.domains.map { dp =>
+            Candidate(route.id, route.name, deriveUrl(dp.raw, path, hasForceHttps), auth, warnings)
+          }
         }
       }
     }.distinct
