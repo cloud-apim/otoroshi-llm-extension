@@ -13,12 +13,26 @@ class A2AConnectorsPage extends Component {
     'agent_card_path': { type: 'string', props: { label: 'Agent Card path', placeholder: '/.well-known/agent-card.json' } },
     'agent_card_fallback_path': { type: 'string', props: { label: 'Agent Card fallback path', help: 'Tried if the primary path 404s (0.3.x servers)', placeholder: '/.well-known/agent.json' } },
     'a2a_version': { type: 'string', props: { label: 'A2A version (override)', help: 'Leave empty to auto-detect from the Agent Card (1.0 / 0.3)' } },
+    'authentication.kind': {
+      type: 'select',
+      props: {
+        label: 'Auth kind',
+        possibleValues: [
+          { label: 'None', value: 'none' },
+          { label: 'Bearer token', value: 'bearer' },
+          { label: 'API key', value: 'apikey' },
+          { label: 'Basic', value: 'basic' },
+          { label: 'Custom headers', value: 'custom_headers' },
+          { label: 'OAuth2 client credentials', value: 'oauth2_client_credentials' },
+        ],
+      },
+    },
     'authentication': {
       type: 'monaco-json',
       props: {
-        height: 200,
-        label: 'Authentication',
-        help: 'kind: none | bearer | apikey | basic | custom_headers. e.g. { "kind": "bearer", "token": "sk-xxx" }',
+        height: 240,
+        label: 'Authentication (raw)',
+        help: 'Fill only the fields used by the selected kind. bearer → token ; apikey → header_name + value ; basic → username + password ; custom_headers → headers{} ; oauth2_client_credentials → token_url + client_id + client_secret + scope. Unused fields can stay null.',
       },
     },
     'tls': {
@@ -45,7 +59,7 @@ class A2AConnectorsPage extends Component {
     },
   ];
 
-  formFlow = ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'url', 'agent_card_path', 'agent_card_fallback_path', 'a2a_version', '---', 'authentication', 'tls', '---', 'timeout', 'streaming', 'skills_filter', 'tool_name_overrides'];
+  formFlow = ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'url', 'agent_card_path', 'agent_card_fallback_path', 'a2a_version', '---', 'authentication.kind', 'authentication', 'tls', '---', 'timeout', 'streaming', 'skills_filter', 'tool_name_overrides'];
 
   componentDidMount() {
     this.props.setTitle(`A2A Connectors`);
@@ -69,7 +83,19 @@ class A2AConnectorsPage extends Component {
           url: 'https://remote-agent.example.com',
           agent_card_path: '/.well-known/agent-card.json',
           agent_card_fallback_path: '/.well-known/agent.json',
-          authentication: { kind: 'none' },
+          authentication: {
+            kind: 'none',
+            token: null,           // bearer
+            header_name: null,     // apikey
+            value: null,           // apikey
+            username: null,        // basic
+            password: null,        // basic
+            headers: null,         // custom_headers (object: { "X-Header": "value" })
+            token_url: null,       // oauth2_client_credentials
+            client_id: null,       // oauth2_client_credentials
+            client_secret: null,   // oauth2_client_credentials
+            scope: null,           // oauth2_client_credentials
+          },
           tls: { enabled: false, loose: false, trust_all: false, certs: [], trusted_certs: [] },
           timeout: 30000,
           streaming: false,
