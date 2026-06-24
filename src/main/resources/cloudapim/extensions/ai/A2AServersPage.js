@@ -35,12 +35,30 @@ class A2AServersPage extends Component {
         help: 'A2A v1.0 Agent Card config. The plugin derives `supportedInterfaces` from the route URL at runtime. Shape: { version, provider, default_input_modes, default_output_modes, capabilities, skills }',
       },
     },
-    'backend': {
+    'backend.kind': {
+      type: 'select',
+      props: {
+        label: 'Backend kind',
+        possibleValues: [
+          { label: 'Inline agent', value: 'agent' },
+          { label: 'Workflow', value: 'workflow' },
+        ],
+      },
+    },
+    'backend.agent': {
       type: 'monaco-json',
       props: {
         height: 280,
-        label: 'Backend',
-        help: 'What handles incoming A2A messages. kind "agent" with an inline AgentConfig, or kind "workflow" with a workflow_ref.',
+        label: 'Agent (inline AgentConfig)',
+        help: 'Inline AgentConfig: { name, description, instructions: [...], provider, model?, mcp_connectors?, a2a_connectors?, tools? }',
+      },
+    },
+    'backend.workflow_ref': {
+      type: 'select',
+      props: {
+        label: 'Workflow',
+        optionsFrom: '/bo/api/proxy/apis/plugins.otoroshi.io/v1/workflows',
+        optionsTransformer: { label: 'name', value: 'id' },
       },
     },
   };
@@ -72,7 +90,12 @@ class A2AServersPage extends Component {
     }
   ];
 
-  formFlow = ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'agent_card', '---', 'backend'];
+  formFlow = (state) => {
+    const head = ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'agent_card', '---', 'backend.kind'];
+    const kind = state?.backend?.kind ?? 'agent';
+    const backendFields = kind === 'workflow' ? ['backend.workflow_ref'] : ['backend.agent'];
+    return [...head, ...backendFields];
+  };
 
   componentDidMount() {
     this.props.setTitle(`A2A Servers`);
@@ -109,7 +132,8 @@ class A2AServersPage extends Component {
               description: '',
               instructions: ['You are a helpful assistant.'],
               provider: 'provider_xxx'
-            }
+            },
+            workflow_ref: null
           }
         }),
         itemName: "A2A Server",
