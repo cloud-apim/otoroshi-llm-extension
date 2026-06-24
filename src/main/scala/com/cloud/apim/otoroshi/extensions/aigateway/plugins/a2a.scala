@@ -225,12 +225,17 @@ class A2AServerPlugin extends NgBackendCall {
                 val rpcMethod = json.select("method").asOpt[String].getOrElse("--")
                 val id: JsValue = (json \ "id").toOption.getOrElse(JsNull)
                 rpcMethod match {
-                  case "SendMessage"          => handleSendMessage(id, json, srv, ctx)
-                  case "SendStreamingMessage" => handleSendStreamingMessage(id, json, srv, ctx)
-                  case "GetTask"              => handleGetTask(id, json)
-                  case "CancelTask"           => handleCancelTask(id, json)
-                  case "ListTasks"            => rpcErr(id, A2AErrors.UnsupportedOperation, "ListTasks not implemented yet (phase 4)")
-                  case other                  => rpcErr(id, A2AErrors.MethodNotFound, s"method not found: $other")
+                  case "SendMessage"                        => handleSendMessage(id, json, srv, ctx)
+                  case "SendStreamingMessage"               => handleSendStreamingMessage(id, json, srv, ctx)
+                  case "GetTask"                            => handleGetTask(id, json)
+                  case "CancelTask"                         => handleCancelTask(id, json)
+                  case "ListTasks"                          => handleListTasks(id, json)
+                  case "SubscribeToTask"                    => handleSubscribeToTask(id, json)
+                  case "CreateTaskPushNotificationConfig"   => handleCreatePushConfig(id, json, srv)
+                  case "GetTaskPushNotificationConfig"      => handleGetPushConfig(id, json, srv)
+                  case "ListTaskPushNotificationConfigs"    => handleListPushConfigs(id, json, srv)
+                  case "DeleteTaskPushNotificationConfig"   => handleDeletePushConfig(id, json, srv)
+                  case other                                => rpcErr(id, A2AErrors.MethodNotFound, s"method not found: $other")
                 }
             }
           }
@@ -251,6 +256,8 @@ class A2AServerPlugin extends NgBackendCall {
           val store = new A2ATaskStore(env)
           val contextId = message.contextId.getOrElse(A2A.newId("ctx"))
           val taskId = A2A.newId("task")
+          val tenant = params.select("tenant").asOpt[String]
+          val taskMeta = tenant.map(t => Json.obj("tenant" -> t))
           A2ASupportServer.executeBackend(srv, message, ctx.attrs).flatMap {
             case Right(responseText) =>
               val agentMsg = A2AMessage.agentText(responseText, Some(contextId), Some(taskId))
@@ -259,8 +266,12 @@ class A2AServerPlugin extends NgBackendCall {
                 contextId = contextId,
                 status = TaskStatus(TaskState.Completed, Some(agentMsg), Some(A2A.nowTimestamp())),
                 history = Seq(message, agentMsg),
+                metadata = taskMeta,
               )
-              store.put(task).flatMap(_ => rpcOk(id, Json.obj("task" -> task.json)))
+              store.put(task).flatMap { _ =>
+                maybeFirePush(srv, task, params)
+                rpcOk(id, Json.obj("task" -> task.json))
+              }
             case Left(err) =>
               val failMsg = A2AMessage.agentText(Json.stringify(err), Some(contextId), Some(taskId))
               val task = A2ATask(
@@ -340,7 +351,9 @@ class A2AServerPlugin extends NgBackendCall {
               val full = (Source.single(workingEvt) ++ deltas ++ Source.single(completedEvt)).watchTermination() { (m, done) =>
                 done.onComplete { _ =>
                   val agentMsg = A2AMessage.agentText(acc.toString, Some(contextId), Some(taskId))
-                  store.put(A2ATask(taskId, contextId, TaskStatus(TaskState.Completed, Some(agentMsg), Some(A2A.nowTimestamp())), history = Seq(message, agentMsg)))
+                  val ctask = A2ATask(taskId, contextId, TaskStatus(TaskState.Completed, Some(agentMsg), Some(A2A.nowTimestamp())), history = Seq(message, agentMsg))
+                  store.put(ctask)
+                  maybeFirePush(srv, ctask, json.select("params").asOpt[JsValue].getOrElse(Json.obj()))
                 }
                 m
               }
@@ -369,6 +382,94 @@ class A2AServerPlugin extends NgBackendCall {
                 }
             }
         }
+    }
+  }
+
+  // fire push notifications for a terminal task: stores the inline config (if any) and POSTs the StreamResponse({task})
+  private def maybeFirePush(srv: A2AServer, task: A2ATask, params: JsValue)(implicit env: Env, ec: ExecutionContext): Unit = {
+    if (srv.agentCard.capabilities.pushNotifications) {
+      params.at("configuration.taskPushNotificationConfig").asOpt[JsValue].foreach { cfgJson =>
+        val cfg = A2APushConfig.from(cfgJson).copy(taskId = task.id)
+        val store = new A2ATaskStore(env)
+        store.putPushConfig(cfg)
+        A2AClient.push(cfg, StreamResponse.OfTask(task).resultJson)
+      }
+    }
+  }
+
+  private def handleListTasks(id: JsValue, json: JsValue)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val params = json.select("params").asOpt[JsObject].getOrElse(Json.obj())
+    val contextId = params.select("contextId").asOpt[String]
+    val status = params.select("status").asOpt[String].map(TaskState.apply).filter(_ != TaskState.Unspecified)
+    val after = params.select("statusTimestampAfter").asOpt[String]
+    val pageSize = params.select("pageSize").asOpt[Int].getOrElse(50)
+    val pageToken = params.select("pageToken").asOpt[String].filter(_.nonEmpty)
+    val includeArtifacts = params.select("includeArtifacts").asOpt[Boolean].getOrElse(false)
+    new A2ATaskStore(env).listTasks(contextId, status, after, pageSize, pageToken, includeArtifacts).flatMap { page =>
+      rpcOk(id, Json.obj(
+        "tasks" -> JsArray(page.tasks.map(_.json)),
+        "nextPageToken" -> page.nextPageToken,
+        "pageSize" -> page.pageSize,
+        "totalSize" -> page.totalSize,
+      ))
+    }
+  }
+
+  // replay the stored state of a task as SSE events (sync model: no live stream to resume)
+  private def handleSubscribeToTask(id: JsValue, json: JsValue)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val taskId = json.at("params.id").asOpt[String].getOrElse("")
+    if (taskId.isEmpty) {
+      rpcErr(id, A2AErrors.InvalidParams, "missing 'id' param")
+    } else {
+      new A2ATaskStore(env).get(taskId).flatMap {
+        case None => rpcErr(id, A2AErrors.TaskNotFound, "task not found", Some(A2AErrors.errorInfo("TASK_NOT_FOUND", Json.obj("taskId" -> taskId))))
+        case Some(task) =>
+          val artifactEvents = task.artifacts.map(a => sse(id, StreamResponse.OfArtifactUpdate(TaskArtifactUpdateEvent(task.id, task.contextId, a, append = false, lastChunk = true))))
+          val statusEvent = sse(id, StreamResponse.OfStatusUpdate(TaskStatusUpdateEvent(task.id, task.contextId, task.status)))
+          val src = Source(statusEvent +: artifactEvents.toList)
+          BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(src).as("text/event-stream")), None).rightf
+      }
+    }
+  }
+
+  private def pushDisabled(srv: A2AServer): Boolean = !srv.agentCard.capabilities.pushNotifications
+
+  private def handleCreatePushConfig(id: JsValue, json: JsValue, srv: A2AServer)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    if (pushDisabled(srv)) rpcErr(id, A2AErrors.PushNotificationNotSupported, "push notifications not supported", Some(A2AErrors.errorInfo("PUSH_NOTIFICATION_NOT_SUPPORTED")))
+    else {
+      val params = json.select("params").asOpt[JsValue].getOrElse(Json.obj())
+      val cfg = A2APushConfig.from(params)
+      if (cfg.taskId.isEmpty || cfg.url.isEmpty) rpcErr(id, A2AErrors.InvalidParams, "missing 'taskId' or 'url'")
+      else new A2ATaskStore(env).putPushConfig(cfg).flatMap(saved => rpcOk(id, saved.json))
+    }
+  }
+
+  private def handleGetPushConfig(id: JsValue, json: JsValue, srv: A2AServer)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    if (pushDisabled(srv)) rpcErr(id, A2AErrors.PushNotificationNotSupported, "push notifications not supported", Some(A2AErrors.errorInfo("PUSH_NOTIFICATION_NOT_SUPPORTED")))
+    else {
+      val taskId = json.at("params.taskId").asOpt[String].orElse(json.at("params.task_id").asOpt[String]).getOrElse("")
+      val cfgId = json.at("params.id").asOpt[String].getOrElse("")
+      new A2ATaskStore(env).getPushConfig(taskId, cfgId).flatMap {
+        case None      => rpcErr(id, A2AErrors.TaskNotFound, "push config not found", Some(A2AErrors.errorInfo("TASK_NOT_FOUND", Json.obj("taskId" -> taskId, "configId" -> cfgId))))
+        case Some(cfg) => rpcOk(id, cfg.json)
+      }
+    }
+  }
+
+  private def handleListPushConfigs(id: JsValue, json: JsValue, srv: A2AServer)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    if (pushDisabled(srv)) rpcErr(id, A2AErrors.PushNotificationNotSupported, "push notifications not supported", Some(A2AErrors.errorInfo("PUSH_NOTIFICATION_NOT_SUPPORTED")))
+    else {
+      val taskId = json.at("params.taskId").asOpt[String].orElse(json.at("params.task_id").asOpt[String]).getOrElse("")
+      new A2ATaskStore(env).listPushConfigs(taskId).flatMap(cfgs => rpcOk(id, Json.obj("configs" -> JsArray(cfgs.map(_.json)))))
+    }
+  }
+
+  private def handleDeletePushConfig(id: JsValue, json: JsValue, srv: A2AServer)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    if (pushDisabled(srv)) rpcErr(id, A2AErrors.PushNotificationNotSupported, "push notifications not supported", Some(A2AErrors.errorInfo("PUSH_NOTIFICATION_NOT_SUPPORTED")))
+    else {
+      val taskId = json.at("params.taskId").asOpt[String].orElse(json.at("params.task_id").asOpt[String]).getOrElse("")
+      val cfgId = json.at("params.id").asOpt[String].getOrElse("")
+      new A2ATaskStore(env).deletePushConfig(taskId, cfgId).flatMap(_ => rpcOk(id, Json.obj()))
     }
   }
 }
