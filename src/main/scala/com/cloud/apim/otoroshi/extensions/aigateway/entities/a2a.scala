@@ -130,6 +130,7 @@ case class A2AServer(
   metadata: Map[String, String] = Map.empty,
   agentCard: A2AServerCard = A2AServerCard(),
   backend: A2AServerBackend = A2AServerBackend(),
+  tenant: Option[String] = None,   // multi-tenant: declared on the generated AgentInterface
 ) extends EntityLocationSupport {
   override def internalId: String = id
   override def theName: String = name
@@ -143,7 +144,7 @@ case class A2AServer(
     name = name,
     description = description,
     version = agentCard.version,
-    supportedInterfaces = Seq(AgentInterface(url = interfaceUrl, protocolBinding = "JSONRPC", protocolVersion = A2A.protocolVersion)),
+    supportedInterfaces = Seq(AgentInterface(url = interfaceUrl, protocolBinding = "JSONRPC", protocolVersion = A2A.protocolVersion, tenant = tenant)),
     capabilities = agentCard.capabilities,
     defaultInputModes = agentCard.defaultInputModes,
     defaultOutputModes = agentCard.defaultOutputModes,
@@ -165,6 +166,7 @@ object A2AServer {
       "tags" -> JsArray(o.tags.map(JsString.apply)),
       "agent_card" -> o.agentCard.json,
       "backend" -> o.backend.json,
+      "tenant" -> o.tenant,
     )
     override def reads(json: JsValue): JsResult[A2AServer] = Try {
       A2AServer(
@@ -177,6 +179,7 @@ object A2AServer {
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         agentCard = json.select("agent_card").asOpt[JsValue].map(A2AServerCard.from).getOrElse(A2AServerCard()),
         backend = json.select("backend").asOpt[JsValue].map(A2AServerBackend.from).getOrElse(A2AServerBackend()),
+        tenant = json.select("tenant").asOpt[String],
       )
     } match {
       case Failure(ex)    => JsError(ex.getMessage)
@@ -257,7 +260,12 @@ case class A2AConnectorAuth(
   username: Option[String] = None,  // basic
   password: Option[String] = None,  // basic
   headers: Map[String, String] = Map.empty, // custom_headers
+  tokenUrl: Option[String] = None,      // oauth2_client_credentials
+  clientId: Option[String] = None,      // oauth2_client_credentials
+  clientSecret: Option[String] = None,  // oauth2_client_credentials
+  scope: Option[String] = None,         // oauth2_client_credentials
 ) {
+  // synchronous headers (everything except oauth2, which is resolved asynchronously by A2AConnector.resolveHeaders)
   def toHeaders: Seq[(String, String)] = kind.toLowerCase match {
     case "bearer"         => token.map(t => Seq("Authorization" -> s"Bearer $t")).getOrElse(Seq.empty)
     case "apikey"         => (for { h <- headerName; v <- value } yield Seq(h -> v)).getOrElse(Seq.empty)
@@ -273,6 +281,10 @@ case class A2AConnectorAuth(
     "username" -> username,
     "password" -> password,
     "headers" -> headers,
+    "token_url" -> tokenUrl,
+    "client_id" -> clientId,
+    "client_secret" -> clientSecret,
+    "scope" -> scope,
   )
 }
 object A2AConnectorAuth {
@@ -284,6 +296,10 @@ object A2AConnectorAuth {
     username = json.select("username").asOpt[String],
     password = json.select("password").asOpt[String],
     headers = json.select("headers").asOpt[Map[String, String]].getOrElse(Map.empty),
+    tokenUrl = json.select("token_url").asOpt[String],
+    clientId = json.select("client_id").asOpt[String],
+    clientSecret = json.select("client_secret").asOpt[String],
+    scope = json.select("scope").asOpt[String],
   )
 }
 
@@ -305,6 +321,7 @@ case class A2AConnector(
   streaming: Boolean = false,
   skillsFilter: Seq[String] = Seq.empty,
   toolNameOverrides: Map[String, String] = Map.empty, // optional skillId -> label (Q6=C)
+  tenant: Option[String] = None,                      // multi-tenant: forwarded as params.tenant to the remote agent
 ) extends EntityLocationSupport {
   override def internalId: String = id
   override def theName: String = name
@@ -320,13 +337,31 @@ case class A2AConnector(
       if (skill.name.nonEmpty) s"${skill.name}: ${skill.description}" else skill.description
     }
 
+  // resolve outgoing auth headers; oauth2_client_credentials fetches (and caches) a token asynchronously
+  def resolveHeaders()(implicit ec: ExecutionContext, env: Env): Future[Seq[(String, String)]] = {
+    authentication.kind.toLowerCase match {
+      case "oauth2_client_credentials" =>
+        (authentication.tokenUrl, authentication.clientId, authentication.clientSecret) match {
+          case (Some(turl), Some(cid), Some(secret)) =>
+            A2AClient.fetchOAuthToken(turl, cid, secret, authentication.scope, tls, timeoutDuration).map {
+              case Right(tok) => Seq("Authorization" -> s"Bearer $tok")
+              case Left(_)    => Seq.empty
+            }
+          case _ => Future.successful(Seq.empty)
+        }
+      case _ => Future.successful(authentication.toHeaders)
+    }
+  }
+
   // resolve the Agent Card (cached) and apply the skills_filter
   def listSkills(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[AgentSkill]] = {
-    A2AClient.fetchAgentCard(id, url, agentCardPath, agentCardFallbackPath, authentication.toHeaders, tls, timeoutDuration).map {
-      case Left(_) => Seq.empty
-      case Right((card, _)) =>
-        val skills = card.skills
-        if (skillsFilter.isEmpty) skills else skills.filter(s => skillsFilter.contains(s.id))
+    resolveHeaders().flatMap { headers =>
+      A2AClient.fetchAgentCard(id, url, agentCardPath, agentCardFallbackPath, headers, tls, timeoutDuration).map {
+        case Left(_) => Seq.empty
+        case Right((card, _)) =>
+          val skills = card.skills
+          if (skillsFilter.isEmpty) skills else skills.filter(s => skillsFilter.contains(s.id))
+      }
     }
   }
 
@@ -334,19 +369,24 @@ case class A2AConnector(
     Try(Await.result(listSkills(attrs), timeoutDuration + 5.seconds)).getOrElse(Seq.empty)
   }
 
-  // execute a skill: extract the `message` argument, send an A2A SendMessage to the remote agent, return its text
+  // execute a skill: extract the `message` argument, send an A2A (streaming) SendMessage to the remote agent, return text
   def call(skillId: String, args: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
     val message: String = Try(Json.parse(args)).toOption.flatMap(_.select("message").asOpt[String]).getOrElse(args)
-    A2AClient.fetchAgentCard(id, url, agentCardPath, agentCardFallbackPath, authentication.toHeaders, tls, timeoutDuration).flatMap {
-      case Left(err) => s"error: unable to reach remote a2a agent: ${Json.stringify(err)}".vfuture
-      case Right((card, detectedVersion)) =>
-        val version = a2aVersion.map(v => A2AVersion.fromCard(Some(v))).getOrElse(detectedVersion)
-        val endpoint = A2AClient.jsonRpcEndpoint(card, url)
-        val msg = A2AMessage(messageId = A2A.newId("msg"), role = A2ARole.User, parts = Seq(A2APart.ofText(message)))
-        A2AClient.sendMessage(endpoint, version, authentication.toHeaders, tls, timeoutDuration, msg).map {
-          case Left(err)   => s"error: ${Json.stringify(err)}"
-          case Right(text) => text
-        }
+    resolveHeaders().flatMap { headers =>
+      A2AClient.fetchAgentCard(id, url, agentCardPath, agentCardFallbackPath, headers, tls, timeoutDuration).flatMap {
+        case Left(err) => s"error: unable to reach remote a2a agent: ${Json.stringify(err)}".vfuture
+        case Right((card, detectedVersion)) =>
+          val version = a2aVersion.map(v => A2AVersion.fromCard(Some(v))).getOrElse(detectedVersion)
+          val endpoint = A2AClient.jsonRpcEndpoint(card, url)
+          val msg = A2AMessage(messageId = A2A.newId("msg"), role = A2ARole.User, parts = Seq(A2APart.ofText(message)))
+          val resF =
+            if (streaming) A2AClient.sendStreamingMessage(endpoint, version, headers, tls, timeoutDuration, msg, tenant)
+            else A2AClient.sendMessage(endpoint, version, headers, tls, timeoutDuration, msg, tenant)
+          resF.map {
+            case Left(err)   => s"error: ${Json.stringify(err)}"
+            case Right(text) => text
+          }
+      }
     }
   }
 }
@@ -370,6 +410,7 @@ object A2AConnector {
       "streaming" -> o.streaming,
       "skills_filter" -> o.skillsFilter,
       "tool_name_overrides" -> o.toolNameOverrides,
+      "tenant" -> o.tenant,
     )
     override def reads(json: JsValue): JsResult[A2AConnector] = Try {
       A2AConnector(
@@ -390,6 +431,7 @@ object A2AConnector {
         streaming = json.select("streaming").asOpt[Boolean].getOrElse(false),
         skillsFilter = json.select("skills_filter").asOpt[Seq[String]].getOrElse(Seq.empty),
         toolNameOverrides = json.select("tool_name_overrides").asOpt[Map[String, String]].getOrElse(Map.empty),
+        tenant = json.select("tenant").asOpt[String],
       )
     } match {
       case Failure(ex)    => JsError(ex.getMessage)
