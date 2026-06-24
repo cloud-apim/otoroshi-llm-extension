@@ -1,7 +1,9 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
+import com.cloud.apim.otoroshi.extensions.aigateway.ChatMessageContent
 import com.cloud.apim.otoroshi.extensions.aigateway.a2a._
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{A2AServer, A2AServerBackend, A2AServerCard, A2ASkillConfig}
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.A2ASupportServer
 import play.api.libs.json._
 
 // Pure unit tests for the A2A v1.0 wire models (no running server required).
@@ -117,6 +119,54 @@ class A2ASuite extends munit.FunSuite {
     assertEquals((ifaces.head \ "protocolVersion").as[String], "1.0")
     assertEquals((card \ "skills").as[JsArray].value.size, 1)
     assertEquals((card \ "capabilities" \ "extendedAgentCard").as[Boolean], false)
+  }
+
+  test("partsToContent maps each A2A part variant to the right ChatMessageContent") {
+    val parts = Seq(
+      A2APart.ofText("hello"),
+      A2APart(url = Some("https://x/y.png"), mediaType = Some("image/png")),
+      A2APart(raw = Some("QQ=="), mediaType = Some("image/png")),
+      A2APart(url = Some("https://x/d.pdf"), mediaType = Some("application/pdf")),
+      A2APart(data = Some(Json.obj("k" -> "v"))),
+    )
+    val content = A2ASupportServer.partsToContent(parts)
+    assertEquals(content.size, 5)
+    content(0) match { case ChatMessageContent.TextContent(t) => assertEquals(t, "hello"); case o => fail(s"expected TextContent, got $o") }
+    content(1) match { case ChatMessageContent.ImageContent(mt, url, data) => assertEquals(mt, "image/png"); assertEquals(url, Some("https://x/y.png")); assert(data.isEmpty); case o => fail(s"expected ImageContent(url), got $o") }
+    content(2) match { case ChatMessageContent.ImageContent(mt, url, data) => assertEquals(mt, "image/png"); assert(url.isEmpty); assert(data.isDefined); case o => fail(s"expected ImageContent(raw), got $o") }
+    content(3) match { case ChatMessageContent.PdfFileContent(url, _, _, _, _) => assertEquals(url, Some("https://x/d.pdf")); case o => fail(s"expected PdfFileContent, got $o") }
+    content(4) match { case ChatMessageContent.TextContent(t) => assert(t.contains("\"k\"")); case o => fail(s"expected TextContent(json), got $o") }
+  }
+
+  test("buildAgentInput produces one user message with the mapped parts") {
+    val msg = A2AMessage("m", A2ARole.User, Seq(A2APart.ofText("a"), A2APart(url = Some("https://x/y.png"), mediaType = Some("image/png"))))
+    val input = A2ASupportServer.buildAgentInput(msg)
+    assertEquals(input.messages.size, 1)
+    assertEquals(input.messages.head.role, "user")
+    assertEquals(input.messages.head.contentParts.size, 2)
+  }
+
+  test("buildAgentInput falls back to textContent when no mappable parts") {
+    val msg = A2AMessage("m", A2ARole.User, Seq(A2APart.ofText("just text")))
+    val input = A2ASupportServer.buildAgentInput(msg)
+    input.messages.head.contentParts.head match {
+      case ChatMessageContent.TextContent(t) => assertEquals(t, "just text")
+      case o => fail(s"expected TextContent, got $o")
+    }
+  }
+
+  test("artifactUpdate stream event encapsulates by member without kind") {
+    val ev = TaskArtifactUpdateEvent("t", "c", Artifact("art-1", Seq(A2APart.ofText("chunk"))), append = true, lastChunk = false)
+    val result = StreamResponse.OfArtifactUpdate(ev).resultJson
+    assert(result.keys.contains("artifactUpdate"))
+    assert(!result.keys.contains("kind"))
+    assertEquals((result \ "artifactUpdate" \ "append").as[Boolean], true)
+    assertEquals((result \ "artifactUpdate" \ "artifact" \ "parts").as[JsArray].value.size, 1)
+    // round-trips back through fromResult
+    StreamResponse.fromResult(result) match {
+      case Some(StreamResponse.OfArtifactUpdate(e)) => assertEquals(e.taskId, "t"); assert(e.append)
+      case other => fail(s"expected OfArtifactUpdate, got $other")
+    }
   }
 
   test("A2AServer entity JSON round-trips") {
