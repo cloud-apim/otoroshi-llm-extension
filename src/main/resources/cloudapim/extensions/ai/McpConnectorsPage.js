@@ -288,17 +288,15 @@ class McpConnectorsPage extends Component {
   ];
 
   commonFlowTail = [
+    '<<< Flags',
     'strict', 'forward_auth', 'audit_events',
-    '---',
+    '>>> Filters',
     'include_functions', 'exclude_functions',
-    '---',
     'include_resources', 'exclude_resources',
-    '---',
     'include_resource_templates', 'exclude_resource_templates',
     'include_resource_template_uris', 'exclude_resource_template_uris',
-    '---',
     'include_prompts', 'exclude_prompts',
-    '---',
+    '>>> Rules',
     'allow_rules', 'disallow_rules',
   ];
 
