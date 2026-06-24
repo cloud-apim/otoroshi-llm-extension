@@ -72,13 +72,14 @@ Two plugins serve the registry — mount them on a route on your gateway. The ca
 
 Serves the standard registry REST API. Put it on a route matching your registry base path (e.g. `/v0/servers`):
 
-- `GET /v0/servers` — the listing:
+- `GET /v0/servers` — the listing, cursor-paginated:
   ```json
   {
     "servers": [ { "name": "io.acme/github", "version": "1.0.0", "...": "..." } ],
     "metadata": { "count": 1 }
   }
   ```
+  Pages hold up to **200 servers by default** — plenty for a curated catalogue, so most deployments get everything in one call. Pass `?limit=` to change the page size. When more servers remain, the response carries a `metadata.next_cursor`; fetch the next page with `?cursor=<value>`. It's standard cursor pagination, so registry-aware clients walk the whole catalogue automatically.
 - `GET /v0/servers/{name}` — a single server by its (possibly namespaced) name, e.g. `GET /v0/servers/io.acme/github`. Returns the `server.json`, or `404` if it is unknown or not published.
 
 ### `Cloud APIM - MCP Registry discovery (.well-known)`
