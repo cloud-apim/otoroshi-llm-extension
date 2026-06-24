@@ -41,6 +41,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val videoModelsDataStore: VideoModelsDataStore = new KvVideoModelsDataStore(extensionId, env.datastores.redis, env)
   val persistentMemoriesDataStore: PersistentMemoryDataStore = new KvPersistentMemoryDataStore(extensionId, env.datastores.redis, env)
   val budgetsDataStore: AiBudgetsDataStore = new KvAiBudgetsDataStore(extensionId, env.datastores.redis, env)
+  val a2aServersDatastore: A2AServersDataStore = new KvA2AServersDataStore(extensionId, env.datastores.redis, env)
 }
 
 class AiGatewayExtensionState(env: Env) {
@@ -123,6 +124,16 @@ class AiGatewayExtensionState(env: Env) {
 
   def updateMcpConnectors(values: Seq[McpConnector]): Unit = {
     _mcpConnectors.addAll(values.map(v => (v.id, v))).remAll(_mcpConnectors.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _a2aServers = new UnboundedTrieMap[String, A2AServer]()
+
+  def a2aServer(id: String): Option[A2AServer] = _a2aServers.get(id)
+
+  def allA2AServers(): Seq[A2AServer] = _a2aServers.values.toSeq
+
+  def updateA2AServers(values: Seq[A2AServer]): Unit = {
+    _a2aServers.addAll(values.map(v => (v.id, v))).remAll(_a2aServers.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _mcpVirtualServers = new UnboundedTrieMap[String, McpVirtualServer]()
@@ -271,6 +282,7 @@ class AiExtension(val env: Env) extends AdminExtension {
 
   lazy val promptPageCode = getResourceCode("cloudapim/extensions/ai/PromptPage.js")
   lazy val mcpConnectorsPageCode = getResourceCode("cloudapim/extensions/ai/McpConnectorsPage.js")
+  lazy val a2aServersPageCode = getResourceCode("cloudapim/extensions/ai/A2AServersPage.js")
   lazy val mcpVirtualServersPageCode = getResourceCode("cloudapim/extensions/ai/McpVirtualServersPage.js")
   lazy val embeddingModelsPageCode = getResourceCode("cloudapim/extensions/ai/EmbeddingModelsPage.js")
   lazy val embeddingStoresPageCode = getResourceCode("cloudapim/extensions/ai/EmbeddingStoresPage.js")
@@ -960,6 +972,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    const canExecuteJlamaMsg = "${JlamaChatClient.errorMsg}";
             |
             |    ${mcpConnectorsPageCode}
+            |    ${a2aServersPageCode}
             |    ${mcpVirtualServersPageCode}
             |    ${embeddingModelsPageCode}
             |    ${embeddingStoresPageCode}
@@ -1111,6 +1124,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            icon: () => 'fa-brain',
             |          },
             |          {
+            |            title: 'A2A Servers',
+            |            description: 'All your A2A Servers',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/a2a-servers',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
             |            title: 'MCP Virtual Servers',
             |            description: 'All your MCP Virtual Servers',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1250,6 +1271,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          icon: () => 'fa-brain',
             |        },
             |        {
+            |          title: 'A2A Servers',
+            |          description: 'All your A2A Servers',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/a2a-servers',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
             |          title: 'MCP Virtual Servers',
             |          description: 'All your MCP Virtual Servers',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1372,6 +1401,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          icon: 'brain'
             |        },
             |        {
+            |          title: 'A2A Servers',
+            |          text: 'All your A2A Servers',
+            |          path: 'extensions/cloud-apim/ai-gateway/a2a-servers',
+            |          icon: 'brain'
+            |        },
+            |        {
             |          title: 'MCP Virtual Servers',
             |          text: 'All your MCP Virtual Servers',
             |          path: 'extensions/cloud-apim/ai-gateway/mcp-virtual-servers',
@@ -1490,6 +1525,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'MCP Connectors',
             |          value: 'mcp-connectors',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/a2a-servers`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'A2A Servers',
+            |          value: 'a2a-servers',
             |        },
             |        {
             |          action: () => {
@@ -1689,6 +1732,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          path: '/extensions/cloud-apim/ai-gateway/embedding-stores',
             |          component: (props) => {
             |            return React.createElement(EmbeddingStoresPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/a2a-servers/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(A2AServersPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/a2a-servers/:taction',
+            |          component: (props) => {
+            |            return React.createElement(A2AServersPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/a2a-servers',
+            |          component: (props) => {
+            |            return React.createElement(A2AServersPage, props, null)
             |          }
             |        },
             |        {
@@ -1901,6 +1962,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       videosModels <- datastores.videoModelsDataStore.findAllAndFillSecrets()
       persistentMemories <- datastores.persistentMemoriesDataStore.findAllAndFillSecrets()
       budgets <- datastores.budgetsDataStore.findAllAndFillSecrets()
+      a2aServers <- datastores.a2aServersDatastore.findAllAndFillSecrets()
     } yield {
       states.updateProviders(providers)
       states.updateTemplates(templates)
@@ -1919,6 +1981,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateVideoModels(videosModels)
       states.updatePersistentMemories(persistentMemories)
       states.updateBudgets(budgets)
+      states.updateA2AServers(a2aServers)
       Future {
         McpSupport.restartConnectorsIfNeeded()
         McpSupport.stopConnectorsIfNeeded()
@@ -1946,6 +2009,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(VideoModel.resource(env, datastores, states)),
       AdminExtensionEntity(PersistentMemory.resource(env, datastores, states)),
       AdminExtensionEntity(AiBudget.resource(env, datastores, states)),
+      AdminExtensionEntity(A2AServer.resource(env, datastores, states)),
     )
   }
 }
