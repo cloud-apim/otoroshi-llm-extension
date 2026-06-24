@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatMessageContent
 import com.cloud.apim.otoroshi.extensions.aigateway.a2a._
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{A2AServer, A2AServerBackend, A2AServerCard, A2ASkillConfig}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{A2AConnector, A2AConnectorAuth, A2AServer, A2AServerBackend, A2AServerCard, A2ASkillConfig, AnthropicApiResponseChoiceMessageToolCall, GenericApiResponseChoiceMessageToolCall}
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.A2ASupportServer
 import play.api.libs.json._
 
@@ -167,6 +167,63 @@ class A2ASuite extends munit.FunSuite {
       case Some(StreamResponse.OfArtifactUpdate(e)) => assertEquals(e.taskId, "t"); assert(e.append)
       case other => fail(s"expected OfArtifactUpdate, got $other")
     }
+  }
+
+  test("A2A tool-call is classified by the a2a___ prefix (idx + skill id)") {
+    val tc = GenericApiResponseChoiceMessageToolCall(Json.obj("id" -> "c1", "function" -> Json.obj("name" -> "a2a___2___route-optimizer", "arguments" -> Json.obj("message" -> "hi"))))
+    assert(tc.isA2A)
+    assert(!tc.isMcp && !tc.isWasm && !tc.isSearchEngine)
+    assertEquals(tc.function.a2aConnectorId, 2)
+    assertEquals(tc.function.a2aFunctionName, "route-optimizer")
+  }
+
+  test("A2A skill id containing ___ is preserved in a2aFunctionName") {
+    val tc = GenericApiResponseChoiceMessageToolCall(Json.obj("function" -> Json.obj("name" -> "a2a___0___weird___skill")))
+    assertEquals(tc.function.a2aConnectorId, 0)
+    assertEquals(tc.function.a2aFunctionName, "weird___skill")
+  }
+
+  test("Anthropic A2A tool-call classification") {
+    val tc = AnthropicApiResponseChoiceMessageToolCall(Json.obj("id" -> "t1", "name" -> "a2a___1___math", "input" -> Json.obj("message" -> "2+2")))
+    assert(tc.isA2A)
+    assertEquals(tc.a2aConnectorId, 1)
+    assertEquals(tc.a2aFunctionName, "math")
+    assertEquals(tc.arguments, Json.stringify(Json.obj("message" -> "2+2")))
+  }
+
+  test("mcp___ tool-call is NOT classified as A2A") {
+    val tc = GenericApiResponseChoiceMessageToolCall(Json.obj("function" -> Json.obj("name" -> "mcp___0___do_thing")))
+    assert(tc.isMcp)
+    assert(!tc.isA2A)
+  }
+
+  test("A2AConnectorAuth.toHeaders builds the right headers per kind") {
+    assertEquals(A2AConnectorAuth(kind = "bearer", token = Some("sk-1")).toHeaders, Seq("Authorization" -> "Bearer sk-1"))
+    assertEquals(A2AConnectorAuth(kind = "apikey", headerName = Some("X-Api-Key"), value = Some("v")).toHeaders, Seq("X-Api-Key" -> "v"))
+    assertEquals(A2AConnectorAuth(kind = "custom_headers", headers = Map("H" -> "V")).toHeaders, Seq("H" -> "V"))
+    assertEquals(A2AConnectorAuth(kind = "none").toHeaders, Seq.empty)
+    val basic = A2AConnectorAuth(kind = "basic", username = Some("u"), password = Some("p")).toHeaders
+    assertEquals(basic.head._1, "Authorization")
+    assert(basic.head._2.startsWith("Basic "))
+  }
+
+  test("A2AConnector entity JSON round-trips (auth + tls + paths)") {
+    val conn = A2AConnector(
+      id = "a2a-connector_test",
+      name = "Remote planner",
+      description = "d",
+      url = "https://remote.example.com",
+      authentication = A2AConnectorAuth(kind = "bearer", token = Some("sk-xxx")),
+      skillsFilter = Seq("plan"),
+    )
+    val back = A2AConnector.format.reads(conn.json).get
+    assertEquals(back.id, "a2a-connector_test")
+    assertEquals(back.url, "https://remote.example.com")
+    assertEquals(back.agentCardPath, "/.well-known/agent-card.json")
+    assertEquals(back.agentCardFallbackPath, "/.well-known/agent.json")
+    assertEquals(back.authentication.kind, "bearer")
+    assertEquals(back.authentication.token, Some("sk-xxx"))
+    assertEquals(back.skillsFilter, Seq("plan"))
   }
 
   test("A2AServer entity JSON round-trips") {
