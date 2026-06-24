@@ -201,6 +201,7 @@ case class AgentConfig(
   modelOptions: Option[JsObject] = None,
   tools: Seq[String] = Seq.empty,
   mcpConnectors: Seq[String],
+  a2aConnectors: Seq[String] = Seq.empty,
   searchEngines: Seq[String] = Seq.empty,
   inlineTools: Seq[InlineFunction] = Seq.empty,
   handoffs: Seq[Handoff] = Seq.empty,
@@ -252,6 +253,7 @@ object AgentConfig {
           tool.select("mcp_ref").asString
         }
       }.getOrElse(Seq.empty),
+      a2aConnectors = json.select("a2a_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       searchEngines = json.select("search_engines").asOpt[Seq[String]].getOrElse(Seq.empty),
       inlineTools = json.select("inline_tools").asOpt[Seq[JsObject]].map { seq =>
         seq.filterNot(_.select("mcp_ref").isDefined).map { tool =>
@@ -395,6 +397,7 @@ class AgentRunner(env: Env) {
               .applyOnWithOpt(agent.model.orElse(rcfg.model)) { case (obj, model) => obj ++ Json.obj("model" -> model) }
               .applyOnIf(additionToolFunctions.nonEmpty) { obj => obj ++ Json.obj("tool_functions" -> additionToolFunctions) }
               .applyOnIf(agent.mcpConnectors.nonEmpty) { obj => obj ++ Json.obj("mcp_connectors" -> agent.mcpConnectors) }
+              .applyOnIf(agent.a2aConnectors.nonEmpty) { obj => obj ++ Json.obj("a2a_connectors" -> agent.a2aConnectors) }
               .applyOnIf(agent.searchEngines.nonEmpty) { obj => obj ++ Json.obj("search_engines" -> agent.searchEngines) }
             val finalInlineFunctions = attrs.get(InlineFunctions.InlineFunctionsKey).getOrElse(Map.empty) ++ inlineFunctions
             attrs.put(
@@ -466,6 +469,9 @@ class AgentRunner(env: Env) {
                 }
                 .applyOnIf(agent.mcpConnectors.nonEmpty && agent.handoffs.isEmpty) { obj =>
                   obj ++ Json.obj("mcp_connectors" -> agent.mcpConnectors)
+                }
+                .applyOnIf(agent.a2aConnectors.nonEmpty && agent.handoffs.isEmpty) { obj =>
+                  obj ++ Json.obj("a2a_connectors" -> agent.a2aConnectors)
                 }
                 .applyOnIf(agent.searchEngines.nonEmpty && agent.handoffs.isEmpty) { obj =>
                   obj ++ Json.obj("search_engines" -> agent.searchEngines)
