@@ -226,6 +226,47 @@ class A2ASuite extends munit.FunSuite {
     assertEquals(back.skillsFilter, Seq("plan"))
   }
 
+  test("A2APushConfig round-trips and AuthenticationInfo builds an Authorization header") {
+    val cfg = A2APushConfig(id = "p1", taskId = "t1", url = "https://hook.example.com", token = Some("tok"), authentication = Some(AuthenticationInfo("Bearer", Some("sek"))))
+    val back = A2APushConfig.from(cfg.json)
+    assertEquals(back.id, "p1")
+    assertEquals(back.taskId, "t1")
+    assertEquals(back.url, "https://hook.example.com")
+    assertEquals(back.token, Some("tok"))
+    assertEquals(back.authentication.flatMap(_.header), Some("Authorization" -> "Bearer sek"))
+  }
+
+  test("push webhook payload is a StreamResponse {task} (no kind)") {
+    val task = A2ATask("t", "c", TaskStatus(TaskState.Completed))
+    val payload = StreamResponse.OfTask(task).resultJson
+    assert(payload.keys.contains("task"))
+    assert(!payload.keys.contains("kind"))
+    assertEquals((payload \ "task" \ "id").as[String], "t")
+  }
+
+  test("A2AConnectorAuth oauth2_client_credentials round-trips") {
+    val auth = A2AConnectorAuth(kind = "oauth2_client_credentials", tokenUrl = Some("https://idp/token"), clientId = Some("cid"), clientSecret = Some("sec"), scope = Some("a2a"))
+    val back = A2AConnectorAuth.from(auth.json)
+    assertEquals(back.kind, "oauth2_client_credentials")
+    assertEquals(back.tokenUrl, Some("https://idp/token"))
+    assertEquals(back.clientId, Some("cid"))
+    assertEquals(back.clientSecret, Some("sec"))
+    assertEquals(back.scope, Some("a2a"))
+    // oauth2 yields no synchronous headers (resolved async)
+    assertEquals(back.toHeaders, Seq.empty)
+  }
+
+  test("tenant propagates to AgentInterface and round-trips on both entities") {
+    val server = A2AServer(id = "a2a-server_t", name = "srv", tenant = Some("acme"),
+      backend = A2AServerBackend(kind = "agent", agent = Some(Json.obj("name" -> "a", "instructions" -> Json.arr("x"), "provider" -> "p"))))
+    val card = server.toAgentCard("https://x/a2a").json.as[JsObject]
+    assertEquals((card \ "supportedInterfaces" \ 0 \ "tenant").as[String], "acme")
+    assertEquals(A2AServer.format.reads(server.json).get.tenant, Some("acme"))
+
+    val conn = A2AConnector(id = "a2a-connector_t", name = "c", url = "https://r", tenant = Some("acme"))
+    assertEquals(A2AConnector.format.reads(conn.json).get.tenant, Some("acme"))
+  }
+
   test("A2AServer entity JSON round-trips") {
     val server = A2AServer(
       id = "a2a-server_test",
