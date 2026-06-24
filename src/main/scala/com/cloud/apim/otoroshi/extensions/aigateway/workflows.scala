@@ -26,6 +26,7 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.generate_video", new GenerateVideoFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.tool_function_call", new CallToolFunctionFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.mcp_function_call", new CallMcpFunctionFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.call_a2a_agent", new CallA2aAgentFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.moderation_call", new ModerationCallFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.guardrail_call", new GuardrailCallFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_add", new VectorStoreAddFunction())
@@ -1002,6 +1003,54 @@ class CallMcpFunctionFunction extends WorkflowFunction {
           res.json.right
         }
       }
+    }
+  }
+}
+
+class CallA2aAgentFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.call_a2a_agent"
+  override def documentationDisplayName: String            = "Call A2A agent"
+  override def documentationIcon: String                   = "fas fa-robot"
+  override def documentationDescription: String            = "Calls a remote A2A agent (skill) through an A2A connector"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("connector", "message"),
+    "properties" -> Json.obj(
+      "connector" -> Json.obj("type" -> "string", "description" -> "The A2A connector id"),
+      "skill"     -> Json.obj("type" -> "string", "description" -> "The remote skill id (optional)"),
+      "message"   -> Json.obj("type" -> "string", "description" -> "The message to send to the remote agent")
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "connector" -> Json.obj(
+      "type" -> "select",
+      "description" -> "The A2A Connector",
+      "props" -> Json.obj(
+        "description" -> "The A2A Connector",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/a2a-connectors",
+        "optionsTransformer" -> Json.obj("label" -> "name", "value" -> "id"),
+      )
+    ),
+    "skill" -> Json.obj("type" -> "string", "props" -> Json.obj("description" -> "The remote skill id (optional)"), "label" -> "Skill"),
+    "message" -> Json.obj("type" -> "string", "props" -> Json.obj("description" -> "The message to send"), "label" -> "Message"),
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj("type" -> "string", "description" -> "The remote agent response"))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.call_a2a_agent",
+    "args" -> Json.obj("connector" -> "a2a-connector_xxx", "skill" -> "main", "message" -> "Plan a route from Paris to Lyon")
+  ))
+
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    val connectorId = args.select("connector").asString
+    val skill = args.select("skill").asOpt[String].getOrElse("")
+    val message = args.select("message").asOpt[String].orElse(args.select("message").asOpt[JsObject].map(_.stringify)).getOrElse("")
+    val extension = env.adminExtensions.extension[AiExtension].get
+    extension.states.a2aConnector(connectorId) match {
+      case None => WorkflowError(s"a2a connector not found", Some(Json.obj("connector_id" -> connectorId)), None).leftf
+      case Some(connector) => connector.call(skill, Json.obj("message" -> message).stringify, wfr.attrs).map(res => res.json.right)
     }
   }
 }
