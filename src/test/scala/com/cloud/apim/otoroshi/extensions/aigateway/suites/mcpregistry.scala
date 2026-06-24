@@ -139,6 +139,46 @@ class McpRegistrySuite extends munit.FunSuite {
     assert(McpRegistry.findByName(Seq(a, b), "io.acme/zzz").isEmpty)
   }
 
+  // ── server selection (different registries expose different subsets) ─────────────────────────────────────
+
+  private def pubVs(id: String, name: String, tenant: String = "default", tags: Seq[String] = Seq.empty): McpVirtualServer =
+    McpVirtualServer(
+      id = id, name = name, tags = tags,
+      location = otoroshi.models.EntityLocation(tenant = otoroshi.models.TenantId(tenant)),
+      registry = McpRegistryConfig(published = true),
+    )
+
+  test("select 'all' returns every published server (and only published ones)") {
+    val a = pubVs("a", "A")
+    val b = vs("b", "B", registry = McpRegistryConfig(published = false))
+    val got = McpRegistry.select(Seq(a, b), "all", Seq.empty, Seq.empty, None)
+    assertEquals(got.map(_.id), Seq("a"))
+  }
+
+  test("select 'refs' keeps only the listed server ids") {
+    val servers = Seq(pubVs("a", "A"), pubVs("b", "B"), pubVs("c", "C"))
+    assertEquals(McpRegistry.select(servers, "refs", Seq("a", "c"), Seq.empty, None).map(_.id), Seq("a", "c"))
+    assertEquals(McpRegistry.select(servers, "refs", Seq.empty, Seq.empty, None), Seq.empty)
+  }
+
+  test("select 'tags' keeps servers carrying any of the listed tags") {
+    val servers = Seq(pubVs("a", "A", tags = Seq("prod")), pubVs("b", "B", tags = Seq("dev")), pubVs("c", "C", tags = Seq("prod", "x")))
+    assertEquals(McpRegistry.select(servers, "tags", Seq.empty, Seq("prod"), None).map(_.id), Seq("a", "c"))
+  }
+
+  test("select 'tenant' keeps servers in the route's tenant") {
+    val servers = Seq(pubVs("a", "A", tenant = "team-x"), pubVs("b", "B", tenant = "team-y"), pubVs("c", "C", tenant = "team-x"))
+    assertEquals(McpRegistry.select(servers, "tenant", Seq.empty, Seq.empty, Some("team-x")).map(_.id), Seq("a", "c"))
+    // no route tenant => no tenant restriction
+    assertEquals(McpRegistry.select(servers, "tenant", Seq.empty, Seq.empty, None).map(_.id), Seq("a", "b", "c"))
+  }
+
+  test("McpRegistryApiConfig round-trips the selector") {
+    val cfg = otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpRegistryApiConfig(
+      basePath = "/v0", selectorMode = "tags", selectorRefs = Seq("x"), selectorTags = Seq("prod", "eu"))
+    assertEquals(otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpRegistryApiConfig.format.reads(cfg.json).get, cfg)
+  }
+
   test("slugifyName produces a reverse-DNS name and never an empty slug") {
     assertEquals(McpRegistry.slugifyName("Hello World"), "io.cloud-apim/hello-world")
     assertEquals(McpRegistry.slugifyName("a__b--c"), "io.cloud-apim/a-b-c")
