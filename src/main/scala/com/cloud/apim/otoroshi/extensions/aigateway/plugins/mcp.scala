@@ -2716,13 +2716,26 @@ object McpRegistry {
   private def published(servers: Seq[McpVirtualServer]): Seq[McpVirtualServer] =
     servers.filter(s => s.enabled && s.registry.published)
 
-  // `GET /v0/servers` body: the published servers wrapped with a cursor-less metadata block.
-  def listing(servers: Seq[McpVirtualServer]): JsObject = {
+  // generous default so a governed (curated) catalogue fits in one page; `?limit=` can lower it, capped.
+  val defaultPageSize = 200
+  val maxPageSize = 1000
+
+  // opaque cursor = base64url(offset). Anything unreadable is treated as the first page.
+  def encodeCursor(offset: Int): String =
+    java.util.Base64.getUrlEncoder.withoutPadding.encodeToString(offset.toString.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+  def decodeCursor(cursor: String): Option[Int] =
+    Try(new String(java.util.Base64.getUrlDecoder.decode(cursor), java.nio.charset.StandardCharsets.UTF_8).trim.toInt).toOption.filter(_ >= 0)
+
+  // `GET /v0/servers` body: one page of published servers + cursor metadata. `metadata.count` is the size of
+  // THIS page; `metadata.next_cursor` is present only when more servers remain (its absence = last page).
+  def listing(servers: Seq[McpVirtualServer], cursor: Option[String] = None, limit: Option[Int] = None): JsObject = {
     val pub = published(servers)
-    Json.obj(
-      "servers" -> JsArray(pub.map(serverJson)),
-      "metadata" -> Json.obj("count" -> pub.size),
-    )
+    val size = limit.map(l => math.max(1, math.min(l, maxPageSize))).getOrElse(defaultPageSize)
+    val offset = cursor.flatMap(decodeCursor).getOrElse(0)
+    val page = pub.slice(offset, offset + size)
+    val nextOffset = offset + page.size
+    val metadata = Json.obj("count" -> page.size) ++ (if (nextOffset < pub.size) Json.obj("next_cursor" -> encodeCursor(nextOffset)) else Json.obj())
+    Json.obj("servers" -> JsArray(page.map(serverJson)), "metadata" -> metadata)
   }
 
   // `GET /v0/servers/{name}` body, by the (possibly namespaced) registry name.
@@ -2833,7 +2846,10 @@ class McpRegistryApi extends NgBackendCall {
     val i = path.lastIndexOf(marker)
     val rest = (if (i < 0) "" else path.substring(i + marker.length)).stripSuffix("/")
     val result = rest match {
-      case "" => Results.Ok(McpRegistry.listing(servers)).as("application/json")
+      case "" =>
+        val cursor = ctx.rawRequest.getQueryString("cursor").filter(_.trim.nonEmpty)
+        val limit = ctx.rawRequest.getQueryString("limit").flatMap(s => Try(s.trim.toInt).toOption)
+        Results.Ok(McpRegistry.listing(servers, cursor, limit)).as("application/json")
       case s  =>
         val nm = java.net.URLDecoder.decode(s.stripPrefix("/"), "UTF-8")
         McpRegistry.findByName(servers, nm) match {
