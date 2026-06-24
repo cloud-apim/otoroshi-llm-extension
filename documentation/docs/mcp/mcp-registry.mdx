@@ -12,7 +12,7 @@ It is the difference between *"a pile of connection configs"* and *"a curated, a
 
 A registry is essentially **a list of [`server.json`](https://github.com/modelcontextprotocol/registry/blob/main/docs/reference/server-json/generic-server-json.md) documents**, one per MCP server. In Otoroshi a registry-server maps **1:1 to a virtual server**: the `server.json` is a *projection* of the virtual server. There is no separate entity — publication is a small block of metadata on the virtual server itself.
 
-The lifecycle is intentionally minimal: a server is either `published` (and optionally `deprecated`). Flipping `published` is your **approval gate**, gated by the usual Otoroshi role/RBAC — no extra workflow.
+Publishing is a single switch on the virtual server, governed by Otoroshi's roles/RBAC: a server appears in the catalogue when you flip `published`, and you can mark it `deprecated` without removing it. That switch **is** your approval gate — nothing reaches consumers until you say so.
 
 ## The `registry` block
 
@@ -66,7 +66,7 @@ So out of the box the discovery doc is served on **`/.well-known/mcp-registry`**
 
 ## Exposing the registry — two plugins
 
-Both are standard `NgBackendCall` plugins; put them on routes on your gateway. They are **publish-only**: only enabled + `published` servers are listed.
+Two plugins serve the registry — mount them on a route on your gateway. The catalogue is governed end to end: only enabled, `published` servers are ever served, so your approval gate decides exactly what consumers can discover.
 
 ### `Cloud APIM - MCP Registry API`
 
@@ -94,8 +94,8 @@ Serves a small discovery document pointing clients at the registry API. Put it o
 }
 ```
 
-:::note
-The exact `.well-known` path/format for an MCP *registry* is not strongly standardized yet, so the document is kept minimal and the path is set on the route. We will align it if/when the spec firms up.
+:::tip
+The discovery path is configurable on the route, so you can serve it wherever your clients expect to find it.
 :::
 
 ## End-to-end flow
