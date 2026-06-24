@@ -493,8 +493,11 @@ case class GenericApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
   lazy val isMcp: Boolean = raw_name.startsWith("mcp___")
   lazy val isSearchEngine: Boolean = raw_name.startsWith("search___")
   lazy val searchEngineId: String = if (isSearchEngine) raw_name.stripPrefix("search___") else name
+  lazy val isA2A: Boolean = raw_name.startsWith("a2a___")
   lazy val connectorId: Int = if (isMcp) raw_name.split("___")(1).toInt else 0
   lazy val connectorFunctionName: String = if (isMcp) raw_name.split("___")(2) else name
+  lazy val a2aConnectorId: Int = if (isA2A) scala.util.Try(raw_name.split("___")(1).toInt).getOrElse(0) else 0
+  lazy val a2aFunctionName: String = if (isA2A) raw_name.split("___").drop(2).mkString("___") else name
   lazy val arguments: String = {
     raw.select("arguments").asValue match {
       case JsString(str) => str
@@ -511,6 +514,7 @@ case class GenericApiResponseChoiceMessageToolCall(raw: JsObject) {
   lazy val isWasm: Boolean = function.isWasm
   lazy val isMcp: Boolean = function.isMcp
   lazy val isSearchEngine: Boolean = function.isSearchEngine
+  lazy val isA2A: Boolean = function.isA2A
 }
 
 case class AnthropicApiResponseChoiceMessageToolCall(raw: JsObject) {
@@ -522,8 +526,11 @@ case class AnthropicApiResponseChoiceMessageToolCall(raw: JsObject) {
   lazy val isMcp: Boolean = raw_name.startsWith("mcp___")
   lazy val isSearchEngine: Boolean = raw_name.startsWith("search___")
   lazy val searchEngineId: String = if (isSearchEngine) raw_name.stripPrefix("search___") else name
+  lazy val isA2A: Boolean = raw_name.startsWith("a2a___")
   lazy val connectorId: Int = if (isMcp) raw_name.split("___")(1).toInt else 0
   lazy val connectorFunctionName: String = if (isMcp) raw_name.split("___")(2) else name
+  lazy val a2aConnectorId: Int = if (isA2A) scala.util.Try(raw_name.split("___")(1).toInt).getOrElse(0) else 0
+  lazy val a2aFunctionName: String = if (isA2A) raw_name.split("___").drop(2).mkString("___") else name
   lazy val input: JsObject = raw.select("input").asObject
   lazy val arguments: String = {
     raw.select("input").asValue match {
