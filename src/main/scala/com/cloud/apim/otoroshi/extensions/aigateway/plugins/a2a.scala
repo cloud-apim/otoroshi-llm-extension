@@ -1,10 +1,12 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import akka.stream.Materializer
+import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.a2a._
-import com.cloud.apim.otoroshi.extensions.aigateway.agents.{AgentConfig, AgentRunConfig}
+import com.cloud.apim.otoroshi.extensions.aigateway.agents.{AgentConfig, AgentInput, AgentRunConfig}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.A2AServer
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessageContent, ChatResponseChunk, InputChatMessage}
 import otoroshi.env.Env
 import otoroshi.next.models.{NgPluginInstance, NgPluginInstanceConfig}
 import otoroshi.next.plugins.api._
@@ -69,8 +71,33 @@ object A2ASupportServer {
   def server(ref: String)(implicit env: Env): Option[A2AServer] =
     env.adminExtensions.extension[AiExtension].flatMap(_.states.a2aServer(ref))
 
-  // execute the configured backend (inline agent or workflow ref) for a textual input
-  def executeBackend(srv: A2AServer, text: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[JsValue, String]] = {
+  // map A2A message parts (v1.0 unified part: text|url|raw|data + mediaType) to the extension's chat content parts
+  def partsToContent(parts: Seq[A2APart]): Seq[ChatMessageContent] = parts.flatMap { p =>
+    if (p.text.isDefined) Some(ChatMessageContent.TextContent(p.text.get))
+    else if (p.data.isDefined) Some(ChatMessageContent.TextContent(Json.stringify(p.data.get)))
+    else if (p.url.isDefined || p.raw.isDefined) {
+      val mt = p.mediaType.getOrElse("application/octet-stream")
+      val url = p.url
+      val data = p.raw.map(_.byteString.decodeBase64)
+      val content: ChatMessageContent =
+        if (mt.startsWith("image/")) ChatMessageContent.ImageContent(mt, url, data)
+        else if (mt.startsWith("audio/")) ChatMessageContent.AudioContent(mt, url, data)
+        else if (mt.startsWith("video/")) ChatMessageContent.VideoContent(mt, url, data)
+        else if (mt == "application/pdf") ChatMessageContent.PdfFileContent(url, data, None, None, None)
+        else ChatMessageContent.TextFileContent(url, data, None, None, None)
+      Some(content)
+    } else None
+  }
+
+  def buildAgentInput(message: A2AMessage): AgentInput = {
+    val parts = partsToContent(message.parts)
+    val finalParts = if (parts.isEmpty) Seq(ChatMessageContent.TextContent(message.textContent)) else parts
+    AgentInput(Seq(InputChatMessage("user", finalParts, None, None, Json.obj())))
+  }
+
+  // execute the configured backend (inline agent or workflow ref) for an A2A message, return the textual result
+  def executeBackend(srv: A2AServer, message: A2AMessage, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[JsValue, String]] = {
+    val text = message.textContent
     srv.backend.kind.toLowerCase match {
       case "agent" =>
         srv.backend.agent match {
@@ -78,7 +105,7 @@ object A2ASupportServer {
           case Some(agentJson) =>
             Try(AgentConfig.from(agentJson)) match {
               case Failure(e) => Json.obj("error" -> s"invalid agent config: ${e.getMessage}").leftf
-              case Success(agent) => agent.runStr(text, AgentRunConfig(), attrs, None)(env)
+              case Success(agent) => agent.run(buildAgentInput(message), AgentRunConfig(), attrs, None)(env).map(_.map(_.wholeTextContent))
             }
         }
       case "workflow" =>
@@ -108,6 +135,23 @@ object A2ASupportServer {
             }
         }
       case other => Json.obj("error" -> s"unknown backend kind: $other").leftf
+    }
+  }
+
+  // streaming variant for the inline-agent backend; returns Left for backends/agents that can't stream token-by-token
+  // (workflow, handoffs, built-in tools) so the caller falls back to a blocking single-artifact emission.
+  def streamBackend(srv: A2AServer, message: A2AMessage, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    srv.backend.kind.toLowerCase match {
+      case "agent" =>
+        srv.backend.agent match {
+          case None => Json.obj("error" -> "no inline agent configured").leftf
+          case Some(agentJson) =>
+            Try(AgentConfig.from(agentJson)) match {
+              case Failure(e) => Json.obj("error" -> s"invalid agent config: ${e.getMessage}").leftf
+              case Success(agent) => agent.stream(buildAgentInput(message), AgentRunConfig(), attrs, None)(env)
+            }
+        }
+      case _ => Json.obj("error" -> "backend not streamable").leftf
     }
   }
 }
@@ -182,9 +226,9 @@ class A2AServerPlugin extends NgBackendCall {
                 val id: JsValue = (json \ "id").toOption.getOrElse(JsNull)
                 rpcMethod match {
                   case "SendMessage"          => handleSendMessage(id, json, srv, ctx)
+                  case "SendStreamingMessage" => handleSendStreamingMessage(id, json, srv, ctx)
                   case "GetTask"              => handleGetTask(id, json)
-                  case "SendStreamingMessage" => rpcErr(id, A2AErrors.UnsupportedOperation, "streaming not implemented yet (phase 2)")
-                  case "CancelTask"           => rpcErr(id, A2AErrors.UnsupportedOperation, "CancelTask not implemented yet (phase 2)")
+                  case "CancelTask"           => handleCancelTask(id, json)
                   case "ListTasks"            => rpcErr(id, A2AErrors.UnsupportedOperation, "ListTasks not implemented yet (phase 4)")
                   case other                  => rpcErr(id, A2AErrors.MethodNotFound, s"method not found: $other")
                 }
@@ -207,7 +251,7 @@ class A2AServerPlugin extends NgBackendCall {
           val store = new A2ATaskStore(env)
           val contextId = message.contextId.getOrElse(A2A.newId("ctx"))
           val taskId = A2A.newId("task")
-          A2ASupportServer.executeBackend(srv, text, ctx.attrs).flatMap {
+          A2ASupportServer.executeBackend(srv, message, ctx.attrs).flatMap {
             case Right(responseText) =>
               val agentMsg = A2AMessage.agentText(responseText, Some(contextId), Some(taskId))
               val task = A2ATask(
@@ -242,6 +286,89 @@ class A2AServerPlugin extends NgBackendCall {
         case None => rpcErr(id, A2AErrors.TaskNotFound, "task not found", Some(A2AErrors.errorInfo("TASK_NOT_FOUND", Json.obj("taskId" -> taskId))))
         case Some(task) => rpcOk(id, Json.obj("task" -> task.json))
       }
+    }
+  }
+
+  private def handleCancelTask(id: JsValue, json: JsValue)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val taskId = json.at("params.id").asOpt[String].getOrElse("")
+    if (taskId.isEmpty) {
+      rpcErr(id, A2AErrors.InvalidParams, "missing 'id' param")
+    } else {
+      val store = new A2ATaskStore(env)
+      store.get(taskId).flatMap {
+        case None => rpcErr(id, A2AErrors.TaskNotFound, "task not found", Some(A2AErrors.errorInfo("TASK_NOT_FOUND", Json.obj("taskId" -> taskId))))
+        case Some(task) if task.status.state.isTerminal =>
+          rpcErr(id, A2AErrors.TaskNotCancelable, "task is in a terminal state", Some(A2AErrors.errorInfo("TASK_NOT_CANCELABLE", Json.obj("taskId" -> taskId, "state" -> task.status.state.wire))))
+        case Some(task) =>
+          val canceled = task.copy(status = TaskStatus(TaskState.Canceled, task.status.message, Some(A2A.nowTimestamp())))
+          store.put(canceled).flatMap(_ => rpcOk(id, Json.obj("task" -> canceled.json)))
+      }
+    }
+  }
+
+  // one SSE `data:` line wrapping a JSON-RPC response whose result is a StreamResponse (encapsulated by member)
+  private def sse(id: JsValue, sr: StreamResponse): ByteString = s"data: ${A2AJsonRpc.ok(id, sr.resultJson).stringify}\n\n".byteString
+
+  private def handleSendStreamingMessage(id: JsValue, json: JsValue, srv: A2AServer, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val params = json.select("params").asOpt[JsObject].getOrElse(Json.obj())
+    val msgJson = params.select("message").asOpt[JsValue].getOrElse(Json.obj())
+    A2AMessage.format.reads(msgJson).asOpt match {
+      case None => rpcErr(id, A2AErrors.InvalidParams, "missing or invalid 'message' param")
+      case Some(message) if message.textContent.trim.isEmpty && message.parts.isEmpty =>
+        rpcErr(id, A2AErrors.InvalidParams, "empty message content")
+      case Some(message) =>
+        val store = new A2ATaskStore(env)
+        val contextId = message.contextId.getOrElse(A2A.newId("ctx"))
+        val taskId = A2A.newId("task")
+        val artifactId = A2A.newId("art")
+        def chunked(source: Source[ByteString, _]): BackendCallResponse =
+          BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(source).as("text/event-stream")), None)
+        val workingEvt = sse(id, StreamResponse.OfStatusUpdate(TaskStatusUpdateEvent(taskId, contextId, TaskStatus(TaskState.Working))))
+        val completedEvt = sse(id, StreamResponse.OfStatusUpdate(TaskStatusUpdateEvent(taskId, contextId, TaskStatus(TaskState.Completed))))
+        A2ASupportServer.streamBackend(srv, message, ctx.attrs).flatMap {
+          case Right(chunkSource) =>
+            // mark the task working, then stream deltas; persist the completed task when the stream finishes
+            store.put(A2ATask(taskId, contextId, TaskStatus(TaskState.Working, None, Some(A2A.nowTimestamp())), history = Seq(message))).map { _ =>
+              val acc = new StringBuilder()
+              val deltas: Source[ByteString, _] = chunkSource
+                .map(chunk => chunk.choices.headOption.flatMap(_.delta.content).getOrElse(""))
+                .filter(_.nonEmpty)
+                .map { txt =>
+                  acc.append(txt)
+                  sse(id, StreamResponse.OfArtifactUpdate(TaskArtifactUpdateEvent(taskId, contextId, Artifact(artifactId, Seq(A2APart.ofText(txt))), append = true, lastChunk = false)))
+                }
+              val full = (Source.single(workingEvt) ++ deltas ++ Source.single(completedEvt)).watchTermination() { (m, done) =>
+                done.onComplete { _ =>
+                  val agentMsg = A2AMessage.agentText(acc.toString, Some(contextId), Some(taskId))
+                  store.put(A2ATask(taskId, contextId, TaskStatus(TaskState.Completed, Some(agentMsg), Some(A2A.nowTimestamp())), history = Seq(message, agentMsg)))
+                }
+                m
+              }
+              Right(chunked(full))
+            }
+          case Left(_) =>
+            // fallback: run the backend in blocking mode and emit a single artifact + completed status
+            A2ASupportServer.executeBackend(srv, message, ctx.attrs).flatMap {
+              case Right(responseText) =>
+                val agentMsg = A2AMessage.agentText(responseText, Some(contextId), Some(taskId))
+                val task = A2ATask(taskId, contextId, TaskStatus(TaskState.Completed, Some(agentMsg), Some(A2A.nowTimestamp())), history = Seq(message, agentMsg))
+                store.put(task).map { _ =>
+                  val src = Source(List(
+                    workingEvt,
+                    sse(id, StreamResponse.OfArtifactUpdate(TaskArtifactUpdateEvent(taskId, contextId, Artifact(artifactId, Seq(A2APart.ofText(responseText))), append = false, lastChunk = true))),
+                    completedEvt,
+                  ))
+                  Right(chunked(src))
+                }
+              case Left(err) =>
+                val failMsg = A2AMessage.agentText(Json.stringify(err), Some(contextId), Some(taskId))
+                val task = A2ATask(taskId, contextId, TaskStatus(TaskState.Failed, Some(failMsg), Some(A2A.nowTimestamp())), history = Seq(message))
+                store.put(task).map { _ =>
+                  val src = Source.single(sse(id, StreamResponse.OfStatusUpdate(TaskStatusUpdateEvent(taskId, contextId, TaskStatus(TaskState.Failed, Some(failMsg))))))
+                  Right(chunked(src))
+                }
+            }
+        }
     }
   }
 }
