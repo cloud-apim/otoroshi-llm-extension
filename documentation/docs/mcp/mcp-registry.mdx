@@ -14,6 +14,19 @@ A registry is essentially **a list of [`server.json`](https://github.com/modelco
 
 Publishing is a single switch on the virtual server, governed by Otoroshi's roles/RBAC: a server appears in the catalogue when you flip `published`, and you can mark it `deprecated` without removing it. That switch **is** your approval gate — nothing reaches consumers until you say so.
 
+## Run several registries, each a curated slice
+
+A registry is just a route with the API plugin, so you can stand up as many as you like — each exposing a different, curated subset of your published servers. The **Expose** setting on the registry API (and the [preset](#one-click-setup--the-registry-preset)) decides what a given registry serves:
+
+| Mode | Serves |
+| --- | --- |
+| **All published servers** (default) | every published server |
+| **Selected servers (by ref)** | only the virtual servers you pick |
+| **By tag** | every published server carrying any of the chosen tags |
+| **Route's tenant** | every published server in the route's tenant |
+
+So one route can be your org-wide catalogue, another a `prod`-only registry by tag, and a per-team registry falls out naturally from multi-tenancy — the same servers, behind different governed front doors. Selection always composes with publication: a server still has to be `published` to appear anywhere.
+
 ## The `registry` block
 
 Configured on the [MCP Virtual Server](/docs/mcp/mcp-virtual-servers) entity (entity-level metadata, not a per-route override):
