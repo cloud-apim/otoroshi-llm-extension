@@ -330,6 +330,7 @@ object AnthropicChatClientOptions {
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
       wasmTools = json.select("wasm_tools").asOpt[Seq[String]].filter(_.nonEmpty).orElse(json.select("tool_functions").asOpt[Seq[String]]).getOrElse(Seq.empty),
       mcpConnectors = json.select("mcp_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
+      a2aConnectors = json.select("a2a_connectors").asOpt[Seq[String]].getOrElse(Seq.empty),
       searchEngines = json.select("search_engines").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
@@ -353,6 +354,7 @@ case class AnthropicChatClientOptions(
   allowConfigOverride: Boolean = true,
   wasmTools: Seq[String] = Seq.empty,
   mcpConnectors: Seq[String] = Seq.empty,
+  a2aConnectors: Seq[String] = Seq.empty,
   searchEngines: Seq[String] = Seq.empty,
   mcpIncludeFunctions: Seq[String] = Seq.empty,
   mcpExcludeFunctions: Seq[String] = Seq.empty,
@@ -375,6 +377,7 @@ case class AnthropicChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
     "tool_functions" -> JsArray(wasmTools.map(_.json)),
     "mcp_connectors" -> JsArray(mcpConnectors.map(_.json)),
+    "a2a_connectors" -> JsArray(a2aConnectors.map(_.json)),
     "search_engines" -> JsArray(searchEngines.map(_.json)),
     "mcp_include_functions" -> JsArray(mcpIncludeFunctions.map(_.json)),
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
@@ -391,7 +394,7 @@ case class AnthropicChatClientOptions(
     case (obj, p) => obj ++ Json.obj("top_p" -> p)
   }
 
-  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls"  - "wasm_tools" - "tool_functions" - "mcp_connectors" - "search_engines" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls"  - "wasm_tools" - "tool_functions" - "mcp_connectors" - "a2a_connectors" - "search_engines" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
 class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions, id: String) extends ChatClient {
@@ -446,7 +449,8 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
-    val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty || options.searchEngines.nonEmpty)) {
+    val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty || options.a2aConnectors.nonEmpty || options.searchEngines.nonEmpty)) {
+      attrs.put(com.cloud.apim.otoroshi.extensions.aigateway.entities.A2ASupport.A2AConnectorsKey -> options.a2aConnectors)
       val tools = LlmFunctions.toolsAnthropicWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
       api.callWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> messages, "system" -> systemMessages)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
@@ -506,7 +510,8 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
     val hasToolsInRequest = body.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
-    val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty || options.searchEngines.nonEmpty)) {
+    val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty || options.a2aConnectors.nonEmpty || options.searchEngines.nonEmpty)) {
+      attrs.put(com.cloud.apim.otoroshi.extensions.aigateway.entities.A2ASupport.A2AConnectorsKey -> options.a2aConnectors)
       val tools = LlmFunctions.toolsAnthropic(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
       api.streamWithToolSupport("POST", "/v1/messages", Some(mergedOptions ++ tools ++ Json.obj("messages" -> messages, "system" -> systemMessages)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
