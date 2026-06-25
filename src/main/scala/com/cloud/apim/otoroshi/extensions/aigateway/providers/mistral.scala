@@ -37,13 +37,21 @@ object MistralAiModels {
   val LARGE = "mistral-large-latest"
 }
 object MistralAiApi {
-  val baseUrl = "https://api.mistral.ai"
+  val baseUrl = "https://api.mistral.ai/v1"
 }
-class MistralAiApi(baseUrl: String = MistralAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[MistralAiApiResponse, OpenAiChatResponseChunk] {
+class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[MistralAiApiResponse, OpenAiChatResponseChunk] {
 
   val supportsTools: Boolean = true
   val supportsStreaming: Boolean = true
   override def supportsCompletion: Boolean = false
+
+  lazy val baseUrl: String = {
+    if (_baseUrl.startsWith("https://api.mistral.ai") && !_baseUrl.endsWith("/v1")) {
+      s"${_baseUrl}/v1"
+    } else {
+      _baseUrl
+    }
+  }
 
   def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
@@ -316,7 +324,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
   }
 
   override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
-    api.rawCall("GET", "/v1/models", None).map { resp =>
+    api.rawCall("GET", "/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
       } else {
@@ -336,14 +344,14 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
       attrs.put(com.cloud.apim.otoroshi.extensions.aigateway.entities.A2ASupport.A2AConnectorsKey -> options.a2aConnectors)
       val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.callWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
+      api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)), acc)
+      api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)), acc)
     }
     callF.map {
       case Left(err) => err.left
       case Right(resp) =>
-        //api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
+        //api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
@@ -395,12 +403,12 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
       attrs.put(com.cloud.apim.otoroshi.extensions.aigateway.entities.A2ASupport.A2AConnectorsKey -> options.a2aConnectors)
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.streamWithToolSupport("POST", "/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
+      api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.json)), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.stream("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)), acc)
+      api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json)), acc)
     }
     callF.map {
-    // api.stream("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
+    // api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
       case Left(err) => err.left
       case Right((source, resp)) =>
         source
@@ -472,11 +480,11 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
-    val callF = api.call("POST", "/v1/fim/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)), acc)
+    val callF = api.call("POST", "/fim/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)), acc)
     callF.map {
       case Left(err) => err.left
       case Right(resp) =>
-        //api.call("POST", "/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
+        //api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
@@ -531,7 +539,7 @@ class MistralAiEmbeddingModelClient(val api: MistralAiApi, val options: MistralA
 
   override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
-    api.rawCall("POST", "/v1/embeddings", (options.raw ++ Json.obj("input" -> opts.input, "model" -> finalModel)).some).map { resp =>
+    api.rawCall("POST", "/embeddings", (options.raw ++ Json.obj("input" -> opts.input, "model" -> finalModel)).some).map { resp =>
       if (resp.status == 200) {
         Right(EmbeddingResponse(
           model = finalModel,
@@ -567,7 +575,7 @@ class MistralAiModerationModelClient(val api: MistralAiApi, val options: Mistral
       "input" -> JsArray(opts.input.filter(_.isText).map(_.mistralJson)),
       "model" -> finalModel
     )
-    api.rawCall("POST", "/v1/moderations", body.some).map { resp =>
+    api.rawCall("POST", "/moderations", body.some).map { resp =>
       if (resp.status == 200) {
         val headers = resp.headers.mapValues(_.last)
         Right(ModerationResponse(
@@ -664,7 +672,7 @@ class MistralAIAudioModelClient(val api: MistralAiApi, val sttOptions: MistralAi
         )
       }
     val form = Multipart.FormData(parts: _*)
-    api.rawCallForm("POST", "/v1/audio/transcriptions", form).map { response =>
+    api.rawCallForm("POST", "/audio/transcriptions", form).map { response =>
       if (response.status == 200) {
         val body = response.json
         AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
@@ -716,7 +724,7 @@ class MistralOcrModelClient(val api: MistralAiApi, val options: MistralOcrModelC
         val body = Json.obj("model" -> model, "document" -> document).applyOnWithOpt(opts.pages) {
           case (obj, pages) => obj ++ Json.obj("pages" -> pages)
         }
-        api.rawCall("POST", "/v1/ocr", body.some).map { resp =>
+        api.rawCall("POST", "/ocr", body.some).map { resp =>
           if (resp.status == 200) {
             val j = resp.json
             val pages = j.select("pages").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { p =>
