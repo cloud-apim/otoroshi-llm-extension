@@ -46,7 +46,7 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
   override def supportsCompletion: Boolean = false
 
   lazy val baseUrl: String = {
-    if (_baseUrl.startsWith("https://api.mistral.ai") && !_baseUrl.endsWith("/v1")) {
+    if (_baseUrl.startsWith("https://api.mistral.ai") && !_baseUrl.startsWith("https://api.mistral.ai/v1")) {
       s"${_baseUrl}/v1"
     } else {
       _baseUrl
