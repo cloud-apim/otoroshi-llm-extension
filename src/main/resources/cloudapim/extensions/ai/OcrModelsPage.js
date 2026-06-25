@@ -185,7 +185,7 @@ class OcrModelsPage extends Component {
                 provider: 'mistral',
                 config: {
                   connection: {
-                    base_url: 'https://api.mistral.ai',
+                    base_url: 'https://api.mistral.ai/v1',
                     token: 'xxxxx',
                     timeout: 180000,
                   },
