@@ -1293,13 +1293,22 @@ object ModerationInput {
       .orElse(
         // ImageUrl
         obj.select("image_url").asOptString
-      ).orElse(
+      )
+      .orElse(
+        // ImageUrl
+        obj.select("image_url").select("url").asOptString
+      )
+      .orElse(
         // ChatMessage
         obj.select("content").asOptString
       )
       .orElse(
         // ImageURLChunk
         obj.select("content").select("image_url").asOptString
+      )
+      .orElse(
+        // ImageURLChunk
+        obj.select("content").select("image_url").select("url").asOptString
       )
       .orElse(
         // array<TextChunk>
