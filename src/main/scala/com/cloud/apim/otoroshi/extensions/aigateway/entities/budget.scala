@@ -49,6 +49,9 @@ object AiBudgetClusterAgent {
   val moderationUsdCounters = new TrieMap[String, DoubleAdder]()
   val moderationTokensCounters = new TrieMap[String, AtomicLong]()
 
+  val ocrUsdCounters = new TrieMap[String, DoubleAdder]()
+  val ocrPagesCounters = new TrieMap[String, AtomicLong]()
+
   private val schedulerRef = new AtomicReference[Cancellable]()
   private val counter = new AtomicInteger(0)
 
@@ -81,6 +84,8 @@ object AiBudgetClusterAgent {
     embeddingTokensCounters.clear()
     moderationUsdCounters.clear()
     moderationTokensCounters.clear()
+    ocrUsdCounters.clear()
+    ocrPagesCounters.clear()
   }
 
   private def otoroshiUrl(env: Env): String = {
@@ -112,6 +117,8 @@ object AiBudgetClusterAgent {
         "embedding_tokens" -> JsObject(embeddingTokensCounters.toMap.mapValues(_.get.json)),
         "moderation_usd" -> JsObject(moderationUsdCounters.toMap.mapValues(_.sum.json)),
         "moderation_tokens" -> JsObject(moderationTokensCounters.toMap.mapValues(_.get.json)),
+        "ocr_usd" -> JsObject(ocrUsdCounters.toMap.mapValues(_.sum.json)),
+        "ocr_pages" -> JsObject(ocrPagesCounters.toMap.mapValues(_.get.json)),
       )
       Retry
         .retry(
@@ -324,6 +331,9 @@ case class AiBudgetLimits(
 
   moderation_tokens: Option[Long],
   moderation_usd: Option[BigDecimal],
+
+  ocr_pages: Option[Long],
+  ocr_usd: Option[BigDecimal],
 ) {
   def json: JsValue = AiBudgetLimits.format.writes(this)
 }
@@ -345,6 +355,8 @@ object AiBudgetLimits {
       "embedding_usd" -> o.embedding_usd,
       "moderation_tokens" -> o.moderation_tokens,
       "moderation_usd" -> o.moderation_usd,
+      "ocr_pages" -> o.ocr_pages,
+      "ocr_usd" -> o.ocr_usd,
     )
     override def reads(json: JsValue): JsResult[AiBudgetLimits] = Try {
       AiBudgetLimits(
@@ -361,7 +373,9 @@ object AiBudgetLimits {
         embedding_tokens = (json \ "embedding_tokens").asOpt[Long].filter(_ > -1L),
         embedding_usd = (json \ "embedding_usd").asOpt[BigDecimal].filter(_ > -1L),
         moderation_tokens = (json \ "moderation_tokens").asOpt[Long].filter(_ > -1L),
-        moderation_usd = (json \ "moderation_usd").asOpt[BigDecimal].filter(_ > -1L)
+        moderation_usd = (json \ "moderation_usd").asOpt[BigDecimal].filter(_ > -1L),
+        ocr_pages = (json \ "ocr_pages").asOpt[Long].filter(_ > -1L),
+        ocr_usd = (json \ "ocr_usd").asOpt[BigDecimal].filter(_ > -1L)
       )
     } match {
       case Failure(ex) => JsError(ex.getMessage)
@@ -522,6 +536,8 @@ case class AiBudgetConsumptions(
   embeddingTokens: Long,
   moderationUsd: BigDecimal,
   moderationTokens: Long,
+  ocrUsd: BigDecimal,
+  ocrPages: Long,
 ) {
   def json: JsValue = Json.obj(
     "consumed_total_usd" -> totalUsd,
@@ -538,6 +554,8 @@ case class AiBudgetConsumptions(
     "consumed_embedding_tokens" -> embeddingTokens,
     "consumed_moderation_usd" -> moderationUsd,
     "consumed_moderation_tokens" -> moderationTokens,
+    "consumed_ocr_usd" -> ocrUsd,
+    "consumed_ocr_pages" -> ocrPages,
   )
   def jsonWithRemaining(budget: AiBudget): JsValue = json.asObject ++ Json.obj(
     "remaining_total_usd" -> JsNumber(budget.limits.total_usd.map(v => v - totalUsd).getOrElse(BigDecimal(0))),
@@ -554,6 +572,8 @@ case class AiBudgetConsumptions(
     "remaining_embedding_tokens" -> JsNumber(BigDecimal(budget.limits.embedding_tokens.map(_ - embeddingTokens).getOrElse(0L))),
     "remaining_moderation_usd" -> JsNumber(budget.limits.moderation_usd.map(_ - moderationUsd).getOrElse(BigDecimal(0))),
     "remaining_moderation_tokens" -> JsNumber(BigDecimal(budget.limits.moderation_tokens.map(_ - moderationTokens).getOrElse(0L))),
+    "remaining_ocr_usd" -> JsNumber(budget.limits.ocr_usd.map(_ - ocrUsd).getOrElse(BigDecimal(0))),
+    "remaining_ocr_pages" -> JsNumber(BigDecimal(budget.limits.ocr_pages.map(_ - ocrPages).getOrElse(0L))),
     "allowed_total_usd" -> budget.limits.total_usd,
     "allowed_total_tokens" -> budget.limits.total_tokens,
     "allowed_inference_usd" -> budget.limits.inference_usd,
@@ -568,6 +588,8 @@ case class AiBudgetConsumptions(
     "allowed_embedding_tokens" -> budget.limits.embedding_tokens,
     "allowed_moderation_usd" -> budget.limits.moderation_usd,
     "allowed_moderation_tokens" -> budget.limits.moderation_tokens,
+    "allowed_ocr_usd" -> budget.limits.ocr_usd,
+    "allowed_ocr_pages" -> budget.limits.ocr_pages,
   )
 }
 
@@ -656,6 +678,9 @@ case class AiBudget(
 
   def moderationUsdKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:moderation-usd"
   def moderationTokensKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:moderation-tokens"
+
+  def ocrUsdKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:ocr-usd"
+  def ocrPagesKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:ocr-pages"
 
   def incrTotalUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
@@ -755,6 +780,20 @@ case class AiBudget(
     env.datastores.rawDataStore.incrby(moderationTokensKey, by)
   }
 
+  def incrOcrUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.ocrUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
+    }
+    env.datastores.rawDataStore.incrby(ocrUsdKey, by.*(BigDecimal(1000000000)).toLong)
+  }
+
+  def incrOcrPages(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.ocrPagesCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
+    }
+    env.datastores.rawDataStore.incrby(ocrPagesKey, by)
+  }
+
   def getTotalUsd()(implicit ec: ExecutionContext, env: Env): Future[BigDecimal] = {
     env.datastores.rawDataStore.get(totalUsdKey).map(_.map { strValue =>
       val lngValue = strValue.utf8String.toLong
@@ -832,6 +871,17 @@ case class AiBudget(
     env.datastores.rawDataStore.get(moderationTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
   }
 
+  def getTotalOcrUsd()(implicit ec: ExecutionContext, env: Env): Future[BigDecimal] = {
+    env.datastores.rawDataStore.get(ocrUsdKey).map(_.map { strValue =>
+      val lngValue = strValue.utf8String.toLong
+      BigDecimal(lngValue)./(BigDecimal(1000000000))
+    }.getOrElse(0L))
+  }
+
+  def getTotalOcrPages()(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+    env.datastores.rawDataStore.get(ocrPagesKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
+  }
+
   def resetCurrentCycle()(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
     env.datastores.rawDataStore.keys(s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:*").flatMap { keys =>
       env.datastores.rawDataStore.del(keys).map { _ =>
@@ -863,7 +913,9 @@ case class AiBudget(
       embeddingUsdKey,
       embeddingTokensKey,
       moderationUsdKey,
-      moderationTokensKey
+      moderationTokensKey,
+      ocrUsdKey,
+      ocrPagesKey
     )).map {
       case list =>
         AiBudgetConsumptions(
@@ -880,7 +932,9 @@ case class AiBudget(
           embeddingUsd = list(10).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
           embeddingTokens = list(11).map(_.utf8String.toLong).getOrElse(0L),
           moderationUsd = list(12).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
-          moderationTokens = list(13).map(_.utf8String.toLong).getOrElse(0L)
+          moderationTokens = list(13).map(_.utf8String.toLong).getOrElse(0L),
+          ocrUsd = list(14).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
+          ocrPages = list(15).map(_.utf8String.toLong).getOrElse(0L)
         )
     }
   }
@@ -961,6 +1015,10 @@ case class AiBudget(
           (false, consumptions.some)
         } else if (limits.moderation_tokens.isDefined && consumptions.moderationTokens >= limits.moderation_tokens.get) {
           (false, consumptions.some)
+        } else if (limits.ocr_usd.isDefined && consumptions.ocrUsd >= limits.ocr_usd.get) {
+          (false, consumptions.some)
+        } else if (limits.ocr_pages.isDefined && consumptions.ocrPages >= limits.ocr_pages.get) {
+          (false, consumptions.some)
         } else {
           val percentageConsumedTotalUsd: Double = limits.total_usd.map(tusd => consumptions.totalUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
           val percentageConsumedTotalTokens: Double = limits.total_tokens.map(ttokens => consumptions.totalTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
@@ -976,8 +1034,10 @@ case class AiBudget(
           val percentageConsumedEmbeddingTokens: Double = limits.embedding_tokens.map(ttokens => consumptions.embeddingTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
           val percentageConsumedModerationUsd: Double = limits.moderation_usd.map(tusd => consumptions.moderationUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
           val percentageConsumedModerationTokens: Double = limits.moderation_tokens.map(ttokens => consumptions.moderationTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedOcrUsd: Double = limits.ocr_usd.map(tusd => consumptions.ocrUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedOcrPages: Double = limits.ocr_pages.map(tpages => consumptions.ocrPages.toDouble / tpages.toDouble * 100.0).getOrElse(0.0)
           val maxPercentage = actionOnExceed.alertOnAlmostExceedPercentage.toDouble
-          if (actionOnExceed.alertOnAlmostExceed && (percentageConsumedTotalUsd > maxPercentage || percentageConsumedTotalTokens > maxPercentage || percentageConsumedInferenceUsd > maxPercentage || percentageConsumedInferenceTokens > maxPercentage || percentageConsumedImageUsd > maxPercentage || percentageConsumedImageTokens > maxPercentage || percentageConsumedAudioUsd > maxPercentage || percentageConsumedAudioTokens > maxPercentage || percentageConsumedVideoUsd > maxPercentage || percentageConsumedVideoTokens > maxPercentage || percentageConsumedEmbeddingUsd > maxPercentage || percentageConsumedEmbeddingTokens > maxPercentage || percentageConsumedModerationUsd > maxPercentage || percentageConsumedModerationTokens > maxPercentage)) {
+          if (actionOnExceed.alertOnAlmostExceed && (percentageConsumedTotalUsd > maxPercentage || percentageConsumedTotalTokens > maxPercentage || percentageConsumedInferenceUsd > maxPercentage || percentageConsumedInferenceTokens > maxPercentage || percentageConsumedImageUsd > maxPercentage || percentageConsumedImageTokens > maxPercentage || percentageConsumedAudioUsd > maxPercentage || percentageConsumedAudioTokens > maxPercentage || percentageConsumedVideoUsd > maxPercentage || percentageConsumedVideoTokens > maxPercentage || percentageConsumedEmbeddingUsd > maxPercentage || percentageConsumedEmbeddingTokens > maxPercentage || percentageConsumedModerationUsd > maxPercentage || percentageConsumedModerationTokens > maxPercentage || percentageConsumedOcrUsd > maxPercentage || percentageConsumedOcrPages > maxPercentage)) {
              AlertEvent.generic("AiBudgetAlmostExceeded", "otoroshi")(Json.obj(
               "budget" -> json,
               "consumption" -> consumptions.json,
@@ -995,7 +1055,9 @@ case class AiBudget(
                 "embedding_usd" -> percentageConsumedEmbeddingUsd,
                 "embedding_tokens" -> percentageConsumedEmbeddingTokens,
                 "moderation_usd" -> percentageConsumedModerationUsd,
-                "moderation_tokens" -> percentageConsumedModerationTokens
+                "moderation_tokens" -> percentageConsumedModerationTokens,
+                "ocr_usd" -> percentageConsumedOcrUsd,
+                "ocr_pages" -> percentageConsumedOcrPages
               )
             )).toAnalytics()
           }
@@ -1095,6 +1157,8 @@ object AiBudget {
               embedding_usd = None,
               moderation_tokens = None,
               moderation_usd = None,
+              ocr_pages = None,
+              ocr_usd = None,
             ),
             scope = AiBudgetScope(
               extractFromApikeyMeta = true,
