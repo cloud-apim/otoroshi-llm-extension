@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.OcrModelClient
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.OcrModelClientDecorators
 import com.cloud.apim.otoroshi.extensions.aigateway.providers._
 import otoroshi.api._
 import otoroshi.env.Env
@@ -54,7 +55,7 @@ case class OcrModel(
     }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
-    provider.toLowerCase() match {
+    val rawClient = provider.toLowerCase() match {
       case "alphaedge" => {
         val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
         new AlphaEdgeOcrModelClient(api, AlphaEdgeOcrModelClientOptions.fromJson(options), id).some
@@ -65,6 +66,7 @@ case class OcrModel(
       }
       case _ => None
     }
+    rawClient.map(c => OcrModelClientDecorators(this, c, env))
   }
 }
 

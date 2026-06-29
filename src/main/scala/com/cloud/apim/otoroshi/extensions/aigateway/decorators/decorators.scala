@@ -159,3 +159,22 @@ object VideosGenModelClientDecorators {
   }
 }
 
+trait DecoratorOcrModelClient extends OcrModelClient {
+  def ocrModelClient: OcrModelClient
+  override def supportsOcr: Boolean = ocrModelClient.supportsOcr
+  override def ocr(options: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = ocrModelClient.ocr(options, rawBody, attrs)
+  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = ocrModelClient.listModels(raw)
+}
+
+object OcrModelClientDecorators {
+  val possibleDecorators: Seq[Function[(OcrModel, OcrModelClient, Env), OcrModelClient]] = Seq(
+    OcrModelClientWithAuditing.applyIfPossible,
+  )
+
+  def apply(provider: OcrModel, client: OcrModelClient, env: Env): OcrModelClient = {
+    possibleDecorators.foldLeft(client) {
+      case (client, predicate) => predicate((provider, client, env))
+    }
+  }
+}
+

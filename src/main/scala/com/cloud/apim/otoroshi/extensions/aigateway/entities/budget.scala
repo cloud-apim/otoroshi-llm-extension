@@ -232,6 +232,17 @@ object AiBudgetUsageKind {
       }
     }
   }
+  case object Ocr extends AiBudgetUsageKind {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Unit = {
+      cost.foreach { c =>
+        budget.incrTotalUsd(c)
+        budget.incrOcrUsd(c)
+      }
+      tokens.foreach { c =>
+        budget.incrOcrPages(c)
+      }
+    }
+  }
 }
 
 sealed trait AiBudgetDurationUnit {
