@@ -1284,48 +1284,43 @@ case class ModerationInput(kind: ModerationInputKind, value: String) {
 }
 object ModerationInput {
   def text(str: String): ModerationInput = ModerationInput(ModerationInputKind.Text, str)
-  def fromObject(obj: JsObject): Option[ModerationInput] = {
+  def fromObject(obj: JsObject): Seq[ModerationInput] = {
+    obj.select("content").asOpt[Seq[JsObject]] match {
+      // content: array<TextChunk | ImageURLChunk> -> one ModerationInput per chunk (text *and* image)
+      case Some(chunks) => chunks.flatMap(fromObject)
+      case None =>
+        obj.select("content").asOpt[JsObject] match {
+          // content: nested object (e.g. ChatMessage with a single chunk as content)
+          case Some(content) => fromObject(content)
+          case None          => leaf(obj).toSeq
+        }
+    }
+  }
+  private def leaf(obj: JsObject): Option[ModerationInput] = {
     obj.select("value").asOptString
       .orElse(
-        // Text
+        // Text / TextChunk
         obj.select("text").asOptString
       )
       .orElse(
-        // ImageUrl
+        // ImageURLChunk -> image_url: "..."
         obj.select("image_url").asOptString
       )
       .orElse(
-        // ImageUrl
+        // ImageURLChunk -> image_url: { url: "..." }
         obj.select("image_url").select("url").asOptString
       )
       .orElse(
-        // ChatMessage
+        // ChatMessage with a plain string content
         obj.select("content").asOptString
       )
-      .orElse(
-        // ImageURLChunk
-        obj.select("content").select("image_url").asOptString
-      )
-      .orElse(
-        // ImageURLChunk
-        obj.select("content").select("image_url").select("url").asOptString
-      )
-      .orElse(
-        // array<TextChunk>
-        obj.select("content").asOpt[Seq[JsObject]].flatMap { seq =>
-          val chunks: Seq[String] = seq.flatMap {
-            case obj if obj.select("type").asOptString.contains("text") => obj.select("text").asOptString
-            case _ => None
-          }
-          if (chunks.isEmpty) {
-            None
-          } else {
-            Some(chunks.mkString(". "))
-          }
-        }
-      )
       .flatMap { value =>
-        val kindStr = obj.select("kind").asOptString.orElse(obj.select("type").asOptString).getOrElse("text").toLowerCase()
+        val hasImage = obj.select("image_url").asOptString.isDefined ||
+          obj.select("image_url").select("url").asOptString.isDefined
+        val kindStr = obj.select("kind").asOptString
+          .orElse(obj.select("type").asOptString)
+          .getOrElse(if (hasImage) "image_url" else "text")
+          .toLowerCase()
         kindStr match {
           case "image_url" => Some(ModerationInput(ModerationInputKind.ImageUrl, value))
           case "text" => Some(ModerationInput(ModerationInputKind.Text, value))
