@@ -692,6 +692,8 @@ class AiExtension(val env: Env) extends AdminExtension {
         val embedding_tokens = bodyJson.select("embedding_tokens").asObject.value
         val moderation_usd = bodyJson.select("moderation_usd").asObject.value
         val moderation_tokens = bodyJson.select("moderation_tokens").asObject.value
+        val ocr_usd = bodyJson.select("ocr_usd").asObject.value
+        val ocr_pages = bodyJson.select("ocr_pages").asObject.value
         total_usd.foreach {
           case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrTotalUsd(value.as[BigDecimal]))
         }
@@ -733,6 +735,12 @@ class AiExtension(val env: Env) extends AdminExtension {
         }
         moderation_tokens.foreach {
           case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrModerationTokens(value.as[Long]))
+        }
+        ocr_usd.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrOcrUsd(value.as[BigDecimal]))
+        }
+        ocr_pages.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrOcrPages(value.as[Long]))
         }
         Results.Ok(Json.obj("done" -> true)).vfuture
       }
