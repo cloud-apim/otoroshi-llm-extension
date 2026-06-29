@@ -1228,8 +1228,8 @@ class OcrModelClientWithAuditing(originalModel: OcrModel, val ocrModelClient: Oc
           val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
           val totalCost = costs.map(_.totalCost)
-          val totalTokens: Option[Long] = None // OCR is billed per page, not per token
-          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Ocr, attrs).map { budgetIds =>
+          val totalPages: Option[Long] = Some(resp.usage.pagesProcessed.toLong).filter(_ > 0L) // OCR is billed per page, not per token
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalPages, AiBudgetUsageKind.Ocr, attrs).map { budgetIds =>
             val _output = resp.toJson.asObject
             val slug = Json.obj(
               "provider_kind" -> originalModel.provider.toLowerCase,
