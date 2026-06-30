@@ -201,6 +201,30 @@ Note: Hive uses `width`/`height` integers instead of a size string like `1024x10
 
 ---
 
+## OpenAI Compatible
+
+- **Base URL:** your own endpoint (set in the connection config)
+- **Generation:** Yes
+- **Editing:** Yes
+
+A generic provider for any image service that speaks the OpenAI images API. Point it at your endpoint with `base_url` and `token`, and give it a display name with `provider_name` — that name is what shows up for this provider everywhere in the gateway. When the target API needs it, you can also override the request `headers`, the `param_mappings`, and the `additional_body_params`. It uses the same parameters and options as OpenAI; the actual feature set depends on the target endpoint.
+
+```js
+{
+  "connection": {
+    "base_url": "https://my-endpoint/v1",
+    "provider_name": "My Provider",
+    "token": "xxx"
+  },
+  "options": {
+    "generation": { "enabled": true, "model": "your-image-model", "n": 1 },
+    "edition": { "enabled": false }
+  }
+}
+```
+
+---
+
 ## OVH AI Endpoints 🇫🇷 🇪🇺
 
 - **Base URL:** `https://oai.endpoints.kepler.ai.cloud.ovh.net/v1`
@@ -213,12 +237,14 @@ OVH AI Endpoints exposes a unified OpenAI-compatible image API. It uses the same
 
 ## Provider comparison
 
-| Feature | OpenAI | Azure | Cloud Temple | Gemini | Grok | Luma | Hive | OVH |
-|---------|:------:|:-----:|:------------:|:------:|:----:|:----:|:----:|:---:|
-| Generation | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Editing | Yes | No | Yes | Yes | No | No | No | Yes |
-| Size control | Yes | Yes (restricted) | Yes | Yes | No | No | Yes (w/h) | Yes |
-| Quality control | Yes | Yes | Yes | Yes | No | No | Yes | Yes |
-| Style control | Yes | Yes | Yes | Yes | No | No | No | Yes |
-| Seed/reproducibility | No | No | No | No | No | No | Yes | No |
-| Inference steps | No | No | No | No | No | No | Yes | No |
+| Feature | OpenAI | Azure | Cloud Temple | Gemini | Grok | Luma | Hive | OVH | OAI Compat |
+|---------|:------:|:-----:|:------------:|:------:|:----:|:----:|:----:|:---:|:----------:|
+| Generation | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Editing | Yes | No | Yes | Yes | No | No | No | Yes | Yes |
+| Size control | Yes | Yes (restricted) | Yes | Yes | No | No | Yes (w/h) | Yes | Yes |
+| Quality control | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes |
+| Style control | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes |
+| Seed/reproducibility | No | No | No | No | No | No | Yes | No | No |
+| Inference steps | No | No | No | No | No | No | Yes | No | No |
+
+For **OpenAI Compatible**, the values above reflect the OpenAI parameters the gateway forwards — what actually works depends on the endpoint you point it at.
