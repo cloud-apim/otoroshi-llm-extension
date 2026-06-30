@@ -24,19 +24,31 @@ object AiProvidersCatalog {
   val Moderation = "moderation"
   val Video      = "video"
 
-  // capability -> provider ids supporting it, read live from each modality registry
-  private def capabilityIndex: Seq[(String, Set[String])] = Seq(
-    Text       -> AiProvider.supportedProviders,
-    Audio      -> AudioModel.supportedProviders,
-    Image      -> ImageModel.supportedProviders,
-    Ocr        -> OcrModel.supportedProviders,
-    Embedding  -> EmbeddingModel.supportedProviders,
-    Moderation -> ModerationModel.supportedProviders,
-    Video      -> VideoModel.supportedProviders,
+  /**
+   * A model modality (a.k.a. model type / capability) supported by Otoroshi LLM, paired with the
+   * live set of provider ids exposing it (read from that entity's `getXXXClient` registry).
+   *
+   * This is THE single place declaring which model types exist. Introducing a new modality (a new
+   * model entity with its own registry) only requires adding one line here; both the providers
+   * catalog and the model-capabilities endpoint pick it up automatically.
+   */
+  final case class Modality(id: String, label: String, providers: () => Set[String])
+
+  val modalities: Seq[Modality] = Seq(
+    Modality(Text,       "Text",       () => AiProvider.supportedProviders),
+    Modality(Audio,      "Audio",      () => AudioModel.supportedProviders),
+    Modality(Image,      "Image",      () => ImageModel.supportedProviders),
+    Modality(Ocr,        "OCR",        () => OcrModel.supportedProviders),
+    Modality(Embedding,  "Embedding",  () => EmbeddingModel.supportedProviders),
+    Modality(Moderation, "Moderation", () => ModerationModel.supportedProviders),
+    Modality(Video,      "Video",      () => VideoModel.supportedProviders),
   )
 
+  // capability -> provider ids supporting it, read live from each modality registry
+  private def capabilityIndex: Seq[(String, Set[String])] = modalities.map(m => m.id -> m.providers())
+
   // every capability name this catalog can expose, in display order
-  val allCapabilities: Seq[String] = capabilityIndex.map(_._1)
+  val allCapabilities: Seq[String] = modalities.map(_.id)
 
   // human-readable labels for the provider ids that are not OpenAI-like providers
   // (OpenAI-like provider labels come from OpenAiLikeProviders directly)
@@ -100,4 +112,18 @@ object AiProvidersCatalog {
   }
 
   def json(requested: Seq[String]): JsArray = JsArray(filtered(requested).map(_.json))
+
+  final case class CapabilityEntry(id: String, label: String, providers: Seq[String]) {
+    def json: JsObject = Json.obj(
+      "id"        -> id,
+      "label"     -> label,
+      "providers" -> providers,
+    )
+  }
+
+  // every model type (modality) Otoroshi LLM supports, with the provider ids exposing it
+  def capabilities: Seq[CapabilityEntry] =
+    modalities.map(m => CapabilityEntry(m.id, m.label, m.providers().toSeq.sorted))
+
+  def capabilitiesJson: JsArray = JsArray(capabilities.map(_.json))
 }
