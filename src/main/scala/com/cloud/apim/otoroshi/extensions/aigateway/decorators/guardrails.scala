@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatClient, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatClient, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata, InputChatMessage, OutputChatMessage}
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails._
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -54,6 +54,7 @@ object Guardrails {
     "moderation_model" -> new ModerationGuardrail(),
     "faithfulness" -> new FaithfulnessGuardrail(),
     "workflow" -> new WorkflowGuardrail(),
+    "rampart" -> new RampartPiiGuardrail(),
   )
 /*
 [
@@ -86,44 +87,55 @@ case class Guardrails(items: Seq[GuardrailItem]) {
       }
     }
 
-    def nextMessage(seq: Seq[ChatMessage], guardrail: Guardrail, config: JsObject): Future[GuardrailResult] = {
-      if (seq.nonEmpty) {
-        val head = seq.head
-        guardrail.pass(Seq(head), config, originalProvider.some, chatClient.some, attrs).andThen {
-          case Success(GuardrailResult.GuardrailPass) => nextMessage(seq.tail, guardrail, config)
-          case Success(GuardrailResult.GuardrailDenied(err)) => GuardrailResult.GuardrailDenied(err).vfuture
-          case Failure(e) => GuardrailResult.GuardrailDenied(e.getMessage).vfuture
+    // runs a single guardrail over the current messages, returning either a terminal result
+    // (deny/error) or the resulting messages (possibly rewritten through GuardrailTransform)
+    def runOne(guardrail: Guardrail, config: JsObject, current: Seq[ChatMessage]): Future[Either[GuardrailResult, Seq[ChatMessage]]] = {
+      if (guardrail.manyMessages) {
+        guardrail.pass(current, config, originalProvider.some, chatClient.some, attrs).map {
+          case GuardrailResult.GuardrailPass => Right(current)
+          case GuardrailResult.GuardrailTransform(msgs) => Right(msgs)
+          case d @ GuardrailResult.GuardrailDenied(_) => Left(d)
+          case e @ GuardrailResult.GuardrailError(_) => Left(e)
         }
       } else {
-        GuardrailResult.GuardrailPass.vfuture
+        def loop(remaining: Seq[ChatMessage], acc: Seq[ChatMessage]): Future[Either[GuardrailResult, Seq[ChatMessage]]] = {
+          if (remaining.isEmpty) {
+            (Right(acc): Either[GuardrailResult, Seq[ChatMessage]]).vfuture
+          } else {
+            val head = remaining.head
+            guardrail.pass(Seq(head), config, originalProvider.some, chatClient.some, attrs).flatMap {
+              case GuardrailResult.GuardrailPass => loop(remaining.tail, acc :+ head)
+              case GuardrailResult.GuardrailTransform(msgs) => loop(remaining.tail, acc ++ msgs)
+              case d @ GuardrailResult.GuardrailDenied(_) => (Left(d): Either[GuardrailResult, Seq[ChatMessage]]).vfuture
+              case e @ GuardrailResult.GuardrailError(_) => (Left(e): Either[GuardrailResult, Seq[ChatMessage]]).vfuture
+            }
+          }
+        }
+        loop(current, Seq.empty)
       }
     }
 
-    def nextGuardrail(seq: Seq[(GuardrailItem, Guardrail)]): Future[GuardrailResult] = {
-      if (seq.nonEmpty) {
+    def nextGuardrail(seq: Seq[(GuardrailItem, Guardrail)], current: Seq[ChatMessage]): Future[GuardrailResult] = {
+      if (seq.isEmpty) {
+        if (current != messages) GuardrailResult.GuardrailTransform(current).vfuture
+        else GuardrailResult.GuardrailPass.vfuture
+      } else {
         val head = seq.head
         val kind = head._1.guardrailId
-        if (head._2.manyMessages) {
-          head._2.pass(messages, head._1.config, originalProvider.some, chatClient.some, attrs).andThen {
-            case Success(GuardrailResult.GuardrailPass) => AiMetrics.markGuardrail(kind, "pass"); nextGuardrail(seq.tail)
-            case Success(GuardrailResult.GuardrailDenied(msg)) => AiMetrics.markGuardrail(kind, "deny"); GuardrailResult.GuardrailDenied(msg).vfuture
-            case Success(GuardrailResult.GuardrailError(err)) => AiMetrics.markGuardrail(kind, "error"); GuardrailResult.GuardrailError(err).vfuture
-            case Failure(e) => AiMetrics.markGuardrail(kind, "error"); GuardrailResult.GuardrailDenied(e.getMessage).vfuture
-          }
-        } else {
-          nextMessage(messages, head._2, head._1.config).andThen {
-            case Success(GuardrailResult.GuardrailPass) => AiMetrics.markGuardrail(kind, "pass"); nextGuardrail(seq.tail)
-            case Success(GuardrailResult.GuardrailError(err)) => AiMetrics.markGuardrail(kind, "error"); GuardrailResult.GuardrailError(err).vfuture
-            case Success(GuardrailResult.GuardrailDenied(msg)) => AiMetrics.markGuardrail(kind, "deny"); GuardrailResult.GuardrailDenied(msg).vfuture
-            case Failure(e) => AiMetrics.markGuardrail(kind, "error"); GuardrailResult.GuardrailDenied(e.getMessage).vfuture
-          }
+        runOne(head._2, head._1.config, current).flatMap {
+          case Left(d @ GuardrailResult.GuardrailDenied(_)) => AiMetrics.markGuardrail(kind, "deny"); (d: GuardrailResult).vfuture
+          case Left(e @ GuardrailResult.GuardrailError(_)) => AiMetrics.markGuardrail(kind, "error"); (e: GuardrailResult).vfuture
+          case Left(other) => other.vfuture
+          case Right(newMessages) =>
+            if (newMessages != current) AiMetrics.markGuardrail(kind, "transform") else AiMetrics.markGuardrail(kind, "pass")
+            nextGuardrail(seq.tail, newMessages)
+        }.recover {
+          case e => AiMetrics.markGuardrail(kind, "error"); GuardrailResult.GuardrailDenied(e.getMessage)
         }
-      } else {
-        GuardrailResult.GuardrailPass.vfuture
       }
     }
 
-    nextGuardrail(allGuardrails)
+    nextGuardrail(allGuardrails, messages)
   }
 }
 
@@ -171,6 +183,9 @@ object GuardrailResult {
   case object GuardrailPass extends GuardrailResult
   case class GuardrailDenied(message: String) extends GuardrailResult
   case class GuardrailError(error: String) extends GuardrailResult
+  // a guardrail can rewrite the messages it inspected (e.g. PII redaction) and let the
+  // (possibly transformed) messages flow downstream instead of just passing/denying
+  case class GuardrailTransform(messages: Seq[ChatMessage]) extends GuardrailResult
 }
 
 trait Guardrail {
@@ -182,93 +197,80 @@ trait Guardrail {
 
 class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
-      case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
-      case GuardrailResult.GuardrailDenied(msg) if originalProvider.guardrailsFailOnDeny => Left(Json.obj("error" -> "guardrail_denied", "error_description" -> msg, "phase" -> "before")).vfuture
-      case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-        Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
-        ChatResponseMetadata.empty,
-        Json.obj(),
-      )).vfuture
-      case GuardrailResult.GuardrailPass => {
-        chatClient.call(originalPrompt, attrs, originalBody).flatMap {
-          case Left(err) => Left(err).vfuture
-          case Right(r) => {
-            originalProvider.guardrails.call(GuardrailsCallPhase.After, r.generations.map(_.message), originalProvider, chatClient, attrs).flatMap {
-              case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "after")).vfuture
-              case GuardrailResult.GuardrailDenied(msg) if originalProvider.guardrailsFailOnDeny => Left(Json.obj("error" -> "guardrail_denied", "error_description" -> msg, "phase" -> "after")).vfuture
-              case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-                Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
-                ChatResponseMetadata.empty,
-                Json.obj(),
-              )).vfuture
-              case GuardrailResult.GuardrailPass => Right(r).vfuture
-            }
-          }
+  private def deniedResponse(msg: String): ChatResponse = ChatResponse(
+    Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
+    ChatResponseMetadata.empty,
+    Json.obj(),
+  )
+
+  // resolves the Before phase: Left = short-circuit result to render (deny/error),
+  // Right = the effective prompt to forward (original on pass, rewritten on transform)
+  private def resolveBefore(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[GuardrailResult, ChatPrompt]] = {
+    originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).map {
+      case GuardrailResult.GuardrailPass => Right(originalPrompt)
+      case GuardrailResult.GuardrailTransform(newMessages) => Right(originalPrompt.copy(messages = newMessages.collect { case i: InputChatMessage => i }))
+      case other => Left(other)
+    }
+  }
+
+  // runs the After phase on a (non-streamed) response, re-inflating placeholders when a guardrail transforms the output
+  private def runAfter(r: ChatResponse, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    originalProvider.guardrails.call(GuardrailsCallPhase.After, r.generations.map(_.message), originalProvider, chatClient, attrs).map {
+      case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "after"))
+      case GuardrailResult.GuardrailDenied(msg) if originalProvider.guardrailsFailOnDeny => Left(Json.obj("error" -> "guardrail_denied", "error_description" -> msg, "phase" -> "after"))
+      case GuardrailResult.GuardrailDenied(msg) => Right(deniedResponse(msg))
+      case GuardrailResult.GuardrailTransform(newMessages) =>
+        val newOutputs = newMessages.collect { case o: OutputChatMessage => o }
+        if (newOutputs.size == r.generations.size) {
+          Right(r.copy(generations = r.generations.zip(newOutputs).map { case (g, m) => g.copy(message = m) }))
+        } else {
+          Right(r) // size mismatch: skip re-inflation rather than drop generations
         }
+      case GuardrailResult.GuardrailPass => Right(r)
+    }
+  }
+
+  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    resolveBefore(originalPrompt, attrs).flatMap {
+      case Left(GuardrailResult.GuardrailError(err)) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
+      case Left(GuardrailResult.GuardrailDenied(msg)) if originalProvider.guardrailsFailOnDeny => Left(Json.obj("error" -> "guardrail_denied", "error_description" -> msg, "phase" -> "before")).vfuture
+      case Left(GuardrailResult.GuardrailDenied(msg)) => Right(deniedResponse(msg)).vfuture
+      case Left(_) => Left(Json.obj("error" -> "bad_request", "error_description" -> "unexpected guardrail result", "phase" -> "before")).vfuture
+      case Right(effectivePrompt) => chatClient.call(effectivePrompt, attrs, originalBody).flatMap {
+        case Left(err) => Left(err).vfuture
+        case Right(r) => runAfter(r, attrs)
       }
     }
   }
 
   override def stream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
-      case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
-      case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-        Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
-        ChatResponseMetadata.empty,
-        Json.obj(),
-      ).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
-      case GuardrailResult.GuardrailPass => {
-        chatClient.stream(originalPrompt, attrs, originalBody).flatMap {
-          case Left(err) => Left(err).vfuture
-          case Right(r) => Right(r).vfuture
-        }
-      }
+    resolveBefore(originalPrompt, attrs).flatMap {
+      case Left(GuardrailResult.GuardrailError(err)) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
+      case Left(GuardrailResult.GuardrailDenied(msg)) => Right(deniedResponse(msg).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
+      case Left(_) => Left(Json.obj("error" -> "bad_request", "error_description" -> "unexpected guardrail result", "phase" -> "before")).vfuture
+      case Right(effectivePrompt) => chatClient.stream(effectivePrompt, attrs, originalBody)
     }
   }
 
   override def completion(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
-      case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
-      case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-        Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
-        ChatResponseMetadata.empty,
-        Json.obj(),
-      )).vfuture
-      case GuardrailResult.GuardrailPass => {
-        chatClient.completion(originalPrompt, attrs, originalBody).flatMap {
-          case Left(err) => Left(err).vfuture
-          case Right(r) => {
-            originalProvider.guardrails.call(GuardrailsCallPhase.After, r.generations.map(_.message), originalProvider, chatClient, attrs).flatMap {
-              case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "after")).vfuture
-              case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-                Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
-                ChatResponseMetadata.empty,
-                Json.obj(),
-              )).vfuture
-              case GuardrailResult.GuardrailPass => Right(r).vfuture
-            }
-          }
-        }
+    resolveBefore(originalPrompt, attrs).flatMap {
+      case Left(GuardrailResult.GuardrailError(err)) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
+      case Left(GuardrailResult.GuardrailDenied(msg)) if originalProvider.guardrailsFailOnDeny => Left(Json.obj("error" -> "guardrail_denied", "error_description" -> msg, "phase" -> "before")).vfuture
+      case Left(GuardrailResult.GuardrailDenied(msg)) => Right(deniedResponse(msg)).vfuture
+      case Left(_) => Left(Json.obj("error" -> "bad_request", "error_description" -> "unexpected guardrail result", "phase" -> "before")).vfuture
+      case Right(effectivePrompt) => chatClient.completion(effectivePrompt, attrs, originalBody).flatMap {
+        case Left(err) => Left(err).vfuture
+        case Right(r) => runAfter(r, attrs)
       }
     }
   }
 
   override def completionStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).flatMap {
-      case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
-      case GuardrailResult.GuardrailDenied(msg) => Right(ChatResponse(
-        Seq(ChatGeneration(ChatMessage.output(role = "assistant", content = msg, prefix = None, raw = Json.obj()))),
-        ChatResponseMetadata.empty,
-        Json.obj(),
-      ).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
-      case GuardrailResult.GuardrailPass => {
-        chatClient.completionStream(originalPrompt, attrs, originalBody).flatMap {
-          case Left(err) => Left(err).vfuture
-          case Right(r) => Right(r).vfuture
-        }
-      }
+    resolveBefore(originalPrompt, attrs).flatMap {
+      case Left(GuardrailResult.GuardrailError(err)) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
+      case Left(GuardrailResult.GuardrailDenied(msg)) => Right(deniedResponse(msg).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
+      case Left(_) => Left(Json.obj("error" -> "bad_request", "error_description" -> "unexpected guardrail result", "phase" -> "before")).vfuture
+      case Right(effectivePrompt) => chatClient.completionStream(effectivePrompt, attrs, originalBody)
     }
   }
 }
