@@ -959,7 +959,7 @@ case class AiBudget(
       false
     } else if (scope.apikeys.nonEmpty && apikey.nonEmpty && scope.apikeys.exists(id => RegexPool.regex(id).matches(apikey.get.clientId))) {
       true
-    } else if (scope.users.nonEmpty && user.nonEmpty && scope.users.exists(id => RegexPool.regex(id).matches(user.get.email))) {
+    } else if (scope.users.nonEmpty && user.nonEmpty && (scope.users.exists(id => RegexPool.regex(id).matches(user.get.email)) || scope.users.exists(id => RegexPool.regex(id).matches(user.get.internalId)))) {
       true
     } else if (scope.groups.nonEmpty && apikey.nonEmpty && scope.groups.exists(id => apikey.get.authorizedEntities.exists(ae => ae.prefix == "group" && RegexPool.regex(id).matches(ae.id)))) {
       true
