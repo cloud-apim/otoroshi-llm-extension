@@ -170,6 +170,9 @@ class AiProviderTester extends Component {
   }
 }
 
+const RAMPART_ALL_ENTITIES = ['GIVEN_NAME','SURNAME','PHONE','TAX_ID','BANK_ACCOUNT','ROUTING_NUMBER','GOVERNMENT_ID','PASSPORT','DRIVERS_LICENSE','BUILDING_NUMBER','STREET_NAME','SECONDARY_ADDRESS','EMAIL','URL','SSN','CREDIT_CARD','IP_ADDRESS','CITY','STATE','ZIP_CODE'];
+const RAMPART_DEFAULT_ENTITIES = RAMPART_ALL_ENTITIES.filter(e => ['CITY','STATE','ZIP_CODE'].indexOf(e) < 0);
+
 class Guardrail extends Component {
   flow = (id) => {
     const def = ['enabled', 'id', 'before', 'after'];
@@ -196,6 +199,7 @@ class Guardrail extends Component {
     if (id === 'quickjs') return [...def, 'config.quickjs_path', ...tail];
     if (id === 'moderation_model') return [...def, 'config.moderation_model', ...tail];
     if (id === 'faithfulness') return [...def, 'config.provider', 'config.context', 'config.exclude_out_of_scope_statements', 'config.threshold', ...tail];
+    if (id === 'rampart') return [...def, 'config.action', 'config.min_score', 'config.entities', 'config.reinflate', ...tail];
     return [...def, ...tail];
   }
   render() {
@@ -232,6 +236,7 @@ class Guardrail extends Component {
                 {label: 'Auto Secrets leakage', value: 'auto_secrets_leakage'},
                 {label: 'No gibberish', value: 'gibberish'},
                 {label: 'No personal information', value: 'pif'},
+                {label: 'No personal information (Rampart, local)', value: 'rampart'},
                 {label: 'Language moderation', value: 'moderation'},
                 {label: 'Moderation model', value: 'moderation_model'},
                 {label: 'No toxic language', value: 'toxic_language'},
@@ -311,7 +316,15 @@ class Guardrail extends Component {
           'config.quickjs_path': {
             type: 'code',
             label: 'QuickJS code path',
-          }
+          },
+          'config.action': { type: 'select', props: { label: 'Action', possibleValues: [
+            { label: 'Redact (replace with placeholders)', value: 'redact' },
+            { label: 'Block (deny request)', value: 'block' },
+            { label: 'Flag (log only)', value: 'flag' },
+          ] } },
+          'config.min_score': { type: 'number', props: { label: 'Min score', step: 0.05 } },
+          'config.reinflate': { type: 'bool', props: { label: 'Re-inflate response (restore values)' } },
+          'config.entities': { type: 'array', props: { label: 'Entities to redact', possibleValues: RAMPART_ALL_ENTITIES.map(i => ({ label: i, value: i })) } }
         },
         value: this.props.itemValue,
         onChange: i => {
@@ -380,6 +393,7 @@ class Guardrail extends Component {
             if (i.id === 'wasm') this.props.value[this.props.idx].config = { plugin_ref: '' };
             if (i.id === 'quickjs') this.props.value[this.props.idx].config = { quickjs_path: '\'inline module\';\n\nexports.guardrail_call = function(args) {\n  const { messages } = JSON.parse(args);\n  return JSON.stringify({ \n    pass: true, \n    reason: "none" \n  });\n};' };
             if (i.id === 'moderation_model') this.props.value[this.props.idx].config = { ref: '' };
+            if (i.id === 'rampart') this.props.value[this.props.idx].config = { action: 'redact', min_score: 0.4, reinflate: false, entities: RAMPART_DEFAULT_ENTITIES };
           }
           this.props.onChange(this.props.value)
         }
