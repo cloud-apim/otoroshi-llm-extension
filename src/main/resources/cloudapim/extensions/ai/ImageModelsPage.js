@@ -42,6 +42,7 @@ class ImageModelsPage extends Component {
           // {label: 'Leonardo AI', value: "leonardo-ai"},
           {label: 'Hive', value: "hive"},
           {label: 'OpenRouter', value: "openrouter"},
+          {label: 'OpenAI Compatible', value: "openai-compatible"},
           {label: 'OVH AI Endpoints', value: "ovh-ai-endpoints"}
         ], i => i.label)
       }
@@ -318,6 +319,33 @@ class ImageModelsPage extends Component {
                       enabled: true,
                       model: 'google/gemini-2.5-flash-image',
                       modalities: ["image", "text"]
+                    }
+                  }
+                },
+              });
+            } else if (state.provider === 'openai-compatible') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'openai-compatible',
+                config: {
+                  connection: {
+                    base_url: '',
+                    provider_name: 'OpenAI Compatible',
+                    token: 'xxxxxx',
+                    timeout: 180000
+                  },
+                  options: {
+                    generation: {
+                      enabled: true,
+                      model: 'your-image-model',
+                      n: 1,
+                    },
+                    edition: {
+                      enabled: false
                     }
                   }
                 },
