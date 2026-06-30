@@ -55,24 +55,37 @@ case class ModerationModel(
       _token
     }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
-    val rawClient = provider.toLowerCase() match {
-      case "openai" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
-        val opts = OpenAiModerationModelClientOptions.fromJson(options)
-        new OpenAiModerationModelClient(api, opts, id).some
-      }
-      case "mistral" => {
-        val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val opts = MistralAiModerationModelClientOptions.fromJson(options)
-        new MistralAiModerationModelClient(api, opts, id).some
-      }
-      case _ => None
-    }
+    val rawClient = ModerationModel.clientBuilders
+      .get(provider.toLowerCase())
+      .flatMap(_.apply(ModerationModel.ClientContext(baseUrl, token, timeout, options, id, env)))
     rawClient.map(c => ModerationModelClientDecorators(this, c, env))
   }
 }
 
 object ModerationModel {
+
+  final case class ClientContext(baseUrl: Option[String], token: String, timeout: Option[FiniteDuration], options: JsObject, id: String, env: Env)
+
+  // Single source of truth for the moderation modality: provider id -> client builder.
+  // `supportedProviders` (and the providers catalog) is derived from these keys, so adding a
+  // provider here is the only change required.
+  val clientBuilders: Map[String, ModerationModel.ClientContext => Option[ModerationModelClient]] = Map(
+    "openai" -> { (c: ClientContext) =>
+      import c._
+      val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
+      val opts = OpenAiModerationModelClientOptions.fromJson(options)
+      new OpenAiModerationModelClient(api, opts, id).some
+    },
+    "mistral" -> { (c: ClientContext) =>
+      import c._
+      val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val opts = MistralAiModerationModelClientOptions.fromJson(options)
+      new MistralAiModerationModelClient(api, opts, id).some
+    },
+  )
+
+  val supportedProviders: Set[String] = clientBuilders.keySet
+
   val format = new Format[ModerationModel] {
     override def writes(o: ModerationModel): JsValue = o.location.jsonWithKey ++ Json.obj(
       "id" -> o.id,
