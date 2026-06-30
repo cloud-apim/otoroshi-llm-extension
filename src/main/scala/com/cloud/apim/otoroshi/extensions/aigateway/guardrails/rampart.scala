@@ -199,7 +199,7 @@ object RampartEngine {
   // deterministic, high-precision recognizers for structured identifiers the model does not label by itself
   private val simplePatterns: Seq[(String, Pattern)] = Seq(
     "EMAIL" -> Pattern.compile("""[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}"""),
-    "URL" -> Pattern.compile("""(?:https?://|www\.)[^\s]+""", Pattern.CASE_INSENSITIVE),
+    "URL" -> Pattern.compile("""(?:https?://|www\.)[^\s"'<>)\]}]+""", Pattern.CASE_INSENSITIVE), // stop at quotes/brackets to stay safe on raw JSON bodies
     "IP_ADDRESS" -> Pattern.compile("""\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b"""),
     "SSN" -> Pattern.compile("""\b\d{3}-\d{2}-\d{4}\b""")
   )
