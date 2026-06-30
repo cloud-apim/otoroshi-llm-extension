@@ -201,14 +201,24 @@ Note: Hive uses `width`/`height` integers instead of a size string like `1024x10
 
 ---
 
+## OVH AI Endpoints 🇫🇷 🇪🇺
+
+- **Base URL:** `https://oai.endpoints.kepler.ai.cloud.ovh.net/v1`
+- **Generation:** Yes
+- **Editing:** Yes
+
+OVH AI Endpoints exposes a unified OpenAI-compatible image API. It uses the same parameters and options as OpenAI — just set your `token` and the image `model` you want to use.
+
+---
+
 ## Provider comparison
 
-| Feature | OpenAI | Azure | Cloud Temple | Gemini | Grok | Luma | Hive |
-|---------|:------:|:-----:|:------------:|:------:|:----:|:----:|:----:|
-| Generation | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Editing | Yes | No | Yes | Yes | No | No | No |
-| Size control | Yes | Yes (restricted) | Yes | Yes | No | No | Yes (w/h) |
-| Quality control | Yes | Yes | Yes | Yes | No | No | Yes |
-| Style control | Yes | Yes | Yes | Yes | No | No | No |
-| Seed/reproducibility | No | No | No | No | No | No | Yes |
-| Inference steps | No | No | No | No | No | No | Yes |
+| Feature | OpenAI | Azure | Cloud Temple | Gemini | Grok | Luma | Hive | OVH |
+|---------|:------:|:-----:|:------------:|:------:|:----:|:----:|:----:|:---:|
+| Generation | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Editing | Yes | No | Yes | Yes | No | No | No | Yes |
+| Size control | Yes | Yes (restricted) | Yes | Yes | No | No | Yes (w/h) | Yes |
+| Quality control | Yes | Yes | Yes | Yes | No | No | Yes | Yes |
+| Style control | Yes | Yes | Yes | Yes | No | No | No | Yes |
+| Seed/reproducibility | No | No | No | No | No | No | Yes | No |
+| Inference steps | No | No | No | No | No | No | Yes | No |
