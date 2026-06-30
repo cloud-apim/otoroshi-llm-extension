@@ -4,6 +4,7 @@ import akka.stream.scaladsl.FileIO
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.agents._
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailResult, Guardrails}
+import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.{PlaceholderAllocator, RampartEngine, RampartPiiGuardrail}
 import otoroshi.env.Env
 import otoroshi.next.workflow._
 import otoroshi.utils.syntax.implicits._
@@ -29,6 +30,7 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.call_a2a_agent", new CallA2aAgentFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.moderation_call", new ModerationCallFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.guardrail_call", new GuardrailCallFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.rampart_redact", new RampartRedactFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_add", new VectorStoreAddFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_remove", new VectorStoreRemoveFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_search", new VectorStoreSearchFunction())
@@ -512,10 +514,77 @@ class GuardrailCallFunction extends WorkflowFunction {
       case Some(guardrail) => {
         guardrail.pass(messages, config, None, None, wfr.attrs).map {
           case GuardrailResult.GuardrailPass => Json.obj("pass" -> true).right
+          case GuardrailResult.GuardrailTransform(newMessages) => Json.obj("pass" -> true, "transformed" -> true, "messages" -> play.api.libs.json.JsArray(newMessages.map(m => Json.obj("role" -> m.role, "content" -> m.wholeTextContent)))).right
           case GuardrailResult.GuardrailDenied(error) => Json.obj("pass" -> false, "cause" -> error).right
           case GuardrailResult.GuardrailError(error) => Json.obj("pass" -> false, "cause" -> "error", "error" -> error).right
         }
       }
+    }
+  }
+}
+
+class RampartRedactFunction extends WorkflowFunction {
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.rampart_redact"
+  override def documentationDisplayName: String            = "Rampart PII redaction"
+  override def documentationIcon: String                   = "fas fa-user-secret"
+  override def documentationDescription: String            = "Detects and redacts personal information (PII) in text locally with the Rampart ONNX model (no external call)."
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("input"),
+    "properties" -> Json.obj(
+      "input" -> Json.obj("type" -> "string", "description" -> "The text to scan / redact"),
+      "action" -> Json.obj("type" -> "string", "description" -> "'redact' (default, returns redacted text + mapping) or 'detect' (returns spans only)"),
+      "min_score" -> Json.obj("type" -> "number", "description" -> "Confidence floor (default 0.4)"),
+      "entities" -> Json.obj("type" -> "array", "description" -> "Entity types to consider (defaults to the standard PII set)"),
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "input" -> Json.obj("type" -> "string", "label" -> "Input", "props" -> Json.obj("description" -> "Text to scan / redact")),
+    "action" -> Json.obj("type" -> "select", "label" -> "Action", "props" -> Json.obj("possibleValues" -> Json.arr(
+      Json.obj("label" -> "Redact", "value" -> "redact"),
+      Json.obj("label" -> "Detect", "value" -> "detect"),
+    ))),
+    "min_score" -> Json.obj("type" -> "number", "label" -> "Min score"),
+    "entities" -> Json.obj("type" -> "array", "label" -> "Entities"),
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = None
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "rampart_redact",
+    "function" -> "extensions.com.cloud-apim.llm-extension.rampart_redact",
+    "args" -> Json.obj(
+      "action" -> "redact",
+      "input" -> "My name is Alex Rivera and my SSN is 472-81-0094.",
+    )
+  ))
+
+  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    args.select("input").asOptString match {
+      case None => WorkflowError("missing 'input' string", Some(Json.obj()), None).leftf
+      case Some(text) =>
+        val action = args.select("action").asOpt[String].getOrElse("redact").toLowerCase.trim
+        val minScore = args.select("min_score").asOpt[Double].orElse(args.select("min_score").asOpt[String].map(_.toDouble)).getOrElse(0.4).toFloat
+        val entities = args.select("entities").asOpt[Seq[String]].map(_.toSet).getOrElse(RampartPiiGuardrail.defaultEntities)
+        try {
+          val engine = RampartEngine.get
+          val spans = engine.detectAll(text, minScore, entities)
+          val spansJson = JsArray(spans.map(s => Json.obj(
+            "entity" -> s.entity,
+            "start" -> s.start,
+            "end" -> s.end,
+            "score" -> s.score,
+            "text" -> text.substring(s.start, s.end),
+          )))
+          if (action == "detect") {
+            Json.obj("found" -> spans.nonEmpty, "count" -> spans.size, "spans" -> spansJson).rightf
+          } else {
+            val alloc = new PlaceholderAllocator()
+            val redacted = engine.redactText(text, spans, alloc)
+            Json.obj("redacted" -> redacted, "mapping" -> Json.toJson(alloc.mapping), "spans" -> spansJson).rightf
+          }
+        } catch {
+          case e: Throwable => WorkflowError(s"rampart error: ${e.getMessage}", Some(Json.obj("error" -> e.getMessage)), None).leftf
+        }
     }
   }
 }
