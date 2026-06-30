@@ -48,13 +48,31 @@ case class EmbeddingModel(
       _token
     }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
-    val rawClient = provider.toLowerCase() match {
-      case "openai" => {
+    val rawClient = EmbeddingModel.clientBuilders
+      .get(provider.toLowerCase())
+      .flatMap(_.apply(EmbeddingModel.ClientContext(connection, baseUrl, token, timeout, options, id, env)))
+    rawClient.map(c => EmbeddingModelClientDecorators(this, c, env))
+  }
+}
+
+object EmbeddingModel {
+
+  final case class ClientContext(connection: JsObject, baseUrl: Option[String], token: String, timeout: Option[FiniteDuration], options: JsObject, id: String, env: Env)
+
+  // Single source of truth for the embedding modality: provider id -> client builder.
+  // `supportedProviders` (and the providers catalog) is derived from these keys. The OpenAI-like
+  // providers that advertise `supportsEmbeddings` are added automatically, so adding such a
+  // provider in OpenAiLikeProviders is enough.
+  val clientBuilders: Map[String, EmbeddingModel.ClientContext => Option[EmbeddingModelClient]] = {
+    val explicit: Map[String, EmbeddingModel.ClientContext => Option[EmbeddingModelClient]] = Map(
+      "openai" -> { (c: ClientContext) =>
+        import c._
         val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
-      }
-      case "azure-openai" => {
+      },
+      "azure-openai" -> { (c: ClientContext) =>
+        import c._
         val resourceName = connection.select("resource_name").as[String]
         val deploymentId = connection.select("deployment_id").as[String]
         val version = connection.select("api_version").asOpt[String].getOrElse("v1")
@@ -68,60 +86,76 @@ case class EmbeddingModel(
           val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env)
           new AzureOpenAiEmbeddingModelClient(api, options, id).some
         }
-      }
-      case "azure-ai-foundry" => {
+      },
+      "azure-ai-foundry" -> { (c: ClientContext) =>
+        import c._
         val api = new OpenAiApi(baseUrl.getOrElse(AzureAiFoundry.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "Azure AI Foundry", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
-      }
-      case "scaleway" => {
+      },
+      "scaleway" -> { (c: ClientContext) =>
+        import c._
         val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Scaleway", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
-      }
-      case "cloud-temple" => {
+      },
+      "cloud-temple" -> { (c: ClientContext) =>
+        import c._
         val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Cloud Temple", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
-      }
-      case "deepseek" => {
+      },
+      "deepseek" -> { (c: ClientContext) =>
+        import c._
         val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Deepseek", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
-      }
-      case "gemini" => {
+      },
+      "gemini" -> { (c: ClientContext) =>
+        import c._
         val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "gemini", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
-      }
-      case "huggingface" => {
+      },
+      "huggingface" -> { (c: ClientContext) =>
+        import c._
         val api = new OpenAiApi(baseUrl.getOrElse(HuggingfaceApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "huggingface", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
-      }
-      case "mistral" => {
+      },
+      "mistral" -> { (c: ClientContext) =>
+        import c._
         val api = new MistralAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
         val opts = MistralAiEmbeddingModelClientOptions.fromJson(options)
         new MistralAiEmbeddingModelClient(api, opts, id).some
-      }
-      case "ollama" => {
+      },
+      "ollama" -> { (c: ClientContext) =>
+        import c._
         val api = new OllamaAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(10.seconds), env = env)
         val opts = OllamaEmbeddingModelClientOptions.fromJson(options)
         new OllamaEmbeddingModelClient(api, opts, id).some
-      }
-      case "x-ai" => {
+      },
+      "x-ai" -> { (c: ClientContext) =>
+        import c._
         val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = XAiEmbeddingModelClientOptions.fromJson(options)
         new XAiEmbeddingModelClient(api, opts, id).some
-      }
-      case "cohere" => {
+      },
+      "cohere" -> { (c: ClientContext) =>
+        import c._
         val api = new CohereAiApi(baseUrl.getOrElse(CohereAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = CohereAiEmbeddingModelClientOptions.fromJson(options)
         new CohereAiEmbeddingModelClient(api, opts, id).some
-      }
-      case "all-minilm-l6-v2" => new AllMiniLmL6V2EmbeddingModelClient(options, id).some
-      case p if OpenAiLikeProviders.find(p).exists(_.supportsEmbeddings) => {
-        OpenAiLikeProviders.find(p).map { provDef =>
+      },
+      "all-minilm-l6-v2" -> { (c: ClientContext) =>
+        import c._
+        new AllMiniLmL6V2EmbeddingModelClient(options, id).some
+      },
+    )
+    val likes: Map[String, EmbeddingModel.ClientContext => Option[EmbeddingModelClient]] =
+      OpenAiLikeProviders.all.filter(_.supportsEmbeddings).map { provDef =>
+        provDef.id -> { (c: ClientContext) =>
+          import c._
           val api = new OpenAiApi(
             _baseUrl = baseUrl.getOrElse(provDef.baseUrl),
             token = token,
@@ -131,16 +165,14 @@ case class EmbeddingModel(
             headers = provDef.headers,
           )
           val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
-          new OpenAiEmbeddingModelClient(api, opts, id)
+          new OpenAiEmbeddingModelClient(api, opts, id).some
         }
-      }
-      case _ => None
-    }
-    rawClient.map(c => EmbeddingModelClientDecorators(this, c, env))
+      }.toMap
+    likes ++ explicit
   }
-}
 
-object EmbeddingModel {
+  val supportedProviders: Set[String] = clientBuilders.keySet
+
   val format = new Format[EmbeddingModel] {
     override def writes(o: EmbeddingModel): JsValue             = o.location.jsonWithKey ++ Json.obj(
       "id"               -> o.id,
