@@ -46,6 +46,8 @@ class EmbeddingModelsPage extends Component {
           { label: 'Gemini', value: "gemini" },
           { label: 'Cohere', value: "cohere" },
           { label: 'Huggingface', value: "huggingface" },
+          { label: 'OpenAI Compatible', value: "openai-compatible" },
+          { label: 'OVH AI Endpoints', value: "ovh-ai-endpoints" },
           { label: 'All MiniLM L6 V2 (embedded)', value: "all-minilm-l6-v2" },
           ...OpenAiLikeProviders.filter(p => p.supports_embeddings).map(p => ({ label: p.name, value: p.id })),
       ], i => i.label) }
@@ -377,6 +379,45 @@ class EmbeddingModelsPage extends Component {
                   },
                   options: {
                     model: 'mistral-embed'
+                  },
+                }
+              });
+            } else if (state.provider === 'openai-compatible') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'openai-compatible',
+                config: {
+                  connection: {
+                    base_url: '',
+                    provider_name: 'OpenAI Compatible',
+                    token: 'xxx',
+                    timeout: 180000,
+                  },
+                  options: {
+                    model: 'your-embedding-model'
+                  },
+                }
+              });
+            } else if (state.provider === 'ovh-ai-endpoints') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'ovh-ai-endpoints',
+                config: {
+                  connection: {
+                    base_url: BaseUrls.ovhUnified,
+                    token: 'xxx',
+                    timeout: 180000,
+                  },
+                  options: {
+                    model: 'your-embedding-model'
                   },
                 }
               });
