@@ -126,6 +126,30 @@ object ImageModel {
       val editOpts = OpenRouterImageModelClientOptions.fromJson(editOptions)
       new OpenRouterImageModelClient(api, opts, editOpts, id).some
     },
+    "openai-compatible" -> { (c: ClientContext) =>
+      import c._
+      // generic OpenAI-compatible image endpoint: base url, display name, headers and param
+      // mappings are all driven by the connection config (dynamic name).
+      val providerName = connection.select("provider_name").asOpt[String]
+        .orElse(connection.select("name").asOpt[String])
+        .getOrElse("OpenAI Compatible")
+      val paramMappings = connection.select("param_mappings").asOpt[Map[String, String]].getOrElse(Map.empty)
+      val customHeaders = connection.select("headers").asOpt[Map[String, String]].getOrElse(Map("Authorization" -> "Bearer {api_key}"))
+      val additionalBodyParams = connection.select("additional_body_params").asOpt[JsObject].getOrElse(Json.obj())
+      val api = new OpenAiApi(
+        _baseUrl = baseUrl.getOrElse(OpenAiApi.baseUrl),
+        token = token,
+        timeout = timeout.getOrElse(3.minutes),
+        providerName = providerName,
+        env = env,
+        param_mappings = paramMappings,
+        headers = customHeaders,
+        additional_body_params = additionalBodyParams,
+      )
+      val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
+      val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
+      new OpenAiImageModelClient(api, opts, editOpts, id).some
+    },
     "ovh-ai-endpoints" -> { (c: ClientContext) =>
       import c._
       // OVH AI Endpoints images go through their unified OpenAI-compatible API
