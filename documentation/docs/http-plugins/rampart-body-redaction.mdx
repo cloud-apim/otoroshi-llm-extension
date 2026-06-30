@@ -1,0 +1,84 @@
+---
+sidebar_position: 10
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Rampart body PII redaction
+
+Two HTTP plugins redact Personally Identifiable Information (PII) directly in the **raw body
+text**, on **any Otoroshi route** (not just LLM routes), using the bundled
+[Rampart](/docs/guardrails/rampart) model **locally** (no external call):
+
+- **Rampart request body PII redaction** — rewrites the **request** body before it reaches the backend.
+- **Rampart response body PII redaction** — rewrites the **response** body before it returns to the client.
+
+They share the same configuration and the same detection engine (model + deterministic
+recognizers + stable placeholders) as the [Rampart guardrail](/docs/guardrails/rampart).
+
+## How it works
+
+1. The plugin reads the raw body and checks its `Content-Type` against `content_types`.
+2. If it matches, the body text is scanned for PII and each value is replaced with a stable
+   placeholder (e.g. `[EMAIL_1]`).
+3. The rewritten body is forwarded (`Transfer-Encoding: chunked`).
+
+PII values are replaced **in place**, so a JSON body stays valid JSON (placeholders live inside
+the string values).
+
+:::warning
+The body is fully **buffered** to be rewritten, so these plugins are **not suitable for
+streamed bodies** (e.g. SSE LLM streams). For LLM-aware, streaming-friendly redaction with
+re-inflation, use the [Rampart guardrail](/docs/guardrails/rampart) instead.
+
+On any internal error the plugins **fail open** (the body is passed through unchanged and the
+error is logged) so the proxy is never broken by a model glitch.
+:::
+
+## Plugin references
+
+```js
+// request body
+"plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.RampartRequestBodyRedactor"
+
+// response body
+"plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.RampartResponseBodyRedactor"
+```
+
+## Configuration
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.RampartRequestBodyRedactor",
+  "config": {
+    "min_score": 0.4,
+    "entities": ["GIVEN_NAME", "SURNAME", "PHONE", "EMAIL", "SSN", "CREDIT_CARD"],
+    "content_types": ["application/json", "text/", "application/x-www-form-urlencoded"]
+  }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `min_score` | number | `0.4` | Confidence floor for the model (lower = more redaction) |
+| `entities` | string[] | standard PII set | Entity types to redact (see the [guardrail](/docs/guardrails/rampart) for the full list) |
+| `content_types` | string[] | `["application/json", "text/", "application/x-www-form-urlencoded"]` | Only redact bodies whose `Content-Type` matches one of these prefixes. **Empty list = all content-types.** |
+
+## Example
+
+Request body in:
+
+```json
+{ "note": "call Alex Rivera at alex@example.com" }
+```
+
+Request body forwarded to the backend:
+
+```json
+{ "note": "call [GIVEN_NAME_1] [SURNAME_1] at [EMAIL_1]" }
+```
+
+The response body plugin works identically on the upstream response before it returns to the client.
