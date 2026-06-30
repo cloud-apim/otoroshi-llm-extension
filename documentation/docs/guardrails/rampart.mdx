@@ -1,0 +1,165 @@
+import Terminal from '@site/src/components/Terminal';
+
+# Rampart (local PII, no LLM)
+
+The **Rampart** guardrail detects and redacts Personally Identifiable Information (PII)
+**locally, in-process, with no external network call**. It runs the open-source
+[Rampart](https://huggingface.co/nationaldesignstudio/rampart) ONNX model (a fine-tuned
+MiniLM token classifier) bundled inside the extension, paired with a deterministic
+recognizer layer.
+
+It is a fast, private, deterministic alternative to the [`pif`](/docs/guardrails/pif)
+guardrail, which calls a separate LLM (slower, costlier, and it ships your data to a third party).
+
+- **Guardrail id**: `rampart`
+- **Runs**: before (on the prompt) and/or after (on the response)
+- **Latency**: ~a few milliseconds on CPU (model loaded once and cached)
+
+## How it works
+
+The guardrail runs three layers, in order:
+
+1. **Deterministic recognizers** — high-precision regexes (with checksums) for structured
+   identifiers: `EMAIL`, `URL`, `IP_ADDRESS`, `SSN`, and `CREDIT_CARD` (validated with the
+   Luhn algorithm). These run first.
+2. **The Rampart model** — a `BertForTokenClassification` head (35-label BIO scheme) that
+   labels the remaining PII tokens (names, addresses, phone, government IDs, bank info, …).
+   A single recall-biased confidence floor (`min_score`, default `0.4`) is applied uniformly.
+3. **Post-processing** — overlapping spans are de-duplicated (deterministic wins over the
+   model), then the configured `action` is applied.
+
+Depending on `action`, the guardrail either **rewrites** the messages (redaction, using the
+extension's `GuardrailTransform` mechanism so the redacted prompt flows downstream to the
+provider), **denies** the request, or just **flags** (logs) it.
+
+### Stable placeholders
+
+When redacting, each PII value is replaced with a **stable placeholder** like
+`[GIVEN_NAME_1]`, `[SSN_1]`, `[EMAIL_1]`. The same value always maps to the same placeholder
+across the whole conversation, so multi-turn context stays coherent.
+
+```text
+"My name is Alex Rivera and my SSN is 472-81-0094."
+  ->  "My name is [GIVEN_NAME_1] [SURNAME_1] and my SSN is [SSN_1]."
+```
+
+### Re-inflation (optional round-trip)
+
+With `reinflate: true` and `after: true`, the placeholders are restored to their original
+values in the (non-streamed) response. The mapping is kept per-request, in memory only.
+The upstream LLM never sees the real values; the end user gets them back.
+
+> Re-inflation is **not** applied to streamed responses (SSE).
+
+## Configuration
+
+Place this in your LLM provider entity, in the `Guardrails validation` section.
+
+```json
+"guardrails": [
+  {
+    "enabled": true,
+    "before": true,
+    "after": false,
+    "id": "rampart",
+    "config": {
+      "action": "redact",
+      "min_score": 0.4,
+      "reinflate": false,
+      "entities": [
+        "GIVEN_NAME", "SURNAME", "PHONE", "EMAIL", "SSN", "CREDIT_CARD"
+      ]
+    }
+  }
+]
+```
+
+### Field explanations
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Activates the guardrail |
+| `before` | bool | `false` | Apply to the **prompt** (redact / block / flag the user input) |
+| `after` | bool | `false` | Apply to the **response** (re-inflation, or block / flag the output) |
+| `id` | string | — | Must be `"rampart"` |
+| `config.action` | string | `"redact"` | `redact` \| `block` \| `flag` (see below) |
+| `config.min_score` | number | `0.4` | Confidence floor for the model. Lower = higher recall, more redaction |
+| `config.reinflate` | bool | `false` | If `true` and `after: true`, restore original values in the response |
+| `config.entities` | string[] | standard set | Entity types to act on (see below) |
+
+### Actions
+
+| `action` | Behavior (before phase) |
+|---|---|
+| `redact` | Replace PII with stable placeholders and forward the redacted prompt to the LLM |
+| `block` | Deny the request if any PII is found (returns `guardrailsFailOnDeny`-dependent response) |
+| `flag` | Log that PII was found, but let the request through unchanged |
+
+## Entity types
+
+Redacted by default:
+
+`GIVEN_NAME`, `SURNAME`, `PHONE`, `TAX_ID`, `BANK_ACCOUNT`, `ROUTING_NUMBER`,
+`GOVERNMENT_ID`, `PASSPORT`, `DRIVERS_LICENSE`, `BUILDING_NUMBER`, `STREET_NAME`,
+`SECONDARY_ADDRESS`, `EMAIL`, `URL`, `SSN`, `CREDIT_CARD`, `IP_ADDRESS`.
+
+Kept by default (coarse geo markers, useful and low-risk):
+
+`CITY`, `STATE`, `ZIP_CODE` — add them to `entities` if you want them redacted too.
+
+> `EMAIL`, `URL`, `IP_ADDRESS`, `SSN`, `CREDIT_CARD` are caught by the deterministic layer;
+> the others come from the model.
+
+## Example — redaction (before)
+
+```sh
+$ curl --request POST \
+  --url 'http://your-route.oto.tools:8080/v1/chat/completions' \
+  --header 'authorization: Bearer $BEARER_TOKEN' \
+  --header 'content-type: application/json' \
+  --data '{
+  "messages": [
+    { "role": "user", "content": "My name is Alex Rivera, email alex@example.com." }
+  ]
+}'
+```
+
+The upstream provider receives the redacted prompt:
+
+```text
+"My name is [GIVEN_NAME_1] [SURNAME_1], email [EMAIL_1]."
+```
+
+## Example — block
+
+With `"action": "block"` and `guardrailsFailOnDeny: true` on the provider, a prompt
+containing PII is rejected:
+
+```json
+{
+  "error": "guardrail_denied",
+  "error_description": "request blocked: personal information detected",
+  "phase": "before"
+}
+```
+
+## Model, license & attribution
+
+- The model is **Rampart** by **National Design Studio**, redistributed unmodified under
+  **CC BY 4.0** (see the project `NOTICE` and the `README.md`/`LICENSE` bundled with the model
+  under `cloudapim/extensions/ai/models/rampart/`).
+- Base model: `nreimers/MiniLM-L6-H384-uncased`. Trained on `ai4privacy/pii-masking-openpii-1.5m`.
+
+## Performance & limitations
+
+- The ONNX session and tokenizer are loaded **once** and cached, so per-call cost is a few ms on CPU.
+- Best on **Latin-script** languages (English, Spanish, French, German, Italian, Portuguese, Dutch).
+  Recall on non-Latin scripts (e.g. CJK, Arabic, Cyrillic) is significantly lower.
+- Not a defense against motivated adversaries (e.g. zero-width / homoglyph obfuscation); pair it
+  with the deterministic validators it already includes and with other guardrails as needed.
+- Re-inflation does not apply to streamed responses.
+
+## See also
+
+- The [`rampart_redact`](/docs/workflows/rampart-redact) workflow function (use the same engine in a workflow).
+- The Rampart raw-body HTTP plugins (redact request/response bodies on any route).
