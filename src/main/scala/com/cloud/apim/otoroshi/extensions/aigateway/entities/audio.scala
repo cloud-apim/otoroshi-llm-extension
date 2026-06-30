@@ -57,74 +57,92 @@ case class AudioModel(
     val ttsOptions = config.select("tts").asOpt[JsObject].getOrElse(Json.obj())
     val sttOptions = config.select("stt").asOpt[JsObject].getOrElse(Json.obj())
     val translateOptions = config.select("translate").asOpt[JsObject].getOrElse(Json.obj())
-    val rawClient = provider.toLowerCase() match {
-      case "openai" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
-        val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
-        val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
-        val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
-        new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
-      }
-      case "azure-openai" => {
-        val resourceName = connection.select("resource_name").as[String]
-        val deploymentId = connection.select("deployment_id").as[String]
-        val version = connection.select("api_version").asOpt[String].getOrElse("v1")
-        val apikey = connection.select("api_key").asOpt[String]
-        val bearer = Some(token).filterNot(_ == "xxx")
-        val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
-        val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
-        val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
-        if (version == "v1") {
-          val api = new OpenAiApi(baseUrl.getOrElse("https://<aoairesource>.openai.azure.com/openai/v1"), token, timeout.getOrElse(30.seconds), providerName = "Azure-OpenAI", env = env)
-          new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
-        } else {
-          val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env)
-          new AzureOpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
-        }
-      }
-      case "cloud-temple" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
-        val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
-        val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
-        val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
-        new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
-      }
-      case "groq" => {
-        val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val ttsopts = GroqAudioModelClientTtsOptions.fromJson(ttsOptions)
-        val sttopts = GroqAudioModelClientSttOptions.fromJson(sttOptions)
-        val transopts = GroqAudioModelClientTranslationOptions.fromJson(translateOptions)
-        new GroqAudioModelClient(api, ttsopts, sttopts, transopts, id).some
-      }
-      case "elevenlabs" => {
-        val api = new ElevenLabsApi(baseUrl.getOrElse(ElevenLabsApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val ttsopts = ElevenLabsAudioModelClientTtsOptions.fromJson(ttsOptions)
-        val sttopts = ElevenLabsAudioModelClientSttOptions.fromJson(sttOptions)
-        new ElevenLabsAudioModelClient(api, ttsopts, sttopts, id).some
-      }
-      case "mistral" => {
-        val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val sttopts = MistralAiAudioModelClientSttOptions.fromJson(sttOptions)
-        new MistralAIAudioModelClient(api, sttopts, id).some
-      }
-      case "alphaedge" => {
-        val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val sttopts = AlphaEdgeAudioModelClientSttOptions.fromJson(sttOptions)
-        new AlphaEdgeAudioModelClient(api, sttopts, id).some
-      }
-      case "openrouter" => {
-        val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val ttsopts = OpenRouterAudioModelClientTtsOptions.fromJson(ttsOptions)
-        val sttopts = OpenRouterAudioModelClientSttOptions.fromJson(sttOptions)
-        new OpenRouterAudioModelClient(api, ttsopts, sttopts, id).some
-      }
-      case _ => None
-    }
+    val rawClient = AudioModel.clientBuilders
+      .get(provider.toLowerCase())
+      .flatMap(_.apply(AudioModel.ClientContext(connection, baseUrl, token, timeout, ttsOptions, sttOptions, translateOptions, id, env)))
     rawClient.map(c => AudioModelClientDecorators(this, c, env))
   }
 }
 
 object AudioModel {
+
+  final case class ClientContext(connection: JsObject, baseUrl: Option[String], token: String, timeout: Option[FiniteDuration], ttsOptions: JsObject, sttOptions: JsObject, translateOptions: JsObject, id: String, env: Env)
+
+  // Single source of truth for the audio modality: provider id -> client builder.
+  // `supportedProviders` (and the providers catalog) is derived from these keys.
+  val clientBuilders: Map[String, AudioModel.ClientContext => Option[AudioModelClient]] = Map(
+    "openai" -> { (c: ClientContext) =>
+      import c._
+      val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
+      val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
+      val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
+      val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
+      new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
+    },
+    "azure-openai" -> { (c: ClientContext) =>
+      import c._
+      val resourceName = connection.select("resource_name").as[String]
+      val deploymentId = connection.select("deployment_id").as[String]
+      val version = connection.select("api_version").asOpt[String].getOrElse("v1")
+      val apikey = connection.select("api_key").asOpt[String]
+      val bearer = Some(token).filterNot(_ == "xxx")
+      val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
+      val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
+      val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
+      if (version == "v1") {
+        val api = new OpenAiApi(baseUrl.getOrElse("https://<aoairesource>.openai.azure.com/openai/v1"), token, timeout.getOrElse(30.seconds), providerName = "Azure-OpenAI", env = env)
+        new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
+      } else {
+        val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env)
+        new AzureOpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
+      }
+    },
+    "cloud-temple" -> { (c: ClientContext) =>
+      import c._
+      val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
+      val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
+      val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
+      val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
+      new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
+    },
+    "groq" -> { (c: ClientContext) =>
+      import c._
+      val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val ttsopts = GroqAudioModelClientTtsOptions.fromJson(ttsOptions)
+      val sttopts = GroqAudioModelClientSttOptions.fromJson(sttOptions)
+      val transopts = GroqAudioModelClientTranslationOptions.fromJson(translateOptions)
+      new GroqAudioModelClient(api, ttsopts, sttopts, transopts, id).some
+    },
+    "elevenlabs" -> { (c: ClientContext) =>
+      import c._
+      val api = new ElevenLabsApi(baseUrl.getOrElse(ElevenLabsApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val ttsopts = ElevenLabsAudioModelClientTtsOptions.fromJson(ttsOptions)
+      val sttopts = ElevenLabsAudioModelClientSttOptions.fromJson(sttOptions)
+      new ElevenLabsAudioModelClient(api, ttsopts, sttopts, id).some
+    },
+    "mistral" -> { (c: ClientContext) =>
+      import c._
+      val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val sttopts = MistralAiAudioModelClientSttOptions.fromJson(sttOptions)
+      new MistralAIAudioModelClient(api, sttopts, id).some
+    },
+    "alphaedge" -> { (c: ClientContext) =>
+      import c._
+      val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val sttopts = AlphaEdgeAudioModelClientSttOptions.fromJson(sttOptions)
+      new AlphaEdgeAudioModelClient(api, sttopts, id).some
+    },
+    "openrouter" -> { (c: ClientContext) =>
+      import c._
+      val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val ttsopts = OpenRouterAudioModelClientTtsOptions.fromJson(ttsOptions)
+      val sttopts = OpenRouterAudioModelClientSttOptions.fromJson(sttOptions)
+      new OpenRouterAudioModelClient(api, ttsopts, sttopts, id).some
+    },
+  )
+
+  val supportedProviders: Set[String] = clientBuilders.keySet
+
   val format = new Format[AudioModel] {
     override def writes(o: AudioModel): JsValue = o.location.jsonWithKey ++ Json.obj(
       "id" -> o.id,
