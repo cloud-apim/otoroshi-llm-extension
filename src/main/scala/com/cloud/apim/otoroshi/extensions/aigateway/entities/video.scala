@@ -48,24 +48,36 @@ case class VideoModel(
       _token
     }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
-    val rawClient = provider.toLowerCase() match {
-      case "luma" => {
-        val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val opts = LumaVideoModelClientOptions.fromJson(options)
-        new LumaVideoModelClient(api, opts, id).some
-      }
-      case "openrouter" => {
-        val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val opts = OpenRouterVideoModelClientOptions.fromJson(options)
-        new OpenRouterVideoModelClient(api, opts, id).some
-      }
-      case _ => None
-    }
+    val rawClient = VideoModel.clientBuilders
+      .get(provider.toLowerCase())
+      .flatMap(_.apply(VideoModel.ClientContext(baseUrl, token, timeout, options, id, env)))
     rawClient.map(c => VideosGenModelClientDecorators(this, c, env))
   }
 }
 
 object VideoModel {
+
+  final case class ClientContext(baseUrl: Option[String], token: String, timeout: Option[FiniteDuration], options: JsObject, id: String, env: Env)
+
+  // Single source of truth for the video modality: provider id -> client builder.
+  // `supportedProviders` (and the providers catalog) is derived from these keys.
+  val clientBuilders: Map[String, VideoModel.ClientContext => Option[VideoModelClient]] = Map(
+    "luma" -> { (c: ClientContext) =>
+      import c._
+      val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val opts = LumaVideoModelClientOptions.fromJson(options)
+      new LumaVideoModelClient(api, opts, id).some
+    },
+    "openrouter" -> { (c: ClientContext) =>
+      import c._
+      val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val opts = OpenRouterVideoModelClientOptions.fromJson(options)
+      new OpenRouterVideoModelClient(api, opts, id).some
+    },
+  )
+
+  val supportedProviders: Set[String] = clientBuilders.keySet
+
   val format = new Format[VideoModel] {
     override def writes(o: VideoModel): JsValue             = o.location.jsonWithKey ++ Json.obj(
       "id"               -> o.id,
