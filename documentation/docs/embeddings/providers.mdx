@@ -202,6 +202,37 @@ Uses OpenAI-compatible API. Provides access to multiple embedding models from di
 
 ---
 
+## OpenAI Compatible
+
+- **Base URL:** your own endpoint (set in the connection config)
+- **API endpoint:** `POST /embeddings`
+
+A generic provider for any embedding service that speaks the OpenAI `/embeddings` format. Point it at your endpoint with `base_url` and `token`, and give it a display name with `provider_name` — that name is what shows up for this provider everywhere in the gateway. When the target API needs it, you can also override the request `headers`, the `param_mappings`, and the `additional_body_params`.
+
+```js
+{
+  "connection": {
+    "base_url": "https://my-endpoint/v1",
+    "provider_name": "My Provider",
+    "token": "xxx"
+  },
+  "options": {
+    "model": "your-embedding-model"
+  }
+}
+```
+
+---
+
+## OVH AI Endpoints 🇫🇷 🇪🇺
+
+- **Base URL:** `https://oai.endpoints.kepler.ai.cloud.ovh.net/v1`
+- **API endpoint:** `POST /embeddings`
+
+Uses OVH's unified OpenAI-compatible API. Just set your `token` and the embedding `model` you want to use.
+
+---
+
 ## All MiniLM L6 V2 (local)
 
 - **No API call** — runs entirely in-process via ONNX runtime
@@ -233,4 +264,6 @@ Token usage is not tracked for this model.
 | Nebius | OpenAI | — | varies | — |
 | SambaNova | OpenAI | — | varies | — |
 | OpenRouter | OpenAI | — | varies | Multi-provider |
+| OpenAI Compatible | OpenAI | (your model) | varies | Configurable name & headers |
+| OVH AI Endpoints | OpenAI | — | varies | Unified API 🇫🇷 🇪🇺 |
 | All MiniLM L6 V2 | Local ONNX | `all-minilm-l6-v2` | 384 | No API call |
