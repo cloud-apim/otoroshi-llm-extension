@@ -36,6 +36,7 @@ class AudioModelsPage extends Component {
           {label: 'Cloud Temple', value: "cloud-temple"},
           {label: 'AlphaEdge', value: "alphaedge"},
           {label: 'OpenRouter', value: "openrouter"},
+          {label: 'OpenAI Compatible', value: "openai-compatible"},
           {label: 'OVH AI Endpoints (transcription)', value: "ovh-ai-endpoints"},
         ], i => i.label)
       }
@@ -354,6 +355,39 @@ class AudioModelsPage extends Component {
                       model: 'openai/whisper-large-v3',
                       language: 'en',
                       temperature: 0.0,
+                    }
+                  }
+                }
+              });
+            } else if (state.provider === 'openai-compatible') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'openai-compatible',
+                config: {
+                  connection: {
+                    base_url: '',
+                    provider_name: 'OpenAI Compatible',
+                    token: 'xxxxx',
+                    timeout: 180000,
+                  },
+                  options: {
+                    tts: {
+                      enabled: true,
+                      model: 'gpt-4o-mini-tts',
+                      response_format: 'mp3',
+                      speed: 1
+                    },
+                    stt: {
+                      enabled: true,
+                      model: 'gpt-4o-mini-transcribe',
+                    },
+                    translation: {
+                      enabled: true,
+                      model: 'whisper-1'
                     }
                   }
                 }
