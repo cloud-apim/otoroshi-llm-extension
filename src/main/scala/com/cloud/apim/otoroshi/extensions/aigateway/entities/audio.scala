@@ -139,6 +139,16 @@ object AudioModel {
       val sttopts = OpenRouterAudioModelClientSttOptions.fromJson(sttOptions)
       new OpenRouterAudioModelClient(api, ttsopts, sttopts, id).some
     },
+    "ovh-ai-endpoints" -> { (c: ClientContext) =>
+      import c._
+      // OVH AI Endpoints audio: transcription (speech-to-text) only, through their unified
+      // OpenAI-compatible API. TTS and translation are forced off.
+      val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
+      val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions ++ Json.obj("enabled" -> false))
+      val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
+      val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions ++ Json.obj("enabled" -> false))
+      new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
+    },
   )
 
   val supportedProviders: Set[String] = clientBuilders.keySet
