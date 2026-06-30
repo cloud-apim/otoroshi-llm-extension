@@ -36,6 +36,7 @@ class AudioModelsPage extends Component {
           {label: 'Cloud Temple', value: "cloud-temple"},
           {label: 'AlphaEdge', value: "alphaedge"},
           {label: 'OpenRouter', value: "openrouter"},
+          {label: 'OVH AI Endpoints (transcription)', value: "ovh-ai-endpoints"},
         ], i => i.label)
       }
     },
@@ -353,6 +354,29 @@ class AudioModelsPage extends Component {
                       model: 'openai/whisper-large-v3',
                       language: 'en',
                       temperature: 0.0,
+                    }
+                  }
+                }
+              });
+            } else if (state.provider === 'ovh-ai-endpoints') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'ovh-ai-endpoints',
+                config: {
+                  connection: {
+                    base_url: BaseUrls.ovhUnified,
+                    token: 'xxxxx',
+                    timeout: 180000,
+                  },
+                  options: {
+                    // OVH AI Endpoints supports transcription (speech-to-text) only
+                    stt: {
+                      enabled: true,
+                      model: 'your-transcription-model',
                     }
                   }
                 }
