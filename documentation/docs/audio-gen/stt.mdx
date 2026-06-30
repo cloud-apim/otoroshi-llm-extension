@@ -19,6 +19,7 @@ Speech-to-Text transcribes audio files into text. Otoroshi exposes STT through a
 | **ElevenLabs** | `scribe_v1` |
 | **Mistral** 🇫🇷 🇪🇺 | `voxtral-mini-latest`, `voxtral-mini-2507` |
 | **AlphaEdge** 🇫🇷 🇪🇺 | `alpha-audio-v1` |
+| **OVH AI Endpoints** 🇫🇷 🇪🇺 | (your transcription model) |
 
 ## STT configuration
 
@@ -123,6 +124,20 @@ Same parameters as OpenAI.
 | `enable_postcorrect` | boolean | `false` | Apply linguistic post-correction (punctuation, capitalization, spelling, stuttering removal) |
 
 `enable_diarization` and `enable_postcorrect` can also be passed per-request as form fields, overriding the entity configuration.
+
+### OVH AI Endpoints
+
+OVH AI Endpoints 🇫🇷 🇪🇺 provides transcription only (no TTS, no translation) through its unified OpenAI-compatible API. It uses the same STT parameters as OpenAI — just set your `token` and the transcription `model`.
+
+```js
+{
+  "stt": {
+    "enabled": true,
+    "model": "your-transcription-model",
+    "language": "en"
+  }
+}
+```
 
 ## API usage
 
@@ -252,6 +267,32 @@ The request is sent as multipart form data.
         "model": "alpha-audio-v1",
         "enable_diarization": true,
         "enable_postcorrect": true
+      }
+    }
+  },
+  "kind": "ai-gateway.extensions.cloud-apim.com/AudioModel"
+}
+```
+
+## Full entity example with OVH AI Endpoints
+
+```js
+{
+  "id": "audio-gen-model_xxxxxxxxx",
+  "name": "OVH Transcription",
+  "description": "OVH AI Endpoints speech-to-text",
+  "provider": "ovh-ai-endpoints",
+  "config": {
+    "connection": {
+      "base_url": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+      "token": "${vault://local/OVH_API_KEY}",
+      "timeout": 180000
+    },
+    "options": {
+      "stt": {
+        "enabled": true,
+        "model": "your-transcription-model",
+        "language": "en"
       }
     }
   },
