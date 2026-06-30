@@ -49,68 +49,87 @@ case class ImageModel(
       _token
     }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
-    val rawClient = provider.toLowerCase() match {
-      case "openai" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
-        val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
-        val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
-        new OpenAiImageModelClient(api, opts, editOpts, id).some
-      }
-      case "gemini" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Gemini", env = env)
-        val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
-        val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
-        new OpenAiImageModelClient(api, opts, editOpts, id).some
-      }
-      case "cloud-temple" => {
-        val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
-        val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
-        val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
-        new OpenAiImageModelClient(api, opts, editOpts, id).some
-      }
-      case "x-ai" => {
-        val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val opts = XAiImageModelClientOptions.fromJson(genOptions)
-        new XAiImageModelClient(api, opts, id).some
-      }
-      case "azure-openai" => {
-        val resourceName = connection.select("resource_name").as[String]
-        val deploymentId = connection.select("deployment_id").as[String]
-        val version = connection.select("api_version").asOpt[String].getOrElse("2024-02-01")
-        val apikey = connection.select("api_key").asOpt[String]
-        val bearer = Some(token).filterNot(_ == "xxx")
-        val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env)
-        val opts = AzureOpenAiImageModelClientOptions.fromJson(genOptions)
-        new AzureOpenAiImageModelClient(api, opts, id).some
-      }
-      case "luma" => {
-        val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val opts = LumaImageModelClientOptions.fromJson(genOptions)
-        new LumaImageModelClient(api, opts, id).some
-      }
-     case "leonardo-ai" => {
-       val api = new LeonardoAIApi(baseUrl.getOrElse(LeonardoAIApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-       val opts = LeonardoAIImagesGenModelClientOptions.fromJson(genOptions)
-       new LeonardoAIImageModelClient(api, opts, id).some
-     }
-      case "hive" => {
-        val api = new HiveApi(baseUrl.getOrElse(HiveApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val opts = HiveImageModelClientOptions.fromJson(genOptions)
-        new HiveImageModelClient(api, opts, id).some
-      }
-      case "openrouter" => {
-        val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        val opts = OpenRouterImageModelClientOptions.fromJson(genOptions)
-        val editOpts = OpenRouterImageModelClientOptions.fromJson(editOptions)
-        new OpenRouterImageModelClient(api, opts, editOpts, id).some
-      }
-      case _ => None
-    }
+    val rawClient = ImageModel.clientBuilders
+      .get(provider.toLowerCase())
+      .flatMap(_.apply(ImageModel.ClientContext(connection, baseUrl, token, timeout, genOptions, editOptions, id, env)))
     rawClient.map(c => ImageModelClientDecorators(this, c, env))
   }
 }
 
 object ImageModel {
+
+  final case class ClientContext(connection: JsObject, baseUrl: Option[String], token: String, timeout: Option[FiniteDuration], genOptions: JsObject, editOptions: JsObject, id: String, env: Env)
+
+  // Single source of truth for the image modality: provider id -> client builder.
+  // `supportedProviders` (and the providers catalog) is derived from these keys.
+  val clientBuilders: Map[String, ImageModel.ClientContext => Option[ImageModelClient]] = Map(
+    "openai" -> { (c: ClientContext) =>
+      import c._
+      val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
+      val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
+      val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
+      new OpenAiImageModelClient(api, opts, editOpts, id).some
+    },
+    "gemini" -> { (c: ClientContext) =>
+      import c._
+      val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Gemini", env = env)
+      val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
+      val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
+      new OpenAiImageModelClient(api, opts, editOpts, id).some
+    },
+    "cloud-temple" -> { (c: ClientContext) =>
+      import c._
+      val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
+      val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
+      val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
+      new OpenAiImageModelClient(api, opts, editOpts, id).some
+    },
+    "x-ai" -> { (c: ClientContext) =>
+      import c._
+      val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val opts = XAiImageModelClientOptions.fromJson(genOptions)
+      new XAiImageModelClient(api, opts, id).some
+    },
+    "azure-openai" -> { (c: ClientContext) =>
+      import c._
+      val resourceName = connection.select("resource_name").as[String]
+      val deploymentId = connection.select("deployment_id").as[String]
+      val version = connection.select("api_version").asOpt[String].getOrElse("2024-02-01")
+      val apikey = connection.select("api_key").asOpt[String]
+      val bearer = Some(token).filterNot(_ == "xxx")
+      val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env)
+      val opts = AzureOpenAiImageModelClientOptions.fromJson(genOptions)
+      new AzureOpenAiImageModelClient(api, opts, id).some
+    },
+    "luma" -> { (c: ClientContext) =>
+      import c._
+      val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val opts = LumaImageModelClientOptions.fromJson(genOptions)
+      new LumaImageModelClient(api, opts, id).some
+    },
+    "leonardo-ai" -> { (c: ClientContext) =>
+      import c._
+      val api = new LeonardoAIApi(baseUrl.getOrElse(LeonardoAIApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val opts = LeonardoAIImagesGenModelClientOptions.fromJson(genOptions)
+      new LeonardoAIImageModelClient(api, opts, id).some
+    },
+    "hive" -> { (c: ClientContext) =>
+      import c._
+      val api = new HiveApi(baseUrl.getOrElse(HiveApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val opts = HiveImageModelClientOptions.fromJson(genOptions)
+      new HiveImageModelClient(api, opts, id).some
+    },
+    "openrouter" -> { (c: ClientContext) =>
+      import c._
+      val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val opts = OpenRouterImageModelClientOptions.fromJson(genOptions)
+      val editOpts = OpenRouterImageModelClientOptions.fromJson(editOptions)
+      new OpenRouterImageModelClient(api, opts, editOpts, id).some
+    },
+  )
+
+  val supportedProviders: Set[String] = clientBuilders.keySet
+
   val format = new Format[ImageModel] {
     override def writes(o: ImageModel): JsValue             = o.location.jsonWithKey ++ Json.obj(
       "id"               -> o.id,
