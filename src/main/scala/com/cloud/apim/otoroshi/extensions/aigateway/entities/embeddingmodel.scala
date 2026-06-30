@@ -147,6 +147,35 @@ object EmbeddingModel {
         val opts = CohereAiEmbeddingModelClientOptions.fromJson(options)
         new CohereAiEmbeddingModelClient(api, opts, id).some
       },
+      "openai-compatible" -> { (c: ClientContext) =>
+        import c._
+        // generic OpenAI-compatible embedding endpoint: base url, display name, headers and param
+        // mappings are all driven by the connection config (dynamic name).
+        val providerName = connection.select("provider_name").asOpt[String]
+          .orElse(connection.select("name").asOpt[String])
+          .getOrElse("OpenAI Compatible")
+        val paramMappings = connection.select("param_mappings").asOpt[Map[String, String]].getOrElse(Map.empty)
+        val customHeaders = connection.select("headers").asOpt[Map[String, String]].getOrElse(Map("Authorization" -> "Bearer {api_key}"))
+        val additionalBodyParams = connection.select("additional_body_params").asOpt[JsObject].getOrElse(Json.obj())
+        val api = new OpenAiApi(
+          _baseUrl = baseUrl.getOrElse(OpenAiApi.baseUrl),
+          token = token,
+          timeout = timeout.getOrElse(30.seconds),
+          providerName = providerName,
+          env = env,
+          param_mappings = paramMappings,
+          headers = customHeaders,
+          additional_body_params = additionalBodyParams,
+        )
+        val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
+        new OpenAiEmbeddingModelClient(api, opts, id).some
+      },
+      "ovh-ai-endpoints" -> { (c: ClientContext) =>
+        import c._
+        val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(10.seconds), providerName = "OVH", env = env)
+        val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
+        new OpenAiEmbeddingModelClient(api, opts, id).some
+      },
       "all-minilm-l6-v2" -> { (c: ClientContext) =>
         import c._
         new AllMiniLmL6V2EmbeddingModelClient(options, id).some
