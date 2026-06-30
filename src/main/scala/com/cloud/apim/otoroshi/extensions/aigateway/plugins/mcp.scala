@@ -1328,6 +1328,7 @@ object McpZeroTrust {
         case None => loop(seq.tail) // unknown guardrail id => skip
         case Some(g) => g.pass(Seq(msg), item.config, None, None, attrs).flatMap {
           case GuardrailResult.GuardrailPass => loop(seq.tail)
+          case GuardrailResult.GuardrailTransform(_) => loop(seq.tail) // scan only blocks on denial; transforms aren't applied here
           case denied @ GuardrailResult.GuardrailDenied(_) => Future.successful(denied)
           case GuardrailResult.GuardrailError(_) => loop(seq.tail) // an internal guardrail error must not block
         }.recoverWith { case _ => loop(seq.tail) }
