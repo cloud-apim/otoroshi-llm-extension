@@ -54,9 +54,19 @@ OpenAI moderation models classify content into the following categories:
 
 ---
 
+## OVH AI Endpoints 🇫🇷 🇪🇺
+
+- **Base URL:** `https://oai.endpoints.kepler.ai.cloud.ovh.net/v1`
+- **API endpoint:** `POST /moderations`
+
+Uses OVH's unified OpenAI-compatible API. Set your `token` and the moderation `model` you want to use.
+
+---
+
 ## Provider comparison
 
 | Provider | Default model | API format | Categories |
 |----------|---------------|------------|------------|
 | OpenAI | `omni-moderation-latest` | OpenAI | 11 categories |
 | Mistral | `mistral-moderation-latest` | OpenAI-compatible | Provider-specific |
+| OVH AI Endpoints 🇫🇷 🇪🇺 | (your model) | OpenAI-compatible | Provider-specific |
