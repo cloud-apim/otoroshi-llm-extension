@@ -1,0 +1,71 @@
+---
+sidebar_position: 21
+---
+
+# Rampart Redact
+
+The `rampart_redact` function detects and redacts Personally Identifiable Information (PII)
+in a piece of text **locally**, using the bundled [Rampart](/docs/guardrails/rampart) ONNX
+model (no external call). Use it as a standalone node in a workflow to scrub text before
+sending it elsewhere, or to inspect what PII a payload contains.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.rampart_redact`
+
+## Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `input` | string | yes | — | The text to scan / redact |
+| `action` | string | no | `redact` | `redact` (return redacted text + mapping) or `detect` (return spans only) |
+| `min_score` | number | no | `0.4` | Confidence floor for the model |
+| `entities` | string[] | no | standard PII set | Entity types to consider |
+
+See the [Rampart guardrail](/docs/guardrails/rampart) for the full list of entity types and
+how the deterministic + model layers work.
+
+## Output
+
+For `action: "redact"`:
+
+```json
+{
+  "redacted": "My name is [GIVEN_NAME_1] [SURNAME_1] and my SSN is [SSN_1].",
+  "mapping": {
+    "[GIVEN_NAME_1]": "Alex",
+    "[SURNAME_1]": "Rivera",
+    "[SSN_1]": "472-81-0094"
+  },
+  "spans": [
+    { "entity": "GIVEN_NAME", "start": 11, "end": 15, "score": 0.99, "text": "Alex" }
+  ]
+}
+```
+
+For `action: "detect"`:
+
+```json
+{
+  "found": true,
+  "count": 3,
+  "spans": [
+    { "entity": "SSN", "start": 37, "end": 48, "score": 1.0, "text": "472-81-0094" }
+  ]
+}
+```
+
+## Example
+
+```json
+{
+  "kind": "rampart_redact",
+  "function": "extensions.com.cloud-apim.llm-extension.rampart_redact",
+  "args": {
+    "action": "redact",
+    "input": "My name is Alex Rivera and my SSN is 472-81-0094."
+  },
+  "result": "redaction_result"
+}
+```
+
+A common pattern is to redact first, call an LLM on `redacted`, then re-inflate downstream
+using the returned `mapping`.
