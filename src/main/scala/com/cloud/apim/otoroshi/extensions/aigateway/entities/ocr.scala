@@ -55,22 +55,34 @@ case class OcrModel(
     }
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
-    val rawClient = provider.toLowerCase() match {
-      case "alphaedge" => {
-        val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        new AlphaEdgeOcrModelClient(api, AlphaEdgeOcrModelClientOptions.fromJson(options), id).some
-      }
-      case "mistral" => {
-        val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
-        new MistralOcrModelClient(api, MistralOcrModelClientOptions.fromJson(options), id).some
-      }
-      case _ => None
-    }
+    val rawClient = OcrModel.clientBuilders
+      .get(provider.toLowerCase())
+      .flatMap(_.apply(OcrModel.ClientContext(baseUrl, token, timeout, options, id, env)))
     rawClient.map(c => OcrModelClientDecorators(this, c, env))
   }
 }
 
 object OcrModel {
+
+  final case class ClientContext(baseUrl: Option[String], token: String, timeout: Option[FiniteDuration], options: JsObject, id: String, env: Env)
+
+  // Single source of truth for the OCR modality: provider id -> client builder.
+  // `supportedProviders` (and the providers catalog) is derived from these keys.
+  val clientBuilders: Map[String, OcrModel.ClientContext => Option[OcrModelClient]] = Map(
+    "alphaedge" -> { (c: ClientContext) =>
+      import c._
+      val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      new AlphaEdgeOcrModelClient(api, AlphaEdgeOcrModelClientOptions.fromJson(options), id).some
+    },
+    "mistral" -> { (c: ClientContext) =>
+      import c._
+      val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      new MistralOcrModelClient(api, MistralOcrModelClientOptions.fromJson(options), id).some
+    },
+  )
+
+  val supportedProviders: Set[String] = clientBuilders.keySet
+
   val format = new Format[OcrModel] {
     override def writes(o: OcrModel): JsValue = o.location.jsonWithKey ++ Json.obj(
       "id" -> o.id,
