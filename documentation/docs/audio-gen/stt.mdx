@@ -19,6 +19,7 @@ Speech-to-Text transcribes audio files into text. Otoroshi exposes STT through a
 | **ElevenLabs** | `scribe_v1` |
 | **Mistral** 🇫🇷 🇪🇺 | `voxtral-mini-latest`, `voxtral-mini-2507` |
 | **AlphaEdge** 🇫🇷 🇪🇺 | `alpha-audio-v1` |
+| **OpenAI Compatible** | (your model) |
 | **OVH AI Endpoints** 🇫🇷 🇪🇺 | (your transcription model) |
 
 ## STT configuration
@@ -124,6 +125,20 @@ Same parameters as OpenAI.
 | `enable_postcorrect` | boolean | `false` | Apply linguistic post-correction (punctuation, capitalization, spelling, stuttering removal) |
 
 `enable_diarization` and `enable_postcorrect` can also be passed per-request as form fields, overriding the entity configuration.
+
+### OpenAI Compatible
+
+A generic provider for any transcription service that speaks the OpenAI `/audio/transcriptions` format. Point it at your endpoint with `base_url` and `token`, and give it a display name with `provider_name`. It uses the same STT parameters as OpenAI.
+
+```js
+{
+  "stt": {
+    "enabled": true,
+    "model": "your-model",
+    "language": "en"
+  }
+}
+```
 
 ### OVH AI Endpoints
 
