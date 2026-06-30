@@ -41,7 +41,8 @@ class ImageModelsPage extends Component {
           {label: 'Luma', value: "luma"},
           // {label: 'Leonardo AI', value: "leonardo-ai"},
           {label: 'Hive', value: "hive"},
-          {label: 'OpenRouter', value: "openrouter"}
+          {label: 'OpenRouter', value: "openrouter"},
+          {label: 'OVH AI Endpoints', value: "ovh-ai-endpoints"}
         ], i => i.label)
       }
     },
@@ -317,6 +318,32 @@ class ImageModelsPage extends Component {
                       enabled: true,
                       model: 'google/gemini-2.5-flash-image',
                       modalities: ["image", "text"]
+                    }
+                  }
+                },
+              });
+            } else if (state.provider === 'ovh-ai-endpoints') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'ovh-ai-endpoints',
+                config: {
+                  connection: {
+                    base_url: BaseUrls.ovhUnified,
+                    token: 'xxxxxx',
+                    timeout: 180000
+                  },
+                  options: {
+                    generation: {
+                      enabled: true,
+                      model: 'your-image-model',
+                      n: 1,
+                    },
+                    edition: {
+                      enabled: false
                     }
                   }
                 },
