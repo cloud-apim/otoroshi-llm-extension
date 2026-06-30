@@ -13,3 +13,18 @@ distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
 WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 License for the specific language governing permissions and limitations under
 the License.
+
+--------------------------------------------------------------------------------
+
+THIRD-PARTY ASSETS
+
+This software bundles the following third-party asset:
+
+- "Rampart" PII detection model, by National Design Studio
+  Source:  https://huggingface.co/nationaldesignstudio/rampart
+  License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+           https://creativecommons.org/licenses/by/4.0/
+  Trained on the ai4privacy/pii-masking-openpii-1.5m dataset (CC BY 4.0).
+  Bundled under src/main/resources/cloudapim/extensions/ai/models/rampart/
+  and redistributed unmodified. The full CC BY 4.0 license text is included
+  alongside the model files (see that folder's LICENSE and README.md).
