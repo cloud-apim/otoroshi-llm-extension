@@ -235,6 +235,12 @@ class OpenAiCompatApi extends NgBackendCall {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
       OpenAiCompatProvidersWithModels.handleRequest(providerConfig, ctx)
 
+    } else if (method == "GET" && path.endsWith("/providers")) {
+      // Catalog of every provider type Otoroshi LLM supports, with its capabilities (text, audio,
+      // image, ocr, embedding, moderation, video). Filter with one or more `capabilities` query
+      // params (repeatable and/or comma-separated); a provider must expose ALL of them to match.
+      LlmProvidersCatalog.handleRequest(ctx)
+
     } else if (method == "POST" && path.endsWith("/audio/speech")) {
       val audioConfig = OpenAICompatTextToSpeechConfig(config.audioModelRefs)
       OpenAICompatTextToSpeech.handleRequest(audioConfig, ctx)
