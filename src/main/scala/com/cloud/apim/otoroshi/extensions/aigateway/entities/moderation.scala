@@ -82,6 +82,13 @@ object ModerationModel {
       val opts = MistralAiModerationModelClientOptions.fromJson(options)
       new MistralAiModerationModelClient(api, opts, id).some
     },
+    "ovh-ai-endpoints" -> { (c: ClientContext) =>
+      import c._
+      // OVH AI Endpoints moderation through their unified OpenAI-compatible API
+      val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
+      val opts = OpenAiModerationModelClientOptions.fromJson(options)
+      new OpenAiModerationModelClient(api, opts, id).some
+    },
   )
 
   val supportedProviders: Set[String] = clientBuilders.keySet
