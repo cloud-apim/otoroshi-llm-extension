@@ -30,6 +30,8 @@ This makes it the ideal choice when you want to expose a single, coherent API su
 | Method | Path | Description | Config field |
 |--------|------|-------------|--------------|
 | `GET` | `/models` | List available models from all configured providers | `language_model_refs` |
+| `GET` | `/providers` | List every provider type the gateway can talk to, with their capabilities | — |
+| `GET` | `/model-capabilities` | List the model types (modalities) the gateway supports | — |
 | `GET` | `/contexts` | List available prompt contexts | `context_refs` |
 | `POST` | `/chat/completions` | OpenAI Chat Completions API | `language_model_refs` |
 | `POST` | `/responses` | OpenAI Responses API (or Open Responses if configured) | `language_model_refs` |
@@ -151,6 +153,81 @@ Response:
   { "id": "context_project_a", "name": "Project A context" },
   { "id": "context_support", "name": "Support context" }
 ]
+```
+
+### GET /providers
+
+Returns the catalog of every provider the gateway can connect to, each with the capabilities (modalities) it supports. This is a great way to build a provider picker in your own UI, or to discover programmatically which providers can handle a given task — text, audio, image, OCR, embeddings, moderation or video.
+
+```sh
+curl https://api.domain.tld/v1/providers \
+  -H "Authorization: Bearer $OTOROSHI_BEARER"
+```
+
+Response:
+
+```js
+{
+  "object": "list",
+  "data": [
+    { "id": "openai", "label": "OpenAI", "capabilities": ["text", "audio", "image", "embedding", "moderation"] },
+    { "id": "anthropic", "label": "Anthropic", "capabilities": ["text"] },
+    { "id": "mistral", "label": "Mistral", "capabilities": ["text", "audio", "ocr", "embedding", "moderation"] },
+    { "id": "ovh-ai-endpoints", "label": "OVH AI Endpoints", "capabilities": ["text", "audio", "image", "embedding", "moderation"] }
+  ]
+}
+```
+
+#### Filtering by capability
+
+Pass one or more `capabilities` query parameters to keep only the providers that expose **all** of them. The parameter is repeatable and also accepts a comma-separated list, so the two calls below are equivalent:
+
+```sh
+curl "https://api.domain.tld/v1/providers?capabilities=image&capabilities=text" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER"
+
+curl "https://api.domain.tld/v1/providers?capabilities=image,text" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER"
+```
+
+This returns only the providers that can do both image **and** text.
+
+The same catalog is also available as a standalone plugin you can put on its own route:
+
+```
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.LlmProvidersCatalog
+```
+
+### GET /model-capabilities
+
+Returns the model types (modalities) the gateway supports — `text`, `audio`, `image`, `ocr`, `embedding`, `moderation` and `video` — each with the list of providers that expose it. It is the mirror image of `/providers`: where `/providers` answers "what can this provider do?", `/model-capabilities` answers "which providers can do this?".
+
+```sh
+curl https://api.domain.tld/v1/model-capabilities \
+  -H "Authorization: Bearer $OTOROSHI_BEARER"
+```
+
+Response:
+
+```js
+{
+  "object": "list",
+  "data": [
+    { "id": "text", "label": "Text", "providers": ["anthropic", "openai", "mistral", "..."] },
+    { "id": "audio", "label": "Audio", "providers": ["openai", "groq", "elevenlabs", "mistral", "ovh-ai-endpoints", "..."] },
+    { "id": "image", "label": "Image", "providers": ["openai", "gemini", "luma", "ovh-ai-endpoints", "..."] },
+    { "id": "ocr", "label": "OCR", "providers": ["alphaedge", "mistral"] },
+    { "id": "embedding", "label": "Embedding", "providers": ["openai", "mistral", "cohere", "ovh-ai-endpoints", "..."] },
+    { "id": "moderation", "label": "Moderation", "providers": ["openai", "mistral", "ovh-ai-endpoints"] },
+    { "id": "video", "label": "Video", "providers": ["luma", "openrouter"] }
+  ]
+}
+```
+
+The same list is also available as a standalone plugin you can put on its own route:
+
+```
+cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.LlmModelCapabilities
 ```
 
 ### POST /chat/completions
