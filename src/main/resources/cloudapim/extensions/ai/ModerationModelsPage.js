@@ -36,6 +36,7 @@ class ModerationModelsPage extends Component {
                 label: 'Provider', possibleValues: _.sortBy([
                     {label: 'OpenAI', value: "openai"},
                     {label: 'Mistral', value: "mistral"},
+                    {label: 'OVH AI Endpoints', value: "ovh-ai-endpoints"},
                 ], i => i.label)
             }
         },
@@ -135,6 +136,25 @@ class ModerationModelsPage extends Component {
                                     },
                                     options: {
                                         model: 'mistral-moderation-latest'
+                                    }
+                                }
+                            });
+                        } else if (state.provider === 'ovh-ai-endpoints') {
+                            update({
+                                id: state.id,
+                                name: state.name,
+                                description: state.description,
+                                tags: state.tags,
+                                metadata: state.metadata,
+                                provider: 'ovh-ai-endpoints',
+                                config: {
+                                    connection: {
+                                        base_url: BaseUrls.ovhUnified,
+                                        token: 'xxxxxx',
+                                        timeout: 180000
+                                    },
+                                    options: {
+                                        model: 'your-moderation-model'
                                     }
                                 }
                             });
