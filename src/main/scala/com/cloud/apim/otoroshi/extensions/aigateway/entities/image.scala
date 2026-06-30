@@ -126,6 +126,14 @@ object ImageModel {
       val editOpts = OpenRouterImageModelClientOptions.fromJson(editOptions)
       new OpenRouterImageModelClient(api, opts, editOpts, id).some
     },
+    "ovh-ai-endpoints" -> { (c: ClientContext) =>
+      import c._
+      // OVH AI Endpoints images go through their unified OpenAI-compatible API
+      val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
+      val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
+      val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
+      new OpenAiImageModelClient(api, opts, editOpts, id).some
+    },
   )
 
   val supportedProviders: Set[String] = clientBuilders.keySet
