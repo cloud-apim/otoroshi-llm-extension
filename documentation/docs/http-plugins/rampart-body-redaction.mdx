@@ -6,12 +6,13 @@ import Terminal from '@site/src/components/Terminal';
 
 # Rampart body PII redaction
 
-Two HTTP plugins redact Personally Identifiable Information (PII) directly in the **raw body
+Three HTTP plugins redact Personally Identifiable Information (PII) directly in the **raw body
 text**, on **any Otoroshi route** (not just LLM routes), using the bundled
 [Rampart](/docs/guardrails/rampart) model **locally** (no external call):
 
 - **Rampart request body PII redaction** — rewrites the **request** body before it reaches the backend.
 - **Rampart response body PII redaction** — rewrites the **response** body before it returns to the client.
+- **Rampart body redaction endpoint** — a terminal backend that reads the request body, redacts it, and **returns the redacted body directly** (no upstream call). Turns a route into a redaction API: `POST` a body, get the redacted body back.
 
 They share the same configuration and the same detection engine (model + deterministic
 recognizers + stable placeholders) as the [Rampart guardrail](/docs/guardrails/rampart).
@@ -43,6 +44,9 @@ error is logged) so the proxy is never broken by a model glitch.
 
 // response body
 "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.RampartResponseBodyRedactor"
+
+// redaction endpoint (terminal backend)
+"plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.RampartBodyRedactionBackend"
 ```
 
 ## Configuration
@@ -82,3 +86,40 @@ Request body forwarded to the backend:
 ```
 
 The response body plugin works identically on the upstream response before it returns to the client.
+
+## Redaction endpoint (terminal backend)
+
+The **Rampart body redaction endpoint** plugin (`RampartBodyRedactionBackend`) is a `NgBackendCall`:
+instead of forwarding to an upstream, it reads the request body, redacts it, and returns the
+redacted body **as the response**, keeping the original `Content-Type`. This turns any route into a
+self-contained redaction API — handy for sanitizing payloads before storing or logging them.
+
+It uses the exact same configuration (`min_score`, `entities`, `content_types`) as the request/response
+plugins above, and the same fail-open behavior.
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.RampartBodyRedactionBackend",
+  "config": {
+    "min_score": 0.4,
+    "entities": ["GIVEN_NAME", "SURNAME", "PHONE", "EMAIL", "SSN", "CREDIT_CARD"],
+    "content_types": ["application/json", "text/", "application/x-www-form-urlencoded"]
+  }
+}
+```
+
+```sh
+curl https://redact.domain.tld/ \
+  -H "Content-Type: application/json" \
+  -d '{ "note": "call Alex Rivera at alex@example.com" }'
+```
+
+Response (same content-type, PII replaced in place):
+
+```json
+{ "note": "call [GIVEN_NAME_1] [SURNAME_1] at [EMAIL_1]" }
+```
+
+The response carries an `X-Rampart-Redaction-Applied: true|false` header indicating whether anything
+was redacted. Bodies whose `Content-Type` is not in `content_types` are returned unchanged.
