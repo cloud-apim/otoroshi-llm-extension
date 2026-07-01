@@ -5,9 +5,10 @@ import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.{PlaceholderAllocator, RampartEngine, RampartPiiGuardrail}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
+import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.utils.syntax.implicits._
 import play.api.libs.json._
-import play.api.mvc.Result
+import play.api.mvc.{Result, Results}
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
@@ -144,6 +145,49 @@ class RampartResponseBodyRedactor extends NgRequestTransformer {
           headers = ctx.otoroshiResponse.headers - "Content-Length" - "content-length" ++ Map("Transfer-Encoding" -> "chunked"),
           body = redacted.byteString.chunks(32 * 1024)
         ))
+      }
+    }
+  }
+}
+
+// Terminal backend: reads the incoming request body, redacts PII in it with the local Rampart model,
+// and returns the redacted body directly as the HTTP response (no upstream call). Turns a route into
+// a "redaction endpoint": POST a body, get the redacted body back with the same content-type.
+class RampartBodyRedactionBackend extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - Rampart body redaction endpoint"
+  override def description: Option[String] = "Reads the request body, redacts personal information with the local Rampart model, and returns the redacted body as the response".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(RampartBodyRedactorConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = RampartBodyRedactorConfig.configFlow
+  override def configSchema: Option[JsObject] = RampartBodyRedactorConfig.configSchema
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(RampartBodyRedactorConfig.format).getOrElse(RampartBodyRedactorConfig.default)
+    val contentType = ctx.request.headers.find(_._1.equalsIgnoreCase("Content-Type")).map(_._2)
+    def respond(redacted: String, applied: Boolean): Either[NgProxyEngineError, BackendCallResponse] = {
+      val base = Results.Ok(redacted)
+      val withCt = contentType.map(base.as).getOrElse(base)
+      Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
+        withCt.withHeaders("X-Rampart-Redaction-Applied" -> applied.toString)
+      ), None))
+    }
+    if (!ctx.request.hasBody) {
+      respond("", applied = false).vfuture
+    } else {
+      ctx.request.body.runFold(ByteString.empty)(_ ++ _).map { raw =>
+        val original = raw.utf8String
+        if (RampartBody.matchesContentType(contentType, config.contentTypes)) {
+          val redacted = RampartBody.safeRedact(original, config)
+          respond(redacted, applied = redacted != original)
+        } else {
+          respond(original, applied = false)
+        }
       }
     }
   }
