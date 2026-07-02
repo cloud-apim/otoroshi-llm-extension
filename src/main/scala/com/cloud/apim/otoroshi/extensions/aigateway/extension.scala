@@ -803,6 +803,25 @@ class AiExtension(val env: Env) extends AdminExtension {
     ProofOfWorkPlugin.handlePowChallengeDelete(ctx, req, apikey, body)(env)
   }
 
+  // Catalog of every provider type the gateway supports, with their capabilities. Filter with one or
+  // more `capabilities` query params (repeatable and/or comma-separated); a provider must expose ALL.
+  def handleProvidersCatalog(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+    val requested = (req.queryString.getOrElse("capabilities", Seq.empty) ++ req.queryString.getOrElse("capability", Seq.empty))
+      .flatMap(_.split(",")).map(_.trim).filter(_.nonEmpty)
+    Results.Ok(Json.obj(
+      "object" -> "list",
+      "data" -> AiProvidersCatalog.json(requested)
+    )).vfuture
+  }
+
+  // List of model types (modalities) the gateway supports, each with the providers exposing it.
+  def handleModelCapabilities(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+    Results.Ok(Json.obj(
+      "object" -> "list",
+      "data" -> AiProvidersCatalog.capabilitiesJson
+    )).vfuture
+  }
+
   override def adminApiRoutes(): Seq[AdminExtensionAdminApiRoute] = Seq(
     AdminExtensionAdminApiRoute(
       method = "PUT",
@@ -839,6 +858,18 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/:key",
       wantsBody = false,
       handle = handlePowChallengeDelete,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "GET",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/providers",
+      wantsBody = false,
+      handle = handleProvidersCatalog,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "GET",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/model-capabilities",
+      wantsBody = false,
+      handle = handleModelCapabilities,
     )
   )
 

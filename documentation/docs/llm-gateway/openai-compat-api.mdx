@@ -230,6 +230,20 @@ The same list is also available as a standalone plugin you can put on its own ro
 cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.LlmModelCapabilities
 ```
 
+:::info Also available on the Otoroshi admin API
+Both catalogs are exposed on the Otoroshi **admin API** as well (authenticated with an admin API key), so you can query them without exposing a route:
+
+- `GET /api/extensions/cloud-apim/extensions/ai-extension/providers`
+- `GET /api/extensions/cloud-apim/extensions/ai-extension/model-capabilities`
+
+```sh
+curl "https://otoroshi-api.domain.tld/api/extensions/cloud-apim/extensions/ai-extension/providers?capabilities=image,text" \
+  -u "$ADMIN_APIKEY_ID:$ADMIN_APIKEY_SECRET"
+```
+
+The `capabilities` filter behaves exactly like on `/providers` above, and the response shape is identical.
+:::
+
 ### POST /chat/completions
 
 Standard [OpenAI Chat Completions API](https://platform.openai.com/docs/api-reference/chat/create) endpoint. Supports streaming, tool calling, and model routing.
