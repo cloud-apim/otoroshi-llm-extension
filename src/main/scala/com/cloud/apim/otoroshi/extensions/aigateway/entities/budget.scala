@@ -968,7 +968,17 @@ case class AiBudget(
     } else if (scope.models.nonEmpty && model.nonEmpty && scope.models.exists(id => RegexPool.regex(id).matches(model.get))) {
       true
     } else {
-      matchesRules(ctx)
+      if (scope.alwaysApplyRules) {
+        // rules are already enforced as a mandatory AND gate upstream (findMatchingBudgets).
+        // reaching this else branch means no selector matched, so we must NOT fall back to
+        // matchesRules here (that would double-count the rules and silently ignore the selectors).
+        // if selectors are defined but none matched, the budget does not match;
+        // if no selector is defined, the rules alone define the scope.
+        val noSelector = scope.apikeys.isEmpty && scope.users.isEmpty && scope.groups.isEmpty && scope.providers.isEmpty && scope.models.isEmpty
+        noSelector
+      } else {
+        matchesRules(ctx)
+      }
     }
   }
 
