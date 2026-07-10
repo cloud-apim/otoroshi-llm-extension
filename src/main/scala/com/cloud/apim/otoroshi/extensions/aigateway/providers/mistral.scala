@@ -313,14 +313,17 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
   override def transformOpenAIInputBodyToProviderInputBody(inputBody: JsObject): JsObject = {
     val model = inputBody.select("model").asOptString.orElse(computeModel(inputBody)).getOrElse("--")
     val maxCompletionTokens = inputBody.select("max_completion_tokens").asOptLong
-    val reasoningEffort = inputBody.select("reasoning_effort").asOptString.filter(_ => model.contains("magistral")) // right now the only reasoning models of mistral are magistral ones
-    (inputBody - "max_completion_tokens" - "reasoning_effort")
+    //val reasoningEffort = inputBody.select("reasoning_effort").asOptString
+    (inputBody - "max_completion_tokens")// - "reasoning_effort")
       .applyOnWithOpt(maxCompletionTokens) {
         case (obj, mct) => obj ++ Json.obj("max_tokens" -> mct)
       }
-      .applyOnWithOpt(reasoningEffort) {
-        case (obj, _) => obj ++ Json.obj("prompt_mode" -> "reasoning")
-      }
+      // .applyOnWithOpt(reasoningEffort) {
+      //   case (obj, value) => obj ++ Json.obj(
+      //     "prompt_mode" -> "reasoning",
+      //     "reasoning_effort" -> value
+      //   )
+      // }
   }
 
   override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
