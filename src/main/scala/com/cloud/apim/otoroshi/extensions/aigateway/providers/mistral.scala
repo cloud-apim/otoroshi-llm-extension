@@ -158,6 +158,7 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
           .filter(_.nonEmpty)
           .takeWhile(_ != "[DONE]")
           .map(str => Json.parse(str))
+          .map(json => MistralAiChatClient.normalizeStreamChunk(json))
           .map(json => OpenAiChatResponseChunk(json))
           .map { c =>
             acc.updateOpenaiChunk(c.usage)
@@ -303,6 +304,71 @@ case class MistralAiChatClientOptions(
   def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "a2a_connectors" - "search_engines" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
 }
 
+object MistralAiChatClient {
+
+  // Per the Mistral chat API, an assistant message `content` can be a plain string, `null`, or an
+  // array of typed chunks: TextChunk | ImageURLChunk | DocumentURLChunk | ReferenceChunk | FileChunk |
+  // ThinkChunk | AudioChunk. In reasoning mode it comes back as an array mixing `thinking` and `text`
+  // chunks (a ThinkChunk nests its reasoning in a `thinking` array of TextChunk/ReferenceChunk).
+  //
+  // This normalizes any of those shapes into a message whose `content` is a plain string, routing each
+  // chunk to the field OutputChatMessage understands: text -> content, thinking -> reasoning_content,
+  // image_url -> images. Chunk types we have no model home for (document_url / file / reference /
+  // input_audio) are preserved verbatim under `content_parts` so nothing is silently dropped; the
+  // untouched original always remains in the raw response body regardless.
+  def normalizeMessage(message: JsObject): JsObject = {
+    message.select("content").asOpt[JsValue] match {
+      case Some(JsString(_)) => message // already a plain string, nothing to normalize
+      case Some(JsArray(chunks)) =>
+        val content = new StringBuilder
+        val reasoning = new StringBuilder
+        val images = scala.collection.mutable.ArrayBuffer.empty[JsValue]
+        val others = scala.collection.mutable.ArrayBuffer.empty[JsValue]
+        chunks.foreach {
+          case JsString(text) => content.append(text) // defensive: a bare string element
+          case chunk => chunk.select("type").asOpt[String] match {
+            case Some("text") => chunk.select("text").asOpt[String].foreach(content.append)
+            case Some("thinking") => chunk.select("thinking").asOpt[Seq[JsValue]].getOrElse(Seq.empty).foreach {
+              case JsString(text) => reasoning.append(text)
+              case part => part.select("text").asOpt[String].foreach(reasoning.append) // skip nested references
+            }
+            case Some("image_url") => images.append(chunk)
+            case _ => others.append(chunk) // document_url / file / reference / input_audio
+          }
+        }
+        val existingImages = message.select("images").asOpt[Seq[JsValue]].getOrElse(Seq.empty)
+        // omit `content` entirely when there is no text: a reasoning-only chunk must not look like an
+        // empty-content delta downstream (asOptString would otherwise report a legitimate Some("")).
+        (message - "content")
+          .applyOnIf(content.nonEmpty) { _ ++ Json.obj("content" -> content.toString()) }
+          .applyOnIf(reasoning.nonEmpty) { _ ++ Json.obj("reasoning_content" -> reasoning.toString()) }
+          .applyOnIf(images.nonEmpty) { _ ++ Json.obj("images" -> JsArray(existingImages ++ images)) }
+          .applyOnIf(others.nonEmpty) { _ ++ Json.obj("content_parts" -> JsArray(others)) }
+      case _ => message ++ Json.obj("content" -> "") // null or absent (e.g. tool-call only messages)
+    }
+  }
+
+  // Streaming deltas carry the exact same `content` union as a full message: in reasoning mode a chunk's
+  // `delta.content` arrives as an array of (partial) `thinking`/`text` chunks. We rewrite only those deltas
+  // whose content is an array — flattening `text` into a string `content` and exposing the incremental
+  // reasoning as `reasoning_content` — so OpenAiChatResponseChunkChoiceDelta reads them like any other
+  // provider. String/null/absent content (role-only or tool-call deltas) passes through untouched.
+  def normalizeStreamChunk(json: JsValue): JsValue = {
+    json.select("choices").asOpt[Seq[JsObject]] match {
+      case Some(choices) if choices.exists(_.select("delta").select("content").asOpt[JsArray].isDefined) =>
+        val newChoices = choices.map { choice =>
+          choice.select("delta").asOpt[JsObject] match {
+            case Some(delta) if delta.select("content").asOpt[JsArray].isDefined =>
+              choice ++ Json.obj("delta" -> normalizeMessage(delta))
+            case _ => choice
+          }
+        }
+        json.asObject ++ Json.obj("choices" -> JsArray(newChoices))
+      case _ => json
+    }
+  }
+}
+
 class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions, id: String) extends ChatClient {
 
   override def supportsTools: Boolean = api.supportsTools
@@ -387,9 +453,13 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
         case None => Json.obj("ai" -> Seq(slug))
       }
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
-        val role = obj.select("message").select("role").asOpt[String].getOrElse("user")
-        val content = obj.select("message").select("content").asOpt[String].getOrElse("")
-        ChatGeneration(ChatMessage.output(role, content, None, obj))
+        // the assistant message `content` may be a string, null, or an array of typed chunks (text,
+        // thinking, image_url, ...) — normalize it so content is a plain string and reasoning/images
+        // land in the fields OutputChatMessage reads
+        val message = MistralAiChatClient.normalizeMessage(obj.select("message").asOpt[JsObject].getOrElse(Json.obj()))
+        val role = message.select("role").asOpt[String].getOrElse("user")
+        val content = message.select("content").asOpt[String].getOrElse("")
+        ChatGeneration(ChatMessage.output(role, content, None, obj ++ Json.obj("message" -> message)))
       }
       Right(ChatResponse(messages, usage, resp.body))
     }

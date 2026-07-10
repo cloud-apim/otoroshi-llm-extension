@@ -826,6 +826,8 @@ case class ChatResponseChunkChoiceDelta(
     "role" -> role,
   ).applyOnWithOpt(content) {
     case (o, content) => o ++ Json.obj("content" -> content)
+  }.applyOnWithOpt(reasoning.filter(_.nonEmpty)) {
+    case (o, reasoning) => o ++ Json.obj("reasoning_content" -> reasoning)
   }.applyOnWithOpt(refusal) {
     case (o, content) => o ++ Json.obj("refusal" -> refusal)
   }.applyOnIf(tool_calls.nonEmpty) { o =>
