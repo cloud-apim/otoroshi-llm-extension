@@ -245,11 +245,19 @@ object AiPluginRefsConfig {
         val model = parts(1)
         val (providersById, providersByName) = AiPluginRefsConfig.getProvidersMap(config)
         providersById.get(name) match {
-          case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+          case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id).applyOn {
+            case obj if model == "_default" => obj - "model"
+            case obj if model.trim.nonEmpty => obj ++ Json.obj("model" -> model)
+            case obj => obj - "model"
+          }
           case None => {
             providersByName.get(name) match {
               case None => _jsonBody
-              case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+              case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id).applyOn {
+                case obj if model == "_default" => obj - "model"
+                case obj if model.trim.nonEmpty => obj ++ Json.obj("model" -> model)
+                case obj => obj - "model"
+              }
             }
           }
         }
@@ -260,11 +268,21 @@ object AiPluginRefsConfig {
         val model = parts.tail.mkString("/")
         val (providersById, providersByName) = AiPluginRefsConfig.getProvidersMap(config)
         providersById.get(name) match {
-          case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+          case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id).applyOn {
+            case obj if model == "_default" => obj - "model"
+            case obj if model.trim.nonEmpty => obj ++ Json.obj("model" -> model)
+            case obj => obj - "model"
+          }
           case None => {
             providersByName.get(name) match {
               case None => _jsonBody
-              case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+              case Some(prov) =>
+                println(s"here ! '${name}' / '${model}' - ${model.trim.nonEmpty}")
+                _jsonBody.asObject ++ Json.obj("provider" -> prov.id).applyOn {
+                  case obj if model == "_default" => obj - "model"
+                  case obj if model.trim.nonEmpty => obj ++ Json.obj("model" -> model)
+                  case obj => obj - "model"
+                }
             }
           }
         }
