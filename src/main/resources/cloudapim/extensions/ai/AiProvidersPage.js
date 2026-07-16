@@ -549,6 +549,15 @@ class AiProvidersPage extends Component {
             { 'label': "alpha-digit-medium", value: 'alpha-digit-medium' },
           ] }
       }
+    } else if (provider === "azure-openai") {
+      return {
+        type: 'string',
+        props: {
+          label: 'Model',
+          placeholder: 'Only for v1 endpoints',
+          help: 'Only taken into account when "Version of the API used" (api_version) is set to "v1", where the endpoint is OpenAI-compatible. In pre-v1 mode the model is fixed by the deployment id and this field is ignored. When left empty in v1 mode, the deployment id is used as the model.'
+        },
+      }
     } else {
       return {
         type: 'string',
@@ -1683,6 +1692,7 @@ class AiProvidersPage extends Component {
         'connection',
         '<<<Connection options',
         'options.allow_config_override',
+        'options.model',
         'options.max_tokens',
         'options.n',
         'options.temperature',

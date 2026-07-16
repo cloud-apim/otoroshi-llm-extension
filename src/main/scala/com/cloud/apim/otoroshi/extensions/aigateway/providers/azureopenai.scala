@@ -364,6 +364,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
 object AzureOpenAiChatClientOptions {
   def fromJson(json: JsValue): AzureOpenAiChatClientOptions = {
     AzureOpenAiChatClientOptions(
+      model = json.select("model").asOptString,
       max_tokens = json.select("max_tokens").asOpt[Int],
       n = json.select("n").asOpt[Int],
       temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
@@ -385,6 +386,7 @@ object AzureOpenAiChatClientOptions {
 }
 
 case class AzureOpenAiChatClientOptions(
+  model: Option[String] = None,
   frequency_penalty: Option[Double] = None,
   logit_bias: Option[Map[String, Int]] = None,
   logprobs: Option[Boolean] = None,
@@ -448,8 +450,15 @@ case class AzureOpenAiChatClientOptions(
 class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientOptions, id: String) extends ChatClient {
 
   def fakemodel: Option[String] = s"${api.resourceName}-${api.deploymentId}".some
+  // in v1 mode the endpoint is OpenAI-compatible and the model is a real body param (defaulting to the deployment name);
+  // in pre-v1 mode the deployment is baked in the url path and fixes the model, so the model field is ignored
+  def isV1: Boolean = api.version == "v1"
+  def defaultModel: String = options.model.getOrElse(api.deploymentId)
+  private def withModelForV1(merged: JsObject): JsObject = {
+    if (isV1 && merged.select("model").asOptString.forall(_.trim.isEmpty)) merged ++ Json.obj("model" -> defaultModel) else merged
+  }
 
-  override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(fakemodel)
+  override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].filter(_.trim.nonEmpty).orElse(if (isV1) defaultModel.some else fakemodel)
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = api.supportsCompletion
@@ -467,7 +476,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val mergedOptions = withModelForV1(if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
@@ -527,7 +536,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
+    val mergedOptions = withModelForV1(if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
@@ -618,7 +627,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
 
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
-    val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
+    val mergedOptions = withModelForV1(if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall)
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
     val callF = api.call("POST", "/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)), acc)
