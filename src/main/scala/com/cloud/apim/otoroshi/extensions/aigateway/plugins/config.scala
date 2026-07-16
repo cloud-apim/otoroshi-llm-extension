@@ -277,7 +277,6 @@ object AiPluginRefsConfig {
             providersByName.get(name) match {
               case None => _jsonBody
               case Some(prov) =>
-                println(s"here ! '${name}' / '${model}' - ${model.trim.nonEmpty}")
                 _jsonBody.asObject ++ Json.obj("provider" -> prov.id).applyOn {
                   case obj if model == "_default" => obj - "model"
                   case obj if model.trim.nonEmpty => obj ++ Json.obj("model" -> model)
