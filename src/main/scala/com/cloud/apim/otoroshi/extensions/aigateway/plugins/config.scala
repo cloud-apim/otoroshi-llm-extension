@@ -254,7 +254,7 @@ object AiPluginRefsConfig {
           }
         }
       }
-      case Some(value) if value.contains("/")=> {
+      case Some(value) if value.nonEmpty => {
         val parts = value.split("/")
         val name = parts(0)
         val model = parts.tail.mkString("/")
