@@ -635,7 +635,7 @@ case class AiBudget(
     }
   }
 
-  def slugName: String = metadata.getOrElse("endpoint_name", name).slugifyWithSlash.replaceAll("-+", "_")
+  def slugName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
 
   def cycle: Option[Int] = {
     // val now = Instant.now()
