@@ -93,6 +93,8 @@ case class CostsOutput(inputCost: BigDecimal, outputCost: BigDecimal, reasoningC
 
 class CostsTracking(settings: CostsTrackingSettings, env: Env) {
 
+  lazy val extension = env.adminExtensions.extension[AiExtension].get
+
   val litllmModels: Map[String, CostModel] = {
     val json = Json.parse(getResourceCode("data/ltllm-prices.json")).asObject
     json.value.filterNot(_._1 == "sample_spec").map {
@@ -143,7 +145,9 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
     reasoningTokens: Long,
   ): Either[String, CostsOutput] = {
     models.get(s"${provider}-${modelName}") match {
-      case None => Left("model not found")
+      case None =>
+        if (extension.logger.isWarnEnabled) extension.logger.warn(s"unable to find costs for model: '${provider}-${modelName}'")
+        Left("model not found")
       case Some(model) => {
         Right(CostsOutput(
           inputCost = inputTokens * model.input_cost_per_token,
