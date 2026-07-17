@@ -37,11 +37,13 @@ case class AnthropicChatResponseChunkChoice(raw: JsValue, role: String) {
 }
 
 case class AnthropicApiResponseChunk(raw: JsValue, messageRef: Option[JsValue]) {
+  // messageRef is the `message_start` event: `id`, `model`, `role` live under its `message` object,
+  // not at the top-level (only `type` is top-level), hence we look there first to avoid "--" values.
   lazy val typ: String = messageRef.flatMap(_.select("type").asOptString).getOrElse("--")
-  lazy val id: String = messageRef.flatMap(_.select("id").asOptString).getOrElse("--")
-  lazy val created: Long = messageRef.flatMap(_.select("created").asOptLong).getOrElse(0L)
-  lazy val model: String = messageRef.flatMap(_.select("model").asOptString).getOrElse("--")
-  lazy val role: String = messageRef.flatMap(_.select("role").asOptString).getOrElse("--")
+  lazy val id: String = messageRef.flatMap(m => m.select("message").select("id").asOptString.orElse(m.select("id").asOptString)).getOrElse("--")
+  lazy val created: Long = messageRef.flatMap(m => m.select("message").select("created").asOptLong.orElse(m.select("created").asOptLong)).getOrElse(0L)
+  lazy val model: String = messageRef.flatMap(m => m.select("message").select("model").asOptString.orElse(m.select("model").asOptString)).getOrElse("--")
+  lazy val role: String = messageRef.flatMap(m => m.select("message").select("role").asOptString.orElse(m.select("role").asOptString)).getOrElse("assistant")
   lazy val usage: Option[AnthropicChatResponseChunkUsage] = raw.select("usage").asOpt[JsObject].map { obj =>
     AnthropicChatResponseChunkUsage(obj)
   }
@@ -655,6 +657,10 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     callF.map {
       case Left(err) => err.left
       case Right((source, resp)) =>
+        // OpenAI streams tool calls as `tool_calls` deltas indexed by tool-call ordinal. Anthropic instead
+        // streams a `content_block_start` (with the tool id/name) followed by `input_json_delta` fragments
+        // for the arguments. We translate them and keep track of the current tool-call ordinal.
+        val toolCallOrdinal = new java.util.concurrent.atomic.AtomicInteger(-1)
         source.filterNot { chunk =>
           if (chunk.usage.nonEmpty) {
             val usage = ChatResponseMetadata(
@@ -696,15 +702,43 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
         .map { chunk =>
           ChatResponseChunk(
             id = chunk.id,
-            created = chunk.created,
+            created = if (chunk.created <= 0L) startTime / 1000L else chunk.created,
             model = chunk.model,
             choices = chunk.choices.map { choice =>
+              val toolCalls: Seq[ChatResponseChunkChoiceDeltaToolCall] = if (choice.tool_use) {
+                // content_block_start for a tool_use block: carries the tool id and name
+                val idx = toolCallOrdinal.incrementAndGet()
+                val block = choice.contentBlockObj
+                Seq(ChatResponseChunkChoiceDeltaToolCall(
+                  index = idx.toLong,
+                  id = block.select("id").asOptString,
+                  typ = Some("function"),
+                  function = ChatResponseChunkChoiceDeltaToolCallFunction(
+                    nameOpt = block.select("name").asOptString,
+                    arguments = "",
+                  ),
+                ))
+              } else if (choice.input_json_delta) {
+                // content_block_delta with a JSON fragment of the current tool's arguments
+                Seq(ChatResponseChunkChoiceDeltaToolCall(
+                  index = math.max(toolCallOrdinal.get(), 0).toLong,
+                  id = None,
+                  typ = None,
+                  function = ChatResponseChunkChoiceDeltaToolCallFunction(
+                    nameOpt = None,
+                    arguments = choice.partial_json,
+                  ),
+                ))
+              } else {
+                Seq.empty
+              }
               ChatResponseChunkChoice(
                 index = choice.index.map(_.toLong).getOrElse(0L),
                 delta = ChatResponseChunkChoiceDelta(
-                  choice.content
+                  content = if (toolCalls.nonEmpty) None else choice.content,
+                  tool_calls = toolCalls,
                 ),
-                finishReason = choice.finish_reason
+                finishReason = choice.finish_reason.map(fr => if (fr == "tool_use") "tool_calls" else fr),
               )
             }
           )

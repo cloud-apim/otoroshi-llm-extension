@@ -422,10 +422,16 @@ class ChatClientWithStreamUsage(originalProvider: AiProvider, val chatClient: Ch
       case Right(resp) => {
         val promise = Promise.apply[Option[ChatResponseChunk]]()
         val ref = new AtomicReference[String](null)
+        // The final synthetic chunk carries the finish_reason. We strip it from upstream chunks, so we track
+        // whether any tool_calls were streamed to report "tool_calls" instead of the default "stop".
+        val hadToolCalls = new java.util.concurrent.atomic.AtomicBoolean(false)
         resp
           .map { chunk =>
             if (ref.get() == null) {
               ref.set(chunk.model)
+            }
+            if (chunk.choices.exists(_.delta.tool_calls.nonEmpty)) {
+              hadToolCalls.set(true)
             }
             chunk
           }
@@ -439,7 +445,7 @@ class ChatClientWithStreamUsage(originalProvider: AiProvider, val chatClient: Ch
               choices = Seq(ChatResponseChunkChoice(
                 index = 0L,
                 delta = ChatResponseChunkChoiceDelta(None),
-                finishReason = "stop".some,
+                finishReason = (if (hadToolCalls.get()) "tool_calls" else "stop").some,
               )),
             ).some)
           }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right
