@@ -228,7 +228,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
               resp.applyOnIf(addCostsInResp) { src =>
                 src.map(r => r.copy(choices = r.choices.map(c => c.copy(finishReason = None))))
               }.alsoTo(Sink.onComplete { _ =>
-                val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+                val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
                 val inputTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L)
                 val outputTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L)
                 val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
