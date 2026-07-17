@@ -61,7 +61,7 @@ case class AzureOpenAiChatResponseChunkChoiceDeltaToolCall(raw: JsValue) {
 
 case class AzureOpenAiChatResponseChunkChoiceDelta(raw: JsValue) {
   lazy val content: Option[String] = raw.select("content").asOptString
-  lazy val role: String = raw.select("role").asString
+  lazy val role: String = raw.select("role").asOptString.getOrElse("assistant")
   lazy val refusal: Option[String] = raw.select("refusal").asOptString
   lazy val reasoning: Option[String] = raw.select("reasoning").asOptString
   lazy val tool_calls: Seq[AzureOpenAiChatResponseChunkChoiceDeltaToolCall] = raw.select("tool_calls").asOpt[Seq[JsObject]].map(_.map(AzureOpenAiChatResponseChunkChoiceDeltaToolCall.apply)).getOrElse(Seq.empty)
