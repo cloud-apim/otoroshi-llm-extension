@@ -422,9 +422,65 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
   }
 
   override def transformOpenAIInputBodyToProviderInputBody(inputBody: JsObject): JsObject = {
-    inputBody.select("max_completion_tokens").asOpt[Long] match {
-      case None => inputBody
-      case Some(value) => inputBody - "max_completion_tokens" ++ Json.obj("max_tokens" -> value)
+    inputBody
+      .applyOn { body =>
+        body.select("max_completion_tokens").asOpt[Long] match {
+          case None => body
+          case Some(value) => body - "max_completion_tokens" ++ Json.obj("max_tokens" -> value)
+        }
+      }
+      .applyOn(transformOpenAiToolsToAnthropic)
+      .applyOn(transformOpenAiToolChoiceToAnthropic)
+  }
+
+  // OpenAI tools are shaped as { "type": "function", "function": { "name", "description", "parameters" } }
+  // while Anthropic expects { "name", "description", "input_schema" }. We translate any OpenAI-shaped
+  // tool and leave tools already in the Anthropic format (no "function" wrapper) untouched.
+  private def transformOpenAiToolsToAnthropic(body: JsObject): JsObject = {
+    body.select("tools").asOpt[Seq[JsObject]] match {
+      case None => body
+      case Some(tools) =>
+        val newTools = tools.map { tool =>
+          tool.select("function").asOpt[JsObject] match {
+            case None => tool // already in the Anthropic format
+            case Some(function) =>
+              val name = function.select("name").asString
+              val parameters = function.select("parameters").asOpt[JsObject].getOrElse(Json.obj("type" -> "object", "properties" -> Json.obj()))
+              Json.obj(
+                "name" -> name,
+                "input_schema" -> parameters,
+              ).applyOnWithOpt(function.select("description").asOpt[String]) {
+                case (obj, description) => obj ++ Json.obj("description" -> description)
+              }
+          }
+        }
+        body ++ Json.obj("tools" -> JsArray(newTools))
+    }
+  }
+
+  // OpenAI tool_choice is either a string ("none" | "auto" | "required") or an object
+  // ({ "type": "function", "function": { "name": "..." } }) while Anthropic always expects an object
+  // ({ "type": "auto" | "any" | "tool" | "none", "name"?: "..." }). We translate it here. Values already
+  // in the Anthropic format are left untouched.
+  private def transformOpenAiToolChoiceToAnthropic(body: JsObject): JsObject = {
+    body.select("tool_choice").asOptString match {
+      case Some("none")     => body ++ Json.obj("tool_choice" -> Json.obj("type" -> "none"))
+      case Some("auto")     => body ++ Json.obj("tool_choice" -> Json.obj("type" -> "auto"))
+      case Some("required") => body ++ Json.obj("tool_choice" -> Json.obj("type" -> "any"))
+      case Some(_)          => body // unknown string, leave as-is
+      case None =>
+        body.select("tool_choice").asOpt[JsObject] match {
+          case None => body // no tool_choice provided
+          case Some(obj) =>
+            obj.select("type").asOptString match {
+              case Some("function") =>
+                obj.select("function").select("name").asOpt[String].orElse(obj.select("name").asOpt[String]) match {
+                  case Some(name) => body ++ Json.obj("tool_choice" -> Json.obj("type" -> "tool", "name" -> name))
+                  case None => body ++ Json.obj("tool_choice" -> Json.obj("type" -> "auto"))
+                }
+              case _ => body // already in the Anthropic format (auto | any | tool | none) or unknown
+            }
+        }
     }
   }
 
