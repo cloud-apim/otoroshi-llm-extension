@@ -495,12 +495,61 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     }
   }
 
+  // Client-provided history uses the OpenAI shape: assistant messages carry a `tool_calls` array and tool
+  // results come as a dedicated `tool` role message. Anthropic instead expects tool calls as `tool_use`
+  // content blocks inside the assistant message and tool results as `tool_result` content blocks inside a
+  // user message. We translate the serialized messages here (and group consecutive tool results into a
+  // single user message, as Anthropic requires).
+  private def transformOpenAiMessagesToAnthropic(messages: Seq[JsObject]): Seq[JsObject] = {
+    def isToolResultUserMessage(m: JsObject): Boolean =
+      m.select("role").asOptString.contains("user") &&
+        m.select("content").asOpt[Seq[JsObject]].exists(blocks => blocks.nonEmpty && blocks.forall(_.select("type").asOptString.contains("tool_result")))
+    val result = scala.collection.mutable.ArrayBuffer.empty[JsObject]
+    messages.foreach { message =>
+      message.select("role").asOptString.getOrElse("user") match {
+        case "tool" =>
+          val toolResultContent: String = message.select("content").asOptString.getOrElse("")
+          val toolResult = Json.obj(
+            "type" -> "tool_result",
+            "tool_use_id" -> message.select("tool_call_id").asString,
+            "content" -> toolResultContent,
+          )
+          result.lastOption match {
+            case Some(last) if isToolResultUserMessage(last) =>
+              val newContent = last.select("content").as[Seq[JsObject]] :+ toolResult
+              result(result.length - 1) = last ++ Json.obj("content" -> JsArray(newContent))
+            case _ =>
+              result += Json.obj("role" -> "user", "content" -> Json.arr(toolResult))
+          }
+        case "assistant" if message.select("tool_calls").asOpt[Seq[JsObject]].exists(_.nonEmpty) =>
+          val textBlocks: Seq[JsValue] = message.select("content").asOptString match {
+            case Some(text) if text.nonEmpty => Seq(Json.obj("type" -> "text", "text" -> text))
+            case _ => message.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+          }
+          val toolUseBlocks: Seq[JsValue] = message.select("tool_calls").as[Seq[JsObject]].map { tc =>
+            val arguments = tc.select("function").select("arguments").asOptString.getOrElse("{}")
+            val input = scala.util.Try(arguments.parseJson).getOrElse(Json.obj())
+            Json.obj(
+              "type" -> "tool_use",
+              "id" -> tc.select("id").asString,
+              "name" -> tc.select("function").select("name").asString,
+              "input" -> input,
+            )
+          }
+          result += Json.obj("role" -> "assistant", "content" -> JsArray(textBlocks ++ toolUseBlocks))
+        case _ =>
+          result += (message - "tool_calls" - "tool_call_id")
+      }
+    }
+    result.toList
+  }
+
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody).applyOn(cleanupDeprecatedSamplingParams)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
-    val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
+    val messages = JsArray(transformOpenAiMessagesToAnthropic(prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic).as[Seq[JsObject]]))
     val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
@@ -548,9 +597,38 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
           case None => Json.obj("ai" -> Seq(slug))
         }
         val role = resp.body.select("role").asOpt[String].getOrElse("assistant")
-        val messages = resp.body.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
-          val content = obj.select("text").asOpt[String].getOrElse("")
-          ChatGeneration(ChatMessage.output(role, content, None, obj))
+        val contentBlocks = resp.body.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+        val messages = if (contentBlocks.exists(_.select("type").asOptString.contains("tool_use"))) {
+          // Anthropic returns tool calls as `tool_use` content blocks. We fold every block into a single
+          // OpenAI-style assistant message (text blocks -> content, tool_use blocks -> tool_calls) so the
+          // downstream OpenAI serialization emits `tool_calls` and a `tool_calls` finish_reason.
+          val textContent = contentBlocks
+            .filter(_.select("type").asOptString.contains("text"))
+            .flatMap(_.select("text").asOpt[String])
+            .mkString
+          val toolCalls = contentBlocks
+            .filter(_.select("type").asOptString.contains("tool_use"))
+            .map { block =>
+              Json.obj(
+                "id" -> block.select("id").asString,
+                "type" -> "function",
+                "function" -> Json.obj(
+                  "name" -> block.select("name").asString,
+                  "arguments" -> block.select("input").asOpt[JsValue].getOrElse(Json.obj()).stringify,
+                ),
+              )
+            }
+          val messageObj = Json.obj(
+            "role" -> role,
+            "content" -> textContent,
+            "tool_calls" -> JsArray(toolCalls),
+          )
+          Seq(ChatGeneration(ChatMessage.output(role, textContent, None, Json.obj("message" -> messageObj))))
+        } else {
+          contentBlocks.map { obj =>
+            val content = obj.select("text").asOpt[String].getOrElse("")
+            ChatGeneration(ChatMessage.output(role, content, None, obj))
+          }
         }
         Right(ChatResponse(messages, usage, resp.body))
     }
@@ -561,7 +639,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody).applyOn(cleanupDeprecatedSamplingParams)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
-    val messages = prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic)
+    val messages = JsArray(transformOpenAiMessagesToAnthropic(prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic).as[Seq[JsObject]]))
     val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
