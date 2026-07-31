@@ -45,9 +45,12 @@ trait DecoratorChatClient extends ChatClient {
   override def supportsStreaming: Boolean = chatClient.supportsStreaming
   override def supportsTools: Boolean = chatClient.supportsTools
   override def supportsCompletion: Boolean = chatClient.supportsCompletion
+  override def supportsResponses: Boolean = chatClient.supportsResponses
   override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = chatClient.listModels(raw, attrs)
   override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.completion(prompt, attrs, originalBody)
   override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = chatClient.completionStream(prompt, attrs, originalBody)
+  override def response(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.response(prompt, attrs, originalBody)
+  override def responseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = chatClient.responseStream(prompt, attrs, originalBody)
 }
 
 object EmbeddingModelClientDecorators {

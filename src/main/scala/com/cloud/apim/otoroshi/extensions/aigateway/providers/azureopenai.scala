@@ -86,6 +86,17 @@ case class AzureOpenAiChatResponseChunk(raw: JsValue) {
   lazy val choices: Seq[AzureOpenAiChatResponseChunkChoice] = raw.select("choices").asOpt[Seq[JsObject]].map(_.map(i => AzureOpenAiChatResponseChunkChoice(i))).getOrElse(Seq.empty)
 }
 
+case class AzureOpenAiResponseApiResponseChunk(raw: JsObject) {
+  lazy val typ: Option[String] = raw.select("type").asOptString
+  lazy val delta: Option[String] = raw.select("delta").asOptString
+  lazy val item_id: String = raw.select("item_id").asString
+  lazy val output_index: Option[Long] = raw.select("output_index").asOptLong
+  lazy val response: JsObject = raw.select("response").asOpt[JsObject].getOrElse(Json.obj())
+  lazy val isOutputTextDelta: Boolean = typ.contains("response.output_text.delta")
+  lazy val usage: Option[JsValue] = response.select("usage").asOpt[JsValue]
+  lazy val model: Option[String] = response.select("model").asOptString
+}
+
 case class AzureOpenAiApiResponseChoiceMessageToolCallFunction(raw: JsObject) {
   lazy val name: String = raw.select("name").asString
   lazy val arguments: String = raw.select("arguments").asString
@@ -291,6 +302,43 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
             c
           }
         , resp)
+      })
+  }
+
+  def responseStream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AzureOpenAiResponseApiResponseChunk, _], WSResponse)]] = {
+    val url = s"${AzureOpenAiApi.url(resourceName, deploymentId, version, path)}"
+    ProviderHelpers.logStream("AzureOpenai", method, url, body)(env)
+    env.Ws
+      .url(url)
+      .withHttpHeaders(
+        "Accept" -> "text/event-stream",
+      )
+      .applyOnWithOpt(apikey) {
+        case (builder, apikey) => builder.addHttpHeaders("api-key" -> apikey)
+      }
+      .applyOnWithOpt(bearer) {
+        case (builder, bearer) => builder.addHttpHeaders("Authorization" -> s"Bearer ${bearer}")
+      }
+      .applyOnWithOpt(body) {
+        case (builder, body) => builder
+          .addHttpHeaders("Content-Type" -> "application/json")
+          .withBody(body.asObject ++ Json.obj("stream" -> true))
+      }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .stream()
+      .map(r => ProviderHelpers.wrapStreamResponse("AzureOpenai", r, env) { resp =>
+        (
+          resp.bodyAsSource
+            .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
+            .map(_.utf8String)
+            .mapConcat(_.split("\n").toList.map(_.trim).filter(_.startsWith("data:")))
+            .map(_.stripPrefix("data:").trim)
+            .filter(str => str.nonEmpty && str != "[DONE]")
+            .map(str => Json.parse(str).asObject)
+            .map(json => AzureOpenAiResponseApiResponseChunk(json)),
+          resp
+        )
       })
   }
 
@@ -534,6 +582,66 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
     }
   }
 
+  override def response(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    if (!isV1) {
+      return super.response(prompt, attrs, originalBody)
+    }
+    val obody = originalBody.asObject - "provider"
+    val mergedOptions = {
+      val rawOptions = withModelForV1(if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
+        rawOptions - "n"
+    }
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
+    val startTime = System.currentTimeMillis()
+    val acc = new UsageAccumulator()
+    api.call("POST", "/responses", Some(mergedOptions), acc).map {
+      case Left(err) => Left(err)
+      case Right(resp) =>
+        val usage = ChatResponseMetadata(
+          ChatResponseMetadataRateLimit(
+            requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+            requestsRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+            tokensLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+            tokensRemaining = resp.headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+          ),
+          acc.usage(),
+          None
+        )
+        val duration: Long = System.currentTimeMillis() - startTime
+        val slug = Json.obj(
+          "provider_kind" -> "AzureOpenAi",
+          "provider" -> id,
+          "duration" -> duration,
+          "model" -> finalModel.json,
+          "deployment_id" -> api.deploymentId,
+          "resource_name" -> api.resourceName,
+          "rate_limit" -> usage.rateLimit.json,
+          "usage" -> usage.usage.json
+        ).applyOnWithOpt(usage.cache) {
+          case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+        }
+        attrs.update(ChatClient.ApiUsageKey -> usage)
+        attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+          case Some(obj @ JsObject(_)) => {
+            val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+            val newArr = arr ++ Seq(slug)
+            obj ++ Json.obj("ai" -> newArr)
+          }
+          case Some(other) => other
+          case None => Json.obj("ai" -> Seq(slug))
+        }
+        val messages = resp.body.select("output").asOpt[Seq[JsObject]].getOrElse(Seq.empty).collect {
+          case item if item.select("type").asOptString.contains("message") =>
+            val role = item.select("role").asOptString.getOrElse("assistant")
+            val content = item.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).collect {
+              case part if part.select("type").asOptString.contains("output_text") || part.select("type").asOptString.contains("input_text") => part.select("text").asOptString.getOrElse("")
+            }.mkString
+            ChatGeneration(ChatMessage.output(role, content, None, item))
+        }
+        Right(ChatResponse(messages, usage, resp.body))
+    }
+  }
+
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = withModelForV1(if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
@@ -622,6 +730,82 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
               // }
             )
           }.right
+    }
+  }
+
+  override def responseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    if (!isV1) {
+      return super.responseStream(prompt, attrs, originalBody)
+    }
+    val obody = originalBody.asObject - "provider"
+    val mergedOptions = {
+      val rawOptions = withModelForV1(if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
+      rawOptions - "n" - "top_p"
+    }
+    val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
+    val startTime = System.currentTimeMillis()
+    val acc = new UsageAccumulator()
+    val callF = api.responseStream("POST", "/responses", Some(mergedOptions), acc)
+    callF.map {
+      case Left(err) => Left(err)
+      case Right((source, resp)) =>
+        Right(source
+          .filterNot { chunk =>
+            if (chunk.usage.nonEmpty) {
+              acc.updateOpenai(chunk.usage)
+                val usage = ChatResponseMetadata(
+                  ChatResponseMetadataRateLimit(
+                    requestsLimit = resp.header("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+                    requestsRemaining = resp.header("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+                    tokensLimit = resp.header("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+                    tokensRemaining = resp.header("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+                  ),
+                  acc.usage(),
+                  None
+                )
+                val eventFinalModel = chunk.model.getOrElse(finalModel)
+                val duration: Long = System.currentTimeMillis() - startTime
+                val slug = Json.obj(
+                  "provider_kind" -> "AzureOpenAi",
+                  "provider" -> id,
+                  "duration" -> duration,
+                  "model" -> eventFinalModel.json,
+                  "deployment_id" -> api.deploymentId,
+                  "resource_name" -> api.resourceName,
+                  "rate_limit" -> usage.rateLimit.json,
+                  "usage" -> usage.usage.json
+                ).applyOnWithOpt(usage.cache) {
+                  case (obj, cache) => obj ++ Json.obj("cache" -> cache.json)
+                }
+                attrs.update(ChatClient.ApiUsageKey -> usage)
+                attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+                  case Some(obj @ JsObject(_)) => {
+                    val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                    val newArr = arr ++ Seq(slug)
+                    obj ++ Json.obj("ai" -> newArr)
+                  }
+                  case Some(other) => other
+                  case None => Json.obj("ai" -> Seq(slug))
+                }
+                true
+            } else {
+              false
+            }
+          }
+          .mapConcat { chunk =>
+            chunk.delta.filter(_ => chunk.isOutputTextDelta).filter(_.nonEmpty).map { text =>
+              ChatResponseChunk(
+                id = chunk.item_id,
+                created = System.currentTimeMillis() / 1000,
+                model = finalModel,
+                choices = Seq(ChatResponseChunkChoice(
+                  index = chunk.output_index.getOrElse(0L),
+                  delta = ChatResponseChunkChoiceDelta(content = text.some),
+                  finishReason = None
+                ))
+              )
+            }.toList
+          })
     }
   }
 

@@ -124,9 +124,9 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
 
   def updateOpenai(usageOpt: Option[JsValue]): Unit = {
     usageOpt.foreach { usage =>
-      promptTokensCounter.addAndGet(usage.select("prompt_tokens").asOpt[Long].getOrElse(0L))
-      generationTokensCounter.addAndGet(usage.select("completion_tokens").asOpt[Long].getOrElse(0L))
-      reasoningTokensCounter.addAndGet(usage.at("completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(0L))
+      promptTokensCounter.addAndGet(usage.select("prompt_tokens").asOpt[Long].orElse(usage.select("input_tokens").asOpt[Long]).getOrElse(0L))
+      generationTokensCounter.addAndGet(usage.select("completion_tokens").asOpt[Long].orElse(usage.select("output_tokens").asOpt[Long]).getOrElse(0L))
+      reasoningTokensCounter.addAndGet(usage.at("completion_tokens_details.reasoning_tokens").asOpt[Long].orElse(usage.at("output_tokens_details.reasoning_tokens").asOpt[Long]).getOrElse(0L))
     }
   }
 
