@@ -40,17 +40,11 @@ class ChatClientWithMetrics(originalProvider: AiProvider, val chatClient: ChatCl
     AiMetrics.around(op, originalProvider.provider.toLowerCase, start, wrapped) { _ => () }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] =
-    meterBlocking("chat.completion.blocking", attrs, chatClient.call(prompt, attrs, originalBody))
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] =
+    meterBlocking(kind.metricsOp(streaming = false), attrs, chatClient.invoke(kind, prompt, attrs, originalBody))
 
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] =
-    meterBlocking("completion.blocking", attrs, chatClient.completion(prompt, attrs, originalBody))
-
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] =
-    meterStreaming("chat.completion.streaming", attrs, chatClient.stream(prompt, attrs, originalBody))
-
-  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] =
-    meterStreaming("completion.streaming", attrs, chatClient.completionStream(prompt, attrs, originalBody))
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] =
+    meterStreaming(kind.metricsOp(streaming = true), attrs, chatClient.invokeStream(kind, prompt, attrs, originalBody))
 }
 
 object ChatClientWithMetrics {

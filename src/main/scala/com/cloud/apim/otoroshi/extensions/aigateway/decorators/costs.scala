@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.{Sink, Source, StreamConverters}
 import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
@@ -268,12 +268,12 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val budgetInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_budget")).contains("true")
     getProvider() match {
-      case None => chatClient.call(prompt, attrs, originalBody) // unsupported provider
+      case None => chatClient.invoke(kind, prompt, attrs, originalBody) // unsupported provider
       case Some(provider) => {
-        chatClient.call(prompt, attrs, originalBody).map {
+        chatClient.invoke(kind, prompt, attrs, originalBody).map {
           case Left(err) => Left(err)
           case Right(resp) => {
             val usage = resp.metadata.usage
@@ -303,49 +303,9 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     handleStream(attrs, originalBody) {
-      chatClient.stream(prompt, attrs, originalBody)
-    }
-  }
-
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    getProvider() match {
-      case None => chatClient.completion(prompt, attrs, originalBody) // unsupported provider
-      case Some(provider) => {
-        chatClient.completion(prompt, attrs, originalBody).map {
-          case Left(err) => Left(err)
-          case Right(resp) => {
-            val usage = resp.metadata.usage
-            val ext = env.adminExtensions.extension[AiExtension].get
-            ext.costsTracking.computeCosts(
-              provider = originalProvider.metadata.getOrElse("costs-tracking-provider", provider),
-              modelName = originalProvider.metadata.getOrElse("costs-tracking-model", getModel(originalBody)),
-              inputTokens = usage.promptTokens,
-              outputTokens = usage.generationTokens,
-              reasoningTokens = usage.reasoningTokens
-            ) match {
-              case Left(err) => Right(resp)
-              case Right(costs) => {
-                attrs.put(ChatClientWithCostsTracking.key -> costs)
-                val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_costs")).contains("true")
-                val budgetInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_budget")).contains("true")
-                if (ext.costsTrackingSettings.embedCostsTrackingInResponses || enableInRequest) {
-                  Right(resp.copy(metadata = resp.metadata.copy(costs = costs.some, budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest))))
-                } else {
-                  Right(resp.copy(metadata = resp.metadata.copy(budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest))))
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    handleStream(attrs, originalBody) {
-      chatClient.completionStream(prompt, attrs, originalBody)
+      chatClient.invokeStream(kind, prompt, attrs, originalBody)
     }
   }
 }

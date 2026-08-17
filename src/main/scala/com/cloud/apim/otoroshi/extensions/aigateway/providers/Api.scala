@@ -10,6 +10,7 @@ import play.api.libs.json.{JsValue, Json}
 import play.api.libs.ws.WSResponse
 
 import java.util.concurrent.atomic.AtomicLong
+import scala.collection.concurrent.TrieMap
 import scala.concurrent.{ExecutionContext, Future}
 
 trait ApiClient[Resp, Chunk] {
@@ -43,6 +44,15 @@ trait NoStreamingApiClient[Resp] {
 
 
 object ProviderHelpers {
+
+  private val warnedOnce = new TrieMap[String, Unit]()
+
+  // logs a misconfiguration warning once per key, so it stays visible without flooding the logs
+  // on every request
+  def warnOnce(key: String, message: => String): Unit = {
+    if (warnedOnce.putIfAbsent(key, ()).isEmpty) AiExtension.logger.warn(message)
+  }
+
   def responseBody(resp: WSResponse): JsValue = {
     if (resp.contentType.contains("application/json")) {
       resp.json
@@ -183,6 +193,15 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
       promptTokensCounter.addAndGet(usage.input_tokens)
       generationTokensCounter.addAndGet(usage.output_tokens)
       reasoningTokensCounter.addAndGet(usage.reasoningTokens)
+    }
+  }
+
+  // usage of the OpenAI Responses API: `input_tokens` / `output_tokens` instead of prompt/completion
+  def updateOpenaiResponses(usageOpt: Option[JsValue]): Unit = {
+    usageOpt.foreach { usage =>
+      promptTokensCounter.addAndGet(usage.select("input_tokens").asOpt[Long].getOrElse(0L))
+      generationTokensCounter.addAndGet(usage.select("output_tokens").asOpt[Long].getOrElse(0L))
+      reasoningTokensCounter.addAndGet(usage.at("output_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(0L))
     }
   }
 

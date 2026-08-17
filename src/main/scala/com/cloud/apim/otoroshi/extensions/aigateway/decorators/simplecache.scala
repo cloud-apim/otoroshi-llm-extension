@@ -31,6 +31,19 @@ object ChatClientWithSimpleCache {
 }
 
 // ---------------------------------------------------------------------------
+//  Cache keys (shared by the simple and semantic caches)
+// ---------------------------------------------------------------------------
+object CacheKeys {
+
+  // the endpoint is part of the key: a /responses answer is not interchangeable with a chat one
+  def forPrompt(kind: ChatCallKind, prompt: ChatPrompt): String = {
+    forQuery(kind, prompt.messages.map(m => s"${m.role}:${m.content}").mkString(","))
+  }
+
+  def forQuery(kind: ChatCallKind, query: String): String = s"${kind.name}|${query}".sha512
+}
+
+// ---------------------------------------------------------------------------
 //  JSON serialization helpers (shared by both implementations)
 // ---------------------------------------------------------------------------
 object SimpleCacheSerialization {
@@ -153,8 +166,9 @@ class ChatClientWithSimpleCacheMemory(originalProvider: AiProvider, val chatClie
 
   private val ttl = originalProvider.cache.ttl
 
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    // the endpoint is part of the key: a /responses answer is not interchangeable with a chat one
+    val key = CacheKeys.forPrompt(kind, originalPrompt)
     ChatClientWithSimpleCacheMemory.cache.getIfPresent(key) match {
       case Some((_, response, at)) =>
         val age = (System.currentTimeMillis() - at).millis
@@ -163,7 +177,7 @@ class ChatClientWithSimpleCacheMemory(originalProvider: AiProvider, val chatClie
           cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, age))
         )).rightf
       case None =>
-        chatClient.call(originalPrompt, attrs, originalBody).map {
+        chatClient.invoke(kind, originalPrompt, attrs, originalBody).map {
           case Left(err) => err.left
           case Right(resp) =>
             ChatClientWithSimpleCacheMemory.cache.put(key, (ttl, resp, System.currentTimeMillis()))
@@ -174,52 +188,12 @@ class ChatClientWithSimpleCacheMemory(originalProvider: AiProvider, val chatClie
     }
   }
 
-  override def stream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val key = CacheKeys.forPrompt(kind, originalPrompt)
     ChatClientWithSimpleCacheMemory.stream_cache.getIfPresent(key) match {
       case Some((_, response, _)) => Source(response.toList).rightf
       case None =>
-        chatClient.stream(originalPrompt, attrs, originalBody).map {
-          case Left(err) => err.left
-          case Right(resp) =>
-            var chunks = Seq.empty[ChatResponseChunk]
-            resp
-              .alsoTo(Sink.foreach { chunk => chunks = chunks :+ chunk })
-              .alsoTo(Sink.onComplete { _ =>
-                ChatClientWithSimpleCacheMemory.stream_cache.put(key, (ttl, chunks, System.currentTimeMillis()))
-              })
-            resp.right
-        }
-    }
-  }
-
-  override def completion(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
-    ChatClientWithSimpleCacheMemory.cache.getIfPresent(key) match {
-      case Some((_, response, at)) =>
-        val age = (System.currentTimeMillis() - at).millis
-        response.copy(metadata = response.metadata.copy(
-          usage = ChatResponseMetadataUsage.empty,
-          cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, age))
-        )).rightf
-      case None =>
-        chatClient.completion(originalPrompt, attrs, originalBody).map {
-          case Left(err) => err.left
-          case Right(resp) =>
-            ChatClientWithSimpleCacheMemory.cache.put(key, (ttl, resp, System.currentTimeMillis()))
-            resp.copy(metadata = resp.metadata.copy(
-              cache = Some(ChatResponseCache(ChatResponseCacheStatus.Miss, key, ttl, 0.millis))
-            )).right
-        }
-    }
-  }
-
-  override def completionStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
-    ChatClientWithSimpleCacheMemory.stream_cache.getIfPresent(key) match {
-      case Some((_, response, _)) => Source(response.toList).rightf
-      case None =>
-        chatClient.completionStream(originalPrompt, attrs, originalBody).map {
+        chatClient.invokeStream(kind, originalPrompt, attrs, originalBody).map {
           case Left(err) => err.left
           case Right(resp) =>
             var chunks = Seq.empty[ChatResponseChunk]
@@ -262,8 +236,8 @@ class ChatClientWithSimpleCacheRedis(originalProvider: AiProvider, val chatClien
     toFuture(LettuceRedisClientManager.getConnection(redisUrl).async().psetex(key, ttl.toMillis, value))
   }
 
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val key = CacheKeys.forPrompt(kind, originalPrompt)
     redisGet(s"simple-cache:call:$key").flatMap {
       case Some(value) =>
         scala.util.Try(SimpleCacheSerialization.deserializeResponse(value)).toOption match {
@@ -273,14 +247,14 @@ class ChatClientWithSimpleCacheRedis(originalProvider: AiProvider, val chatClien
               usage = ChatResponseMetadataUsage.empty,
               cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, age))
             )).rightf
-          case None => callAndCache(key, originalPrompt, attrs, originalBody)
+          case None => callAndCache(kind, key, originalPrompt, attrs, originalBody)
         }
-      case None => callAndCache(key, originalPrompt, attrs, originalBody)
+      case None => callAndCache(kind, key, originalPrompt, attrs, originalBody)
     }
   }
 
-  private def callAndCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    chatClient.call(originalPrompt, attrs, originalBody).map {
+  private def callAndCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    chatClient.invoke(kind, originalPrompt, attrs, originalBody).map {
       case Left(err) => err.left
       case Right(resp) =>
         redisPut(s"simple-cache:call:$key", SimpleCacheSerialization.serializeResponse(resp, System.currentTimeMillis()))
@@ -290,74 +264,20 @@ class ChatClientWithSimpleCacheRedis(originalProvider: AiProvider, val chatClien
     }
   }
 
-  override def stream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val key = CacheKeys.forPrompt(kind, originalPrompt)
     redisGet(s"simple-cache:stream:$key").flatMap {
       case Some(value) =>
         scala.util.Try(SimpleCacheSerialization.deserializeChunks(value)).toOption match {
           case Some((chunks, _)) => Source(chunks.toList).rightf
-          case None => streamAndCache(key, originalPrompt, attrs, originalBody)
+          case None => streamAndCache(kind, key, originalPrompt, attrs, originalBody)
         }
-      case None => streamAndCache(key, originalPrompt, attrs, originalBody)
+      case None => streamAndCache(kind, key, originalPrompt, attrs, originalBody)
     }
   }
 
-  private def streamAndCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    chatClient.stream(originalPrompt, attrs, originalBody).map {
-      case Left(err) => err.left
-      case Right(resp) =>
-        var chunks = Seq.empty[ChatResponseChunk]
-        resp
-          .alsoTo(Sink.foreach { chunk => chunks = chunks :+ chunk })
-          .alsoTo(Sink.onComplete { _ =>
-            redisPut(s"simple-cache:stream:$key", SimpleCacheSerialization.serializeChunks(chunks, System.currentTimeMillis()))
-          })
-        resp.right
-    }
-  }
-
-  override def completion(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
-    redisGet(s"simple-cache:call:$key").flatMap {
-      case Some(value) =>
-        scala.util.Try(SimpleCacheSerialization.deserializeResponse(value)).toOption match {
-          case Some((response, at)) =>
-            val age = (System.currentTimeMillis() - at).millis
-            response.copy(metadata = response.metadata.copy(
-              usage = ChatResponseMetadataUsage.empty,
-              cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, age))
-            )).rightf
-          case None => completionAndCache(key, originalPrompt, attrs, originalBody)
-        }
-      case None => completionAndCache(key, originalPrompt, attrs, originalBody)
-    }
-  }
-
-  private def completionAndCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    chatClient.completion(originalPrompt, attrs, originalBody).map {
-      case Left(err) => err.left
-      case Right(resp) =>
-        redisPut(s"simple-cache:call:$key", SimpleCacheSerialization.serializeResponse(resp, System.currentTimeMillis()))
-        resp.copy(metadata = resp.metadata.copy(
-          cache = Some(ChatResponseCache(ChatResponseCacheStatus.Miss, key, ttl, 0.millis))
-        )).right
-    }
-  }
-
-  override def completionStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val key = originalPrompt.messages.map(m => s"${m.role}:${m.content}").mkString(",").sha512
-    redisGet(s"simple-cache:stream:$key").flatMap {
-      case Some(value) =>
-        scala.util.Try(SimpleCacheSerialization.deserializeChunks(value)).toOption match {
-          case Some((chunks, _)) => Source(chunks.toList).rightf
-          case None => completionStreamAndCache(key, originalPrompt, attrs, originalBody)
-        }
-      case None => completionStreamAndCache(key, originalPrompt, attrs, originalBody)
-    }
-  }
-
-  private def completionStreamAndCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    chatClient.completionStream(originalPrompt, attrs, originalBody).map {
+  private def streamAndCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    chatClient.invokeStream(kind, originalPrompt, attrs, originalBody).map {
       case Left(err) => err.left
       case Right(resp) =>
         var chunks = Seq.empty[ChatResponseChunk]

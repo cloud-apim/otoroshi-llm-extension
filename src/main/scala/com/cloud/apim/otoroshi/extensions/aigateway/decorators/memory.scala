@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
+import akka.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway._
 import otoroshi.el.GlobalExpressionLanguage
@@ -24,7 +25,8 @@ object ChatClientWithPersistentMemory {
 
 class ChatClientWithPersistentMemory(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  // resolves the memory client and the session id, then hands them to `f`
+  private def withMemory[T](attrs: TypedMap)(f: (PersistentMemoryClient, String) => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val ref = originalProvider.memory.get
     env.adminExtensions.extension[AiExtension].get.states.persistentMemory(ref) match {
       case None => Json.obj("error" -> "memory provider not found").leftf
@@ -44,24 +46,61 @@ class ChatClientWithPersistentMemory(originalProvider: AiProvider, val chatClien
         )
         memory.getPersistentMemoryClient() match {
           case None => Json.obj("error" -> "memory provider client not found").leftf
-          case Some(memClient) => {
-            memClient.getMessages(sessionId).flatMap {
-              case Left(error) => error.leftf
-              case Right(memoryMessages) => {
-                val memoryMessagesForClient = memoryMessages.map(m => InputChatMessage.fromJson(m.raw))
-                val addedMessagesForMemory = originalPrompt.messages.map(m => PersistedChatMessage.from(m.raw))
-                chatClient.call(originalPrompt.copy(messages = memoryMessagesForClient ++ originalPrompt.messages), attrs, originalBody).flatMap {
-                  case Left(error) => {
-                    memClient.addMessages(sessionId, addedMessagesForMemory)
-                    error.leftf
-                  }
-                  case Right(response) => {
-                    val responseMessages = response.generations.map(m => PersistedChatMessage.from(m.message.raw))
-                    memClient.addMessages(sessionId, addedMessagesForMemory ++ responseMessages)
-                    response.rightf
-                  }
+          case Some(memClient) => f(memClient, sessionId)
+        }
+      }
+    }
+  }
+
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    withMemory[ChatResponse](attrs) { (memClient, sessionId) =>
+      memClient.getMessages(sessionId).flatMap {
+        case Left(error) => error.leftf
+        case Right(memoryMessages) => {
+          val memoryMessagesForClient = memoryMessages.map(m => InputChatMessage.fromJson(m.raw))
+          val addedMessagesForMemory = originalPrompt.messages.map(m => PersistedChatMessage.from(m.raw))
+          chatClient.invoke(kind, originalPrompt.copy(messages = memoryMessagesForClient ++ originalPrompt.messages), attrs, originalBody).flatMap {
+            case Left(error) => {
+              memClient.addMessages(sessionId, addedMessagesForMemory)
+              error.leftf
+            }
+            case Right(response) => {
+              val responseMessages = response.generations.map(m => PersistedChatMessage.from(m.message.raw))
+              memClient.addMessages(sessionId, addedMessagesForMemory ++ responseMessages)
+              response.rightf
+            }
+          }
+        }
+      }
+    }
+  }
+
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    withMemory[Source[ChatResponseChunk, _]](attrs) { (memClient, sessionId) =>
+      memClient.getMessages(sessionId).flatMap {
+        case Left(error) => error.leftf
+        case Right(memoryMessages) => {
+          val memoryMessagesForClient = memoryMessages.map(m => InputChatMessage.fromJson(m.raw))
+          val addedMessagesForMemory = originalPrompt.messages.map(m => PersistedChatMessage.from(m.raw))
+          chatClient.invokeStream(kind, originalPrompt.copy(messages = memoryMessagesForClient ++ originalPrompt.messages), attrs, originalBody).map {
+            case Left(error) => {
+              memClient.addMessages(sessionId, addedMessagesForMemory)
+              error.left
+            }
+            case Right(source) => {
+              // the answer is only known once the stream completes: aggregate the deltas and
+              // persist the resulting assistant message
+              val content = new StringBuilder()
+              source
+                .map { chunk =>
+                  chunk.choices.flatMap(_.delta.content).foreach(content.append)
+                  chunk
                 }
-              }
+                .alsoTo(Sink.onComplete { _ =>
+                  val text = content.toString()
+                  val raw = Json.obj("role" -> "assistant", "content" -> text)
+                  memClient.addMessages(sessionId, addedMessagesForMemory :+ PersistedChatMessage.from(raw))
+                }).right
             }
           }
         }

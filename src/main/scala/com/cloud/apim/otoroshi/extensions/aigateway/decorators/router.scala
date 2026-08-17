@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, KindBasedChatClient}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -66,7 +66,7 @@ object OtoroshiRouterChatClient {
 
 case class RouterCandidate(provider: AiProvider, model: String, score: Option[Double], cost: Option[BigDecimal])
 
-class OtoroshiRouterChatClient(provider: AiProvider) extends ChatClient {
+class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient {
 
   override def computeModel(payload: JsValue): Option[String] = None
   override def isOpenAi: Boolean = true
@@ -358,23 +358,13 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends ChatClient {
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     if (isFusion(originalBody)) fusionCall(prompt, attrs, originalBody)
-    else execute(prompt, originalBody)((client, body) => client.call(prompt, attrs, body))
+    else execute(prompt, originalBody)((client, body) => client.invoke(kind, prompt, attrs, body))
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     if (isFusion(originalBody)) fusionStream(prompt, attrs, originalBody)
-    else execute(prompt, originalBody)((client, body) => client.stream(prompt, attrs, body))
-  }
-
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    if (isFusion(originalBody)) fusionCall(prompt, attrs, originalBody)
-    else execute(prompt, originalBody)((client, body) => client.completion(prompt, attrs, body))
-  }
-
-  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    if (isFusion(originalBody)) fusionStream(prompt, attrs, originalBody)
-    else execute(prompt, originalBody)((client, body) => client.completionStream(prompt, attrs, body))
+    else execute(prompt, originalBody)((client, body) => client.invokeStream(kind, prompt, attrs, body))
   }
 }

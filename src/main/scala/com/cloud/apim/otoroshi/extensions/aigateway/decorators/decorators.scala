@@ -36,7 +36,12 @@ object ChatClientDecorators {
   }
 }
 
-trait DecoratorChatClient extends ChatClient {
+/**
+ * Base trait of every chat decorator. A decorator implements `invoke` / `invokeStream` (see
+ * `KindBasedChatClient`) and therefore applies to chat/completions, completions AND responses at
+ * once: no endpoint can silently escape the chain.
+ */
+trait DecoratorChatClient extends KindBasedChatClient {
   def chatClient: ChatClient
   override def computeModel(payload: JsValue): Option[String] = chatClient.computeModel(payload)
   override def isCohere: Boolean = chatClient.isCohere
@@ -45,9 +50,10 @@ trait DecoratorChatClient extends ChatClient {
   override def supportsStreaming: Boolean = chatClient.supportsStreaming
   override def supportsTools: Boolean = chatClient.supportsTools
   override def supportsCompletion: Boolean = chatClient.supportsCompletion
+  override def supportsResponses: Boolean = chatClient.supportsResponses
   override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = chatClient.listModels(raw, attrs)
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.completion(prompt, attrs, originalBody)
-  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = chatClient.completionStream(prompt, attrs, originalBody)
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.invoke(kind, prompt, attrs, originalBody)
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = chatClient.invokeStream(kind, prompt, attrs, originalBody)
 }
 
 object EmbeddingModelClientDecorators {

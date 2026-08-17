@@ -403,8 +403,10 @@ The plugin acts as a translation layer between the Open Responses API format and
 
 1. **Input translation**: Open Responses `input` items (messages, function calls, function call outputs) are converted to OpenAI-style `messages` array
 2. **Tool translation**: Open Responses tool definitions (`name`, `description`, `parameters` at top level) are wrapped into OpenAI format (`function` object)
-3. **Parameter mapping**: `max_output_tokens` maps to `max_completion_tokens`, `instructions` becomes a system message
-4. **Response translation**: OpenAI-style responses are converted back to Open Responses format with proper `output` items, status fields, and usage details
-5. **Streaming translation**: OpenAI SSE chunks are wrapped into Open Responses semantic events with proper lifecycle management
+3. **Parameter mapping**: `max_output_tokens` maps to `max_tokens`, `text.format` to `response_format`, `reasoning.effort` to `reasoning_effort`, and `instructions` becomes a system message
+4. **Gateway pipeline**: guardrails, prompt contexts, persistent memory, model restrictions, caches, cost tracking, budgets, auditing and metrics all apply, exactly as on `/chat/completions`
+5. **Provider call**: the request goes to the provider's native `/responses` endpoint when its [`responses` option](/docs/llm-gateway/openai-responses-proxy#native-responses-api) is on, and to its chat completions endpoint otherwise
+6. **Response translation**: provider responses are converted back to Open Responses format with proper `output` items, status fields, and usage details (a native payload is returned as is, keeping its response id and reasoning items)
+7. **Streaming translation**: provider chunks are wrapped into Open Responses semantic events with proper lifecycle management, tool calls and token usage on the final `response.completed` event
 
 This means you can use **any** LLM provider supported by Otoroshi (OpenAI, Anthropic, Mistral, Ollama, Azure, Cohere, Deepseek, and 50+ others) through the Open Responses API format.

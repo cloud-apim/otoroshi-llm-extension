@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, KindBasedChatClient}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.cache.types.UnboundedTrieMap
@@ -98,7 +98,7 @@ object LoadBalancerChatClient {
 
 case class LoadBalancingTarget(ref: String, weight: Int, selector: Option[String])
 
-class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
+class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
 
   override def computeModel(payload: JsValue): Option[String] = None
 
@@ -184,40 +184,20 @@ class LoadBalancerChatClient(provider: AiProvider) extends ChatClient {
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     execute(prompt, attrs, originalBody) { (selected, client) =>
       val start = System.currentTimeMillis()
-      client.call(prompt, attrs, originalBody).map { resp =>
+      client.invoke(kind, prompt, attrs, originalBody).map { resp =>
         BestResponseTime.record(selected, System.currentTimeMillis() - start)
         resp
       }
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     execute(prompt, attrs, originalBody) { (selected, client) =>
       val start = System.currentTimeMillis()
-      client.stream(prompt, attrs, originalBody).map { resp =>
-        BestResponseTime.record(selected, System.currentTimeMillis() - start)
-        resp
-      }
-    }
-  }
-
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    execute(prompt, attrs, originalBody) { (selected, client) =>
-      val start = System.currentTimeMillis()
-      client.completion(prompt, attrs, originalBody).map { resp =>
-        BestResponseTime.record(selected, System.currentTimeMillis() - start)
-        resp
-      }
-    }
-  }
-
-  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    execute(prompt, attrs, originalBody) { (selected, client) =>
-      val start = System.currentTimeMillis()
-      client.completionStream(prompt, attrs, originalBody).map { resp =>
+      client.invokeStream(kind, prompt, attrs, originalBody).map { resp =>
         BestResponseTime.record(selected, System.currentTimeMillis() - start)
         resp
       }

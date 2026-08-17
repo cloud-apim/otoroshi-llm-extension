@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.{Sink, Source}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
@@ -94,23 +94,24 @@ class ChatClientWithRequestResponseLogging(originalProvider: AiProvider, val cha
     "provider_llm"  -> originalProvider.provider,
   )
 
-  // ---- call ---------------------------------------------------------------
+  // ---- blocking -----------------------------------------------------------
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val requestedAt = now()
+    val logKind = s"${kind.name}/call"
     writeEntry(baseFields ++ Json.obj(
       "timestamp"   -> requestedAt,
       "type"        -> "request",
-      "kind"        -> "call",
+      "kind"        -> logKind,
       "raw_request" -> originalBody,          // body as received from the client
       "llm_request" -> prompt.json,           // parsed messages forwarded to the LLM
     ), attrs)
-    chatClient.call(prompt, attrs, originalBody).map {
+    chatClient.invoke(kind, prompt, attrs, originalBody).map {
       case Left(err) =>
         writeEntry(baseFields ++ Json.obj(
           "timestamp" -> now(),
           "type"      -> "error",
-          "kind"      -> "call",
+          "kind"      -> logKind,
           "error"     -> err,
         ), attrs)
         Left(err)
@@ -118,7 +119,7 @@ class ChatClientWithRequestResponseLogging(originalProvider: AiProvider, val cha
         writeEntry(baseFields ++ Json.obj(
           "timestamp"    -> now(),
           "type"         -> "response",
-          "kind"         -> "call",
+          "kind"         -> logKind,
           "raw_response" -> resp.raw,                                           // raw JSON from the LLM
           "response"     -> JsArray(resp.generations.map(_.json)),              // normalised generations sent to client
         ), attrs)
@@ -128,21 +129,22 @@ class ChatClientWithRequestResponseLogging(originalProvider: AiProvider, val cha
 
   // ---- stream -------------------------------------------------------------
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val requestedAt = now()
+    val logKind = s"${kind.name}/stream"
     writeEntry(baseFields ++ Json.obj(
       "timestamp"   -> requestedAt,
       "type"        -> "request",
-      "kind"        -> "stream",
+      "kind"        -> logKind,
       "raw_request" -> originalBody,          // body as received from the client
       "llm_request" -> prompt.json,           // parsed messages forwarded to the LLM
     ), attrs)
-    chatClient.stream(prompt, attrs, originalBody).map {
+    chatClient.invokeStream(kind, prompt, attrs, originalBody).map {
       case Left(err) =>
         writeEntry(baseFields ++ Json.obj(
           "timestamp" -> now(),
           "type"      -> "error",
-          "kind"      -> "stream",
+          "kind"      -> logKind,
           "error"     -> err,
         ), attrs)
         Left(err)
@@ -160,7 +162,7 @@ class ChatClientWithRequestResponseLogging(originalProvider: AiProvider, val cha
               writeEntry(baseFields ++ Json.obj(
                 "timestamp"    -> now(),
                 "type"         -> "response",
-                "kind"         -> "stream",
+                "kind"         -> logKind,
                 "raw_response" -> JsArray(chunks.map(_.json(env)).toSeq),   // chunks as returned by the LLM provider
                 "response"     -> JsArray(chunks.map(_.openaiJson(env)).toSeq), // chunks forwarded to the client (OpenAI format)
               ), attrs)

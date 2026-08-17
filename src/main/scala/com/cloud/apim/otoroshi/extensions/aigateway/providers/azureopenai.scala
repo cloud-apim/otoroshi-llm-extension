@@ -212,6 +212,31 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
       .execute()
   }
 
+  /** raw streamed POST, used by the native /responses path */
+  def rawStream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${AzureOpenAiApi.url(resourceName, deploymentId, version, path)}"
+    ProviderHelpers.logStream("AzureOpenai", method, url, body)(env)
+    env.Ws
+      .url(url)
+      .withHttpHeaders(
+        "Accept" -> "text/event-stream",
+      )
+      .applyOnWithOpt(apikey) {
+        case (builder, apikey) => builder.addHttpHeaders("api-key" -> apikey)
+      }
+      .applyOnWithOpt(bearer) {
+        case (builder, bearer) => builder.addHttpHeaders("Authorization" -> s"Bearer ${bearer}")
+      }
+      .applyOnWithOpt(body) {
+        case (builder, body) => builder
+          .addHttpHeaders("Content-Type" -> "application/json")
+          .withBody(body)
+      }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .stream()
+  }
+
   def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {
     rawCall(method, path, body)
       .map(r => ProviderHelpers.wrapResponse("AzureOpenai", r, env) { resp =>
@@ -381,6 +406,7 @@ object AzureOpenAiChatClientOptions {
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
       mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
+      responses = json.select("responses").asOpt[Boolean].getOrElse(false),
     )
   }
 }
@@ -411,6 +437,9 @@ case class AzureOpenAiChatClientOptions(
   mcpIncludeFunctions: Seq[String] = Seq.empty,
   mcpExcludeFunctions: Seq[String] = Seq.empty,
   maxFunctionCalls: Int = 10,
+  // opt-in native /responses endpoint. Only exists on the `v1` api surface
+  // (https://{resource}.openai.azure.com/openai/v1/responses), not on the deployment-scoped one
+  responses: Boolean = false,
 ) extends ChatOptions {
 
   lazy val wasmToolsNoInline: Seq[String] = wasmTools.filterNot(_.startsWith("__inline_"))
@@ -442,12 +471,13 @@ case class AzureOpenAiChatClientOptions(
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
     "max_function_calls" -> maxFunctionCalls,
+    "responses" -> responses,
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls"  - "wasm_tools" - "tool_functions" - "mcp_connectors" - "a2a_connectors" - "search_engines" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls"  - "wasm_tools" - "tool_functions" - "mcp_connectors" - "a2a_connectors" - "search_engines" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions" - "responses")
 }
 
-class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientOptions, id: String) extends ChatClient {
+class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientOptions, id: String) extends ChatClient with NativeResponsesSupport {
 
   def fakemodel: Option[String] = s"${api.resourceName}-${api.deploymentId}".some
   // in v1 mode the endpoint is OpenAI-compatible and the model is a real body param (defaulting to the deployment name);
@@ -462,7 +492,39 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = api.supportsCompletion
-  override def supportsResponses: Boolean = true
+
+  ////////////////////////////////////////////////////////////////////////////////////////////////////
+  //  native /responses (enabled by the `responses` option, off by default)
+  ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  // azure only exposes /responses on the `v1` api surface: with a dated api version the url is
+  // deployment-scoped and has no such endpoint, so we keep degrading to /chat/completions there
+  override protected def responsesEnabled: Boolean = {
+    if (options.responses && !isV1) {
+      ProviderHelpers.warnOnce(
+        s"azure-responses-${id}",
+        s"the azure provider '${id}' has the 'responses' option enabled but its api version is '${api.version}': the native /responses endpoint only exists on the 'v1' api version, /responses calls keep being served through /chat/completions"
+      )
+    }
+    options.responses && isV1
+  }
+  override protected def responsesProviderKind: String = "AzureOpenai"
+  override protected def responsesProviderId: String = id
+  override protected def responsesChatOptions: JsObject = withModelForV1(options.jsonForCall)
+  override protected def responsesAllowConfigOverride: Boolean = options.allowConfigOverride
+  override protected def responsesSupportsTools: Boolean = api.supportsTools
+  override protected def responsesToolsOptions: NativeResponsesToolsOptions = NativeResponsesToolsOptions(
+    wasmToolsNoInline = options.wasmToolsNoInline,
+    wasmToolsInline = options.wasmToolsInline,
+    mcpConnectors = options.mcpConnectors,
+    a2aConnectors = options.a2aConnectors,
+    searchEngines = options.searchEngines,
+    mcpIncludeFunctions = options.mcpIncludeFunctions,
+    mcpExcludeFunctions = options.mcpExcludeFunctions,
+    maxFunctionCalls = options.maxFunctionCalls,
+  )
+  override protected def responsesRawCall(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawCall("POST", "/responses", withModelForV1(body.asObject).some)
+  override protected def responsesRawStream(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawStream("POST", "/responses", (withModelForV1(body.asObject) ++ Json.obj("stream" -> true)).some)
 
   override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/models", None).map { resp =>

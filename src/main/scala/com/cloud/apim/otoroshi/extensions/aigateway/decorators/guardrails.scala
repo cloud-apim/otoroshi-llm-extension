@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatClient, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata, InputChatMessage, OutputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatCallKind, ChatClient, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata, InputChatMessage, OutputChatMessage}
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails._
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -230,47 +230,25 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
     }
   }
 
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     resolveBefore(originalPrompt, attrs).flatMap {
       case Left(GuardrailResult.GuardrailError(err)) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
       case Left(GuardrailResult.GuardrailDenied(msg)) if originalProvider.guardrailsFailOnDeny => Left(Json.obj("error" -> "guardrail_denied", "error_description" -> msg, "phase" -> "before")).vfuture
       case Left(GuardrailResult.GuardrailDenied(msg)) => Right(deniedResponse(msg)).vfuture
       case Left(_) => Left(Json.obj("error" -> "bad_request", "error_description" -> "unexpected guardrail result", "phase" -> "before")).vfuture
-      case Right(effectivePrompt) => chatClient.call(effectivePrompt, attrs, originalBody).flatMap {
+      case Right(effectivePrompt) => chatClient.invoke(kind, effectivePrompt, attrs, originalBody).flatMap {
         case Left(err) => Left(err).vfuture
         case Right(r) => runAfter(r, attrs)
       }
     }
   }
 
-  override def stream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     resolveBefore(originalPrompt, attrs).flatMap {
       case Left(GuardrailResult.GuardrailError(err)) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
       case Left(GuardrailResult.GuardrailDenied(msg)) => Right(deniedResponse(msg).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
       case Left(_) => Left(Json.obj("error" -> "bad_request", "error_description" -> "unexpected guardrail result", "phase" -> "before")).vfuture
-      case Right(effectivePrompt) => chatClient.stream(effectivePrompt, attrs, originalBody)
-    }
-  }
-
-  override def completion(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    resolveBefore(originalPrompt, attrs).flatMap {
-      case Left(GuardrailResult.GuardrailError(err)) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
-      case Left(GuardrailResult.GuardrailDenied(msg)) if originalProvider.guardrailsFailOnDeny => Left(Json.obj("error" -> "guardrail_denied", "error_description" -> msg, "phase" -> "before")).vfuture
-      case Left(GuardrailResult.GuardrailDenied(msg)) => Right(deniedResponse(msg)).vfuture
-      case Left(_) => Left(Json.obj("error" -> "bad_request", "error_description" -> "unexpected guardrail result", "phase" -> "before")).vfuture
-      case Right(effectivePrompt) => chatClient.completion(effectivePrompt, attrs, originalBody).flatMap {
-        case Left(err) => Left(err).vfuture
-        case Right(r) => runAfter(r, attrs)
-      }
-    }
-  }
-
-  override def completionStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    resolveBefore(originalPrompt, attrs).flatMap {
-      case Left(GuardrailResult.GuardrailError(err)) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
-      case Left(GuardrailResult.GuardrailDenied(msg)) => Right(deniedResponse(msg).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture
-      case Left(_) => Left(Json.obj("error" -> "bad_request", "error_description" -> "unexpected guardrail result", "phase" -> "before")).vfuture
-      case Right(effectivePrompt) => chatClient.completionStream(effectivePrompt, attrs, originalBody)
+      case Right(effectivePrompt) => chatClient.invokeStream(kind, effectivePrompt, attrs, originalBody)
     }
   }
 }

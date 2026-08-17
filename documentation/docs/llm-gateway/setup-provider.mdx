@@ -182,6 +182,7 @@ The `options` object configures the model and its parameters. These options foll
 | `logprobs` | boolean | — | Return log probabilities |
 | `top_logprobs` | integer | — | Number of top log probabilities to return |
 | `allow_config_override` | boolean | `true` | Allow users to override these options from the request body |
+| `responses` | boolean | `false` | Call the provider's native [Responses API](/docs/llm-gateway/openai-responses-proxy#native-responses-api) endpoint for `/responses` requests instead of translating them to chat completions. Available on OpenAI, OpenAI-compatible providers, Azure OpenAI, Groq, x.ai and Ollama |
 | `wasm_tools` / `tool_functions` | array | `[]` | List of Wasm function IDs for [function calling](/docs/category/function-calling-tools) |
 | `mcp_connectors` | array | `[]` | List of [MCP connector](/docs/category/mcp-model-context-protocol) IDs |
 | `search_engines` | array | `[]` | List of [Search Engine](/docs/search-engines/introduction) IDs, exposed to the model as a web `search` tool |
