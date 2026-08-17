@@ -330,7 +330,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
-    val body = mergedOptions ++ Json.obj("messages" -> prompt.json)
+    val body = mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))
     val startTime = System.currentTimeMillis()
     api.call(options.model, "POST", "/api/openai_compat/v1/chat/completions", Some(body)).map {
       case Left(err) => err.left

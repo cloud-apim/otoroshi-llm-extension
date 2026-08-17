@@ -260,6 +260,30 @@ curl https://api.domain.tld/v1/chat/completions \
   }'
 ```
 
+#### Multipart content
+
+Messages can mix text with images, audio and files. Documents are attached with a `file` content part, either inline as a data-uri or by url, and are forwarded to the target provider in its own format:
+
+```js
+{
+  "model": "gpt-4o",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "Summarize this document" },
+        { "type": "file", "file": {
+          "filename": "report.pdf",
+          "file_data": "data:application/pdf;base64,JVBERi0xLjQK..."
+        }}
+      ]
+    }
+  ]
+}
+```
+
+PDF and plain text documents are supported. The same document is sent as a `file` part to OpenAI compatible providers and as a `document` block to Anthropic, so a single request works across providers.
+
 #### Model routing
 
 When multiple providers are configured, you can target a specific provider using the `model` field:
@@ -350,7 +374,8 @@ The `input` field accepts multiple formats:
         "role": "user",
         "content": [
           { "type": "input_text", "text": "What's in this image?" },
-          { "type": "input_image", "image_url": "https://example.com/image.png" }
+          { "type": "input_image", "image_url": "https://example.com/image.png" },
+          { "type": "input_file", "filename": "report.pdf", "file_data": "data:application/pdf;base64,JVBERi0xLjQK..." }
         ]
       }
     ]

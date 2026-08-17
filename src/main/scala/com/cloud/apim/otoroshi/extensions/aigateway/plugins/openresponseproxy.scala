@@ -102,14 +102,15 @@ class OpenResponseCompatProxy extends NgBackendCall {
                   case Some("input_file") =>
                     val filename = contentItem.select("filename").asOptString
                     val file_data = contentItem.select("file_data").asOptString
-                    //val file_url = contentItem.select("file_url").asOptString
+                    val file_url = contentItem.select("file_url").asOptString
+                    val file_id = contentItem.select("file_id").asOptString
                     Json.obj(
                       "type" -> "file",
-                      "file" -> Json.obj(
-                        "filename" -> filename,
-                        "file_data" -> file_data,
-                        // "file_url" -> file_url
-                      )
+                      "file" -> Json.obj()
+                        .applyOnWithOpt(filename) { case (obj, filename) => obj ++ Json.obj("filename" -> filename) }
+                        .applyOnWithOpt(file_data) { case (obj, file_data) => obj ++ Json.obj("file_data" -> file_data) }
+                        .applyOnWithOpt(file_url) { case (obj, file_url) => obj ++ Json.obj("file_url" -> file_url) }
+                        .applyOnWithOpt(file_id) { case (obj, file_id) => obj ++ Json.obj("file_id" -> file_id) }
                     ).some
                   case Some("input_video") =>
                     val data = contentItem.select("data").asOptString

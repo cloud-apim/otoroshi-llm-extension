@@ -134,7 +134,7 @@ class A2ASuite extends munit.FunSuite {
     content(0) match { case ChatMessageContent.TextContent(t) => assertEquals(t, "hello"); case o => fail(s"expected TextContent, got $o") }
     content(1) match { case ChatMessageContent.ImageContent(mt, url, data) => assertEquals(mt, "image/png"); assertEquals(url, Some("https://x/y.png")); assert(data.isEmpty); case o => fail(s"expected ImageContent(url), got $o") }
     content(2) match { case ChatMessageContent.ImageContent(mt, url, data) => assertEquals(mt, "image/png"); assert(url.isEmpty); assert(data.isDefined); case o => fail(s"expected ImageContent(raw), got $o") }
-    content(3) match { case ChatMessageContent.PdfFileContent(url, _, _, _, _) => assertEquals(url, Some("https://x/d.pdf")); case o => fail(s"expected PdfFileContent, got $o") }
+    content(3) match { case ChatMessageContent.PdfFileContent(url, _, _, _, _, _) => assertEquals(url, Some("https://x/d.pdf")); case o => fail(s"expected PdfFileContent, got $o") }
     content(4) match { case ChatMessageContent.TextContent(t) => assert(t.contains("\"k\"")); case o => fail(s"expected TextContent(json), got $o") }
   }
 

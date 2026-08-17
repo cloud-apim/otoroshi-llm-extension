@@ -112,7 +112,7 @@ class HuggingfaceChatClient(api: HuggingfaceApi, options: HuggingfaceChatClientO
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
-    api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.json))).map {
+    api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi)))).map {
       case Left(err) => err.left
       case Right(resp) =>
       val usage = ChatResponseMetadata(
