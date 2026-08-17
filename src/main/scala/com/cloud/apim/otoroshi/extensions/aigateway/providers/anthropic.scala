@@ -14,6 +14,7 @@ import play.api.libs.ws.WSResponse
 import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.matching.Regex
 
 case class AnthropicChatResponseChunkUsage(raw: JsObject) {
   lazy val input_tokens: Long = raw.select("input_tokens").asOptLong.getOrElse(0L)
@@ -78,19 +79,34 @@ object AnthropicModels {
   val CLAUDE_3_SONNET = "claude-3-sonnet-20240229"
   val CLAUDE_3_HAIKU = "claude-3-haiku-20240307"
 
-  // sampling parameters (temperature, top_p, top_k) are removed starting from Claude Opus 4.7.
+  // sampling parameters (temperature, top_p, top_k) are removed starting from Claude Opus 4.7 and
+  // on the whole 5 generation (opus 5, sonnet 5, fable 5, mythos 5 and mythos preview).
   // Sending any of them to such a model returns a 400, so we strip them automatically.
   // see https://platform.claude.com/docs/en/about-claude/models/migration-guide#migrating-to-claude-opus-4-7
-  private val opusVersionRegex = """claude-opus-(\d+)-(\d+).*""".r
+  // the version part can be a single number (claude-opus-5) or major-minor (claude-opus-4-7), and can be
+  // followed by a date/revision suffix (claude-opus-4-5-20251101, claude-opus-4-5@20251101). the model name
+  // can also be prefixed by the platform (anthropic.claude-opus-5 on bedrock), hence the unanchored search.
+  private val opusVersionRegex = """claude-opus-(\d{1,9})(?:-(\d{1,9}))?""".r
+  private val sonnetVersionRegex = """claude-sonnet-(\d{1,9})(?:-(\d{1,9}))?""".r
+  private val fableVersionRegex = """claude-fable-(\d{1,9})(?:-(\d{1,9}))?""".r
+  private val mythosRegex = """claude-mythos-""".r
+
+  private def modelVersion(regex: Regex, model: String): Option[(Int, Int)] = {
+    regex.findFirstMatchIn(model).map { m =>
+      (m.group(1).toInt, Option(m.group(2)).map(_.toInt).getOrElse(0))
+    }
+  }
 
   def dropsSamplingParams(model: String): Boolean = {
-    model.toLowerCase.trim match {
-      case opusVersionRegex(major, minor) =>
-        val maj = major.toInt
-        val min = minor.toInt
-        maj > 4 || (maj == 4 && min >= 7)
-      case _ => false
-    }
+    val name = model.toLowerCase.trim
+    // opus: removed starting from 4.7
+    modelVersion(opusVersionRegex, name).exists { case (major, minor) => major > 4 || (major == 4 && minor >= 7) } ||
+      // sonnet: removed starting from 5
+      modelVersion(sonnetVersionRegex, name).exists { case (major, _) => major >= 5 } ||
+      // fable: removed since the first release (fable 5)
+      modelVersion(fableVersionRegex, name).exists { case (major, _) => major >= 5 } ||
+      // mythos: removed on every release (mythos 5, mythos preview)
+      mythosRegex.findFirstMatchIn(name).isDefined
   }
 }
 object AnthropicApi {
