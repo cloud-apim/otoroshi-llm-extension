@@ -176,7 +176,7 @@ class AlphaEdgeChatClient(api: AlphaEdgeApi, options: AlphaEdgeChatClientOptions
     val parts = prompt.messages.flatMap(_.contentParts)
     parts.collectFirst {
       case img: ChatMessageContent.ImageContent => (img.data, img.url, img.mediaType, s"image.${fileExtension(img.mediaType)}")
-      case pdf: ChatMessageContent.PdfFileContent => (pdf.data, pdf.url, "application/pdf", "document.pdf")
+      case pdf: ChatMessageContent.PdfFileContent => (pdf.data, pdf.url, "application/pdf", pdf.filename.getOrElse("document.pdf"))
     } match {
       case None => Future.successful(None)
       case Some((Some(bytes), _, ct, name)) => Future.successful(Some((bytes, ct, name)))

@@ -53,6 +53,66 @@ sealed trait ChatMessageContent { self =>
 }
 object ChatMessageContent {
 
+  private val logger = play.api.Logger("cloud-apim-llm-extension-chat-message-content")
+
+  private val textMediaTypes = Set("application/json", "application/xml", "application/x-yaml", "application/yaml")
+
+  // content parts can embed huge base64 payloads, never log them entirely
+  private def truncated(json: JsObject): String = {
+    val str = json.stringify
+    if (str.length > 512) s"${str.take(512)} ..." else str
+  }
+
+  // media type guessed from a filename or an url, used when a file content part does not carry one
+  private def mediaTypeFromFileName(name: String): Option[String] = {
+    name.takeWhile(c => c != '?' && c != '#').toLowerCase.split('.').toSeq match {
+      case parts if parts.size < 2 => None
+      case parts => parts.last match {
+        case "pdf" => "application/pdf".some
+        case "txt" | "text" | "md" | "markdown" | "csv" | "json" | "xml" | "yaml" | "yml" | "html" | "htm" => "text/plain".some
+        case _ => None
+      }
+    }
+  }
+
+  private def isTextMediaType(mediaType: String): Boolean = {
+    mediaType.startsWith("text/") || textMediaTypes.contains(mediaType)
+  }
+
+  // decodes the `file_data` of an openai file content part: either a data-uri
+  // ("data:application/pdf;base64,....") or a bare base64 payload. also returns the
+  // media type when the data-uri carries one
+  private def decodeFileData(fileData: String): (Option[String], Option[ByteString]) = {
+    if (fileData.startsWith("data:")) {
+      val base = fileData.substring("data:".length)
+      val mediaType = base.split(";").head.split(",").head.some.filter(_.nonEmpty)
+      if (base.contains("base64,")) {
+        (mediaType, base.split("base64,").drop(1).mkString("base64,").byteString.decodeBase64.some)
+      } else if (base.contains(",")) {
+        (mediaType, base.substring(base.indexOf(",") + 1).byteString.some)
+      } else {
+        (mediaType, None)
+      }
+    } else {
+      (None, fileData.byteString.decodeBase64.some)
+    }
+  }
+
+  // builds the right file content part from the openai `file` / `input_file` shapes
+  private def fileContentFromJson(json: JsObject, filename: Option[String], fileData: Option[String], fileUrl: Option[String], fileId: Option[String]): ChatMessageContent = {
+    val (mediaTypeFromData, data) = fileData.map(decodeFileData).getOrElse((None, None))
+    val mediaType = mediaTypeFromData
+      .orElse(filename.flatMap(mediaTypeFromFileName))
+      .orElse(fileUrl.flatMap(mediaTypeFromFileName))
+    if (data.isEmpty && fileUrl.isEmpty) {
+      logger.warn(s"file content part without usable 'file_data' or 'file_url'${fileId.map(id => s" (unsupported 'file_id': ${id})").getOrElse("")}, it will not be sent to the provider: ${truncated(json)}")
+    }
+    mediaType match {
+      case Some(mt) if isTextMediaType(mt) => TextFileContent(fileUrl, data, None, None, None, filename)
+      case _ => PdfFileContent(fileUrl, data, None, None, None, filename)
+    }
+  }
+
   // fails on {"type":"tool_use","id":"call_T9ZK1A03AhQNoAw6toPo4mNz","name":"Glob","input":{"pattern":"README*","path":"/Users/mathieuancelin/projects/wines-api"}}
   def fromJson(json: JsObject): ChatMessageContent = try {
     val url = json.at("source.url").asOptString
@@ -71,6 +131,22 @@ object ChatMessageContent {
           case _ => TextFileContent(url, dataText, title, context, citations)
         }
       }
+      // openai chat/completions shape: {"type":"file","file":{"filename":"...","file_data":"data:application/pdf;base64,..."}}
+      case Some("file") => fileContentFromJson(
+        json = json,
+        filename = json.at("file.filename").asOptString,
+        fileData = json.at("file.file_data").asOptString,
+        fileUrl = json.at("file.file_url").asOptString,
+        fileId = json.at("file.file_id").asOptString,
+      )
+      // openai responses shape: {"type":"input_file","filename":"...","file_data":"data:application/pdf;base64,..."}
+      case Some("input_file") => fileContentFromJson(
+        json = json,
+        filename = json.select("filename").asOptString,
+        fileData = json.select("file_data").asOptString,
+        fileUrl = json.select("file_url").asOptString,
+        fileId = json.select("file_id").asOptString,
+      )
       case Some("video") => VideoContent(mediaType, url, dataBase64)
       case Some("image") => ImageContent(mediaType, url, dataBase64)
       case Some("audio") =>  AudioContent(mediaType, url, dataBase64)
@@ -94,7 +170,13 @@ object ChatMessageContent {
         }
         AudioContent(format, None, data.some)
       }
-      case _ => TextContent(json.select("text").asOptString.getOrElse(""))
+      case other => {
+        val text = json.select("text").asOptString
+        if (text.isEmpty) {
+          logger.warn(s"unsupported content part of type '${other.getOrElse("none")}', it will be sent as an empty text part: ${truncated(json)}")
+        }
+        TextContent(text.getOrElse(""))
+      }
     }
   } catch {
     case t: Throwable =>
@@ -111,8 +193,18 @@ object ChatMessageContent {
       copy(text = f(text))
     }
   }
-  case class TextFileContent(url: Option[String], data: Option[ByteString], title: Option[String], context: Option[String], citations: Option[Boolean]) extends ChatMessageContent {
+  case class TextFileContent(url: Option[String], data: Option[ByteString], title: Option[String], context: Option[String], citations: Option[Boolean], filename: Option[String] = None) extends ChatMessageContent {
     override def json(flavor: ChatMessageContentFlavor): JsValue = flavor match {
+      case ChatMessageContentFlavor.OpenAi => {
+        val name: String = filename.getOrElse("document.txt")
+        val file: JsObject = Json.obj("filename" -> name)
+          .applyOnWithOpt(data) {
+            case (obj, data) => obj ++ Json.obj("file_data" -> s"data:text/plain;base64,${data.encodeBase64.utf8String}")
+          }.applyOnWithOpt(url) {
+            case (obj, url) => obj ++ Json.obj("file_url" -> url)
+          }
+        Json.obj("type" -> "file", "file" -> file)
+      }
       case _ => Json.obj(
         "type" -> "document",
         "source" -> Json.obj(
@@ -123,7 +215,7 @@ object ChatMessageContent {
         }.applyOnWithOpt(data) {
           case (obj, data) => obj ++ Json.obj("data" -> data.utf8String)
         }
-      ).applyOnWithOpt(title) {
+      ).applyOnWithOpt(title.orElse(filename)) {
         case (obj, title) => obj ++ Json.obj("title" -> title)
       }.applyOnWithOpt(context) {
         case (obj, context) => obj ++ Json.obj("context" -> context)
@@ -132,7 +224,7 @@ object ChatMessageContent {
       }
     }
   }
-  case class PdfFileContent(url: Option[String], data: Option[ByteString], title: Option[String], context: Option[String], citations: Option[Boolean]) extends ChatMessageContent {
+  case class PdfFileContent(url: Option[String], data: Option[ByteString], title: Option[String], context: Option[String], citations: Option[Boolean], filename: Option[String] = None) extends ChatMessageContent {
     val kind: String = url match {
       case Some(_) => "url"
       case None => data match {
@@ -141,6 +233,16 @@ object ChatMessageContent {
       }
     }
     override def json(flavor: ChatMessageContentFlavor): JsValue = flavor match {
+      case ChatMessageContentFlavor.OpenAi => {
+        val name: String = filename.getOrElse("document.pdf")
+        val file: JsObject = Json.obj("filename" -> name)
+          .applyOnWithOpt(data) {
+            case (obj, data) => obj ++ Json.obj("file_data" -> s"data:application/pdf;base64,${data.encodeBase64.utf8String}")
+          }.applyOnWithOpt(url) {
+            case (obj, url) => obj ++ Json.obj("file_url" -> url)
+          }
+        Json.obj("type" -> "file", "file" -> file)
+      }
       case _ => Json.obj(
         "type" -> "document",
         "source" -> Json.obj(
@@ -151,7 +253,7 @@ object ChatMessageContent {
         }.applyOnWithOpt(data) {
           case (obj, data) => obj ++ Json.obj("data" -> data.encodeBase64.utf8String)
         }
-      ).applyOnWithOpt(title) {
+      ).applyOnWithOpt(title.orElse(filename)) {
         case (obj, title) => obj ++ Json.obj("title" -> title)
       }.applyOnWithOpt(context) {
         case (obj, context) => obj ++ Json.obj("context" -> context)

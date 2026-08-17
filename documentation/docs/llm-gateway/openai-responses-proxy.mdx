@@ -126,7 +126,7 @@ Standard role-based messages with the `type: "message"` wrapper:
 
 ### Multipart content
 
-Messages can contain mixed content types (`input_text`, `input_image`, `input_audio`):
+Messages can contain mixed content types (`input_text`, `input_image`, `input_audio`, `input_file`):
 
 ```js
 {
@@ -137,7 +137,8 @@ Messages can contain mixed content types (`input_text`, `input_image`, `input_au
       "role": "user",
       "content": [
         { "type": "input_text", "text": "What's in this image?" },
-        { "type": "input_image", "image_url": "https://example.com/photo.jpg" }
+        { "type": "input_image", "image_url": "https://example.com/photo.jpg" },
+        { "type": "input_file", "filename": "report.pdf", "file_data": "data:application/pdf;base64,JVBERi0xLjQK..." }
       ]
     }
   ]
@@ -148,6 +149,7 @@ Content types are translated to the OpenAI chat completions format automatically
 - `input_text` becomes `text`
 - `input_image` becomes `image_url`
 - `input_audio` becomes `input_audio`
+- `input_file` becomes `file`, then the document is sent in the format of the target provider (a `file` part for OpenAI compatible providers, a `document` block for Anthropic). PDF and plain text documents are supported, inline as a data-uri (`file_data`) or by url (`file_url`).
 
 ### Function call outputs
 
