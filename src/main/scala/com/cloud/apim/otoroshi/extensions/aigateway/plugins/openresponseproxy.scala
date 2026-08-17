@@ -5,7 +5,7 @@ import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatMessageContent, ChatPrompt, ChatResponse, ChatResponseMetadataUsage, InputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessageContent, ChatPrompt, ChatResponse, InputChatMessage, OpenAiResponsesBodyConverter, ResponsesStreamAccumulator}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api._
 import otoroshi.next.proxy.NgProxyEngineError
@@ -15,7 +15,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json._
 import play.api.mvc.Results
 
-import java.util.concurrent.atomic.{AtomicInteger, AtomicReference}
+import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.{ExecutionContext, Future}
 
 object OpenResponseCompatProxy {
@@ -60,164 +60,12 @@ class OpenResponseCompatProxy extends NgBackendCall {
     ().vfuture
   }
 
-  private def transformInputToMessages(jsonBody: JsValue): Seq[JsObject] = {
-    val instructionMessages: Seq[JsObject] = jsonBody.select("instructions").asOptString.map { instructions =>
-      Seq(Json.obj("role" -> "system", "content" -> instructions))
-    }.getOrElse(Seq.empty)
-
-    val inputMessages: Seq[JsObject] = jsonBody.select("input").asOptString match {
-      case Some(text) => Seq(Json.obj("role" -> "user", "content" -> text))
-      case None => jsonBody.select("input").asOpt[Seq[JsObject]].getOrElse(Seq.empty).flatMap { item =>
-        val itemType = item.select("type").asOptString.getOrElse("message")
-        itemType match {
-          case "message" =>
-            val role = item.select("role").asOptString.getOrElse("user") match {
-              case "developer" => "system"
-              case other => other
-            }
-            val content: JsValue = item.select("content").asOptString match {
-              case Some(text) => JsString(text).asValue
-              case None => JsArray(item.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).flatMap { contentItem =>
-                contentItem.select("type").asOptString match {
-                  case Some("input_image") =>
-                    val image_url = contentItem.select("image_url").asOptString.orElse(contentItem.select("image_url").select("url").asOptString)
-                    val detail = contentItem.select("detail").asOptString
-                    Json.obj(
-                      "type" -> "image_url",
-                      "image_url" -> Json.obj(
-                        "url" -> image_url,
-                        "details" -> detail,
-                      )
-                    ).some
-                  case Some("input_audio") =>
-                    val data = contentItem.select("data").asOptString
-                    val format = contentItem.select("format").asOptString
-                    Json.obj(
-                      "type" -> "input_audio",
-                      "input_audio" -> Json.obj(
-                        "data" -> data,
-                        "format" -> format,
-                      )
-                    ).some
-                  case Some("input_file") =>
-                    val filename = contentItem.select("filename").asOptString
-                    val file_data = contentItem.select("file_data").asOptString
-                    val file_url = contentItem.select("file_url").asOptString
-                    val file_id = contentItem.select("file_id").asOptString
-                    Json.obj(
-                      "type" -> "file",
-                      "file" -> Json.obj()
-                        .applyOnWithOpt(filename) { case (obj, filename) => obj ++ Json.obj("filename" -> filename) }
-                        .applyOnWithOpt(file_data) { case (obj, file_data) => obj ++ Json.obj("file_data" -> file_data) }
-                        .applyOnWithOpt(file_url) { case (obj, file_url) => obj ++ Json.obj("file_url" -> file_url) }
-                        .applyOnWithOpt(file_id) { case (obj, file_id) => obj ++ Json.obj("file_id" -> file_id) }
-                    ).some
-                  case Some("input_video") =>
-                    val data = contentItem.select("data").asOptString
-                    val format = contentItem.select("format").asOptString
-                    Json.obj(
-                      "type" -> "input_video",
-                      "input_video" -> Json.obj(
-                        "data" -> data,
-                        "format" -> format,
-                      )
-                    ).some
-                  case Some("input_text") =>
-                    val text = contentItem.select("text").asOptString.getOrElse("")
-                    Json.obj("type" -> "text", "text" -> text).some
-                  case _ => None
-                }
-              })
-            }
-            Seq(Json.obj("role" -> role, "content" -> content))
-          case "function_call_output" =>
-            val toolCallId = item.select("call_id").asOptString.getOrElse("")
-            val output = item.select("output").asOptString.getOrElse("")
-            Seq(Json.obj("role" -> "tool", "tool_call_id" -> toolCallId, "content" -> output))
-          case "function_call" =>
-            val callId = item.select("call_id").asOptString.getOrElse(item.select("id").asOptString.getOrElse(""))
-            val fnName = item.select("name").asOptString.getOrElse("")
-            val arguments = item.select("arguments").asOptString.getOrElse("{}")
-            Seq(Json.obj(
-              "role" -> "assistant",
-              "tool_calls" -> Json.arr(Json.obj(
-                "id" -> callId,
-                "type" -> "function",
-                "function" -> Json.obj(
-                  "name" -> fnName,
-                  "arguments" -> arguments
-                )
-              ))
-            ))
-          case _ => Seq.empty
-        }
-      }
-    }
-    instructionMessages ++ inputMessages
-  }
-
-  private def transformInputTools(jsonBody: JsValue): JsValue = {
-    jsonBody.select("tools").asOpt[Seq[JsObject]] match {
-      case None => JsNull
-      case Some(tools) =>
-        JsArray(tools.map { tool =>
-          val toolType = tool.select("type").asOptString.getOrElse("function")
-          if (toolType == "function") {
-            val name = tool.select("name").asOptString.getOrElse("")
-            val description = tool.select("description").asOptString.getOrElse("")
-            val parameters = tool.select("parameters").asOpt[JsObject].getOrElse(Json.obj())
-            val strict = tool.select("strict").asOptBoolean
-            val fn = Json.obj(
-              "name" -> name,
-              "description" -> description,
-              "parameters" -> parameters
-            ).applyOnWithOpt(strict) {
-              case (o, s) => o ++ Json.obj("strict" -> s)
-            }
-            Json.obj("type" -> "function", "function" -> fn)
-          } else {
-            tool
-          }
-        })
-    }
-  }
-
-  private def transformOutputTool(tools: Seq[JsObject]): Seq[JsObject] = {
-    tools.map { tool =>
-      val typ = tool.select("type").asOptString.getOrElse("function")
-      val name = tool.select("name").asString
-      val description = tool.select("description").asOptString
-      val parameters = tool.select("parameters").asObject
-      val strict = tool.select("strict").asOptBoolean
-      Json.obj(
-        "type" -> typ,
-        "name" -> name,
-        "description" -> description,
-        "parameters" -> parameters,
-        "strict" -> strict,
-      )
-    }
-  }
-
-  private def buildOpenAiBody(jsonBody: JsValue, messages: Seq[JsObject]): JsObject = {
-    var body = Json.obj("messages" -> messages)
-    jsonBody.select("model").asOptString.foreach(m => body = body ++ Json.obj("model" -> m))
-    jsonBody.select("temperature").asOpt[JsNumber].foreach(t => body = body ++ Json.obj("temperature" -> t))
-    jsonBody.select("top_p").asOpt[JsNumber].foreach(t => body = body ++ Json.obj("top_p" -> t))
-    jsonBody.select("max_output_tokens").asOpt[JsNumber].foreach(t => body = body ++ Json.obj("max_completion_tokens" -> t))
-    jsonBody.select("tool_choice").asOpt[JsValue].foreach(t => body = body ++ Json.obj("tool_choice" -> t))
-    jsonBody.select("parallel_tool_calls").asOpt[JsValue].foreach(t => body = body ++ Json.obj("parallel_tool_calls" -> t))
-    jsonBody.select("store").asOpt[JsValue].foreach(t => body = body ++ Json.obj("store" -> t))
-    jsonBody.select("metadata").asOpt[JsValue].foreach(t => body = body ++ Json.obj("metadata" -> t))
-    jsonBody.select("provider").asOptString.foreach(p => body = body ++ Json.obj("provider" -> p))
-    val tools = transformInputTools(jsonBody)
-    if (tools != JsNull) {
-      body = body ++ Json.obj("tools" -> tools)
-    }
-    body
-  }
-
   private def buildResponseJson(response: com.cloud.apim.otoroshi.extensions.aigateway.ChatResponse, model: String, request: JsObject, tools: Seq[JsObject], env: Env): JsValue = {
+    // a provider that answered natively on /responses already returns a complete payload: pass it
+    // through rather than rebuilding a lossy envelope (response id, reasoning items, annotations)
+    if (response.isNativeResponsePayload) {
+      return response.openaiResponseJson(model, env)
+    }
     val respId = s"resp_${IdGenerator.token(32)}"
     val msgId = s"msg_${IdGenerator.token(32)}"
     val createdAt = System.currentTimeMillis() / 1000
@@ -386,8 +234,11 @@ class OpenResponseCompatProxy extends NgBackendCall {
       case None => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "provider not found")))).vfuture
       case Some(client) => {
         val stream = ctx.request.queryParam("stream").contains("true") || ctx.request.header("x-stream").contains("true") || jsonBody.select("stream").asOpt[Boolean].contains(true)
-        val requestMessages = transformInputToMessages(jsonBody)
-        val openAiBody = buildOpenAiBody(jsonBody, requestMessages)
+        // `input` becomes the prompt (the source of truth for the messages, see ChatClient.response),
+        // the rest of the body stays a raw /responses body: the client converts it if it has to, which
+        // is what keeps guardrails, budgets, caches and mock providers on the path
+        val requestMessages = OpenAiResponsesBodyConverter.inputToMessages(jsonBody)
+        val openAiBody = jsonBody.asObject - "input"
 
         if (validate(requestMessages, ctx)) {
           val (preContextMessages, postContextMessages) = ctx.attrs.get(AiPluginsKeys.PromptContextKey).getOrElse((Seq.empty, Seq.empty))
@@ -399,7 +250,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
             val msgId = s"msg_${IdGenerator.token(32)}"
             val model = client.computeModel(openAiBody).getOrElse("none")
             val createdAt = System.currentTimeMillis() / 1000
-            val tools = transformOutputTool(jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty))
+            val tools = OpenAiResponsesBodyConverter.normalizeResponsesTools(jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty))
 
             def eventWithResponse(typ: String, seqNum: Int): JsObject = {
               Json.obj(
@@ -417,7 +268,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
               "content" -> Json.arr()
             )
 
-            client.tryStream(ChatPrompt(messages), ctx.attrs, openAiBody).map {
+            client.tryResponseStream(ChatPrompt(messages), ctx.attrs, openAiBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(source) => {
                 val counter = new AtomicInteger(0)
@@ -440,16 +291,12 @@ class OpenResponseCompatProxy extends NgBackendCall {
                   ))
                 ))
 
-                val ref = new AtomicReference[String]("")
-                val refUsage = new AtomicReference[ChatResponseMetadataUsage]()
+                // text, tool calls and usage are only complete once the stream ends
+                val acc = new ResponsesStreamAccumulator()
 
-                val deltaEvents = source.zipWithIndex.map {
-                  case (chunk, idx) =>
-                    val text = chunk.choices.headOption.flatMap(_.delta.content).getOrElse("")
-                    ref.accumulateAndGet(text, (a, b) => a + b)
-                    chunk.usage.foreach { u =>
-                      refUsage.set(u)
-                    }
+                val deltaEvents = source.mapConcat { chunk =>
+                  acc.accumulate(chunk)
+                  chunk.choices.headOption.flatMap(_.delta.content).filter(_.nonEmpty).map { text =>
                     sseEvent("response.output_text.delta", Json.obj(
                       "type" -> "response.output_text.delta",
                       "item_id" -> msgId,
@@ -459,90 +306,72 @@ class OpenResponseCompatProxy extends NgBackendCall {
                       "sequence_number" -> counter.getAndIncrement(),
                       "delta" -> text
                     ))
+                  }.toList
                 }
 
-                val footerEvents = Source.single(())
-                  .flatMapConcat(_ => Source.lazySingle[ByteString] { () =>
+                // materialized by `concatLazy` only once the delta events are done, which is what
+                // makes the accumulated text, tool calls and usage available here
+                val footerEvents = Source.lazily { () =>
+                  val text = acc.wholeText
+                  val contentPart = Json.obj("type" -> "output_text", "text" -> text, "annotations" -> Json.arr(), "logprobs" -> Json.arr())
+                  val messageItem = msgItem.deepMerge(Json.obj("status" -> "completed", "content" -> Json.arr(contentPart)))
+                  // tool calls streamed as deltas are reported as `function_call` output items
+                  val functionCallItems = acc.functionCallItems(_ => s"fc_${IdGenerator.token(24)}")
+                  Source(List(
                     sseEvent("response.output_text.done", Json.obj(
                       "type" -> "response.output_text.done",
                       "item_id" -> msgId,
                       "output_index" -> 0,
                       "content_index" -> 0,
                       "sequence_number" -> counter.getAndIncrement(),
-                      "text" -> ref.get(),
+                      "text" -> text,
                       "logprobs" -> Json.arr(),
-                    )) }
-                  )
-                  .concatLazy(
-                    Source.lazySingle[ByteString] { () =>
-                      sseEvent("response.content_part.done", Json.obj(
+                    )),
+                    sseEvent("response.content_part.done", Json.obj(
                       "type" -> "response.content_part.done",
                       "item_id" -> msgId,
                       "output_index" -> 0,
                       "content_index" -> 0,
                       "sequence_number" -> counter.getAndIncrement(),
-                      "part" -> Json.obj("type" -> "output_text", "text" -> ref.get(), "annotations" -> Json.arr(), "logprobs" -> Json.arr()),
-                    )) }
-                  )
-                  .concatLazy(
-                    Source.lazySingle[ByteString] { () =>
-                      sseEvent("response.output_item.done", Json.obj(
-                        "type" -> "response.output_item.done",
-                        "output_index" -> 0,
-                        "sequence_number" -> counter.getAndIncrement(),
-                        "item" -> msgItem.deepMerge(Json.obj(
-                          "status" -> "completed",
-                          "content" -> Json.arr(
-                            Json.obj("type" -> "output_text", "text" -> ref.get(), "annotations" -> Json.arr(), "logprobs" -> Json.arr())
-                          ),
-                        ))
-                      ))
-                    }
-                  )
-                  .concatLazy(
-                    Source.lazySingle[ByteString] { () =>
-                      val usage = Option(refUsage.get()).getOrElse(ChatResponseMetadataUsage.empty)
-                      sseEvent("response.completed", eventWithResponse("response.completed", counter.getAndIncrement()).deepMerge(
-                        Json.obj(
-                          "status" -> "completed",
-                          "response" -> Json.obj(
-                            "output" -> Json.arr(Json.obj(
-                              "type" -> "message",
-                              "id" -> msgId,
-                              "status" -> "completed",
-                              "role" -> "assistant",
-                              "content" -> Json.arr(
-                                Json.obj("type" -> "output_text", "text" -> ref.get(), "annotations" -> Json.arr(), "logprobs" -> Json.arr())
-                              ),
-                            ))
-                          ),
-                          "usage" -> Json.obj(
-                            "input_tokens" -> usage.promptTokens,
-                            "output_tokens" -> usage.generationTokens,
-                            "total_tokens" -> usage.totalTokens,
-                            "input_tokens_details" -> Json.obj(
-                              "cached_tokens" -> 0
-                            ),
-                            "output_tokens_details" -> Json.obj(
-                              "reasoning_tokens" -> usage.reasoningTokens
-                            )
-                          ),
-                        )
+                      "part" -> contentPart,
+                    )),
+                    sseEvent("response.output_item.done", Json.obj(
+                      "type" -> "response.output_item.done",
+                      "output_index" -> 0,
+                      "sequence_number" -> counter.getAndIncrement(),
+                      "item" -> messageItem,
+                    )),
+                  ) ++ functionCallItems.zipWithIndex.map { case (item, idx) =>
+                    sseEvent("response.output_item.done", Json.obj(
+                      "type" -> "response.output_item.done",
+                      "output_index" -> (idx + 1),
+                      "sequence_number" -> counter.getAndIncrement(),
+                      "item" -> item,
+                    ))
+                  }.toList ++ List(
+                    sseEvent("response.completed", eventWithResponse("response.completed", counter.getAndIncrement()).deepMerge(
+                      Json.obj(
+                        "status" -> "completed",
+                        "response" -> Json.obj(
+                          "output" -> JsArray(Seq(messageItem) ++ functionCallItems),
+                          // reported by the final chunk of the stream, not by the provider payload
+                          "usage" -> acc.usageJson,
+                        ),
                       )
-                    )
-                  }
-                )
+                    )),
+                  ))
+                }
 
-                val finalSource = headerEvents.concat(deltaEvents).concat(footerEvents)
+                val finalSource = headerEvents.concat(deltaEvents).concatLazy(footerEvents)
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
               }
             }
           } else {
-            client.call(ChatPrompt(messages), ctx.attrs, openAiBody).map {
+            client.tryResponse(ChatPrompt(messages), ctx.attrs, openAiBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(response) =>
                 val model = client.computeModel(openAiBody).getOrElse("none")
-                val tools = transformOutputTool(jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty))
+                val tools = OpenAiResponsesBodyConverter.normalizeResponsesTools(jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty))
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(buildResponseJson(response, model, jsonBody.asObject, tools, env))
                   .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
             }

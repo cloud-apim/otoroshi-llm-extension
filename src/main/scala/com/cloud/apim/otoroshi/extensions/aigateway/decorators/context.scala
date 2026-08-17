@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.Source
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatMessageContentFlavor, ChatPrompt, ChatResponse, ChatResponseChunk}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatMessage, ChatMessageContentFlavor, ChatPrompt, ChatResponse, ChatResponseChunk}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, PromptContext}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -62,13 +62,13 @@ class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatCl
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val newPrompt = getNewPrompt(prompt, originalBody)
-    chatClient.call(newPrompt, attrs, originalBody.asObject - "context")
+    chatClient.invoke(kind, newPrompt, attrs, originalBody.asObject - "context")
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val newPrompt = getNewPrompt(prompt, originalBody)
-    chatClient.stream(newPrompt, attrs, originalBody.asObject - "context")
+    chatClient.invokeStream(kind, newPrompt, attrs, originalBody.asObject - "context")
   }
 }

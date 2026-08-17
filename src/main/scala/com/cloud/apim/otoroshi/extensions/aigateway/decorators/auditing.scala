@@ -4,7 +4,7 @@ import akka.http.scaladsl.util.FastFuture
 import akka.stream.scaladsl.{Sink, Source}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions, AiBudgetUsageKind, AiBudgetsDataStore, AiProvider, AudioModel, EmbeddingModel, ImageModel, ModerationModel, OcrModel, VideoModel}
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ImagesGenResponseMetadata, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ImagesGenResponseMetadata, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.events.AuditEvent
@@ -55,369 +55,121 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     }.getOrElse(JsNull).asValue
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val user = attrs.get(otoroshi.plugins.Keys.UserKey)
-    val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
-    val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
+  // fields shared by every LLMUsageAudit event, whatever the endpoint and the outcome
+  private def commonFields(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap): JsObject = Json.obj(
+    "provider_kind" -> originalProvider.provider.toLowerCase,
+    "consumed_using" -> consumedUsing,
+    "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
+    "user" -> attrs.get(otoroshi.plugins.Keys.UserKey).map(_.json).getOrElse(JsNull).asValue,
+    "apikey" -> attrs.get(otoroshi.plugins.Keys.ApiKeyKey).map(_.json).getOrElse(JsNull).asValue,
+    "route" -> attrs.get(otoroshi.next.plugins.Keys.RouteKey).map(_.json).getOrElse(JsNull).asValue,
+    "input_prompt" -> prompt.json,
+    "provider_details" -> originalProvider.json,
+  )
+
+  private def auditError(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, error: JsValue)(implicit env: Env): Unit = {
+    AuditEvent.generic("LLMUsageAudit") {
+      commonFields(consumedUsing, prompt, attrs) ++ Json.obj("error" -> error, "output" -> JsNull)
+    }.toAnalytics()
+  }
+
+  // usage/costs/impacts are only known once the inner clients have run, hence the attrs lookups
+  private def auditSuccess(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, output: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+    val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+    val impacts = attrs.get(ChatClientWithEcoImpact.key)
+    val costs = attrs.get(ChatClientWithCostsTracking.key)
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val totalCost = costs.map(_.totalCost)
+    val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
+    ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs).map { budgetIds =>
+      AuditEvent.generic("LLMUsageAudit") {
+        usageSlug ++ commonFields(consumedUsing, prompt, attrs) ++ output ++ Json.obj(
+          "error" -> JsNull,
+          "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+          "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+          "budgets" -> budgetIds.json,
+          "consumer_rate_limit" -> consumerRateLimit(attrs, usageSlug),
+        )
+      }.toAnalytics()
+      ()
+    }
+  }
+
+  // the budget check needs the provider and the model in the attrs
+  private def prepare(attrs: TypedMap, originalBody: JsValue): Unit = {
     attrs.put(ChatClientWithAuding.ProviderKey -> originalProvider)
     attrs.put(ChatClientWithAuding.ModelKey -> originalBody.select("model").asOptString.orElse(originalProvider.options.select("model").asOptString).getOrElse("--"))
+  }
+
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val consumedUsing = kind.consumedUsing(streaming = false)
+    prepare(attrs, originalBody)
     AiBudgetsDataStore.handleWithinBudget(attrs)(
       Json.obj("error" -> "budget exceeded").leftf,
-      // val request = attrs.get(otoroshi.plugins.Keys.RequestKey)
-      chatClient.call(prompt, attrs, originalBody).andThen {
-        case Failure(exception) => {
-          AuditEvent.generic("LLMUsageAudit") {
-            Json.obj(
-              "error" -> Json.obj(
-                "exception" -> exception.getMessage
-              ),
-              "provider_kind" -> originalProvider.provider.toLowerCase,
-              "consumed_using" -> "chat/completion/blocking",
-              "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-              "input_prompt" -> prompt.json,
-              "output" -> JsNull,
-              "provider_details" -> originalProvider.json
-              //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-            )
-          }.toAnalytics()
-        }
-        case Success(value) => value match {
-          case Left(err) => {
-            AuditEvent.generic("LLMUsageAudit") {
-              Json.obj(
-                "error" -> err,
-                "provider_kind" -> originalProvider.provider.toLowerCase,
-                "consumed_using" -> "chat/completion/blocking",
-                "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-                "input_prompt" -> prompt.json,
-                "output" -> JsNull,
-                "provider_details" -> originalProvider.json
-                //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-              )
-            }.toAnalytics()
-          }
-          case Right(value) => {
-            val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-            val impacts = attrs.get(ChatClientWithEcoImpact.key)
-            val costs = attrs.get(ChatClientWithCostsTracking.key)
-            val ext = env.adminExtensions.extension[AiExtension].get
-            val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
-            val totalCost = costs.map(_.totalCost)
-            val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
-            ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs).map { budgetIds =>
-              AuditEvent.generic("LLMUsageAudit") {
-                usageSlug ++ Json.obj(
-                  "error" -> JsNull,
-                  "consumed_using" -> "chat/completion/blocking",
-                  "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-                  "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-                  "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-                  "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-                  "input_prompt" -> prompt.json,
-                  "output" -> value.json(env),
-                  "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
-                  "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-                  "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                  "budgets" -> budgetIds.json,
-                  "consumer_rate_limit" -> consumerRateLimit(attrs, usageSlug),
-                  //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-                )
-              }.toAnalytics()
-            }
-          }
-        }
+      chatClient.invoke(kind, prompt, attrs, originalBody).andThen {
+        case Failure(exception) => auditError(consumedUsing, prompt, attrs, Json.obj("exception" -> exception.getMessage))
+        case Success(Left(err)) => auditError(consumedUsing, prompt, attrs, err)
+        case Success(Right(value)) => auditSuccess(consumedUsing, prompt, attrs, Json.obj("output" -> value.json(env)))
       }
     )
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val user = attrs.get(otoroshi.plugins.Keys.UserKey)
-    val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
-    val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    // val request = attrs.get(otoroshi.plugins.Keys.RequestKey)
-    attrs.put(ChatClientWithAuding.ProviderKey -> originalProvider)
-    attrs.put(ChatClientWithAuding.ModelKey -> originalBody.select("model").asOptString.orElse(originalProvider.options.select("model").asOptString).getOrElse("--"))
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val consumedUsing = kind.consumedUsing(streaming = true)
+    prepare(attrs, originalBody)
     AiBudgetsDataStore.handleWithinBudget(attrs)(
       Json.obj("error" -> "budget exceeded").leftf,
-      chatClient.stream(prompt, attrs, originalBody).transformWith {
-        case Failure(exception) => {
-          AuditEvent.generic("LLMUsageAudit") {
-            Json.obj(
-              "error" -> Json.obj(
-                "exception" -> exception.getMessage
-              ),
-              "provider_kind" -> originalProvider.provider.toLowerCase,
-              "consumed_using" -> "chat/completion/streaming",
-              "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-              "input_prompt" -> prompt.json,
-              "output" -> JsNull,
-              "provider_details" -> originalProvider.json
-              //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-            )
-          }.toAnalytics()
+      chatClient.invokeStream(kind, prompt, attrs, originalBody).transformWith {
+        case Failure(exception) =>
+          auditError(consumedUsing, prompt, attrs, Json.obj("exception" -> exception.getMessage))
           FastFuture.failed(exception)
-        }
-        case Success(value) => value match {
-          case Left(err) => {
-            AuditEvent.generic("LLMUsageAudit") {
-              Json.obj(
-                "error" -> err,
-                "provider_kind" -> originalProvider.provider.toLowerCase,
-                "consumed_using" -> "chat/completion/streaming",
-                "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-                "input_prompt" -> prompt.json,
-                "output" -> JsNull,
-                "provider_details" -> originalProvider.json
-                //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-              )
-            }.toAnalytics()
-            FastFuture.successful(Left(err))
-          }
-          case Right(value) => {
-            var seq = Seq.empty[ChatResponseChunk]
-            val source = value
-              .alsoTo(Sink.foreach { chunk =>
-                seq = seq :+ chunk
-              })
-              .alsoTo(Sink.onComplete { _ =>
-                val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-                val impacts = attrs.get(ChatClientWithEcoImpact.key)
-                val costs = attrs.get(ChatClientWithCostsTracking.key)
-                val ext = env.adminExtensions.extension[AiExtension].get
-                val totalCost = costs.map(_.totalCost)
-                val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
-                ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs).map { budgetIds =>
-                  val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
-                  AuditEvent.generic("LLMUsageAudit") {
-                    usageSlug ++ Json.obj(
-                      "error" -> JsNull,
-                      "consumed_using" -> "chat/completion/streaming",
-                      "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-                      "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-                      "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-                      "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-                      "input_prompt" -> prompt.json,
-                      "output_stream" -> JsArray(seq.map(_.json(env))),
-                      "output" -> ChatResponse(
-                        raw = Json.obj(),
-                        generations = Seq(ChatGeneration(OutputChatMessage("assistant", seq.flatMap(_.choices.flatMap(_.delta.content)).mkString(""), None, Json.obj()))),
-                        metadata = ChatResponseMetadata(
-                          rateLimit =  ChatResponseMetadataRateLimit(
-                            requestsLimit = usageSlug.select("rate_limit").select("requests_limit").asOptLong.getOrElse(-1L),
-                            requestsRemaining = usageSlug.select("rate_limit").select("requests_remaining").asOptLong.getOrElse(-1L),
-                            tokensLimit = usageSlug.select("rate_limit").select("tokens_limit").asOptLong.getOrElse(-1L),
-                            tokensRemaining = usageSlug.select("rate_limit").select("tokens_remaining").asOptLong.getOrElse(-1L),
-                          ),
-                          usage = ChatResponseMetadataUsage(
-                            promptTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L),
-                            generationTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L),
-                            reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L),
-                          ),
-                          cache = None
-                        )
-                      ).json(env),
-                      "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
-                      "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-                      "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                      "budgets" -> budgetIds.json,
-                      "consumer_rate_limit" -> consumerRateLimit(attrs, usageSlug),
-                      //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-                    )
-                  }.toAnalytics()
-                }
-              })
-            FastFuture.successful(Right(source))
-          }
-        }
-      }
-    )
-  }
-
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val user = attrs.get(otoroshi.plugins.Keys.UserKey)
-    val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
-    val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    attrs.put(ChatClientWithAuding.ProviderKey -> originalProvider)
-    attrs.put(ChatClientWithAuding.ModelKey -> originalBody.select("model").asOptString.orElse(originalProvider.options.select("model").asOptString).getOrElse("--"))
-    AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
-      chatClient.completion(prompt, attrs, originalBody).andThen {
-        case Failure(exception) => {
-          AuditEvent.generic("LLMUsageAudit") {
-            Json.obj(
-              "error" -> Json.obj(
-                "exception" -> exception.getMessage
-              ),
-              "provider_kind" -> originalProvider.provider.toLowerCase,
-              "consumed_using" -> "completion/blocking",
-              "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-              "input_prompt" -> prompt.json,
-              "output" -> JsNull,
-              "provider_details" -> originalProvider.json
-              //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-            )
-          }.toAnalytics()
-        }
-        case Success(value) => value match {
-          case Left(err) => {
-            AuditEvent.generic("LLMUsageAudit") {
-              Json.obj(
-                "error" -> err,
-                "provider_kind" -> originalProvider.provider.toLowerCase,
-                "consumed_using" -> "completion/blocking",
-                "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-                "input_prompt" -> prompt.json,
-                "output" -> JsNull,
-                "provider_details" -> originalProvider.json
-                //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-              )
-            }.toAnalytics()
-          }
-          case Right(value) => {
-            val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-            val impacts = attrs.get(ChatClientWithEcoImpact.key)
-            val costs = attrs.get(ChatClientWithCostsTracking.key)
-            val ext = env.adminExtensions.extension[AiExtension].get
-            val totalCost = costs.map(_.totalCost)
-            val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
-            ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs).map { budgetIds =>
-              val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
-              AuditEvent.generic("LLMUsageAudit") {
-                usageSlug ++ Json.obj(
-                  "error" -> JsNull,
-                  "consumed_using" -> "completion/blocking",
-                  "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-                  "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-                  "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-                  "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-                  "input_prompt" -> prompt.json,
-                  "output" -> value.json(env),
-                  "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
-                  "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-                  "budgets" -> budgetIds.json,
-                  "consumer_rate_limit" -> consumerRateLimit(attrs, usageSlug),
-                  "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
+        case Success(Left(err)) =>
+          auditError(consumedUsing, prompt, attrs, err)
+          FastFuture.successful(Left(err))
+        case Success(Right(value)) => {
+          var seq = Seq.empty[ChatResponseChunk]
+          val source = value
+            .alsoTo(Sink.foreach { chunk => seq = seq :+ chunk })
+            .alsoTo(Sink.onComplete { _ =>
+              // the audited output is rebuilt from the chunks: the individual ones for traceability,
+              // the aggregated text + usage as the equivalent of a blocking response
+              val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+              val aggregated = ChatResponse(
+                raw = Json.obj(),
+                generations = Seq(ChatGeneration(OutputChatMessage("assistant", seq.flatMap(_.choices.flatMap(_.delta.content)).mkString(""), None, Json.obj()))),
+                metadata = ChatResponseMetadata(
+                  rateLimit = ChatResponseMetadataRateLimit(
+                    requestsLimit = usageSlug.select("rate_limit").select("requests_limit").asOptLong.getOrElse(-1L),
+                    requestsRemaining = usageSlug.select("rate_limit").select("requests_remaining").asOptLong.getOrElse(-1L),
+                    tokensLimit = usageSlug.select("rate_limit").select("tokens_limit").asOptLong.getOrElse(-1L),
+                    tokensRemaining = usageSlug.select("rate_limit").select("tokens_remaining").asOptLong.getOrElse(-1L),
+                  ),
+                  usage = ChatResponseMetadataUsage(
+                    promptTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L),
+                    generationTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L),
+                    reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L),
+                  ),
+                  cache = None
                 )
-              }.toAnalytics()
-            }
-          }
-        }
-      }
-    )
-  }
-
-  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val user = attrs.get(otoroshi.plugins.Keys.UserKey)
-    val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
-    val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-    attrs.put(ChatClientWithAuding.ProviderKey -> originalProvider)
-    attrs.put(ChatClientWithAuding.ModelKey -> originalBody.select("model").asOptString.orElse(originalProvider.options.select("model").asOptString).getOrElse("--"))
-    AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
-      chatClient.completionStream(prompt, attrs, originalBody).andThen {
-        case Failure(exception) => {
-          AuditEvent.generic("LLMUsageAudit") {
-            Json.obj(
-              "error" -> Json.obj(
-                "exception" -> exception.getMessage
-              ),
-              "provider_kind" -> originalProvider.provider.toLowerCase,
-              "consumed_using" -> "completion/streaming",
-              "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-              "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-              "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-              "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-              "input_prompt" -> prompt.json,
-              "output" -> JsNull,
-              "provider_details" -> originalProvider.json
-              //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-            )
-          }.toAnalytics()
-        }
-        case Success(value) => value match {
-          case Left(err) => {
-            AuditEvent.generic("LLMUsageAudit") {
-              Json.obj(
-                "error" -> err,
-                "provider_kind" -> originalProvider.provider.toLowerCase,
-                "consumed_using" -> "completion/streaming",
-                "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-                "input_prompt" -> prompt.json,
-                "output" -> JsNull,
-                "provider_details" -> originalProvider.json
-                //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
               )
-            }.toAnalytics()
-          }
-          case Right(value) => {
-            var seq = Seq.empty[ChatResponseChunk]
-            value
-              .alsoTo(Sink.foreach { chunk =>
-                seq = seq :+ chunk
-              })
-              .alsoTo(Sink.onComplete { _ =>
-                val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
-                val impacts = attrs.get(ChatClientWithEcoImpact.key)
-                val costs = attrs.get(ChatClientWithCostsTracking.key)
-                val ext = env.adminExtensions.extension[AiExtension].get
-                val totalCost = costs.map(_.totalCost)
-                val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
-                ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs).map { budgetIds =>
-                  val provider = usageSlug.select("provider").asOpt[String].flatMap(id => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(id)))
-                  AuditEvent.generic("LLMUsageAudit") {
-                    usageSlug ++ Json.obj(
-                      "error" -> JsNull,
-                      "consumed_using" -> "completion/streaming",
-                      "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
-                      "user" -> user.map(_.json).getOrElse(JsNull).asValue,
-                      "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
-                      "route" -> route.map(_.json).getOrElse(JsNull).asValue,
-                      "input_prompt" -> prompt.json,
-                      "output" -> JsArray(seq.map(_.json(env))),
-                      "provider_details" -> originalProvider.json, //provider.map(_.json).getOrElse(JsNull).asValue,
-                      "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
-                      "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
-                      "consumer_rate_limit" -> consumerRateLimit(attrs, usageSlug),
-                      "budgets" -> budgetIds.json
-                      //"request" -> request.map(_.json).getOrElse(JsNull).asValue,
-                    )
-                  }.toAnalytics()
-                }
-              })
-          }
+              auditSuccess(consumedUsing, prompt, attrs, Json.obj(
+                "output_stream" -> JsArray(seq.map(_.json(env))),
+                "output" -> aggregated.json(env),
+              ))
+            })
+          FastFuture.successful(Right(source))
         }
       }
     )
   }
 }
 
+// Appends a synthetic final chunk carrying the usage a provider only reports at the end of a stream,
+// so front-ends can report token counts on any streaming endpoint (`/responses` included).
 class ChatClientWithStreamUsage(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.call(prompt, attrs, originalBody)
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.completion(prompt, attrs, originalBody)
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    chatClient.stream(prompt, attrs, originalBody).map {
+
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    chatClient.invokeStream(kind, prompt, attrs, originalBody).map {
       case Left(err) => Left(err)
       case Right(resp) => {
         val promise = Promise.apply[Option[ChatResponseChunk]]()
@@ -446,37 +198,6 @@ class ChatClientWithStreamUsage(originalProvider: AiProvider, val chatClient: Ch
                 index = 0L,
                 delta = ChatResponseChunkChoiceDelta(None),
                 finishReason = (if (hadToolCalls.get()) "tool_calls" else "stop").some,
-              )),
-            ).some)
-          }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right
-      }
-    }
-  }
-
-  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    chatClient.completionStream(prompt, attrs, originalBody).map {
-      case Left(err) => Left(err)
-      case Right(resp) => {
-        val promise = Promise.apply[Option[ChatResponseChunk]]()
-        val ref = new AtomicReference[String](null)
-        resp
-          .map { chunk =>
-            if (ref.get() == null) {
-              ref.set(chunk.model)
-            }
-            chunk
-          }
-          .map(r => r.copy(choices = r.choices.map(c => c.copy(finishReason = None))))
-          .alsoTo(Sink.onComplete { _ =>
-            promise.trySuccess(ChatResponseChunk(
-              id = s"chatcmpl-${ULID.random().toLowerCase()}",
-              created = (System.currentTimeMillis() / 1000L),
-              model = ref.get(),
-              usage = attrs.get(ChatClient.ApiUsageKey).map(_.usage),
-              choices = Seq(ChatResponseChunkChoice(
-                index = 0L,
-                delta = ChatResponseChunkChoiceDelta(None),
-                finishReason = "stop".some,
               )),
             ).some)
           }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right

@@ -112,9 +112,9 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
     new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
   }
 
-  private def notInCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, completion: Boolean)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  private def notInCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val embeddingStore = getStore
-    val r = if (completion) chatClient.completion(originalPrompt, attrs, originalBody) else chatClient.call(originalPrompt, attrs, originalBody)
+    val r = chatClient.invoke(kind, originalPrompt, attrs, originalBody)
     r.flatMap {
       case Left(err) => err.leftf
       case Right(resp) =>
@@ -134,9 +134,9 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
     }
   }
 
-  private def notInCacheStream(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, completion: Boolean)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  private def notInCacheStream(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val embeddingStore = getStore
-    val r = if (completion) chatClient.completionStream(originalPrompt, attrs, originalBody) else chatClient.stream(originalPrompt, attrs, originalBody)
+    val r = chatClient.invokeStream(kind, originalPrompt, attrs, originalBody)
     r.map {
       case Left(err) => err.left
       case Right(resp) =>
@@ -158,9 +158,9 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
     }
   }
 
-  private def internalCall(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, completion: Boolean)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
-    val key = query.sha512
+    val key = CacheKeys.forQuery(kind, query)
     ChatClientWithSemanticCacheMemory.cache.getIfPresent(key) match {
       case Some((_, response, at)) =>
         response.copy(metadata = response.metadata.copy(
@@ -176,7 +176,7 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
           if (matches.nonEmpty) {
             val id = matches.head.embeddingId()
             ChatClientWithSemanticCacheMemory.cache.getIfPresent(id) match {
-              case None => notInCache(key, originalPrompt, attrs, originalBody, completion)
+              case None => notInCache(kind, key, originalPrompt, attrs, originalBody)
               case Some(cached) =>
                 cached._2.copy(metadata = cached._2.metadata.copy(
                   usage = ChatResponseMetadataUsage.empty,
@@ -184,15 +184,15 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
                 )).rightf
             }
           } else {
-            notInCache(key, originalPrompt, attrs, originalBody, completion)
+            notInCache(kind, key, originalPrompt, attrs, originalBody)
           }
         }
     }
   }
 
-  private def internalStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, completion: Boolean)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
-    val key = query.sha512
+    val key = CacheKeys.forQuery(kind, query)
     ChatClientWithSemanticCacheMemory.stream_cache.getIfPresent(key) match {
       case Some((_, response, _)) => Source(response.toList).rightf
       case None =>
@@ -204,27 +204,15 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
           if (matches.nonEmpty) {
             val id = matches.head.embeddingId()
             ChatClientWithSemanticCacheMemory.stream_cache.getIfPresent(id) match {
-              case None => notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
+              case None => notInCacheStream(kind, key, originalPrompt, attrs, originalBody)
               case Some(cached) => Source(cached._2.toList).rightf
             }
           } else {
-            notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
+            notInCacheStream(kind, key, originalPrompt, attrs, originalBody)
           }
         }
     }
   }
-
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] =
-    internalCall(originalPrompt, attrs, originalBody, completion = false)
-
-  override def stream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] =
-    internalStream(originalPrompt, attrs, originalBody, completion = false)
-
-  override def completion(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] =
-    internalCall(originalPrompt, attrs, originalBody, completion = true)
-
-  override def completionStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] =
-    internalStream(originalPrompt, attrs, originalBody, completion = true)
 }
 
 // ---------------------------------------------------------------------------
@@ -390,8 +378,8 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
 
   // --- cache miss handlers ---
 
-  private def notInCache(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, completion: Boolean)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val r = if (completion) chatClient.completion(originalPrompt, attrs, originalBody) else chatClient.call(originalPrompt, attrs, originalBody)
+  private def notInCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    val r = chatClient.invoke(kind, originalPrompt, attrs, originalBody)
     r.flatMap {
       case Left(err) => err.leftf
       case Right(resp) =>
@@ -414,8 +402,8 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
     }
   }
 
-  private def notInCacheStream(key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, completion: Boolean)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val r = if (completion) chatClient.completionStream(originalPrompt, attrs, originalBody) else chatClient.stream(originalPrompt, attrs, originalBody)
+  private def notInCacheStream(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    val r = chatClient.invokeStream(kind, originalPrompt, attrs, originalBody)
     r.map {
       case Left(err) => err.left
       case Right(resp) =>
@@ -436,9 +424,9 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
 
   // --- main logic ---
 
-  private def internalCall(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, completion: Boolean)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
-    val key = query.sha512
+    val key = CacheKeys.forQuery(kind, query)
     // 1. exact key lookup
     redisGetResponse(key).flatMap {
       case Some((response, at)) =>
@@ -459,18 +447,18 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
                       usage = ChatResponseMetadataUsage.empty,
                       cache = Some(ChatResponseCache(ChatResponseCacheStatus.Hit, key, ttl, (System.currentTimeMillis() - at).millis))
                     )).rightf
-                  case None => notInCache(key, originalPrompt, attrs, originalBody, completion)
+                  case None => notInCache(kind, key, originalPrompt, attrs, originalBody)
                 }
-              case None => notInCache(key, originalPrompt, attrs, originalBody, completion)
+              case None => notInCache(kind, key, originalPrompt, attrs, originalBody)
             }
           }
-        }.recoverWith { case _ => notInCache(key, originalPrompt, attrs, originalBody, completion) }
+        }.recoverWith { case _ => notInCache(kind, key, originalPrompt, attrs, originalBody) }
     }
   }
 
-  private def internalStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, completion: Boolean)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
-    val key = query.sha512
+    val key = CacheKeys.forQuery(kind, query)
     // 1. exact key lookup
     redisGetChunks(key).flatMap {
       case Some((chunks, _)) => Source(chunks.toList).rightf
@@ -483,24 +471,12 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
               case Some((matchedId, _)) =>
                 redisGetChunks(matchedId).flatMap {
                   case Some((cachedChunks, _)) => Source(cachedChunks.toList).rightf
-                  case None => notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
+                  case None => notInCacheStream(kind, key, originalPrompt, attrs, originalBody)
                 }
-              case None => notInCacheStream(key, originalPrompt, attrs, originalBody, completion)
+              case None => notInCacheStream(kind, key, originalPrompt, attrs, originalBody)
             }
           }
-        }.recoverWith { case _ => notInCacheStream(key, originalPrompt, attrs, originalBody, completion) }
+        }.recoverWith { case _ => notInCacheStream(kind, key, originalPrompt, attrs, originalBody) }
     }
   }
-
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] =
-    internalCall(originalPrompt, attrs, originalBody, completion = false)
-
-  override def stream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] =
-    internalStream(originalPrompt, attrs, originalBody, completion = false)
-
-  override def completion(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] =
-    internalCall(originalPrompt, attrs, originalBody, completion = true)
-
-  override def completionStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] =
-    internalStream(originalPrompt, attrs, originalBody, completion = true)
 }

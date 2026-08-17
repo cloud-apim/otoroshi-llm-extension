@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import akka.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -60,19 +60,11 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
     }
   }
 
-  override def call(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    withFallback(_.call(originalPrompt, attrs, originalBody))
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    withFallback(_.invoke(kind, originalPrompt, attrs, originalBody))
   }
 
-  override def stream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    withFallback(_.stream(originalPrompt, attrs, originalBody))
-  }
-
-  override def completion(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    withFallback(_.completion(originalPrompt, attrs, originalBody))
-  }
-
-  override def completionStream(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    withFallback(_.completionStream(originalPrompt, attrs, originalBody))
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    withFallback(_.invokeStream(kind, originalPrompt, attrs, originalBody))
   }
 }

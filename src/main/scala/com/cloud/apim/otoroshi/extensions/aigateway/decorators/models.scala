@@ -4,7 +4,7 @@ import akka.stream.scaladsl.Source
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.AiMetrics
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel, ModelSettings, ModerationModel, VideoModel}
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits._
@@ -24,43 +24,28 @@ object ChatClientWithModelConstraints {
 
 class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  // Left when the requested model is outside the allow-list of the provider, the apikey or the user
+  private def checkModel(originalBody: JsValue, attrs: TypedMap)(implicit env: Env): Either[JsValue, Unit] = {
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
-      case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.call(prompt, attrs, originalBody)
-      case _ if originalProvider.models.isEmpty => chatClient.call(prompt, attrs, originalBody)
-      case _ => AiMetrics.markModelConstraintDenied(); Json.obj("error" -> "you can't use this model").leftf
+      case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => Right(())
+      case _ if originalProvider.models.isEmpty => Right(())
+      case _ => AiMetrics.markModelConstraintDenied(); Left(Json.obj("error" -> "you can't use this model"))
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
-    val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
-    originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
-      case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.stream(prompt, attrs, originalBody)
-      case _ if originalProvider.models.isEmpty => chatClient.stream(prompt, attrs, originalBody)
-      case _ => AiMetrics.markModelConstraintDenied(); Json.obj("error" -> "you can't use this model").leftf
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    checkModel(originalBody, attrs) match {
+      case Left(err) => err.leftf
+      case Right(_) => chatClient.invoke(kind, prompt, attrs, originalBody)
     }
   }
 
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
-    val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
-    originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
-      case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.completion(prompt, attrs, originalBody)
-      case _ if originalProvider.models.isEmpty => chatClient.completion(prompt, attrs, originalBody)
-      case _ => AiMetrics.markModelConstraintDenied(); Json.obj("error" -> "you can't use this model").leftf
-    }
-  }
-
-  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
-    val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
-    originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
-      case Some(model) if originalProvider.models.matches(model) && apikeyModels.forall(_.matches(model)) && userModels.forall(_.matches(model)) => chatClient.completionStream(prompt, attrs, originalBody)
-      case _ if originalProvider.models.isEmpty => chatClient.completionStream(prompt, attrs, originalBody)
-      case _ => AiMetrics.markModelConstraintDenied(); Json.obj("error" -> "you can't use this model").leftf
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+    checkModel(originalBody, attrs) match {
+      case Left(err) => err.leftf
+      case Right(_) => chatClient.invokeStream(kind, prompt, attrs, originalBody)
     }
   }
 

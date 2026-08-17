@@ -18,6 +18,8 @@ The OpenAI Responses API is a newer API format introduced by OpenAI that replace
 
 This plugin allows you to expose **any** LLM provider (OpenAI, Anthropic, Mistral, Ollama, Azure, Groq, and 50+ others) through the Responses API format, even if the underlying provider only supports the chat completions API. The plugin handles all format translation transparently.
 
+Whichever path a request takes, it goes through the full gateway pipeline: guardrails, prompt contexts, persistent memory, model restrictions, semantic and simple caches, cost tracking, budgets, auditing and live metrics all apply to `/responses` exactly as they do to `/chat/completions`.
+
 ### OpenAI Responses vs Open Responses
 
 This plugin implements the **OpenAI Responses API** format. A separate plugin, [Open Responses Proxy](/docs/llm-gateway/open-response-proxy), implements the [Open Responses](https://www.openresponses.org/) specification, which is a community-driven open standard inspired by the OpenAI Responses API but with its own differences.
@@ -193,10 +195,47 @@ The `instructions` field is converted to a system message prepended to the conve
 | `temperature` | number | Sampling temperature | Passed through |
 | `top_p` | number | Nucleus sampling | Passed through |
 | `max_output_tokens` | number | Max tokens to generate | Mapped to `max_tokens` |
-| `tools` | array | Tool definitions | Passed through |
+| `tools` | array | Tool definitions | Converted from the flat Responses shape to the chat `{ "type": "function", "function": { … } }` shape |
 | `tool_choice` | string or object | Tool selection strategy | Passed through |
+| `text.format` | object | Structured outputs | Mapped to `response_format` (`json_schema` included) |
+| `reasoning.effort` | string | Reasoning budget | Mapped to `reasoning_effort` |
 
-Parameters specific to the Responses API that have no chat completions equivalent (`previous_response_id`, `store`, `truncation`, `text`, `reasoning`, `metadata`) are stripped from the request before forwarding to the provider.
+Parameters specific to the Responses API that have no chat completions equivalent (`previous_response_id`, `store`, `truncation`, `metadata`, `background`, `include`, `max_tool_calls`, `safety_identifier`, `prompt_cache_key`) are stripped from the request before forwarding to the provider — providers such as Anthropic reject unknown top-level parameters outright.
+
+## Native Responses API
+
+Some providers expose a real `/responses` endpoint of their own, which unlocks reasoning items, `previous_response_id` continuity, server-side tools and native file inputs. Set the `responses` option to `true` on such a provider and this plugin calls that endpoint directly instead of translating to chat completions:
+
+```js
+{
+  "provider": "openai",
+  "options": {
+    "model": "gpt-4o",
+    "responses": true
+  }
+}
+```
+
+The option is `false` by default for every provider, so nothing changes until you turn it on.
+
+| Provider | Endpoint | Good to know |
+|---|---|---|
+| OpenAI, OpenAI-compatible (Azure AI Foundry, OVH, Scaleway, Deepseek, Cloud Temple, …) | `POST {base_url}/responses` | full support |
+| Azure OpenAI | `POST https://{resource}.openai.azure.com/openai/v1/responses` | requires `connection.api_version` to be `v1`; with a dated api version the endpoint does not exist, so the option is ignored (a warning is logged) and calls keep going through chat completions |
+| Groq | `POST {base_url}/openai/v1/responses` | beta; stateful conversations are not supported, so `previous_response_id`, `store`, `truncation`, `include`, `safety_identifier` and `prompt_cache_key` are dropped from the request instead of making it fail |
+| x.ai | `POST {base_url}/v1/responses` | full support, including `previous_response_id`, `store` and the server-side tools |
+| Ollama | `POST {base_url}/v1/responses` | requires Ollama v0.13.3+; non-stateful only, so `previous_response_id`, `conversation` and `truncation` are dropped. Ollama-specific generation options (`num_ctx`, `top_k`, `repeat_penalty`, …) do not exist on this endpoint and are dropped too, `num_predict` becomes `max_output_tokens` |
+
+On the native path:
+
+- the request payload is rebuilt from the conversation the gateway holds, so prompt contexts, persistent memory and guardrail rewrites are applied before the provider sees it
+- provider options that only exist on the chat completions API are renamed (`max_tokens` becomes `max_output_tokens`, `response_format` becomes `text.format`) or dropped, so a provider configured for chat completions keeps working as is
+- the provider payload is returned as it is, keeping its response id, reasoning items and annotations intact for clients that rely on them
+- `message`, `function_call` and reasoning output items are mapped back into the gateway model, so caching, cost tracking and auditing see the same thing they see on any other endpoint
+- your Wasm functions, MCP connectors and search engines keep working: they are declared as native tools and the tool loop runs on `function_call` output items
+- parameters a provider documents as unsupported are dropped rather than forwarded, so a request written for OpenAI does not fail on another provider
+
+Providers without a native endpoint keep serving `/responses` through the chat completions translation described above — this is the default and remains fully supported.
 
 ## Response format
 
@@ -296,6 +335,8 @@ data: {"type":"response.output_item.done","output_index":0,"item":{"type":"messa
 event: response.completed
 data: {"type":"response.completed","response":{"id":"resp_xxx","status":"completed","output":[...],"usage":{...}}}
 ```
+
+The final `response.completed` event carries the token usage of the call and, when the model called tools, the `function_call` items rebuilt from the streamed argument deltas.
 
 Streaming is activated when any of the following is true:
 - The request body contains `"stream": true`
@@ -397,9 +438,10 @@ The plugin acts as a translation layer between the OpenAI Responses API format a
 
 1. **Input parsing**: the `input` field is parsed and converted to a standard `messages` array (string becomes a user message, `type: "message"` items are converted, `function_call_output` items become tool messages)
 2. **Instructions**: the `instructions` field is prepended as a system message
-3. **Body cleaning**: Responses-specific fields (`input`, `instructions`, `previous_response_id`, `store`, `truncation`, `text`, `reasoning`, `metadata`) are removed; `max_output_tokens` is mapped to `max_tokens`
-4. **Provider call**: the cleaned request is forwarded to the underlying provider via the standard chat completions path
-5. **Response formatting**: the provider's response is converted to the Responses API format with `output` items, proper IDs, and usage details
-6. **Stream translation**: for streaming, chat completion chunks are wrapped into Responses API lifecycle events with text deltas and proper start/done events
+3. **Gateway pipeline**: the conversation goes through guardrails, prompt contexts, persistent memory, model restrictions, caches, cost tracking, budgets and auditing
+4. **Body cleaning**: Responses-specific fields are removed, `max_output_tokens` is mapped to `max_tokens`, `text.format` to `response_format`, `reasoning.effort` to `reasoning_effort` and tools to the chat shape
+5. **Provider call**: the request is forwarded to the underlying provider, on its native `/responses` endpoint when the `responses` option is on, on the chat completions endpoint otherwise
+6. **Response formatting**: the provider's response is converted to the Responses API format with `output` items, proper IDs, and usage details (a native payload is returned as is)
+7. **Stream translation**: for streaming, provider chunks are wrapped into Responses API lifecycle events with text deltas, tool calls and usage on the final event
 
 This means the plugin works with **any** LLM provider supported by Otoroshi, regardless of whether that provider natively supports the Responses API or not.

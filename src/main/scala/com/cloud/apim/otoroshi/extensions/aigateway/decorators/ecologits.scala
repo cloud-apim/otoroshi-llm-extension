@@ -4,7 +4,7 @@ import akka.stream.scaladsl.{Sink, Source, StreamConverters}
 import akka.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.Types.ValueOrRange
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -810,12 +810,12 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     getProvider() match {
-      case None => chatClient.call(prompt, attrs, originalBody) // unsupported provider
+      case None => chatClient.invoke(kind, prompt, attrs, originalBody) // unsupported provider
       case Some(provider) => {
         val start = System.currentTimeMillis()
-        chatClient.call(prompt, attrs, originalBody).map {
+        chatClient.invoke(kind, prompt, attrs, originalBody).map {
           case Left(err) => Left(err)
           case Right(resp) => {
             val usage = resp.metadata.usage
@@ -845,50 +845,9 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     handleStream(attrs, originalBody) {
-      chatClient.stream(prompt, attrs, originalBody)
-    }
-  }
-
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    getProvider() match {
-      case None => chatClient.completion(prompt, attrs, originalBody) // unsupported provider
-      case Some(provider) => {
-        val start = System.currentTimeMillis()
-        chatClient.completion(prompt, attrs, originalBody).map {
-          case Left(err) => Left(err)
-          case Right(resp) => {
-            val usage = resp.metadata.usage
-            val ext = env.adminExtensions.extension[AiExtension].get
-            ext.llmImpacts.llmImpacts(
-              provider = originalProvider.metadata.getOrElse("eco-impacts-provider", provider),
-              modelName = originalProvider.metadata.getOrElse("eco-impacts-model", getModel(originalBody)),
-              outputTokenCount = (usage.generationTokens + usage.reasoningTokens).toInt,
-              requestLatency = System.currentTimeMillis() - start,
-              electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
-            ) match {
-              case Left(err) => Right(resp)
-              case Right(impacts) => {
-                attrs.put(ChatClientWithEcoImpact.key -> impacts)
-                // impacts.json(ext.llmImpactsSettings.embedDescriptionInJson).prettify.debugPrintln
-                val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_impacts")).contains("true")
-                if (ext.llmImpactsSettings.embedImpactsInResponses || enableInRequest) {
-                  Right(resp.copy(metadata = resp.metadata.copy(impacts = impacts.some)))
-                } else {
-                  Right(resp)
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    handleStream(attrs, originalBody) {
-      chatClient.completionStream(prompt, attrs, originalBody)
+      chatClient.invokeStream(kind, prompt, attrs, originalBody)
     }
   }
 }

@@ -319,6 +319,27 @@ class OpenAiApi(
       })
   }
 
+  /** raw streamed POST, used by the native /responses path */
+  def rawStream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+    val url = s"${baseUrl}${path}"
+    val uri = Uri(url)
+    ProviderHelpers.logStream(providerName, method, url, body)(env)
+    env.Ws
+      .url(url)
+      .withHttpHeaders(
+        resolvedHeaders ++ Seq(
+          "Accept" -> "text/event-stream",
+          "Host" -> uri.authority.host.toString()): _*
+      ).applyOnWithOpt(applyParamMappings(body)) {
+        case (builder, body) => builder
+          .addHttpHeaders("Content-Type" -> "application/json")
+          .withBody(body)
+      }
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .stream()
+  }
+
   override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
     if (currentCallCounter >= maxCalls) {
       return stream(method, path, body, acc)
@@ -445,6 +466,7 @@ object OpenAiChatClientOptions {
       mcpIncludeFunctions = json.select("mcp_include_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       maxFunctionCalls = json.select("max_function_calls").asOpt[Int].getOrElse(10),
+      responses = json.select("responses").asOpt[Boolean].getOrElse(false),
     )
   }
 }
@@ -475,6 +497,9 @@ case class OpenAiChatClientOptions(
   mcpIncludeFunctions: Seq[String] = Seq.empty,
   mcpExcludeFunctions: Seq[String] = Seq.empty,
   maxFunctionCalls: Int = 10,
+  // opt-in native OpenAI Responses API (`POST /responses`). Off by default: most OpenAI-compatible
+  // providers have no such endpoint, and the default degradation to /chat/completions is right for them.
+  responses: Boolean = false,
 ) extends ChatOptions {
 
   lazy val wasmToolsNoInline: Seq[String] = wasmTools.filterNot(_.startsWith("__inline_"))
@@ -509,18 +534,18 @@ case class OpenAiChatClientOptions(
     "mcp_exclude_functions" -> JsArray(mcpExcludeFunctions.map(_.json)),
     "allow_config_override" -> allowConfigOverride,
     "max_function_calls" -> maxFunctionCalls,
+    "responses" -> responses,
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "a2a_connectors" - "search_engines" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions")
+  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "a2a_connectors" - "search_engines" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions" - "responses")
 }
 
-class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String, modelsPath: String = "/models", completion: Boolean = true, accumulateStreamConsumptions: Boolean = false) extends ChatClient {
+class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String, modelsPath: String = "/models", completion: Boolean = true, accumulateStreamConsumptions: Boolean = false) extends ChatClient with NativeResponsesSupport {
 
   override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = completion //api.supportsCompletion
-  override def supportsResponses: Boolean = true
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     val body = originalBody.asObject - "messages" - "provider"
@@ -764,6 +789,29 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
       }
     }
   }
+
+  ////////////////////////////////////////////////////////////////////////////////////////////////////
+  //  native /responses (enabled by the `responses` option, off by default)
+  ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  override protected def responsesEnabled: Boolean = options.responses
+  override protected def responsesProviderKind: String = providerName
+  override protected def responsesProviderId: String = id
+  override protected def responsesChatOptions: JsObject = options.jsonForCall
+  override protected def responsesAllowConfigOverride: Boolean = options.allowConfigOverride
+  override protected def responsesSupportsTools: Boolean = api.supportsTools
+  override protected def responsesToolsOptions: NativeResponsesToolsOptions = NativeResponsesToolsOptions(
+    wasmToolsNoInline = options.wasmToolsNoInline,
+    wasmToolsInline = options.wasmToolsInline,
+    mcpConnectors = options.mcpConnectors,
+    a2aConnectors = options.a2aConnectors,
+    searchEngines = options.searchEngines,
+    mcpIncludeFunctions = options.mcpIncludeFunctions,
+    mcpExcludeFunctions = options.mcpExcludeFunctions,
+    maxFunctionCalls = options.maxFunctionCalls,
+  )
+  override protected def responsesRawCall(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawCall("POST", "/responses", body.some)
+  override protected def responsesRawStream(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawStream("POST", "/responses", (body.asObject ++ Json.obj("stream" -> true)).some)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

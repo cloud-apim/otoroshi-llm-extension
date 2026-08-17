@@ -40,7 +40,7 @@ class ChatClientWithMockResponse(val chatClient: ChatClient) extends DecoratorCh
 
   private def mockResponse(originalBody: JsValue): Option[String] = originalBody.select("mock_response").asOpt[String]
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     mockResponse(originalBody) match {
       case Some(mock) if mock.startsWith(ChatClientWithMockResponse.exceptionPrefix) =>
         Future.successful(Left(ChatClientWithMockResponse.mockError(mock.drop(ChatClientWithMockResponse.exceptionPrefix.length).trim)))
@@ -55,11 +55,11 @@ class ChatClientWithMockResponse(val chatClient: ChatClient) extends DecoratorCh
           raw = Json.obj("model" -> model, "mock" -> true),
         )
         Future.successful(Right(response))
-      case None => chatClient.call(prompt, attrs, originalBody)
+      case None => chatClient.invoke(kind, prompt, attrs, originalBody)
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
     mockResponse(originalBody) match {
       case Some(mock) if mock.startsWith(ChatClientWithMockResponse.exceptionPrefix) =>
         Future.successful(Left(ChatClientWithMockResponse.mockError(mock.drop(ChatClientWithMockResponse.exceptionPrefix.length).trim)))
@@ -75,7 +75,7 @@ class ChatClientWithMockResponse(val chatClient: ChatClient) extends DecoratorCh
         }
         val finalChunk = ChatResponseChunk(id, created, model, Seq(ChatResponseChunkChoice(0L, ChatResponseChunkChoiceDelta(None), Some("stop"))))
         Future.successful(Right(Source(contentChunks :+ finalChunk)))
-      case None => chatClient.stream(prompt, attrs, originalBody)
+      case None => chatClient.invokeStream(kind, prompt, attrs, originalBody)
     }
   }
 }
