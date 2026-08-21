@@ -2,10 +2,10 @@ package com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic
 
 import otoroshi.api.OpenApi
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 
 object Catalog {
 

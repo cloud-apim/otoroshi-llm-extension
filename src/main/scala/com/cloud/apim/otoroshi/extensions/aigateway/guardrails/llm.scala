@@ -5,7 +5,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmVal
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt, InputChatMessage, OutputChatMessage}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, Json}
 
@@ -23,7 +23,7 @@ class LLMGuardrail extends Guardrail {
 
   def fail(idx: Int): Future[GuardrailResult] = GuardrailResult.GuardrailDenied(s"request content did not pass llm validation (${idx})").vfuture
 
-  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val llmValidation = LlmValidationSettings.format.reads(config).getOrElse(LlmValidationSettings())
     llmValidation.provider match {
       case None => pass()
@@ -44,7 +44,7 @@ class LLMGuardrail extends Guardrail {
                   validationClient.call(ChatPrompt(Seq(
                     ChatMessage.input("system", prompt.prompt, None, Json.obj())
                   ) ++ messages), attrs, Json.obj()).flatMap {
-                    case Left(err) => fail(2)
+                    case Left(_) => fail(2)
                     case Right(resp) => {
                       val content = resp.headGeneration.message.content.toLowerCase().trim.replace("\n", " ")
                       //  println(s"content: '${content}'")

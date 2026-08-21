@@ -6,7 +6,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 Otoroshi LLM Extension is a set of Otoroshi plugins for building an AI/LLM gateway. It provides a unified interface to 20+ LLM providers with features like load balancing, fallbacks, semantic caching, guardrails, and budget management.
 
-**Requirements**: JDK 17+ and Scala 2.12
+**Requirements**: JDK 17+ and Scala 3.8.4
 
 ## Build Commands
 
@@ -20,9 +20,12 @@ sbt test
 # Run a single test suite
 sbt "testOnly com.cloud.apim.otoroshi.extensions.aigateway.ProvidersSuite"
 
+# Run only the suites that do not need a real LLM provider
+sh ./scripts/run-offline-tests.sh
+
 # Build fat JAR for deployment
 sbt assembly
-# Output: target/scala-2.12/otoroshi-llm-extension-assembly_2.12-dev.jar
+# Output: target/scala-3.8.4/otoroshi-llm-extension-assembly_3-dev.jar
 ```
 
 ## Architecture
@@ -77,7 +80,7 @@ Test configuration uses `domains/providers.scala` for test data factories.
 
 ## Dependencies
 
-- **Otoroshi 17.11.0** - Base API gateway (provided dependency)
-- **Langchain4j 1.9.1** - LLM integration library
+- **Otoroshi 18.0.0-preview2** - Base API gateway (provided dependency, brings Play 3 / Pekko)
+- **Langchain4j 1.15.0** - LLM integration library
 - **Jlama 0.8.4** - Local LLM inference
-- **Jackson 2.15.3** - JSON processing
+- **Jackson 2.22.2** - JSON processing (kept in sync with otoroshi)

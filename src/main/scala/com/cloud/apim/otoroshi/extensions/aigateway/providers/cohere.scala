@@ -1,15 +1,16 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.stream.scaladsl.{Framing, Source}
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.stream.scaladsl.{Framing, Source}
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json
 import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -94,9 +95,9 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
   override def supportsCompletion: Boolean = false
   override def supportsStreaming: Boolean = true
 
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("Cohere", method, url, body)(env)
+    ProviderHelpers.logCall("Cohere", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -112,17 +113,17 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
       .execute()
   }
 
-  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
+  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
     rawCall(method, path, body)
       .map(r => ProviderHelpers.wrapResponse("Cohere", r, env) { resp =>
         acc.updateCohere(resp.json.select("usage").asOpt[JsObject])
-        CohereAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+        CohereAiApiResponse(resp.status, resp.headers.view.mapValues(_.last).toMap, resp.json)
       })
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = {
+  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, ?], WSResponse)]] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logStream(providerName, method, url, body)(env)
+    ProviderHelpers.logStream(providerName, method, url, body)(using env)
     val messageStartRef = new AtomicReference[JsValue]()
     val messageEndRef = new AtomicReference[JsValue]()
     env.Ws
@@ -167,8 +168,8 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
-      if (currentCallCounter >= maxCalls) {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {
+    if (currentCallCounter >= maxCalls) {
       return call(method, path, body, acc)
     }
     // TODO: accumulate consumptions ???
@@ -182,7 +183,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              LlmFunctions.callToolsCohere(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, providerName, fmap, attrs, nameToFunction)(ec, env)
+              LlmFunctions.callToolsCohere(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, providerName, fmap, attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -201,7 +202,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
     }
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[CohereAiApiResponseChunk, ?], WSResponse)]] = {
     if (currentCallCounter >= maxCalls) {
       return stream(method, path, body, acc)
     }
@@ -222,7 +223,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
             if (!isToolCall && chunk.tool_call_start) {
               isToolCall = true
               toolCalls = toolCalls :+ chunk.choices.head.delta.get.message.tool_calls
-              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => ""): _*)
+              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => "")*)
               Source.empty
             } else if (isToolCall && !isToolCallEnded) {
               if (chunk.tool_call_end) { //chunk.choices.head.finish_reason.contains("TOOL_CALL")) {
@@ -249,7 +250,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[Either[JsValue, (Source[CohereAiApiResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsCohere(calls, mcpConnectors, providerName, fmap, attrs, nameToFunction)(ec, env)
+              val a: Future[Either[JsValue, (Source[CohereAiApiResponseChunk, ?], WSResponse)]] = LlmFunctions.callToolsCohere(calls, mcpConnectors, providerName, fmap, attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -366,7 +367,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
 
   override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
 
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/v1/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("models").as[List[JsObject]].map(obj => obj.select("name").asString))
@@ -376,7 +377,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -422,7 +423,6 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
           val newArr = arr ++ Seq(slug)
           obj ++ Json.obj("ai" -> newArr)
         }
-        case Some(other) => other
         case None => Json.obj("ai" -> Seq(slug))
       }
       val messages = resp.body.select("message").asOpt[JsObject].map { obj =>
@@ -436,7 +436,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -484,7 +484,6 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
                   val newArr = arr ++ Seq(slug)
                   obj ++ Json.obj("ai" -> newArr)
                 }
-                case Some(other) => other
                 case None => Json.obj("ai" -> Seq(slug))
               }
               true
@@ -522,7 +521,7 @@ object CohereAiEmbeddingModelClientOptions {
 
 class CohereAiEmbeddingModelClient(val api: CohereAiApi, val options: CohereAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
 
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
     api.rawCall("POST", "/v2/embed", (options.raw ++ Json.obj("texts" -> opts.input, "model" -> finalModel, "input_type" -> "classification", "embedding_types" -> Json.arr("float"))).some).map { resp =>
       if (resp.status == 200) {

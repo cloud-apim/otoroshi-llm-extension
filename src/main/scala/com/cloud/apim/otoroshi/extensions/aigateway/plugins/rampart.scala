@@ -1,13 +1,13 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.{PlaceholderAllocator, RampartEngine, RampartPiiGuardrail}
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.mvc.{Result, Results}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -62,14 +62,14 @@ object RampartBody {
   }
 
   // redacts PII in raw text. Each call uses a fresh allocator (request and response bodies are independent).
-  def redact(text: String, cfg: RampartBodyRedactorConfig)(implicit env: Env): String = {
+  def redact(text: String, cfg: RampartBodyRedactorConfig)(using env: Env): String = {
     val engine = RampartEngine.get
     val alloc = new PlaceholderAllocator()
     engine.redactText(text, engine.detectAll(text, cfg.minScore, cfg.entities), alloc)
   }
 
   // fail-open: never break the proxy if the model misbehaves, just log and pass the body through unchanged
-  def safeRedact(text: String, cfg: RampartBodyRedactorConfig)(implicit env: Env): String = {
+  def safeRedact(text: String, cfg: RampartBodyRedactorConfig)(using env: Env): String = {
     try { redact(text, cfg) } catch {
       case e: Throwable => logger.error(s"[rampart] body redaction failed, passing body through: ${e.getMessage}", e); text
     }
@@ -96,7 +96,7 @@ class RampartRequestBodyRedactor extends NgRequestTransformer {
   override def transformsResponse: Boolean = false
   override def transformsRequest: Boolean = true
 
-  override def transformRequest(ctx: NgTransformerRequestContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
+  override def transformRequest(ctx: NgTransformerRequestContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     val config = ctx.cachedConfig(internalName)(RampartBodyRedactorConfig.format).getOrElse(RampartBodyRedactorConfig.default)
     val contentType = ctx.otoroshiRequest.headers.find(_._1.equalsIgnoreCase("Content-Type")).map(_._2)
     if (!ctx.otoroshiRequest.hasBody || !RampartBody.matchesContentType(contentType, config.contentTypes)) {
@@ -133,7 +133,7 @@ class RampartResponseBodyRedactor extends NgRequestTransformer {
   override def transformsResponse: Boolean = true
   override def transformsRequest: Boolean = false
 
-  override def transformResponse(ctx: NgTransformerResponseContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
+  override def transformResponse(ctx: NgTransformerResponseContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
     val config = ctx.cachedConfig(internalName)(RampartBodyRedactorConfig.format).getOrElse(RampartBodyRedactorConfig.default)
     val contentType = ctx.otoroshiResponse.headers.find(_._1.equalsIgnoreCase("Content-Type")).map(_._2)
     if (!RampartBody.matchesContentType(contentType, config.contentTypes)) {
@@ -167,7 +167,7 @@ class RampartBodyRedactionBackend extends NgBackendCall {
   override def configFlow: Seq[String] = RampartBodyRedactorConfig.configFlow
   override def configSchema: Option[JsObject] = RampartBodyRedactorConfig.configSchema
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(RampartBodyRedactorConfig.format).getOrElse(RampartBodyRedactorConfig.default)
     val contentType = ctx.request.headers.find(_._1.equalsIgnoreCase("Content-Type")).map(_._2)
     def respond(redacted: String, applied: Boolean): Either[NgProxyEngineError, BackendCallResponse] = {

@@ -1,18 +1,18 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessageContent, ChatPrompt, ChatResponse, InputChatMessage, OpenAiResponsesBodyConverter, ResponsesStreamAccumulator}
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.security.IdGenerator
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.Results
 
 import java.util.concurrent.atomic.AtomicInteger
@@ -20,7 +20,7 @@ import scala.concurrent.{ExecutionContext, Future}
 
 object OpenResponseCompatProxy {
 
-  def handleRequest(config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     if (ctx.request.hasBody) {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         try {
@@ -66,9 +66,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
     if (response.isNativeResponsePayload) {
       return response.openaiResponseJson(model, env)
     }
-    val respId = s"resp_${IdGenerator.token(32)}"
     val msgId = s"msg_${IdGenerator.token(32)}"
-    val createdAt = System.currentTimeMillis() / 1000
 
     val textOutputs: Seq[JsObject] = response.generations.filter(!_.message.has_tool_calls).map { gen =>
       Json.obj(
@@ -182,6 +180,8 @@ class OpenResponseCompatProxy extends NgBackendCall {
       "summary" -> "auto"
     ))
 
+    val respId = s"resp_${IdGenerator.token(32)}"
+    val createdAt = System.currentTimeMillis() / 1000
     Json.obj(
       "id" -> respId,
       "object" -> "response",
@@ -221,7 +221,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
     s"event: $eventType\ndata: ${data.stringify}\n\n".byteString
   }
 
-  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config)
     val provider: Option[AiProvider] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
@@ -246,10 +246,8 @@ class OpenResponseCompatProxy extends NgBackendCall {
             InputChatMessage.fromJson(obj)
           }
           if (stream) {
-            val respId = s"resp_${IdGenerator.token(32)}"
             val msgId = s"msg_${IdGenerator.token(32)}"
             val model = client.computeModel(openAiBody).getOrElse("none")
-            val createdAt = System.currentTimeMillis() / 1000
             val tools = OpenAiResponsesBodyConverter.normalizeResponsesTools(jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty))
 
             def eventWithResponse(typ: String, seqNum: Int): JsObject = {
@@ -311,7 +309,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
 
                 // materialized by `concatLazy` only once the delta events are done, which is what
                 // makes the accumulated text, tool calls and usage available here
-                val footerEvents = Source.lazily { () =>
+                val footerEvents = Source.lazySource { () =>
                   val text = acc.wholeText
                   val contentPart = Json.obj("type" -> "output_text", "text" -> text, "annotations" -> Json.arr(), "logprobs" -> Json.arr())
                   val messageItem = msgItem.deepMerge(Json.obj("status" -> "completed", "content" -> Json.arr(contentPart)))
@@ -373,7 +371,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
                 val model = client.computeModel(openAiBody).getOrElse("none")
                 val tools = OpenAiResponsesBodyConverter.normalizeResponsesTools(jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty))
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(buildResponseJson(response, model, jsonBody.asObject, tools, env))
-                  .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
+                  .withHeaders(response.metadata.cacheHeaders.toSeq*)), None))
             }
           }
         } else {
@@ -399,7 +397,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
     }
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     if (ctx.request.hasBody) {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         try {

@@ -1,15 +1,15 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.{JsObject, JsValue, Json}
 
 // Unit tests of the responses <-> chat/completions translation. The end to end behaviour is covered
 // by ResponsesSuite, this pins the conversion rules themselves.
 class OpenAiResponsesConverterSuite extends munit.FunSuite {
 
-  import OpenAiResponsesBodyConverter._
+  import OpenAiResponsesBodyConverter.*
 
   // ---- responses → chat/completions --------------------------------------------------------
 

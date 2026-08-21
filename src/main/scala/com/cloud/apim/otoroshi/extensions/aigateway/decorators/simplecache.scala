@@ -1,17 +1,18 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.{Sink, Source}
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.LettuceRedisClientManager
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.concurrent.{ExecutionContext, Future, Promise}
+import io.lettuce.core.SetArgs
 
 // ---------------------------------------------------------------------------
 //  Entry point — picks the right implementation based on redis_url
@@ -145,18 +146,18 @@ object ChatClientWithSimpleCacheMemory {
 
   val cache = Scaffeine()
     .expireAfter[String, (FiniteDuration, ChatResponse, Long)](
-      create = (key, value) => value._1,
-      update = (key, value, currentDuration) => currentDuration,
-      read = (key, value, currentDuration) => currentDuration
+      create = (_, value) => value._1,
+      update = (_, _, currentDuration) => currentDuration,
+      read = (_, _, currentDuration) => currentDuration
     )
     .maximumSize(5000)
     .build[String, (FiniteDuration, ChatResponse, Long)]()
 
   val stream_cache = Scaffeine()
     .expireAfter[String, (FiniteDuration, Seq[ChatResponseChunk], Long)](
-      create = (key, value) => value._1,
-      update = (key, value, currentDuration) => currentDuration,
-      read = (key, value, currentDuration) => currentDuration
+      create = (_, value) => value._1,
+      update = (_, _, currentDuration) => currentDuration,
+      read = (_, _, currentDuration) => currentDuration
     )
     .maximumSize(5000)
     .build[String, (FiniteDuration, Seq[ChatResponseChunk], Long)]()
@@ -166,7 +167,7 @@ class ChatClientWithSimpleCacheMemory(originalProvider: AiProvider, val chatClie
 
   private val ttl = originalProvider.cache.ttl
 
-  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     // the endpoint is part of the key: a /responses answer is not interchangeable with a chat one
     val key = CacheKeys.forPrompt(kind, originalPrompt)
     ChatClientWithSimpleCacheMemory.cache.getIfPresent(key) match {
@@ -188,7 +189,7 @@ class ChatClientWithSimpleCacheMemory(originalProvider: AiProvider, val chatClie
     }
   }
 
-  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val key = CacheKeys.forPrompt(kind, originalPrompt)
     ChatClientWithSimpleCacheMemory.stream_cache.getIfPresent(key) match {
       case Some((_, response, _)) => Source(response.toList).rightf
@@ -226,17 +227,17 @@ class ChatClientWithSimpleCacheRedis(originalProvider: AiProvider, val chatClien
     promise.future
   }
 
-  private def redisGet(key: String)(implicit ec: ExecutionContext): Future[Option[String]] = {
+  private def redisGet(key: String)(using ec: ExecutionContext): Future[Option[String]] = {
     toFuture(LettuceRedisClientManager.getConnection(redisUrl).async().get(key))
       .map(Option(_))
       .recover { case _ => None }
   }
 
-  private def redisPut(key: String, value: String)(implicit ec: ExecutionContext): Unit = {
-    toFuture(LettuceRedisClientManager.getConnection(redisUrl).async().psetex(key, ttl.toMillis, value))
+  private def redisPut(key: String, value: String)(using ec: ExecutionContext): Unit = {
+    toFuture(LettuceRedisClientManager.getConnection(redisUrl).async().set(key, value, SetArgs.Builder.px(ttl.toMillis)))
   }
 
-  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val key = CacheKeys.forPrompt(kind, originalPrompt)
     redisGet(s"simple-cache:call:$key").flatMap {
       case Some(value) =>
@@ -253,7 +254,7 @@ class ChatClientWithSimpleCacheRedis(originalProvider: AiProvider, val chatClien
     }
   }
 
-  private def callAndCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  private def callAndCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     chatClient.invoke(kind, originalPrompt, attrs, originalBody).map {
       case Left(err) => err.left
       case Right(resp) =>
@@ -264,7 +265,7 @@ class ChatClientWithSimpleCacheRedis(originalProvider: AiProvider, val chatClien
     }
   }
 
-  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val key = CacheKeys.forPrompt(kind, originalPrompt)
     redisGet(s"simple-cache:stream:$key").flatMap {
       case Some(value) =>
@@ -276,7 +277,7 @@ class ChatClientWithSimpleCacheRedis(originalProvider: AiProvider, val chatClien
     }
   }
 
-  private def streamAndCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  private def streamAndCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     chatClient.invokeStream(kind, originalPrompt, attrs, originalBody).map {
       case Left(err) => err.left
       case Right(resp) =>

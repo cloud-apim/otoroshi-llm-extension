@@ -1,12 +1,12 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.Source
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.stream.scaladsl.Source
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.{JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -40,7 +40,7 @@ class ChatClientWithMockResponse(val chatClient: ChatClient) extends DecoratorCh
 
   private def mockResponse(originalBody: JsValue): Option[String] = originalBody.select("mock_response").asOpt[String]
 
-  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     mockResponse(originalBody) match {
       case Some(mock) if mock.startsWith(ChatClientWithMockResponse.exceptionPrefix) =>
         Future.successful(Left(ChatClientWithMockResponse.mockError(mock.drop(ChatClientWithMockResponse.exceptionPrefix.length).trim)))
@@ -59,7 +59,7 @@ class ChatClientWithMockResponse(val chatClient: ChatClient) extends DecoratorCh
     }
   }
 
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     mockResponse(originalBody) match {
       case Some(mock) if mock.startsWith(ChatClientWithMockResponse.exceptionPrefix) =>
         Future.successful(Left(ChatClientWithMockResponse.mockError(mock.drop(ChatClientWithMockResponse.exceptionPrefix.length).trim)))

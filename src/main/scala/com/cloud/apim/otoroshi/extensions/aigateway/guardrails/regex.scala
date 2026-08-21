@@ -1,10 +1,10 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatMessageContent, InputChatMessage, OutputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, InputChatMessage, OutputChatMessage}
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi.utils.{RegexPool, TypedMap}
 import play.api.libs.json.JsObject
 
@@ -24,7 +24,7 @@ class RegexGuardrail extends Guardrail {
     !denied && allowed
   }
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val allow = config.select("allow").asOpt[Seq[String]].getOrElse(Seq.empty)
     val deny = config.select("deny").asOpt[Seq[String]].getOrElse(Seq.empty)
 

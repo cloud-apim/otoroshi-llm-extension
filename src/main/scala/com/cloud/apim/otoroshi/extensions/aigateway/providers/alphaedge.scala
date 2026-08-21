@@ -1,17 +1,17 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.http.scaladsl.model.{ContentType, ContentTypes, HttpEntity, Multipart}
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.http.scaladsl.model.{ContentType, ContentTypes, HttpEntity, Multipart}
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
-import scala.concurrent._
-import scala.concurrent.duration._
+import scala.concurrent.*
+import scala.concurrent.duration.*
 
 // AlphaEdge AI - https://api-docs.alphaedge-ai.com
 // AlphaEdge only exposes "file -> text" models:
@@ -26,9 +26,9 @@ object AlphaEdgeApi {
 
 class AlphaEdgeApi(baseUrl: String = AlphaEdgeApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
 
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("AlphaEdge", method, url, body)(env)
+    ProviderHelpers.logCall("AlphaEdge", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -44,10 +44,10 @@ class AlphaEdgeApi(baseUrl: String = AlphaEdgeApi.baseUrl, token: String, timeou
       .execute()
   }
 
-  def rawCallForm(method: String, path: String, body: Multipart)(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("AlphaEdge", method, url, None)(env)
-    val entity = body.toEntity()
+    ProviderHelpers.logCall("AlphaEdge", method, url, None)(using env)
+    val entity = body.toEntity
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -83,7 +83,7 @@ class AlphaEdgeAudioModelClient(val api: AlphaEdgeApi, val sttOptions: AlphaEdge
   override def supportsStt: Boolean = sttOptions.enabled
   override def supportsTranslation: Boolean = false
 
-  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = {
+  override def listModels(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = {
     api.rawCall("GET", "/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.asOpt[Seq[JsObject]].getOrElse(Seq.empty)
@@ -98,11 +98,11 @@ class AlphaEdgeAudioModelClient(val api: AlphaEdgeApi, val sttOptions: AlphaEdge
     }
   }
 
-  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+  override def listVoices(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     List.empty.rightf
   }
 
-  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model).getOrElse(AlphaEdgeApi.defaultAudioModel)
     val diarization = rawBody.select("enable_diarization").asOptBoolean.orElse(sttOptions.enableDiarization)
     val postcorrect = rawBody.select("enable_postcorrect").asOptBoolean.orElse(sttOptions.enablePostcorrect)
@@ -123,7 +123,7 @@ class AlphaEdgeAudioModelClient(val api: AlphaEdgeApi, val sttOptions: AlphaEdge
         HttpEntity(postcorrect.toString.byteString),
       )
     }
-    val form = Multipart.FormData(parts: _*)
+    val form = Multipart.FormData(parts*)
     api.rawCallForm("POST", s"/models/${model}/transcript", form).map { response =>
       if (response.status == 200) {
         AudioTranscriptionResponse(response.json.select("text").asString, AudioTranscriptionResponseMetadata.empty).right
@@ -156,7 +156,7 @@ class AlphaEdgeChatClient(api: AlphaEdgeApi, options: AlphaEdgeChatClientOptions
 
   override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
 
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.asOpt[Seq[JsObject]].getOrElse(Seq.empty)
@@ -172,7 +172,7 @@ class AlphaEdgeChatClient(api: AlphaEdgeApi, options: AlphaEdgeChatClientOptions
     mediaType.split("/").lastOption.map(_.split(";").head.trim).filter(_.nonEmpty).getOrElse("bin")
 
   // OCR needs a single image/pdf file. We extract it from the first image or pdf content part of the prompt.
-  private def resolveOcrFile(prompt: ChatPrompt)(implicit ec: ExecutionContext, env: Env): Future[Option[(ByteString, String, String)]] = {
+  private def resolveOcrFile(prompt: ChatPrompt)(using ec: ExecutionContext, env: Env): Future[Option[(ByteString, String, String)]] = {
     val parts = prompt.messages.flatMap(_.contentParts)
     parts.collectFirst {
       case img: ChatMessageContent.ImageContent => (img.data, img.url, img.mediaType, s"image.${fileExtension(img.mediaType)}")
@@ -185,7 +185,7 @@ class AlphaEdgeChatClient(api: AlphaEdgeApi, options: AlphaEdgeChatClientOptions
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject
     val finalModel = computeModel(originalBody).getOrElse(options.model)
     val pdfPassword = (if (options.allowConfigOverride) obody.select("pdf_password").asOptString else None).orElse(options.pdfPassword)
@@ -203,7 +203,7 @@ class AlphaEdgeChatClient(api: AlphaEdgeApi, options: AlphaEdgeChatClientOptions
         ).applyOnWithOpt(pdfPassword) {
           case (list, pwd) => list :+ Multipart.FormData.BodyPart("pdf_password", HttpEntity(pwd.byteString))
         }
-        val form = Multipart.FormData(parts: _*)
+        val form = Multipart.FormData(parts*)
         api.rawCallForm("POST", s"/models/${finalModel}/ocr", form).map { resp =>
           if (resp.status == 200) {
             val body = resp.json
@@ -224,7 +224,6 @@ class AlphaEdgeChatClient(api: AlphaEdgeApi, options: AlphaEdgeChatClientOptions
                 val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
                 obj ++ Json.obj("ai" -> (arr ++ Seq(slug)))
               }
-              case Some(other) => other
               case None => Json.obj("ai" -> Seq(slug))
             }
             val gen = ChatGeneration(ChatMessage.output("assistant", text, None, Json.obj("role" -> "assistant", "content" -> text)))
@@ -253,7 +252,7 @@ object AlphaEdgeOcrModelClientOptions {
 
 class AlphaEdgeOcrModelClient(val api: AlphaEdgeApi, val options: AlphaEdgeOcrModelClientOptions, id: String) extends OcrModelClient {
 
-  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = {
+  override def listModels(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = {
     api.rawCall("GET", "/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.asOpt[Seq[JsObject]].getOrElse(Seq.empty)
@@ -268,7 +267,7 @@ class AlphaEdgeOcrModelClient(val api: AlphaEdgeApi, val options: AlphaEdgeOcrMo
     }
   }
 
-  private def resolveBytes(opts: OcrModelClientInputOptions)(implicit ec: ExecutionContext, env: Env): Future[Option[(ByteString, String, String)]] = {
+  private def resolveBytes(opts: OcrModelClientInputOptions)(using ec: ExecutionContext, env: Env): Future[Option[(ByteString, String, String)]] = {
     val ct = opts.fileContentType.getOrElse("application/octet-stream")
     val name = opts.fileName.getOrElse(if (ct.startsWith("image/")) s"image.${ct.split("/").lastOption.getOrElse("png")}" else "document.pdf")
     opts.bytes match {
@@ -280,7 +279,7 @@ class AlphaEdgeOcrModelClient(val api: AlphaEdgeApi, val options: AlphaEdgeOcrMo
     }
   }
 
-  override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
+  override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
     val model = opts.model.getOrElse(options.model)
     val pdfPassword = rawBody.select("pdf_password").asOptString.orElse(options.pdfPassword)
     resolveBytes(opts).flatMap {
@@ -292,7 +291,7 @@ class AlphaEdgeOcrModelClient(val api: AlphaEdgeApi, val options: AlphaEdgeOcrMo
         ).applyOnWithOpt(pdfPassword) {
           case (list, pwd) => list :+ Multipart.FormData.BodyPart("pdf_password", HttpEntity(pwd.byteString))
         }
-        val form = Multipart.FormData(parts: _*)
+        val form = Multipart.FormData(parts*)
         api.rawCallForm("POST", s"/models/${model}/ocr", form).map { resp =>
           if (resp.status == 200) {
             val text = resp.json.select("text").asString

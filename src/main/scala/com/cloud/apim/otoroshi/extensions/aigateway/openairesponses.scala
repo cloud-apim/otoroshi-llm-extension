@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway
 
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
 /**
  * Translation between the OpenAI Responses API shape (`/responses`) and the chat/completions shape

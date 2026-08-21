@@ -1,14 +1,15 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
+import play.api.libs.ws.WSBodyWritables.given
 
 // Generic HTTP backend for persistent memory
 // The remote API is expected to support:
@@ -38,10 +39,10 @@ class HttpPersistentMemoryClient(val config: JsObject, _memoryId: String) extend
 
   private def sessionUrl(sessionId: String): String = s"$baseUrl/${_memoryId}/$sessionId"
 
-  override def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(sessionUrl(sessionId))
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .put(Json.obj(
         "messages" -> JsArray(messages.map(_.raw))
@@ -50,15 +51,15 @@ class HttpPersistentMemoryClient(val config: JsObject, _memoryId: String) extend
         if (resp.status >= 200 && resp.status < 300) {
           Right(())
         } else {
-          Left(Json.obj("error" -> s"HTTP memory update error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"HTTP memory update error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }
 
-  override def getMessages(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
+  override def getMessages(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
     env.Ws
       .url(sessionUrl(sessionId))
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .get()
       .map { resp =>
@@ -68,22 +69,22 @@ class HttpPersistentMemoryClient(val config: JsObject, _memoryId: String) extend
         } else if (resp.status == 404) {
           Right(Seq.empty[PersistedChatMessage])
         } else {
-          Left(Json.obj("error" -> s"HTTP memory get error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"HTTP memory get error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }
 
-  override def clearMemory(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def clearMemory(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(sessionUrl(sessionId))
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .delete()
       .map { resp =>
         if (resp.status >= 200 && resp.status < 300 || resp.status == 404) {
           Right(())
         } else {
-          Left(Json.obj("error" -> s"HTTP memory delete error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"HTTP memory delete error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }

@@ -1,11 +1,11 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
-import akka.util.ByteString
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.models.EntityLocation
-import otoroshi.next.models._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.models.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{OpenAiCompatProxy, OpenAiResponsesProxy, OpenResponseCompatProxy}
 import play.api.libs.json.{JsObject, JsValue, Json}
 import reactor.core.publisher.Mono

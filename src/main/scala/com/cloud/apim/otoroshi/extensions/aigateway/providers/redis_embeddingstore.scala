@@ -1,19 +1,19 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import io.lettuce.core.codec.StringCodec
 import io.lettuce.core.output.{IntegerOutput, NestedMultiOutput, StatusOutput}
 import io.lettuce.core.protocol.{CommandArgs, ProtocolKeyword}
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import java.nio.charset.StandardCharsets
 import java.nio.{ByteBuffer, ByteOrder}
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.{ExecutionContext, Future, Promise}
-import scala.jdk.CollectionConverters._
+import scala.jdk.CollectionConverters.*
 
 // ---------------------------------------------------------------------------
 //  Redis Stack (RediSearch) backed EmbeddingStoreClient
@@ -27,10 +27,10 @@ object RedisEmbeddingStoreClient {
   private val verifiedIndices = new TrieMap[String, Boolean]()
   def resetVerifiedIndex(indexName: String): Unit = verifiedIndices.remove(indexName)
 
-  private def cmd(name: String): ProtocolKeyword = new ProtocolKeyword {
-    private val bytes = name.getBytes(StandardCharsets.US_ASCII)
+  private def cmd(cmdName: String): ProtocolKeyword = new ProtocolKeyword {
+    private val bytes = cmdName.getBytes(StandardCharsets.US_ASCII)
     override def getBytes: Array[Byte] = bytes
-    override def name(): String = name
+    override def name(): String = cmdName
   }
 
   val FT_CREATE: ProtocolKeyword = cmd("FT.CREATE")
@@ -41,7 +41,7 @@ object RedisEmbeddingStoreClient {
 
 class RedisEmbeddingStoreClient (val config: JsObject, _storeId: String) extends EmbeddingStoreClient {
 
-  import RedisEmbeddingStoreClient._
+  import RedisEmbeddingStoreClient.*
 
   private lazy val connection: JsObject = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
   private lazy val url: String = connection.select("url").asOptString.getOrElse("redis://localhost:6379")
@@ -75,7 +75,7 @@ class RedisEmbeddingStoreClient (val config: JsObject, _storeId: String) extends
 
   // ---- index lifecycle ----
 
-  private def ensureIndex()(implicit ec: ExecutionContext): Future[Unit] = {
+  private def ensureIndex()(using ec: ExecutionContext): Future[Unit] = {
     if (verifiedIndices.contains(indexName)) {
       Future.successful(())
     } else {
@@ -111,7 +111,7 @@ class RedisEmbeddingStoreClient (val config: JsObject, _storeId: String) extends
 
   // ---- EmbeddingStoreClient impl ----
 
-  override def add(options: EmbeddingAddOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def add(options: EmbeddingAddOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     ensureIndex().flatMap { _ =>
       val key = s"${keyPrefix}${options.id}"
       val vectorBytes = floatsToBytes(options.embedding.vector)
@@ -135,7 +135,7 @@ class RedisEmbeddingStoreClient (val config: JsObject, _storeId: String) extends
     }
   }
 
-  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     val key = s"${keyPrefix}${options.id}"
     toFuture(redisConn.async().del(key))
       .map(_ => Right(()))
@@ -144,7 +144,7 @@ class RedisEmbeddingStoreClient (val config: JsObject, _storeId: String) extends
       }
   }
 
-  override def search(options: EmbeddingSearchOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
+  override def search(options: EmbeddingSearchOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
     ensureIndex().flatMap { _ =>
       val vectorBytes = floatsToBytes(options.embedding.vector)
 
@@ -180,7 +180,7 @@ class RedisEmbeddingStoreClient (val config: JsObject, _storeId: String) extends
             if (i + 1 < list.size) {
               val docKey = list(i).toString
               val fields = list(i + 1) match {
-                case l: java.util.List[_] => l.asScala.map(_.toString).toList
+                case l: java.util.List[?] => l.asScala.map(_.toString).toList
                 case _ => List.empty[String]
               }
               val fieldMap = fields.grouped(2).collect { case List(k, v) => k -> v }.toMap

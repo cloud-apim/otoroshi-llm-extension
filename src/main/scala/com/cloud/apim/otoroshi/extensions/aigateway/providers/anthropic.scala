@@ -1,17 +1,17 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.stream.scaladsl.{Framing, Source}
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AnthropicApiResponseChoiceMessageToolCall, GenericApiResponseChoiceMessageToolCall, LlmFunctions}
-import diffson.DiffOps
+import org.apache.pekko.stream.scaladsl.{Framing, Source}
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AnthropicApiResponseChoiceMessageToolCall, LlmFunctions}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
-import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
+import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.matching.Regex
@@ -119,9 +119,9 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
   override def supportsCompletion: Boolean = true
   override def supportsStreaming: Boolean = true
 
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("Anthropic", method, url, body)(env)
+    ProviderHelpers.logCall("Anthropic", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -142,17 +142,17 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
       .execute()
   }
 
-  override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {
+  override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {
     rawCall(method, path, body)
       .map(r => ProviderHelpers.wrapResponse("Anthropic", r, env) { resp =>
         acc.updateAnthropic(resp.json.select("usage").asOpt[JsObject])
-        AnthropicApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+        AnthropicApiResponse(resp.status, resp.headers.view.mapValues(_.last).toMap, resp.json)
       })
   }
 
-  def raw_stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
+  def raw_stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, ?], WSResponse)]] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logStream(providerName, method, url, body)(env)
+    ProviderHelpers.logStream(providerName, method, url, body)(using env)
     val messageRef = new AtomicReference[JsValue]()
     env.Ws
       .url(s"${baseUrl}${path}")
@@ -203,7 +203,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
       })
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
+  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, ?], WSResponse)]] = {
     raw_stream(method, path, body, acc)
       .map {
         case Left(e) => Left(e)
@@ -216,7 +216,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
       }
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {
     if (currentCallCounter >= maxCalls) {
       return call(method, path, body, acc)
     }
@@ -230,7 +230,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.body.select("content").as[Seq[JsObject]].filter(o => o.select("type").asOptString.contains("tool_use"))
-              LlmFunctions.callToolsAnthropic(toolCalls.map(tc => AnthropicApiResponseChoiceMessageToolCall(tc)), mcpConnectors, providerName, attrs, nameToFunction)(ec, env)
+              LlmFunctions.callToolsAnthropic(toolCalls.map(tc => AnthropicApiResponseChoiceMessageToolCall(tc)), mcpConnectors, providerName, attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   val newMessages: Seq[JsValue] = messages ++ callResps
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
@@ -247,7 +247,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
     }
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[AnthropicApiResponseChunk, ?], WSResponse)]] = {
     if (currentCallCounter >= maxCalls) {
       return stream(method, path, body, acc)
     }
@@ -268,7 +268,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
               // println("start tool_user")
               isToolCall = true
               toolCalls = toolCalls :+ AnthropicChatResponseChunkChoiceDeltaToolCall(chunk.choices.head.contentBlockObj)
-              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => ""): _*)
+              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => "")*)
               Source.empty
             } else if (isToolCall && !isToolCallEnded) {
               if (chunk.choices.head.stop_tool_use) {
@@ -306,7 +306,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
                   a
               }
               //println("calling !!!")
-              val a: Future[Either[JsValue, (Source[AnthropicApiResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsAnthropic(calls, mcpConnectors, providerName, attrs, nameToFunction)(ec, env)
+              val a: Future[Either[JsValue, (Source[AnthropicApiResponseChunk, ?], WSResponse)]] = LlmFunctions.callToolsAnthropic(calls, mcpConnectors, providerName, attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -429,7 +429,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
 
   override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
 
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/v1/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
@@ -562,7 +562,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     result.toList
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody).applyOn(cleanupDeprecatedSamplingParams)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -611,7 +611,6 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
             val newArr = arr ++ Seq(slug)
             obj ++ Json.obj("ai" -> newArr)
           }
-          case Some(other) => other
           case None => Json.obj("ai" -> Seq(slug))
         }
         val role = resp.body.select("role").asOpt[String].getOrElse("assistant")
@@ -652,7 +651,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody).applyOn(cleanupDeprecatedSamplingParams)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -707,7 +706,6 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
                 val newArr = arr ++ Seq(slug)
                 obj ++ Json.obj("ai" -> newArr)
               }
-              case Some(other) => other
               case None => Json.obj("ai" -> Seq(slug))
             }
             true

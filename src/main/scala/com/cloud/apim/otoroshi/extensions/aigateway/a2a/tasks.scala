@@ -2,9 +2,9 @@ package com.cloud.apim.otoroshi.extensions.aigateway.a2a
 
 import otoroshi.env.Env
 import otoroshi.storage.RedisLike
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import java.util.Base64
 import scala.concurrent.{ExecutionContext, Future}
@@ -23,7 +23,7 @@ case class A2ATaskPage(tasks: Seq[A2ATask], nextPageToken: String, pageSize: Int
 // by providing an alternative RedisLike.
 class A2ATaskStore(env: Env, redisOpt: Option[RedisLike] = None) {
 
-  private implicit val ec: ExecutionContext = env.otoroshiExecutionContext
+  private given ec: ExecutionContext = env.otoroshiExecutionContext
 
   private def redis: RedisLike = redisOpt.getOrElse(env.datastores.redis)
 
@@ -85,12 +85,12 @@ class A2ATaskStore(env: Env, redisOpt: Option[RedisLike] = None) {
       val ids = members.map(_.utf8String)
       Future.sequence(ids.map(id => get(id).map(id -> _))).flatMap { pairs =>
         val missing = pairs.collect { case (id, None) => id }
-        val healed = if (missing.nonEmpty) redis.srem(sourceKey, missing: _*).map(_ => ()) else Future.successful(())
+        val healed = if (missing.nonEmpty) redis.srem(sourceKey, missing*).map(_ => ()) else Future.successful(())
         healed.map { _ =>
           val all = pairs.collect { case (_, Some(t)) => t }
             .filter(t => status.forall(s => t.status.state == s))
             .filter(t => statusTimestampAfter.forall(after => t.status.timestamp.exists(_ >= after)))
-            .sortBy(_.status.timestamp.getOrElse(""))(Ordering[String].reverse)
+            .sortBy(_.status.timestamp.getOrElse(""))(using Ordering[String].reverse)
           val total = all.size
           val page = all.slice(offset, offset + size).map(t => if (includeArtifacts) t else t.copy(artifacts = Seq.empty))
           val next = if (offset + size < total) encodeOffset(offset + size) else ""

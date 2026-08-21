@@ -1,13 +1,13 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
+import org.apache.pekko.stream.Materializer
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatClient
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ChatClientWithCostsTracking
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.mvc.Result
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -102,7 +102,7 @@ class AiLlmResponseHeaders extends NgRequestTransformer {
   override def transformsResponse: Boolean = true
   override def transformsRequest: Boolean = false
 
-  override def transformResponse(ctx: NgTransformerResponseContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
+  override def transformResponse(ctx: NgTransformerResponseContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
     val config = ctx.cachedConfig(internalName)(AiLlmResponseHeadersConfig.format).getOrElse(AiLlmResponseHeadersConfig.default)
     val headers = AiLlmResponseHeaders.computeHeaders(ctx.attrs, config.prefix, config.includeCosts)
     if (headers.isEmpty) {

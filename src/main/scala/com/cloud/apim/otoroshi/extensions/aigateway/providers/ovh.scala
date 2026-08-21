@@ -1,16 +1,16 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.stream.scaladsl.{Framing, Source}
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.stream.scaladsl.{Framing, Source}
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import com.github.blemale.scaffeine.Scaffeine
-import otoroshi.api.OtoroshiEnvHolder
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsArray, JsObject, JsValue, Json, __}
+import play.api.libs.json.{JsObject, JsValue, Json}
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
@@ -68,7 +68,7 @@ object OVHAiEndpointsApi {
   val cache = Scaffeine().expireAfterWrite(1.hour).build[String, JsValue]()
   val apikey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.ewogICJyb2xlIjogImFub24iLAogICJpc3MiOiAic3VwYWJhc2UiLAogICJpYXQiOiAxNzEwNzE2NDAwLAogICJleHAiOiAxODY4NDgyODAwCn0.Jty_eO4oWqLm4Lx_LfbpRW5WESXYXtT2humbBq2Pal8" // good until 2029
 
-  def getModelsList()(implicit ec: ExecutionContext, env: Env): Future[Either[String, List[OVHAiEndpointsApiModel]]] = {
+  def getModelsList()(using ec: ExecutionContext, env: Env): Future[Either[String, List[OVHAiEndpointsApiModel]]] = {
     val key = "all_models"
     cache.getIfPresent(key) match {
       case Some(models) =>
@@ -97,14 +97,14 @@ object OVHAiEndpointsApi {
     }
   }
 
-  def getModel(model: String)(implicit ec: ExecutionContext, env: Env): Future[Either[String, OVHAiEndpointsApiModel]] = {
+  def getModel(model: String)(using ec: ExecutionContext, env: Env): Future[Either[String, OVHAiEndpointsApiModel]] = {
     val key = model
     cache.getIfPresent(key) match {
       case Some(model) =>
         OVHAiEndpointsApiModel(model).rightf
       case None => {
         getModelsList().flatMap {
-          case Left(err) => s"model url not found for '${model}'".leftf
+          case Left(_) => s"model url not found for '${model}'".leftf
           case Right(modelRefs) => {
             modelRefs.find(_.name == model) match {
               case None => s"model url not found in model refs for '${model}'".leftf
@@ -133,12 +133,12 @@ object OVHAiEndpointsApi {
     }
   }
 
-  def extractModelUrlsMap()(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+  def extractModelUrlsMap()(using ec: ExecutionContext, env: Env): Future[Unit] = {
     cache.getIfPresent("model_urls_map") match {
       case Some(_) => ().vfuture
       case None => {
         OVHAiEndpointsApi.getModelsList().flatMap {
-          case Left(err) => ().vfuture
+          case Left(_) => ().vfuture
           case Right(list) => {
             list.filter(v => v.isLlm && v.isAvailable).mapAsync { model =>
               env.Ws.url(model.documentation_url).get().map { r =>
@@ -150,7 +150,7 @@ object OVHAiEndpointsApi {
                 models.headOption.map(m => (m, model.gradio_url))
               }
             }.map(_.flatten).map { tuples =>
-              cache.put("model_urls_map", JsObject(tuples.toMap.mapValues(_.json)))
+              cache.put("model_urls_map", JsObject(tuples.toMap.view.mapValues(_.json).toMap))
             }
           }
         }
@@ -158,7 +158,7 @@ object OVHAiEndpointsApi {
     }
   }
 
-  def getRealModelNames()(implicit ec: ExecutionContext, env: Env): Future[Either[String, List[String]]] = {
+  def getRealModelNames()(using ec: ExecutionContext, env: Env): Future[Either[String, List[String]]] = {
     cache.getIfPresent("model_urls_map") match {
       case Some(obj) => obj.asObject.value.keys.toList.rightf
       case None => extractModelUrlsMap().map { _ =>
@@ -167,7 +167,7 @@ object OVHAiEndpointsApi {
     }
   }
 
-  def getUrlFromModel(modelName: String)(implicit ec: ExecutionContext, env: Env): Future[Either[String, String]] = {
+  def getUrlFromModel(modelName: String)(using ec: ExecutionContext, env: Env): Future[Either[String, String]] = {
     cache.getIfPresent("model_urls_map") match {
       case Some(obj) =>
         obj.asObject.value.get(modelName).map(_.asString).orElse(
@@ -188,13 +188,13 @@ class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token
   val supportsCompletion: Boolean = true
   val supportsStreaming: Boolean = true
 
-  def rawCall(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[String, WSResponse]] = {
+  def rawCall(model: String, method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[Either[String, WSResponse]] = {
     //val url = OVHAiEndpointsModels.modelUrls.get(model).getOrElse(s"${model.toLowerCase().replaceAll("\\.", "")}.${baseDomain}")
-    OVHAiEndpointsApi.getUrlFromModel(model)(env.otoroshiExecutionContext, env).flatMap {
+    OVHAiEndpointsApi.getUrlFromModel(model)(using env.otoroshiExecutionContext, env).flatMap {
       case Left(err) => err.leftf
       case Right(url) => {
         val furl = s"${url}${path}"
-        ProviderHelpers.logCall("OVH", method, furl, body)(env)
+        ProviderHelpers.logCall("OVH", method, furl, body)(using env)
         env.Ws
           .url(furl)
           .withHttpHeaders(
@@ -213,23 +213,23 @@ class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token
     }
   }
 
-  def call(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, OVHAiEndpointsApiResponse]] = {
+  def call(model: String, method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[Either[JsValue, OVHAiEndpointsApiResponse]] = {
     rawCall(model, method, path, body)
       .map {
         case Left(err) => Left(err.json)
         case Right(r) => ProviderHelpers.wrapResponse("OVH", r, env) { resp =>
-          OVHAiEndpointsApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+          OVHAiEndpointsApiResponse(resp.status, resp.headers.view.mapValues(_.last).toMap, resp.json)
         }
       }
   }
 
-  def stream(model: String, method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  def stream(model: String, method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {
     // val url = OVHAiEndpointsModels.modelUrls.get(model).getOrElse(s"${model.toLowerCase().replaceAll("\\.", "")}.${baseDomain}")
-    OVHAiEndpointsApi.getUrlFromModel(model)(env.otoroshiExecutionContext, env).flatMap {
+    OVHAiEndpointsApi.getUrlFromModel(model)(using env.otoroshiExecutionContext, env).flatMap {
       case Left(err) => err.json.leftf
       case Right(url) => {
         val furl = s"${url}${path}"
-        ProviderHelpers.logStream("OVH", method, furl, body)(env)
+        ProviderHelpers.logStream("OVH", method, furl, body)(using env)
         env.Ws
           .url(s"${url}${path}")
           .withHttpHeaders(
@@ -304,7 +304,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
 
   override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
 
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     if (raw) {
       api.rawCall(options.model, "GET", "/api/openai_compat/v1/models", None).map {
         case Left(err) =>
@@ -319,14 +319,14 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
         }
       }
     } else {
-      OVHAiEndpointsApi.getRealModelNames()(ec, api.env).map {
-        case Left(err) => Right(OVHAiEndpointsModels.backup_model_urls.keys.toList)
+      OVHAiEndpointsApi.getRealModelNames()(using ec, api.env).map {
+        case Left(_) => Right(OVHAiEndpointsModels.backup_model_urls.keys.toList)
         case Right(list) => list.right
       }
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -368,7 +368,6 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
             val newArr = arr ++ Seq(slug)
             obj ++ Json.obj("ai" -> newArr)
           }
-          case Some(other) => other
           case None => Json.obj("ai" -> Seq(slug))
         }
         val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
@@ -380,7 +379,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -423,7 +422,6 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
                   val newArr = arr ++ Seq(slug)
                   obj ++ Json.obj("ai" -> newArr)
                 }
-                case Some(other) => other
                 case None => Json.obj("ai" -> Seq(slug))
               }
               true
@@ -450,7 +448,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
     }
   }
 
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -490,7 +488,6 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
             val newArr = arr ++ Seq(slug)
             obj ++ Json.obj("ai" -> newArr)
           }
-          case Some(other) => other
           case None => Json.obj("ai" -> Seq(slug))
         }
         val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>

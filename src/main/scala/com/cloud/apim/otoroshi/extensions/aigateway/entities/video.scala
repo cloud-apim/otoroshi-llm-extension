@@ -2,16 +2,16 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.VideoModelClient
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.VideosGenModelClientDecorators
-import com.cloud.apim.otoroshi.extensions.aigateway.providers._
-import otoroshi.api._
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
+import otoroshi.api.*
 import otoroshi.env.Env
-import otoroshi.models._
+import otoroshi.models.*
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
-import otoroshi.storage._
-import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
-import play.api.libs.json._
+import otoroshi.storage.*
+import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.*
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -35,7 +35,7 @@ case class VideoModel(
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
   def slugName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
-  def getVideoModelClient()(implicit env: Env): Option[VideoModelClient] = {
+  def getVideoModelClient()(using env: Env): Option[VideoModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
@@ -63,13 +63,13 @@ object VideoModel {
   // `supportedProviders` (and the providers catalog) is derived from these keys.
   val clientBuilders: Map[String, VideoModel.ClientContext => Option[VideoModelClient]] = Map(
     "luma" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val opts = LumaVideoModelClientOptions.fromJson(options)
       new LumaVideoModelClient(api, opts, id).some
     },
     "openrouter" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val opts = OpenRouterVideoModelClientOptions.fromJson(options)
       new OpenRouterVideoModelClient(api, opts, id).some
@@ -120,7 +120,7 @@ object VideoModel {
         extractIdf = c => datastores.videoModelsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, p, _) => {
           p.get("kind").map(_.toLowerCase()) match {
             case Some("luma") => VideoModel(
               id = IdGenerator.namedId("video-model", env),
@@ -172,7 +172,7 @@ class KvVideoModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike,
   extends VideoModelsDataStore
     with RedisLikeStore[VideoModel] {
   override def fmt: Format[VideoModel]                  = VideoModel.format
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
   override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:videomodels:$id"
   override def extractId(value: VideoModel): String    = value.id
 }

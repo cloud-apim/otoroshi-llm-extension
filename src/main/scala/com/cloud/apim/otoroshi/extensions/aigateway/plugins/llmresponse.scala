@@ -1,14 +1,14 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
+import org.apache.pekko.stream.Materializer
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage}
 import otoroshi.el.GlobalExpressionLanguage
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -16,7 +16,7 @@ import scala.util.{Failure, Success, Try}
 
 case class LlmResponseConfig(ref: String = "", _prompt: String = "", promptRef: Option[String] = None, contextRef: Option[String] = None) extends NgPluginConfig {
   def json: JsValue = LlmResponseConfig.format.writes(this)
-  def promptBeforeEl(implicit env: Env): String = promptRef match {
+  def promptBeforeEl(using env: Env): String = promptRef match {
     case None => _prompt
     case Some(ref) => env.adminExtensions.extension[AiExtension] match {
       case None => _prompt
@@ -26,7 +26,7 @@ case class LlmResponseConfig(ref: String = "", _prompt: String = "", promptRef: 
       }
     }
   }
-  def preChatMessages(implicit env: Env): Seq[InputChatMessage] = {
+  def preChatMessages(using env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -38,7 +38,7 @@ case class LlmResponseConfig(ref: String = "", _prompt: String = "", promptRef: 
       }
     }
   }
-  def postChatMessages(implicit env: Env): Seq[InputChatMessage] = {
+  def postChatMessages(using env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -140,7 +140,7 @@ class LlmResponseEndpoint extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(LlmResponseConfig.format).getOrElse(LlmResponseConfig.default)
     env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref)) match {
       case None => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "provider not found")))).vfuture // TODO: rewrite error

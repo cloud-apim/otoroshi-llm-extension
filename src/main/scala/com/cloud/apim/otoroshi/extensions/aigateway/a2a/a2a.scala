@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.a2a
 
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
 import java.time.format.DateTimeFormatter
 import java.time.{Instant, ZoneOffset}

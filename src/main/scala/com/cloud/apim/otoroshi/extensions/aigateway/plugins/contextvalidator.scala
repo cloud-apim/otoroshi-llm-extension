@@ -4,8 +4,8 @@ import com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiPromptRequestConfi
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
 import otoroshi.env.Env
 import otoroshi.gateway.Errors
-import otoroshi.next.plugins.api._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.plugins.api.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, Json}
 import play.api.mvc.Results
@@ -33,7 +33,7 @@ class AiContextValidator extends NgAccessValidator {
     ().vfuture
   }
 
-  private def validate(ctx: NgAccessContext, config: AiPromptRequestConfig)(implicit env: Env, ec: ExecutionContext): Future[Boolean] = {
+  private def validate(ctx: NgAccessContext, config: AiPromptRequestConfig)(using env: Env, ec: ExecutionContext): Future[Boolean] = {
     env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref)) match {
       case None => false.vfuture // TODO: log it
       case Some(provider) => provider.getChatClient() match {
@@ -43,7 +43,7 @@ class AiContextValidator extends NgAccessValidator {
             ChatMessage.input("system", config.prompt, None, Json.obj()),
             ChatMessage.input("user", ctx.json.stringify, None, Json.obj()),
           ) ++ config.postChatMessages), ctx.attrs, Json.obj()).map {
-            case Left(err) => false // TODO: log it
+            case Left(_) => false // TODO: log it
             case Right(resp) => {
               val content = resp.headGeneration.message.content
               config.extractor match {
@@ -72,7 +72,7 @@ class AiContextValidator extends NgAccessValidator {
     }
   }
 
-  override def access(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+  override def access(ctx: NgAccessContext)(using env: Env, ec: ExecutionContext): Future[NgAccess] = {
     val config = ctx.cachedConfig(internalName)(AiPromptRequestConfig.format).getOrElse(AiPromptRequestConfig())
     validate(ctx, config) flatMap {
       case true => NgAccess.NgAllowed.vfuture

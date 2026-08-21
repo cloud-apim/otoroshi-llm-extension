@@ -1,11 +1,11 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsValue, Json}
 
@@ -23,7 +23,7 @@ object ChatClientWithProviderFallback {
 
 class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  private def fallbackClient()(implicit env: Env): Option[ChatClient] = {
+  private def fallbackClient()(using env: Env): Option[ChatClient] = {
     env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(originalProvider.providerFallback.get)).flatMap(_.getChatClient())
   }
 
@@ -31,7 +31,7 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
   // (Left or exception). When the per-provider circuit breaker is enabled and the primary's circuit
   // is open, the primary is skipped entirely and we go straight to the fallback (fail fast). Primary
   // outcomes feed the breaker (success closes the circuit, failures eventually open it).
-  private def withFallback[T](op: ChatClient => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
+  private def withFallback[T](op: ChatClient => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val settings = CircuitBreakerSettings.fromProvider(originalProvider)
 
     def callFallback(err: JsValue): Future[Either[JsValue, T]] = {
@@ -60,11 +60,11 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
     }
   }
 
-  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     withFallback(_.invoke(kind, originalPrompt, attrs, originalBody))
   }
 
-  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     withFallback(_.invokeStream(kind, originalPrompt, attrs, originalBody))
   }
 }

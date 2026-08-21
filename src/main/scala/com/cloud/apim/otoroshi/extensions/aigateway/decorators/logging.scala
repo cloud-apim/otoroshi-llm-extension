@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.{Sink, Source}
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import io.azam.ulidj.ULID
@@ -14,7 +14,7 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import scala.collection.mutable.ListBuffer
 import scala.concurrent.{ExecutionContext, Future}
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 
 object ChatClientWithRequestResponseLogging {
 
@@ -96,7 +96,7 @@ class ChatClientWithRequestResponseLogging(originalProvider: AiProvider, val cha
 
   // ---- blocking -----------------------------------------------------------
 
-  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val requestedAt = now()
     val logKind = s"${kind.name}/call"
     writeEntry(baseFields ++ Json.obj(
@@ -129,7 +129,7 @@ class ChatClientWithRequestResponseLogging(originalProvider: AiProvider, val cha
 
   // ---- stream -------------------------------------------------------------
 
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val requestedAt = now()
     val logKind = s"${kind.name}/stream"
     writeEntry(baseFields ++ Json.obj(

@@ -1,12 +1,12 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import io.lettuce.core.{RedisClient => LettuceRedisClient}
 import io.lettuce.core.api.StatefulRedisConnection
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.{ExecutionContext, Future, Promise}
@@ -98,7 +98,7 @@ class RedisPersistentMemoryClient(val config: JsObject, _memoryId: String) exten
     promise.future
   }
 
-  override def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     val json = Json.stringify(JsArray(messages.map(_.raw)))
     toFuture(conn.async().set(redisKey(sessionId), json))
       .map(_ => Right(()))
@@ -107,7 +107,7 @@ class RedisPersistentMemoryClient(val config: JsObject, _memoryId: String) exten
       }
   }
 
-  override def getMessages(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
+  override def getMessages(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
     toFuture(conn.async().get(redisKey(sessionId)))
       .map {
         case null => Right(Seq.empty[PersistedChatMessage])
@@ -120,7 +120,7 @@ class RedisPersistentMemoryClient(val config: JsObject, _memoryId: String) exten
       }
   }
 
-  override def clearMemory(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def clearMemory(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     toFuture(conn.async().del(redisKey(sessionId)))
       .map(_ => Right(()))
       .recover { case e: Throwable =>

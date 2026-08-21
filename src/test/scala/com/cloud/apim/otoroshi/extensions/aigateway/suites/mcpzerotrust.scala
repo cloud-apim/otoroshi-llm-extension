@@ -1,8 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.GuardrailItem
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpProxyEndpointConfig, McpRedaction, McpRedactionRule, McpToolPinning, McpZeroTrustConfig, PinVerdict}
-import play.api.libs.json.{JsArray, JsNull, JsNumber, JsObject, JsString, Json}
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpProxyEndpointConfig, McpRedaction, McpRedactionRule, McpToolPinning, McpZeroTrustConfig}
+import play.api.libs.json.{JsArray, JsObject, JsString, Json}
 
 // Pure unit tests for the Zero-Trust MCP security logic that does NOT require a booted Otoroshi:
 //   - tool fingerprinting / canonicalization (anti-rug-pull, sub-feature A)

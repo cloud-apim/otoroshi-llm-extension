@@ -6,10 +6,10 @@ import otoroshi.models.{EntityLocation, EntityLocationSupport}
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
 import otoroshi.storage.{BasicStore, RedisLike, RedisLikeStore}
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiGatewayExtensionDatastores, AiGatewayExtensionState}
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.McpProxyEndpointConfig
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import scala.util.{Failure, Success, Try}
 
@@ -101,8 +101,8 @@ object McpVirtualServer {
         description = (json \ "description").asOpt[String].getOrElse(""),
         metadata = (json \ "metadata").asOpt[Map[String, String]].getOrElse(Map.empty),
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
-        config = (json \ "config").asOpt(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default),
-        registry = (json \ "registry").asOpt(McpRegistryConfig.format).getOrElse(McpRegistryConfig.empty),
+        config = (json \ "config").asOpt(using McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default),
+        registry = (json \ "registry").asOpt(using McpRegistryConfig.format).getOrElse(McpRegistryConfig.empty),
       )
     } match {
       case Failure(ex) => JsError(ex.getMessage)
@@ -124,7 +124,7 @@ object McpVirtualServer {
         extractIdf = c => datastores.mcpVirtualServersDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, _, _) => {
           McpVirtualServer(
             id = IdGenerator.namedId("mcp-virtual-server", env),
             enabled = true,
@@ -156,7 +156,7 @@ class KvMcpVirtualServersDataStore(extensionId: AdminExtensionId, redisCli: Redi
     with RedisLikeStore[McpVirtualServer] {
   override def fmt: Format[McpVirtualServer] = McpVirtualServer.format
 
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
 
   override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:mcpvirtsrv:$id"
 

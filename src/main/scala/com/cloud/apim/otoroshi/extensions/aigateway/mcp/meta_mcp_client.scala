@@ -5,19 +5,19 @@ import com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic.ExpressionLa
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{McpConnector, McpSupport}
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
 import dev.langchain4j.invocation.InvocationContext
-import dev.langchain4j.mcp.client._
-import dev.langchain4j.model.chat.request.json._
+import dev.langchain4j.mcp.client.*
+import dev.langchain4j.model.chat.request.json.*
 import dev.langchain4j.service.tool.ToolExecutionResult
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import java.{util => ju}
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters.*
 import scala.collection.concurrent.TrieMap
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.concurrent.{Await, ExecutionContext, Future}
 
 private final case class MetaToolEntry(serverSlug: String, serverName: String, serverId: String, tool: ToolSpecification) {
@@ -184,8 +184,8 @@ object MetaMcpClient {
 
 class MetaMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) extends McpClient {
 
-  private implicit val _env: Env = env
-  private implicit val _ec: ExecutionContext = ec
+  private given _env: Env = env
+  private given _ec: ExecutionContext = ec
 
   override def subscribeToResource(uri: String): Unit = ()
 
@@ -412,7 +412,7 @@ class MetaMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) ext
     if (query.isEmpty) return Future.successful((true, "missing required argument 'query'"))
     val filterServers = args.select("servers").asOpt[Seq[String]].map(_.toSet).getOrElse(Set.empty[String])
     ensureSearchIndex().map { idx =>
-      val filterFn: ((String, _)) => Boolean = {
+      val filterFn: ((String, ?)) => Boolean = {
         case (docId, _) =>
           if (filterServers.isEmpty) true else idx.entries.get(docId).exists(e => filterServers.contains(e.serverSlug))
       }

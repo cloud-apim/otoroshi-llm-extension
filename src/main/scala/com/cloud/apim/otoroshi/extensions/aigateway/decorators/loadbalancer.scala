@@ -1,12 +1,12 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, KindBasedChatClient}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.cache.types.UnboundedTrieMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsBoolean, JsDefined, JsLookupResult, JsNull, JsNumber, JsObject, JsString, JsUndefined, JsValue, Json}
 
@@ -15,12 +15,12 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success}
 
 trait LoadBalancing {
-  def select(reqId: String, targets: Seq[AiProvider])(implicit env: Env): AiProvider
+  def select(reqId: String, targets: Seq[AiProvider])(using env: Env): AiProvider
 }
 
 object RoundRobin extends LoadBalancing {
   private val reqCounter                   = new AtomicInteger(0)
-  override def select(reqId: String, targets: Seq[AiProvider])(implicit env: Env): AiProvider = {
+  override def select(reqId: String, targets: Seq[AiProvider])(using env: Env): AiProvider = {
     val index: Int = reqCounter.incrementAndGet() % (if (targets.nonEmpty) targets.size else 1)
     targets.apply(index)
   }
@@ -28,7 +28,7 @@ object RoundRobin extends LoadBalancing {
 
 object Random extends LoadBalancing {
   private val random = new scala.util.Random
-  override def select(reqId: String, targets: Seq[AiProvider])(implicit env: Env): AiProvider = {
+  override def select(reqId: String, targets: Seq[AiProvider])(using env: Env): AiProvider = {
     val index = random.nextInt(targets.length)
     targets.apply(index)
   }
@@ -78,7 +78,7 @@ object BestResponseTime extends LoadBalancing {
     window.record(System.currentTimeMillis(), responseTime)
   }
 
-  override def select(reqId: String, targets: Seq[AiProvider])(implicit env: Env): AiProvider = {
+  override def select(reqId: String, targets: Seq[AiProvider])(using env: Env): AiProvider = {
     if (targets.isEmpty) throw new IllegalArgumentException("no targets to load balance on")
     val now = System.currentTimeMillis()
     val scored: Seq[(AiProvider, Option[Long])] = targets.map { t =>
@@ -106,7 +106,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
   override def isOpenAi: Boolean = true
   override def isAnthropic: Boolean = false
 
-  def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: (AiProvider, ChatClient) => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
+  def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: (AiProvider, ChatClient) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val refs: Seq[LoadBalancingTarget] = provider.options.select("refs")
       .asOpt[Seq[String]].map { seq =>
         seq.map(i => LoadBalancingTarget(i, 1, None))
@@ -184,7 +184,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
     }
   }
 
-  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     execute(prompt, attrs, originalBody) { (selected, client) =>
       val start = System.currentTimeMillis()
       client.invoke(kind, prompt, attrs, originalBody).map { resp =>
@@ -194,7 +194,7 @@ class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
     }
   }
 
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     execute(prompt, attrs, originalBody) { (selected, client) =>
       val start = System.currentTimeMillis()
       client.invokeStream(kind, prompt, attrs, originalBody).map { resp =>

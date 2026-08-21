@@ -1,14 +1,15 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
+import play.api.libs.ws.WSBodyWritables.given
 
 object ElasticsearchPersistentMemoryClient {
   lazy val logger = Logger("ElasticsearchPersistentMemoryClient")
@@ -40,10 +41,10 @@ class ElasticsearchPersistentMemoryClient(val config: JsObject, _memoryId: Strin
 
   private def docId(sessionId: String): String = s"${_memoryId}_${sessionId}"
 
-  override def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(s"$baseUrl/$index/_doc/${docId(sessionId)}")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .put(Json.obj(
         "memory_id" -> _memoryId,
@@ -54,15 +55,15 @@ class ElasticsearchPersistentMemoryClient(val config: JsObject, _memoryId: Strin
         if (resp.status == 200 || resp.status == 201) {
           Right(())
         } else {
-          Left(Json.obj("error" -> s"Elasticsearch update error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Elasticsearch update error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }
 
-  override def getMessages(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
+  override def getMessages(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
     env.Ws
       .url(s"$baseUrl/$index/_doc/${docId(sessionId)}")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .get()
       .map { resp =>
@@ -73,22 +74,22 @@ class ElasticsearchPersistentMemoryClient(val config: JsObject, _memoryId: Strin
         } else if (resp.status == 404) {
           Right(Seq.empty[PersistedChatMessage])
         } else {
-          Left(Json.obj("error" -> s"Elasticsearch get error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Elasticsearch get error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }
 
-  override def clearMemory(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def clearMemory(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(s"$baseUrl/$index/_doc/${docId(sessionId)}")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .delete()
       .map { resp =>
         if (resp.status == 200 || resp.status == 404) {
           Right(())
         } else {
-          Left(Json.obj("error" -> s"Elasticsearch delete error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Elasticsearch delete error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }

@@ -1,10 +1,10 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic
 
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 
 import java.net.URI
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.concurrent.{ExecutionContext, Future}
 
 object DocResource {
@@ -54,7 +54,7 @@ object DocResource {
     case class Failed(message: String) extends FetchResult
   }
 
-  def fetch(url: String)(implicit ec: ExecutionContext, env: Env): Future[FetchResult] = {
+  def fetch(url: String)(using ec: ExecutionContext, env: Env): Future[FetchResult] = {
     val parsed = scala.util.Try(new URI(url)).toOption
     parsed match {
       case None => FetchResult.InvalidUrl(s"Invalid URL: $url").vfuture.asInstanceOf[Future[FetchResult]]

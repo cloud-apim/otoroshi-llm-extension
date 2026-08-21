@@ -1,14 +1,15 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
+import play.api.libs.ws.WSBodyWritables.given
 
 object PineconeEmbeddingStoreClient {
   lazy val logger = Logger("PineconeEmbeddingStoreClient")
@@ -28,10 +29,10 @@ class PineconeEmbeddingStoreClient(val config: JsObject, _storeId: String) exten
     "Api-Key" -> apiKey
   )
 
-  override def add(options: EmbeddingAddOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def add(options: EmbeddingAddOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(s"$baseUrl/vectors/upsert")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .post(Json.obj(
         "vectors" -> Json.arr(Json.obj(
@@ -47,15 +48,15 @@ class PineconeEmbeddingStoreClient(val config: JsObject, _storeId: String) exten
         if (resp.status == 200) {
           Right(())
         } else {
-          Left(Json.obj("error" -> s"Pinecone upsert error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Pinecone upsert error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }
 
-  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(s"$baseUrl/vectors/delete")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .post(Json.obj(
         "ids" -> Json.arr(options.id),
@@ -65,15 +66,15 @@ class PineconeEmbeddingStoreClient(val config: JsObject, _storeId: String) exten
         if (resp.status == 200) {
           Right(())
         } else {
-          Left(Json.obj("error" -> s"Pinecone delete error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Pinecone delete error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }
 
-  override def search(options: EmbeddingSearchOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
+  override def search(options: EmbeddingSearchOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
     env.Ws
       .url(s"$baseUrl/query")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .post(Json.obj(
         "vector" -> Json.toJson(options.embedding.vector),
@@ -98,7 +99,7 @@ class PineconeEmbeddingStoreClient(val config: JsObject, _storeId: String) exten
           }
           Right(EmbeddingSearchResponse(matches))
         } else {
-          Left(Json.obj("error" -> s"Pinecone query error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Pinecone query error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }

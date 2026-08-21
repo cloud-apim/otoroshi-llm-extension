@@ -1,8 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools
 
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic.Catalog
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -44,7 +44,7 @@ class SearchTool extends AssistantTool {
     ),
   )
 
-  override def call(arguments: JsValue, ctx: ToolCallContext)(implicit ec: ExecutionContext): Future[String] = {
+  override def call(arguments: JsValue, ctx: ToolCallContext)(using ec: ExecutionContext): Future[String] = {
     val query = arguments.select("query").asOpt[String].map(_.trim).getOrElse("")
     if (query.isEmpty) return Future.successful("Error: missing 'query' argument.")
     println(s"call tool 'search': ${query}")

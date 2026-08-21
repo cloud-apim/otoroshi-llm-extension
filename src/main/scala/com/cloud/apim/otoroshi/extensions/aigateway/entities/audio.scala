@@ -2,16 +2,16 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.AudioModelClient
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.AudioModelClientDecorators
-import com.cloud.apim.otoroshi.extensions.aigateway.providers._
-import otoroshi.api._
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
+import otoroshi.api.*
 import otoroshi.env.Env
-import otoroshi.models._
+import otoroshi.models.*
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
-import otoroshi.storage._
-import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
-import play.api.libs.json._
+import otoroshi.storage.*
+import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.*
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -42,7 +42,7 @@ case class AudioModel(
 
   def slugName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
 
-  def getAudioModelClient()(implicit env: Env): Option[AudioModelClient] = {
+  def getAudioModelClient()(using env: Env): Option[AudioModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val _token = connection.select("token").asOpt[String].getOrElse("xxx")
@@ -72,7 +72,7 @@ object AudioModel {
   // `supportedProviders` (and the providers catalog) is derived from these keys.
   val clientBuilders: Map[String, AudioModel.ClientContext => Option[AudioModelClient]] = Map(
     "openai" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
       val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
       val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
@@ -80,7 +80,7 @@ object AudioModel {
       new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
     },
     "azure-openai" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val resourceName = connection.select("resource_name").as[String]
       val deploymentId = connection.select("deployment_id").as[String]
       val version = connection.select("api_version").asOpt[String].getOrElse("v1")
@@ -98,7 +98,7 @@ object AudioModel {
       }
     },
     "cloud-temple" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
       val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
       val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
@@ -106,7 +106,7 @@ object AudioModel {
       new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
     },
     "groq" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val ttsopts = GroqAudioModelClientTtsOptions.fromJson(ttsOptions)
       val sttopts = GroqAudioModelClientSttOptions.fromJson(sttOptions)
@@ -114,33 +114,33 @@ object AudioModel {
       new GroqAudioModelClient(api, ttsopts, sttopts, transopts, id).some
     },
     "elevenlabs" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new ElevenLabsApi(baseUrl.getOrElse(ElevenLabsApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val ttsopts = ElevenLabsAudioModelClientTtsOptions.fromJson(ttsOptions)
       val sttopts = ElevenLabsAudioModelClientSttOptions.fromJson(sttOptions)
       new ElevenLabsAudioModelClient(api, ttsopts, sttopts, id).some
     },
     "mistral" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val sttopts = MistralAiAudioModelClientSttOptions.fromJson(sttOptions)
       new MistralAIAudioModelClient(api, sttopts, id).some
     },
     "alphaedge" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val sttopts = AlphaEdgeAudioModelClientSttOptions.fromJson(sttOptions)
       new AlphaEdgeAudioModelClient(api, sttopts, id).some
     },
     "openrouter" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val ttsopts = OpenRouterAudioModelClientTtsOptions.fromJson(ttsOptions)
       val sttopts = OpenRouterAudioModelClientSttOptions.fromJson(sttOptions)
       new OpenRouterAudioModelClient(api, ttsopts, sttopts, id).some
     },
     "openai-compatible" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       // generic OpenAI-compatible audio endpoint: base url, display name, headers and param
       // mappings are all driven by the connection config (dynamic name). TTS/STT/Translation are
       // enabled according to the configured options.
@@ -166,7 +166,7 @@ object AudioModel {
       new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
     },
     "ovh-ai-endpoints" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       // OVH AI Endpoints audio: transcription (speech-to-text) only, through their unified
       // OpenAI-compatible API. TTS and translation are forced off.
       val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
@@ -223,7 +223,7 @@ object AudioModel {
         extractIdf = c => datastores.AudioModelsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, p, _) => {
           p.get("kind").map(_.toLowerCase()) match {
             case Some("openai") => AudioModel(
               id = IdGenerator.namedId("audio-model", env),
@@ -283,7 +283,7 @@ class KvAudioModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike,
     with RedisLikeStore[AudioModel] {
   override def fmt: Format[AudioModel] = AudioModel.format
 
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
 
   override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:audiomodels:$id"
 

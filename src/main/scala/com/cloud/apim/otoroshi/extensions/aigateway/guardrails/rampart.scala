@@ -8,13 +8,14 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, InputChatMessage, OutputChatMessage}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.{JsObject, Json}
 import play.api.libs.typedmap.TypedKey
 
 import java.nio.LongBuffer
 import java.nio.charset.StandardCharsets
 import java.util.regex.Pattern
+import scala.compiletime.uninitialized
 import scala.collection.mutable
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -254,7 +255,7 @@ object RampartEngine {
     }
   }
 
-  private def resourceBytes(path: String)(implicit env: Env): Array[Byte] = {
+  private def resourceBytes(path: String)(using env: Env): Array[Byte] = {
     val is = env.environment.resourceAsStream(path).getOrElse(throw new RuntimeException(s"rampart: resource not found '$path'"))
     try {
       val buffer = new java.io.ByteArrayOutputStream()
@@ -266,15 +267,16 @@ object RampartEngine {
   }
 
   // the DJL tokenizer loads from a filesystem path, so extract the bundled tokenizer.json to a temp file once
-  private def resourceToTemp(path: String)(implicit env: Env): java.nio.file.Path = {
+  private def resourceToTemp(path: String)(using env: Env): java.nio.file.Path = {
     val tmp = java.nio.file.Files.createTempFile("rampart-tokenizer-", ".json")
     java.nio.file.Files.write(tmp, resourceBytes(path))
     tmp.toFile.deleteOnExit()
     tmp
   }
 
-  @volatile private var _instance: RampartEngine = _
-  def get(implicit env: Env): RampartEngine = {
+  @volatile private var _instance: RampartEngine = uninitialized
+
+  def get(using env: Env): RampartEngine = {
     val ref = _instance
     if (ref != null) ref
     else synchronized {
@@ -321,7 +323,7 @@ class RampartPiiGuardrail extends Guardrail {
   override def isAfter: Boolean = true
   override def manyMessages: Boolean = true // sees the whole conversation at once -> stable placeholders across turns
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val action = config.select("action").asOpt[String].getOrElse("redact").toLowerCase.trim
     val minScore = config.select("min_score").asOpt[Double].orElse(config.select("min_score").asOpt[String].map(_.toDouble)).getOrElse(0.4).toFloat
     val entities = config.select("entities").asOpt[Seq[String]].map(_.toSet).getOrElse(RampartPiiGuardrail.defaultEntities)
@@ -346,7 +348,7 @@ class RampartPiiGuardrail extends Guardrail {
     }
   }
 
-  private def applyAction(messages: Seq[ChatMessage], engine: RampartEngine, action: String, minScore: Float, entities: Set[String], attrs: TypedMap, store: Boolean)(implicit env: Env): GuardrailResult = {
+  private def applyAction(messages: Seq[ChatMessage], engine: RampartEngine, action: String, minScore: Float, entities: Set[String], attrs: TypedMap, store: Boolean)(using env: Env): GuardrailResult = {
     action match {
       case "block" =>
         if (messages.exists(m => engine.detectAll(m.wholeTextContent, minScore, entities).nonEmpty)) {

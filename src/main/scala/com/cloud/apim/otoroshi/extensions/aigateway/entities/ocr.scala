@@ -2,16 +2,16 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.OcrModelClient
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.OcrModelClientDecorators
-import com.cloud.apim.otoroshi.extensions.aigateway.providers._
-import otoroshi.api._
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
+import otoroshi.api.*
 import otoroshi.env.Env
-import otoroshi.models._
+import otoroshi.models.*
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
-import otoroshi.storage._
-import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
-import play.api.libs.json._
+import otoroshi.storage.*
+import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.*
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -42,7 +42,7 @@ case class OcrModel(
 
   def slugName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
 
-  def getOcrModelClient()(implicit env: Env): Option[OcrModelClient] = {
+  def getOcrModelClient()(using env: Env): Option[OcrModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val _token = connection.select("token").asOpt[String].getOrElse("xxx")
@@ -70,12 +70,12 @@ object OcrModel {
   // `supportedProviders` (and the providers catalog) is derived from these keys.
   val clientBuilders: Map[String, OcrModel.ClientContext => Option[OcrModelClient]] = Map(
     "alphaedge" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       new AlphaEdgeOcrModelClient(api, AlphaEdgeOcrModelClientOptions.fromJson(options), id).some
     },
     "mistral" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       new MistralOcrModelClient(api, MistralOcrModelClientOptions.fromJson(options), id).some
     },
@@ -127,7 +127,7 @@ object OcrModel {
         extractIdf = c => datastores.ocrModelsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, p, _) => {
           p.get("kind").map(_.toLowerCase()) match {
             case Some("mistral") => OcrModel(
               id = IdGenerator.namedId("ocr-model", env),
@@ -189,7 +189,7 @@ class KvOcrModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
     with RedisLikeStore[OcrModel] {
   override def fmt: Format[OcrModel] = OcrModel.format
 
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
 
   override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:ocrmodels:$id"
 

@@ -1,13 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
-import otoroshi.env.Env
-import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json.{JsObject, JsValue, Json}
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 
-import scala.concurrent.duration.{DurationInt, FiniteDuration}
-import scala.concurrent.{ExecutionContext, Future}
 
 /*
 case class HuggingfaceApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
@@ -35,7 +29,7 @@ class HuggingfaceApi(val modelName: String, token: String, timeout: FiniteDurati
 
   override def supportsCompletion: Boolean = false
 
-  def call(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, HuggingfaceApiResponse]] = {
+  def call(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[Either[JsValue, HuggingfaceApiResponse]] = {
     val url = s"${HuggingfaceApi.url(modelName)}${path}"
     ProviderHelpers.logCall("Huggingface", method, url, body)(env)
     env.Ws
@@ -52,7 +46,7 @@ class HuggingfaceApi(val modelName: String, token: String, timeout: FiniteDurati
       .withRequestTimeout(timeout)
       .execute()
       .map(r => ProviderHelpers.wrapResponse("Huggingface", r, env) { resp =>
-        HuggingfaceApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+        HuggingfaceApiResponse(resp.status, resp.headers.view.mapValues(_.last).toMap, resp.json)
       })
   }
 }
@@ -109,7 +103,7 @@ class HuggingfaceChatClient(api: HuggingfaceApi, options: HuggingfaceChatClientO
 
   override def model: Option[String] = api.modelName.some
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi)))).map {

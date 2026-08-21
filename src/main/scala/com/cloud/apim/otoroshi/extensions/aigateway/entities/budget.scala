@@ -1,31 +1,33 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
-import akka.actor.Cancellable
-import akka.http.scaladsl.util.FastFuture
+import org.apache.pekko.actor.Cancellable
+import org.apache.pekko.http.scaladsl.util.FastFuture
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ChatClientWithAuding
 import org.joda.time.DateTime
-import otoroshi.api._
+import otoroshi.api.*
 import otoroshi.cluster.Cluster
 import otoroshi.env.Env
 import otoroshi.events.AlertEvent
 import otoroshi.gateway.Retry
-import otoroshi.models._
+import otoroshi.models.*
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.next.utils.JsonHelpers
 import otoroshi.security.IdGenerator
-import otoroshi.storage._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.storage.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi.utils.{JsonPathValidator, RegexPool, TypedMap}
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
-import play.api.libs.json._
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.*
+import play.api.libs.json.*
 import play.api.libs.ws.WSAuthScheme
+import play.api.libs.ws.WSBodyWritables.given
 
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic._
+import java.util.concurrent.atomic.*
 import scala.collection.concurrent.TrieMap
-import scala.concurrent._
-import scala.concurrent.duration._
+import scala.concurrent.*
+import scala.concurrent.duration.*
 import scala.util.{Failure, Success, Try}
+import org.apache.pekko.actor.Scheduler
 
 object AiBudgetClusterAgent {
   val totalUsdCounters = new TrieMap[String, DoubleAdder]()
@@ -57,8 +59,7 @@ object AiBudgetClusterAgent {
 
   def start(env: Env, ext: AiExtension): Unit = {
     if (env.clusterConfig.mode.isWorker) {
-      implicit val ev = env
-      implicit val ec = env.otoroshiExecutionContext
+      given ec: ExecutionContext = env.otoroshiExecutionContext
       schedulerRef.set(env.otoroshiScheduler.scheduleAtFixedRate(10.seconds, env.clusterConfig.worker.state.pollEvery.millis) { () =>
         sendDeltas(env, ext)
       })
@@ -95,30 +96,28 @@ object AiBudgetClusterAgent {
   }
 
   private def sendDeltas(env: Env, ext: AiExtension): Unit = {
-    import otoroshi.utils.http.Implicits._
-    implicit val ev = env
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val sc = env.otoroshiScheduler
-    implicit val mat = env.otoroshiMaterializer
+    import otoroshi.utils.http.Implicits.*
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given sc: Scheduler = env.otoroshiScheduler
     if (env.clusterConfig.mode.isWorker) {
       val config = env.clusterConfig
       val payload = Json.obj(
-        "total_usd" -> JsObject(totalUsdCounters.toMap.mapValues(_.sum.json)),
-        "total_tokens" -> JsObject(totalTokensCounters.toMap.mapValues(_.get.json)),
-        "inference_usd" -> JsObject(inferenceUsdCounters.toMap.mapValues(_.sum.json)),
-        "inference_tokens" -> JsObject(inferenceTokensCounters.toMap.mapValues(_.get.json)),
-        "image_usd" -> JsObject(imageUsdCounters.toMap.mapValues(_.sum.json)),
-        "image_tokens" -> JsObject(imageTokensCounters.toMap.mapValues(_.get.json)),
-        "audio_usd" -> JsObject(audioUsdCounters.toMap.mapValues(_.sum.json)),
-        "audio_tokens" -> JsObject(audioTokensCounters.toMap.mapValues(_.get.json)),
-        "video_usd" -> JsObject(videoUsdCounters.toMap.mapValues(_.sum.json)),
-        "video_tokens" -> JsObject(videoTokensCounters.toMap.mapValues(_.get.json)),
-        "embedding_usd" -> JsObject(embeddingUsdCounters.toMap.mapValues(_.sum.json)),
-        "embedding_tokens" -> JsObject(embeddingTokensCounters.toMap.mapValues(_.get.json)),
-        "moderation_usd" -> JsObject(moderationUsdCounters.toMap.mapValues(_.sum.json)),
-        "moderation_tokens" -> JsObject(moderationTokensCounters.toMap.mapValues(_.get.json)),
-        "ocr_usd" -> JsObject(ocrUsdCounters.toMap.mapValues(_.sum.json)),
-        "ocr_pages" -> JsObject(ocrPagesCounters.toMap.mapValues(_.get.json)),
+        "total_usd" -> JsObject(totalUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
+        "total_tokens" -> JsObject(totalTokensCounters.toMap.view.mapValues(_.get.json).toMap),
+        "inference_usd" -> JsObject(inferenceUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
+        "inference_tokens" -> JsObject(inferenceTokensCounters.toMap.view.mapValues(_.get.json).toMap),
+        "image_usd" -> JsObject(imageUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
+        "image_tokens" -> JsObject(imageTokensCounters.toMap.view.mapValues(_.get.json).toMap),
+        "audio_usd" -> JsObject(audioUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
+        "audio_tokens" -> JsObject(audioTokensCounters.toMap.view.mapValues(_.get.json).toMap),
+        "video_usd" -> JsObject(videoUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
+        "video_tokens" -> JsObject(videoTokensCounters.toMap.view.mapValues(_.get.json).toMap),
+        "embedding_usd" -> JsObject(embeddingUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
+        "embedding_tokens" -> JsObject(embeddingTokensCounters.toMap.view.mapValues(_.get.json).toMap),
+        "moderation_usd" -> JsObject(moderationUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
+        "moderation_tokens" -> JsObject(moderationTokensCounters.toMap.view.mapValues(_.get.json).toMap),
+        "ocr_usd" -> JsObject(ocrUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
+        "ocr_pages" -> JsObject(ocrPagesCounters.toMap.view.mapValues(_.get.json).toMap),
       )
       Retry
         .retry(
@@ -126,7 +125,7 @@ object AiBudgetClusterAgent {
           delay = config.retryDelay,
           factor = config.retryFactor,
           ctx = "leader-pushing-budgets-delta"
-        ) { tryCount =>
+        ) { _ =>
           if (Cluster.logger.isDebugEnabled)
             Cluster.logger.debug(s"Pushing ai budgets deltas to leaders")
           env.MtlsWs
@@ -150,7 +149,7 @@ object AiBudgetClusterAgent {
               Some(Json.parse(resp.body))
             }
         }
-        .recover { case e =>
+        .recover { case _ =>
           if (Cluster.logger.isDebugEnabled)
             Cluster.logger.debug(
               s"[${env.clusterConfig.mode.name}] Error while pushing ai budgets deltas Otoroshi leader cluster"
@@ -164,11 +163,11 @@ object AiBudgetClusterAgent {
 }
 
 sealed trait AiBudgetUsageKind {
-  def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Unit
+  def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit
 }
 object AiBudgetUsageKind {
   case object Inference extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
         budget.incrTotalUsd(c)
         budget.incrInferenceUsd(c)
@@ -180,7 +179,7 @@ object AiBudgetUsageKind {
     }
   }
   case object Image extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
         budget.incrTotalUsd(c)
         budget.incrImageUsd(c)
@@ -192,7 +191,7 @@ object AiBudgetUsageKind {
     }
   }
   case object Audio extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
         budget.incrTotalUsd(c)
         budget.incrAudioUsd(c)
@@ -204,7 +203,7 @@ object AiBudgetUsageKind {
     }
   }
   case object Video extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
         budget.incrTotalUsd(c)
         budget.incrVideoUsd(c)
@@ -216,7 +215,7 @@ object AiBudgetUsageKind {
     }
   }
   case object Embedding extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
         budget.incrTotalUsd(c)
         budget.incrEmbeddingUsd(c)
@@ -228,7 +227,7 @@ object AiBudgetUsageKind {
     }
   }
   case object Moderation extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
         budget.incrTotalUsd(c)
         budget.incrModerationUsd(c)
@@ -240,7 +239,7 @@ object AiBudgetUsageKind {
     }
   }
   case object Ocr extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c =>
         budget.incrTotalUsd(c)
         budget.incrOcrUsd(c)
@@ -658,231 +657,231 @@ case class AiBudget(
 
   def cycleId: String = cycle.map(_.toString).getOrElse("single")
 
-  def totalUsdKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:total-usd"
-  def totalTokensKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:total-tokens"
+  def totalUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:total-usd"
+  def totalTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:total-tokens"
 
-  def inferenceUsdKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:inference-usd"
-  def inferenceTokensKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:inference-tokens"
+  def inferenceUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:inference-usd"
+  def inferenceTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:inference-tokens"
 
-  def imageUsdKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:image-usd"
-  def imageTokensKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:image-tokens"
+  def imageUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:image-usd"
+  def imageTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:image-tokens"
 
-  def audioUsdKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:audio-usd"
-  def audioTokensKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:audio-tokens"
+  def audioUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:audio-usd"
+  def audioTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:audio-tokens"
 
-  def videoUsdKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:video-usd"
-  def videoTokensKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:video-tokens"
+  def videoUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:video-usd"
+  def videoTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:video-tokens"
 
-  def embeddingUsdKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:embedding-usd"
-  def embeddingTokensKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:embedding-tokens"
+  def embeddingUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:embedding-usd"
+  def embeddingTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:embedding-tokens"
 
-  def moderationUsdKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:moderation-usd"
-  def moderationTokensKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:moderation-tokens"
+  def moderationUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:moderation-usd"
+  def moderationTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:moderation-tokens"
 
-  def ocrUsdKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:ocr-usd"
-  def ocrPagesKey(implicit env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:ocr-pages"
+  def ocrUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:ocr-usd"
+  def ocrPagesKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:ocr-pages"
 
-  def incrTotalUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrTotalUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.totalUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
     }
     env.datastores.rawDataStore.incrby(totalUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
-  def incrTotalTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrTotalTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.totalTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
     }
     env.datastores.rawDataStore.incrby(totalTokensKey, by)
   }
 
-  def incrInferenceUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrInferenceUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.inferenceUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
     }
     env.datastores.rawDataStore.incrby(inferenceUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
-  def incrInferenceTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrInferenceTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.inferenceTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
     }
     env.datastores.rawDataStore.incrby(inferenceTokensKey, by)
   }
 
-  def incrImageUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrImageUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.imageUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
     }
     env.datastores.rawDataStore.incrby(imageUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
-  def incrImageTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrImageTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.imageTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
     }
     env.datastores.rawDataStore.incrby(imageTokensKey, by)
   }
 
-  def incrAudioUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrAudioUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.audioUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
     }
     env.datastores.rawDataStore.incrby(audioUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
-  def incrAudioTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrAudioTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.audioTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
     }
     env.datastores.rawDataStore.incrby(audioTokensKey, by)
   }
 
-  def incrVideoUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrVideoUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.videoUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
     }
     env.datastores.rawDataStore.incrby(videoUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
-  def incrVideoTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrVideoTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.videoTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
     }
     env.datastores.rawDataStore.incrby(videoTokensKey, by)
   }
 
-  def incrEmbeddingUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrEmbeddingUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.embeddingUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
     }
     env.datastores.rawDataStore.incrby(embeddingUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
-  def incrEmbeddingTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrEmbeddingTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.embeddingTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
     }
     env.datastores.rawDataStore.incrby(embeddingTokensKey, by)
   }
 
-  def incrModerationUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrModerationUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.moderationUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
     }
     env.datastores.rawDataStore.incrby(moderationUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
-  def incrModerationTokens(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrModerationTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.moderationTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
     }
     env.datastores.rawDataStore.incrby(moderationTokensKey, by)
   }
 
-  def incrOcrUsd(by: BigDecimal)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrOcrUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.ocrUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
     }
     env.datastores.rawDataStore.incrby(ocrUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
-  def incrOcrPages(by: Long)(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def incrOcrPages(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
       AiBudgetClusterAgent.ocrPagesCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
     }
     env.datastores.rawDataStore.incrby(ocrPagesKey, by)
   }
 
-  def getTotalUsd()(implicit ec: ExecutionContext, env: Env): Future[BigDecimal] = {
+  def getTotalUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
     env.datastores.rawDataStore.get(totalUsdKey).map(_.map { strValue =>
       val lngValue = strValue.utf8String.toLong
       BigDecimal(lngValue)./(BigDecimal(1000000000))
     }.getOrElse(0L))
   }
 
-  def getTotalTokens()(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def getTotalTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
     env.datastores.rawDataStore.get(totalTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
   }
 
-  def getTotalInferenceUsd()(implicit ec: ExecutionContext, env: Env): Future[BigDecimal] = {
+  def getTotalInferenceUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
     env.datastores.rawDataStore.get(inferenceUsdKey).map(_.map { strValue =>
       val lngValue = strValue.utf8String.toLong
       BigDecimal(lngValue)./(BigDecimal(1000000000))
     }.getOrElse(0L))
   }
 
-  def getTotalInferenceTokens()(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def getTotalInferenceTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
     env.datastores.rawDataStore.get(inferenceTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
   }
 
-  def getTotalImageUsd()(implicit ec: ExecutionContext, env: Env): Future[BigDecimal] = {
+  def getTotalImageUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
     env.datastores.rawDataStore.get(imageUsdKey).map(_.map { strValue =>
       val lngValue = strValue.utf8String.toLong
       BigDecimal(lngValue)./(BigDecimal(1000000000))
     }.getOrElse(0L))
   }
 
-  def getTotalImageTokens()(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def getTotalImageTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
     env.datastores.rawDataStore.get(imageTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
   }
 
-  def getTotalAudioUsd()(implicit ec: ExecutionContext, env: Env): Future[BigDecimal] = {
+  def getTotalAudioUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
     env.datastores.rawDataStore.get(audioUsdKey).map(_.map { strValue =>
       val lngValue = strValue.utf8String.toLong
       BigDecimal(lngValue)./(BigDecimal(1000000000))
     }.getOrElse(0L))
   }
 
-  def getTotalAudioTokens()(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def getTotalAudioTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
     env.datastores.rawDataStore.get(audioTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
   }
 
-  def getTotalVideoUsd()(implicit ec: ExecutionContext, env: Env): Future[BigDecimal] = {
+  def getTotalVideoUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
     env.datastores.rawDataStore.get(videoUsdKey).map(_.map { strValue =>
       val lngValue = strValue.utf8String.toLong
       BigDecimal(lngValue)./(BigDecimal(1000000000))
     }.getOrElse(0L))
   }
 
-  def getTotalVideoTokens()(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def getTotalVideoTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
     env.datastores.rawDataStore.get(videoTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
   }
 
-  def getTotalEmbeddingUsd()(implicit ec: ExecutionContext, env: Env): Future[BigDecimal] = {
+  def getTotalEmbeddingUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
     env.datastores.rawDataStore.get(embeddingUsdKey).map(_.map { strValue =>
       val lngValue = strValue.utf8String.toLong
       BigDecimal(lngValue)./(BigDecimal(1000000000))
     }.getOrElse(0L))
   }
 
-  def getTotalEmbeddingTokens()(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def getTotalEmbeddingTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
     env.datastores.rawDataStore.get(embeddingTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
   }
 
-  def getTotalModerationUsd()(implicit ec: ExecutionContext, env: Env): Future[BigDecimal] = {
+  def getTotalModerationUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
     env.datastores.rawDataStore.get(moderationUsdKey).map(_.map { strValue =>
       val lngValue = strValue.utf8String.toLong
       BigDecimal(lngValue)./(BigDecimal(1000000000))
     }.getOrElse(0L))
   }
 
-  def getTotalModerationTokens()(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def getTotalModerationTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
     env.datastores.rawDataStore.get(moderationTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
   }
 
-  def getTotalOcrUsd()(implicit ec: ExecutionContext, env: Env): Future[BigDecimal] = {
+  def getTotalOcrUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
     env.datastores.rawDataStore.get(ocrUsdKey).map(_.map { strValue =>
       val lngValue = strValue.utf8String.toLong
       BigDecimal(lngValue)./(BigDecimal(1000000000))
     }.getOrElse(0L))
   }
 
-  def getTotalOcrPages()(implicit ec: ExecutionContext, env: Env): Future[Long] = {
+  def getTotalOcrPages()(using ec: ExecutionContext, env: Env): Future[Long] = {
     env.datastores.rawDataStore.get(ocrPagesKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
   }
 
-  def resetCurrentCycle()(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+  def resetCurrentCycle()(using ec: ExecutionContext, env: Env): Future[Unit] = {
     env.datastores.rawDataStore.keys(s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:*").flatMap { keys =>
       env.datastores.rawDataStore.del(keys).map { _ =>
         ()
@@ -890,7 +889,7 @@ case class AiBudget(
     }
   }
 
-  def resetAll()(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+  def resetAll()(using ec: ExecutionContext, env: Env): Future[Unit] = {
     env.datastores.rawDataStore.keys(s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:*").flatMap { keys =>
       env.datastores.rawDataStore.del(keys).map { _ =>
         ()
@@ -898,7 +897,7 @@ case class AiBudget(
     }
   }
 
-  def getConsumptions()(implicit ec: ExecutionContext, env: Env): Future[AiBudgetConsumptions] = {
+  def getConsumptions()(using ec: ExecutionContext, env: Env): Future[AiBudgetConsumptions] = {
     env.datastores.rawDataStore.mget(Seq(
       totalUsdKey,
       totalTokensKey,
@@ -939,7 +938,7 @@ case class AiBudget(
     }
   }
 
-  def matchesRules(ctx: JsValue)(implicit env: Env): Boolean = {
+  def matchesRules(ctx: JsValue)(using env: Env): Boolean = {
     if (scope.rules.isEmpty) {
       false
     } else {
@@ -950,7 +949,7 @@ case class AiBudget(
     }
   }
 
-  def matches(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String])(implicit env: Env): Boolean = {
+  def matches(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String])(using env: Env): Boolean = {
     if (!enabled) {
       false
     } else if (startAt.isAfterNow) {
@@ -982,13 +981,13 @@ case class AiBudget(
     }
   }
 
-  def isNotWithinBudget(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Boolean] = isNotWithinBudgetWithConsumption(attrs).map(r => r._1)
+  def isNotWithinBudget(attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Boolean] = isNotWithinBudgetWithConsumption(attrs).map(r => r._1)
 
-  def isWithinBudget(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Boolean] = isWithinBudgetWithConsumption(attrs).map(r => r._1)
+  def isWithinBudget(attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Boolean] = isWithinBudgetWithConsumption(attrs).map(r => r._1)
 
-  def isNotWithinBudgetWithConsumption(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[(Boolean, Option[AiBudgetConsumptions])] = isWithinBudgetWithConsumption(attrs).map(r => (!r._1, r._2))
+  def isNotWithinBudgetWithConsumption(attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[(Boolean, Option[AiBudgetConsumptions])] = isWithinBudgetWithConsumption(attrs).map(r => (!r._1, r._2))
 
-  def isWithinBudgetWithConsumption(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[(Boolean, Option[AiBudgetConsumptions])] = {
+  def isWithinBudgetWithConsumption(attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[(Boolean, Option[AiBudgetConsumptions])] = {
     val cycleValue = cycle.getOrElse(-1)
     if (cycleValue >= (renewals + 1)) {
       (false, None).vfuture
@@ -1100,7 +1099,7 @@ object AiBudget {
       val startAt = (json \ "start_at").asOpt[String].map(DateTime.parse).getOrElse(DateTime.now())
       val endAt = (json \ "end_at").asOpt[String].map(DateTime.parse).getOrElse(DateTime.now().plusDays(365))
       // val renewals = (json \ "renewals").asOpt[Int]
-      val duration = (json \ "duration").as(AiBudgetDuration.format)
+      val duration = (json \ "duration").as(using AiBudgetDuration.format)
       AiBudget(
         location = otoroshi.models.EntityLocation.readFromKey(json),
         id = (json \ "id").as[String],
@@ -1113,9 +1112,9 @@ object AiBudget {
         endAt = endAt,
         // renewals = finalRenewals.some,
         duration = duration,
-        limits = (json \ "limits").as(AiBudgetLimits.format),
-        scope = (json \ "scope").as(AiBudgetScope.format),
-        actionOnExceed = (json \ "action_on_exceed").as(AiBudgetActionOnExceed.format)
+        limits = (json \ "limits").as(using AiBudgetLimits.format),
+        scope = (json \ "scope").as(using AiBudgetScope.format),
+        actionOnExceed = (json \ "action_on_exceed").as(using AiBudgetActionOnExceed.format)
       )
     } match {
       case Failure(ex) =>
@@ -1139,7 +1138,7 @@ object AiBudget {
         extractIdf = c => datastores.budgetsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, _, _) => {
           AiBudget(
             id = IdGenerator.namedId("budget", env),
             name = "AI Budget",
@@ -1212,7 +1211,7 @@ trait AiBudgetsDataStore extends BasicStore[AiBudget] {
 }
 
 object AiBudgetsDataStore {
-  def handleWithinBudget[A](attrs: TypedMap)(notInBudget: => Future[A], inBudget: => Future[A])(implicit env: Env, ec: ExecutionContext): Future[A] = {
+  def handleWithinBudget[A](attrs: TypedMap)(notInBudget: => Future[A], inBudget: => Future[A])(using env: Env, ec: ExecutionContext): Future[A] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     if (ext.budgetsEnabled) {
       val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
@@ -1283,7 +1282,7 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
 
   override def fmt: Format[AiBudget] = AiBudget.format
 
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
 
   override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:aibudgets:$id"
 
@@ -1293,8 +1292,8 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
     val ext = _env.adminExtensions.extension[AiExtension].get
     if (ext.budgetsEnabled) {
       if (ext.states.hasBudgets && ((cost.isDefined && cost.get.>(BigDecimal(0))) || (tokens.isDefined && tokens.get > 0L))) {
-        implicit val ec = _env.analyticsExecutionContext
-        implicit val env = _env
+        given ec: ExecutionContext = _env.analyticsExecutionContext
+        given env: Env = _env
         val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
         val user = attrs.get(otoroshi.plugins.Keys.UserKey)
         val snowflake = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
@@ -1335,7 +1334,7 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
   }
 
   def findMatchingBudgets(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String]): Future[Seq[AiBudget]] = {
-    implicit val env = _env
+    given env: Env = _env
     val ext = _env.adminExtensions.extension[AiExtension].get
     if (ext.budgetsEnabled) {
       if (ext.states.hasBudgets) {

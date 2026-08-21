@@ -1,14 +1,14 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage}
 import otoroshi.env.Env
 import otoroshi.next.plugins.BodyHelper
-import otoroshi.next.plugins.api._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.plugins.api.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.{Result, Results}
 
 import java.util.regex.Pattern.CASE_INSENSITIVE
@@ -18,7 +18,7 @@ import scala.util.{Failure, Success, Try}
 
 case class AiResponseBodyModifierConfig(ref: String = "", _prompt: String = "", promptRef: Option[String] = None, contextRef: Option[String] = None, extractor: Option[String] = None, isResponse: Boolean = false) extends NgPluginConfig {
   def json: JsValue = AiResponseBodyModifierConfig.format.writes(this)
-  def prompt(implicit env: Env): String = promptRef match {
+  def prompt(using env: Env): String = promptRef match {
     case None => _prompt
     case Some(ref) => env.adminExtensions.extension[AiExtension] match {
       case None => _prompt
@@ -28,7 +28,7 @@ case class AiResponseBodyModifierConfig(ref: String = "", _prompt: String = "", 
       }
     }
   }
-  def preChatMessages(implicit env: Env): Seq[InputChatMessage] = {
+  def preChatMessages(using env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -40,7 +40,7 @@ case class AiResponseBodyModifierConfig(ref: String = "", _prompt: String = "", 
       }
     }
   }
-  def postChatMessages(implicit env: Env): Seq[InputChatMessage] = {
+  def postChatMessages(using env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -157,7 +157,7 @@ class AiResponseBodyModifier extends NgRequestTransformer {
     ().vfuture
   }
 
-  override def transformResponse(ctx: NgTransformerResponseContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
+  override def transformResponse(ctx: NgTransformerResponseContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
     val config = ctx.cachedConfig(internalName)(AiResponseBodyModifierConfig.format).getOrElse(AiResponseBodyModifierConfig.default)
     env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref)) match {
       case None => Left(Results.InternalServerError(Json.obj("error" -> "provider not found"))).vfuture // TODO: rewrite error
@@ -183,7 +183,7 @@ class AiResponseBodyModifier extends NgRequestTransformer {
                       body = body.chunks(32 * 1024)
                     ).rightf
                   }
-                  case None if !config.isResponse => {
+                  case None => {
                     val content = resp.headGeneration.message.content
                     ctx.otoroshiResponse.copy(
                       headers = ctx.otoroshiResponse.headers ++ Map("Transfer-Encoding" -> s"chunked") - "Content-Length" - "content-length",

@@ -1,13 +1,13 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatMessage, ChatMessageContentFlavor, ChatPrompt, ChatResponse, ChatResponseChunk}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, PromptContext}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsObject, JsValue}
+import play.api.libs.json.JsValue
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -30,7 +30,7 @@ class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatCl
       }
   }
 
-  private def getNewPrompt(prompt: ChatPrompt, originalBody: JsValue)(implicit env: Env): ChatPrompt = {
+  private def getNewPrompt(prompt: ChatPrompt, originalBody: JsValue)(using env: Env): ChatPrompt = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val possibleContextList = originalProvider.context.contexts.flatMap(ref => ext.states.context(ref))
     lazy val possibleContextById = possibleContextList.map(c => (c.id, c)).toMap
@@ -62,12 +62,12 @@ class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatCl
     }
   }
 
-  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val newPrompt = getNewPrompt(prompt, originalBody)
     chatClient.invoke(kind, newPrompt, attrs, originalBody.asObject - "context")
   }
 
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val newPrompt = getNewPrompt(prompt, originalBody)
     chatClient.invokeStream(kind, newPrompt, attrs, originalBody.asObject - "context")
   }

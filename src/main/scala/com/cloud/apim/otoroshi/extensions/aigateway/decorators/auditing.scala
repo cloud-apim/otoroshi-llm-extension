@@ -1,16 +1,16 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.http.scaladsl.util.FastFuture
-import akka.stream.scaladsl.{Sink, Source}
-import akka.util.ByteString
+import org.apache.pekko.http.scaladsl.util.FastFuture
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions, AiBudgetUsageKind, AiBudgetsDataStore, AiProvider, AudioModel, EmbeddingModel, ImageModel, ModerationModel, OcrModel, VideoModel}
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ImagesGenResponseMetadata, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.events.AuditEvent
 import otoroshi.models.Entity
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.LlmTokensRateLimitingValidatorConfig
 import play.api.libs.json.{JsArray, JsNull, JsObject, JsString, JsValue, Json}
@@ -67,14 +67,14 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     "provider_details" -> originalProvider.json,
   )
 
-  private def auditError(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, error: JsValue)(implicit env: Env): Unit = {
+  private def auditError(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, error: JsValue)(using env: Env): Unit = {
     AuditEvent.generic("LLMUsageAudit") {
       commonFields(consumedUsing, prompt, attrs) ++ Json.obj("error" -> error, "output" -> JsNull)
     }.toAnalytics()
   }
 
   // usage/costs/impacts are only known once the inner clients have run, hence the attrs lookups
-  private def auditSuccess(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, output: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+  private def auditSuccess(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, output: JsObject)(using ec: ExecutionContext, env: Env): Future[Unit] = {
     val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
     val impacts = attrs.get(ChatClientWithEcoImpact.key)
     val costs = attrs.get(ChatClientWithCostsTracking.key)
@@ -101,7 +101,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     attrs.put(ChatClientWithAuding.ModelKey -> originalBody.select("model").asOptString.orElse(originalProvider.options.select("model").asOptString).getOrElse("--"))
   }
 
-  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val consumedUsing = kind.consumedUsing(streaming = false)
     prepare(attrs, originalBody)
     AiBudgetsDataStore.handleWithinBudget(attrs)(
@@ -114,7 +114,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     )
   }
 
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val consumedUsing = kind.consumedUsing(streaming = true)
     prepare(attrs, originalBody)
     AiBudgetsDataStore.handleWithinBudget(attrs)(
@@ -168,7 +168,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
 // so front-ends can report token counts on any streaming endpoint (`/responses` included).
 class ChatClientWithStreamUsage(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     chatClient.invokeStream(kind, prompt, attrs, originalBody).map {
       case Left(err) => Left(err)
       case Right(resp) => {
@@ -214,7 +214,7 @@ object EmbeddingModelClientWithAuditing {
 
 class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embeddingModelClient: EmbeddingModelClient) extends DecoratorEmbeddingModelClient {
 
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val startTime = System.currentTimeMillis()
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
@@ -278,7 +278,6 @@ class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embedd
                 val newArr = arr ++ Seq(slug)
                 obj ++ Json.obj("ai-embedding" -> newArr)
               }
-              case Some(other) => other
               case None => Json.obj("ai-embedding" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
@@ -315,7 +314,7 @@ object AudioModelClientWithAuditing {
 
 class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClient: AudioModelClient) extends DecoratorAudioModelClient {
 
-  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val startTime = System.currentTimeMillis()
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
@@ -379,7 +378,6 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
                 val newArr = arr ++ Seq(slug)
                 obj ++ Json.obj("ai-audio" -> newArr)
               }
-              case Some(other) => other
               case None => Json.obj("ai-audio" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
@@ -407,7 +405,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
     )
   }
 
-  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val startTime = System.currentTimeMillis()
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
@@ -471,7 +469,6 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
                 val newArr = arr ++ Seq(slug)
                 obj ++ Json.obj("ai-audio" -> newArr)
               }
-              case Some(other) => other
               case None => Json.obj("ai-audio" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
@@ -500,7 +497,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
   }
 
   // no metrics right now !!!
-  override def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = super.textToSpeech(options, rawBody, attrs)
+  override def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = super.textToSpeech(options, rawBody, attrs)
 }
 
 object ImageModelClientWithAuditing {
@@ -511,7 +508,7 @@ object ImageModelClientWithAuditing {
 
 class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClient: ImageModelClient) extends DecoratorImageModelClient {
 
-  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val startTime = System.currentTimeMillis()
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
@@ -575,7 +572,6 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
                 val newArr = arr ++ Seq(slug)
                 obj ++ Json.obj("ai-image" -> newArr)
               }
-              case Some(other) => other
               case None => Json.obj("ai-image" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
@@ -603,7 +599,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
     )
   }
 
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val startTime = System.currentTimeMillis()
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
@@ -667,7 +663,6 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
                 val newArr = arr ++ Seq(slug)
                 obj ++ Json.obj("ai-image" -> newArr)
               }
-              case Some(other) => other
               case None => Json.obj("ai-image" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
@@ -704,7 +699,7 @@ object ModerationModelClientWithAuditing {
 
 class ModerationModelClientWithAuditing(originalModel: ModerationModel, val moderationModelClient: ModerationModelClient) extends DecoratorModerationModelClient {
 
-  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
+  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
     val startTime = System.currentTimeMillis()
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
@@ -768,7 +763,6 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
                 val newArr = arr ++ Seq(slug)
                 obj ++ Json.obj("ai-moderation" -> newArr)
               }
-              case Some(other) => other
               case None => Json.obj("ai-moderation" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
@@ -805,7 +799,7 @@ object VideoModelClientWithAuditing {
 
 class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClient: VideoModelClient) extends DecoratorVideoModelClient {
 
-  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
+  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
     val startTime = System.currentTimeMillis()
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
@@ -869,7 +863,6 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
                 val newArr = arr ++ Seq(slug)
                 obj ++ Json.obj("ai-video" -> newArr)
               }
-              case Some(other) => other
               case None => Json.obj("ai-video" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {
@@ -906,7 +899,7 @@ object OcrModelClientWithAuditing {
 
 class OcrModelClientWithAuditing(originalModel: OcrModel, val ocrModelClient: OcrModelClient) extends DecoratorOcrModelClient {
 
-  override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
+  override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
     val startTime = System.currentTimeMillis()
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
@@ -970,7 +963,6 @@ class OcrModelClientWithAuditing(originalModel: OcrModel, val ocrModelClient: Oc
                 val newArr = arr ++ Seq(slug)
                 obj ++ Json.obj("ai-ocr" -> newArr)
               }
-              case Some(other) => other
               case None => Json.obj("ai-ocr" -> Seq(slug))
             }
             AuditEvent.generic("LLMUsageAudit") {

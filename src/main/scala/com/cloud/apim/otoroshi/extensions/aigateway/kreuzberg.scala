@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 import dev.kreuzberg.Kreuzberg
 import dev.kreuzberg.config.{ExtractionConfig, OcrConfig}
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
 
 import java.nio.file.Path
@@ -42,7 +42,7 @@ object KreuzbergHelper {
       .useCache(false)
       .build()
 
-  def extractFromBytes(bytes: Array[Byte], mimeType: String)(implicit env: Env, ec: ExecutionContext): Future[String] = {
+  def extractFromBytes(bytes: Array[Byte], mimeType: String)(using env: Env, ec: ExecutionContext): Future[String] = {
     if (!canExecuteKreuzberg) return Future.failed(new RuntimeException(errorMsg))
     env.metrics.withTimer("kreuzberg.extractFromBytes", display = true) {
       val result = Kreuzberg.extractBytes(bytes, mimeType, defaultConfig)
@@ -50,19 +50,19 @@ object KreuzbergHelper {
     }
   }
 
-  def extractFromFile(path: Path)(implicit ec: ExecutionContext): Future[String] = {
+  def extractFromFile(path: Path)(using ec: ExecutionContext): Future[String] = {
     if (!canExecuteKreuzberg) return Future.failed(new RuntimeException(errorMsg))
       val result = Kreuzberg.extractFile(path, defaultConfig)
       result.getContent.vfuture
   }
 
-  def extractFromUrl(url: String, method: String = "GET", headers: Map[String, String] = Map.empty)(implicit env: Env, ec: ExecutionContext): Future[(String, String)] = {
+  def extractFromUrl(url: String, method: String = "GET", headers: Map[String, String] = Map.empty)(using env: Env, ec: ExecutionContext): Future[(String, String)] = {
     if (!canExecuteKreuzberg) return Future.failed(new RuntimeException(errorMsg))
     val req = env.Ws
       .url(url)
       .withFollowRedirects(true)
       .withRequestTimeout(scala.concurrent.duration.Duration(30000L, "millis"))
-      .withHttpHeaders(headers.toSeq: _*)
+      .withHttpHeaders(headers.toSeq*)
     req.execute(method).flatMap { resp =>
       val contentType = resp.header("Content-Type").getOrElse("application/octet-stream")
       val mimeType = contentType.split(";").head.trim

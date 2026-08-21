@@ -1,20 +1,21 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant
 
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools.{AssistantTool, ToolCallContext, ToolRegistry}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
 import otoroshi.models.BackOfficeUser
-import otoroshi.next.extensions._
+import otoroshi.next.extensions.*
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
-import play.api.mvc._
+import play.api.libs.json.*
+import play.api.mvc.*
 
 import scala.concurrent.{ExecutionContext, Future}
+import org.apache.pekko.stream.Materializer
 
 object OtoroshiAssistant {
 
@@ -190,7 +191,7 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
   //private val maxToolCallIterations: Int = 20
 
   private def gc = {
-    env.datastores.globalConfigDataStore.latest()(env.otoroshiExecutionContext, env)
+    env.datastores.globalConfigDataStore.latest()(using env.otoroshiExecutionContext, env)
   }
   private def config: AssistantConfiguration = {
     AssistantConfiguration.fromJson(gc.extensions.get("cloud-apim_extensions_LlmExtension").flatMap(_.select("otoroshiassistant").asOpt[JsObject]).getOrElse(Json.obj()))
@@ -205,10 +206,10 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
 
   def isEnabled: Boolean = config.enabled && assistantProvider.isDefined
 
-  def handleAssistantCompletion(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleAssistantCompletion(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
+    given ev: Env = env
     if (isEnabled) {
       body match {
         case None => Results.BadRequest(Json.obj("error" -> "No body")).vfuture
@@ -267,8 +268,8 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
     registry: ToolRegistry,
     toolCtx: ToolCallContext,
     iteration: Int,
-  )(implicit ec: ExecutionContext): Future[Either[JsValue, ChatResponse]] = {
-    implicit val ev: Env = env
+  )(using ec: ExecutionContext): Future[Either[JsValue, ChatResponse]] = {
+    given ev: Env = env
     if (iteration >= config.maxToolCalls) {
       Left[JsValue, ChatResponse](JsString(s"Max tool-call iterations reached (${config.maxToolCalls}).")).vfuture
     } else {
@@ -294,7 +295,7 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
     }
   }
 
-  private def runToolCall(tc: JsObject, registry: ToolRegistry, toolCtx: ToolCallContext)(implicit ec: ExecutionContext): Future[InputChatMessage] = {
+  private def runToolCall(tc: JsObject, registry: ToolRegistry, toolCtx: ToolCallContext)(using ec: ExecutionContext): Future[InputChatMessage] = {
     val callId = tc.select("id").asOpt[String].getOrElse(java.util.UUID.randomUUID().toString)
     val fn = tc.select("function").asOpt[JsObject].getOrElse(Json.obj())
     val name = fn.select("name").asOpt[String].getOrElse("")
@@ -357,24 +358,24 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
     registry: ToolRegistry,
     toolCtx: ToolCallContext,
     iteration: Int,
-  )(implicit ec: ExecutionContext): Future[Either[JsValue, Source[AssistantStreamEvent, _]]] = {
-    implicit val ev: Env = env
+  )(using ec: ExecutionContext): Future[Either[JsValue, Source[AssistantStreamEvent, ?]]] = {
+    given ev: Env = env
     if (iteration >= config.maxToolCalls) {
-      Left[JsValue, Source[AssistantStreamEvent, _]](JsString(s"Max tool-call iterations reached (${config.maxToolCalls}).")).vfuture
+      Left[JsValue, Source[AssistantStreamEvent, ?]](JsString(s"Max tool-call iterations reached (${config.maxToolCalls}).")).vfuture
     } else {
       // println(s"[assistant.stream] iter=$iteration starting (messages=${messages.size})")
       client.stream(ChatPrompt(messages, None), TypedMap.empty, baseBody).map {
         case Left(err) =>
           // println(s"[assistant.stream] iter=$iteration upstream LEFT: $err")
-          Left[JsValue, Source[AssistantStreamEvent, _]](err)
+          Left[JsValue, Source[AssistantStreamEvent, ?]](err)
         case Right(source) =>
           val assistantContent = new StringBuilder()
           val buffer = new StreamingToolCallBuffer()
           @volatile var triggered = false
           val chunkCount = new java.util.concurrent.atomic.AtomicInteger(0)
 
-          val transformed: Source[AssistantStreamEvent, _] = source.flatMapConcat { chunk =>
-            val n = chunkCount.incrementAndGet()
+          val transformed: Source[AssistantStreamEvent, ?] = source.flatMapConcat { chunk =>
+            val _ = chunkCount.incrementAndGet()
             if (triggered) {
               // println(s"[assistant.stream] iter=$iteration chunk#$n DROPPED (already triggered): ${chunk.choices.headOption.map(_.json.stringify).getOrElse("?")}")
               Source.empty[AssistantStreamEvent]
@@ -382,7 +383,6 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
               val choice = chunk.choices.headOption
               val deltaToolCalls = choice.toSeq.flatMap(_.delta.tool_calls)
               val finishReason = choice.flatMap(_.finishReason)
-              val deltaContent = choice.flatMap(_.delta.content)
               // println(s"[assistant.stream] iter=$iteration chunk#$n content=${deltaContent.map(s => s"'${s.take(40)}'").getOrElse("-")} toolCallDeltas=${deltaToolCalls.size} finish=${finishReason.getOrElse("-")} bufferSize=${buffer.byIndex.size}")
 
               if (deltaToolCalls.nonEmpty) {
@@ -408,7 +408,7 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
                 }
 
                 val toolRunsF: Future[Seq[(InputChatMessage, AssistantStreamEvent.ToolCallFinished)]] =
-                  Future.sequence(toolCallObjs.map { tc =>
+                  Future.sequence(toolCallObjs.toSeq.map { tc =>
                     val startTs = System.currentTimeMillis()
                     val id = tc.select("id").asOpt[String].getOrElse("")
                     val name = tc.select("function").select("name").asOpt[String].getOrElse("")
@@ -438,7 +438,7 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
                     }
                   })
 
-                val nextStepF: Future[Source[AssistantStreamEvent, _]] = toolRunsF.flatMap { results =>
+                val nextStepF: Future[Source[AssistantStreamEvent, ?]] = toolRunsF.flatMap { results =>
                   val msgs = results.map(_._1)
                   val finishedEvents: List[AssistantStreamEvent] = results.map(_._2: AssistantStreamEvent).toList
                   val newMessages = (messages :+ assistantMsg) ++ msgs
@@ -455,22 +455,22 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
               }
             }
           }
-          Right[JsValue, Source[AssistantStreamEvent, _]](transformed)
+          Right[JsValue, Source[AssistantStreamEvent, ?]](transformed)
       }
     }
   }
 }
 
 sealed trait AssistantStreamEvent {
-  def asSse(env: Env): akka.util.ByteString
+  def asSse(env: Env): org.apache.pekko.util.ByteString
 }
 
 object AssistantStreamEvent {
   case class Chunk(chunk: ChatResponseChunk) extends AssistantStreamEvent {
-    def asSse(env: Env): akka.util.ByteString = chunk.openaiEventSource(env)
+    def asSse(env: Env): org.apache.pekko.util.ByteString = chunk.openaiEventSource(env)
   }
   case class ToolCallStarted(id: String, name: String, arguments: String, iteration: Int) extends AssistantStreamEvent {
-    def asSse(env: Env): akka.util.ByteString = {
+    def asSse(env: Env): org.apache.pekko.util.ByteString = {
       val payload = Json.obj(
         "otoroshi_assistant_event" -> "tool_call_started",
         "id" -> id,
@@ -478,11 +478,11 @@ object AssistantStreamEvent {
         "arguments" -> arguments,
         "iteration" -> iteration,
       )
-      akka.util.ByteString(s"data: ${payload.stringify}\n\n")
+      org.apache.pekko.util.ByteString(s"data: ${payload.stringify}\n\n")
     }
   }
   case class ToolCallFinished(id: String, name: String, ok: Boolean, durationMs: Long, iteration: Int) extends AssistantStreamEvent {
-    def asSse(env: Env): akka.util.ByteString = {
+    def asSse(env: Env): org.apache.pekko.util.ByteString = {
       val payload = Json.obj(
         "otoroshi_assistant_event" -> "tool_call_finished",
         "id" -> id,
@@ -491,7 +491,7 @@ object AssistantStreamEvent {
         "duration_ms" -> durationMs,
         "iteration" -> iteration,
       )
-      akka.util.ByteString(s"data: ${payload.stringify}\n\n")
+      org.apache.pekko.util.ByteString(s"data: ${payload.stringify}\n\n")
     }
   }
 }

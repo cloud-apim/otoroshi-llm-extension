@@ -1,9 +1,9 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.entities._
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.*
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import play.api.libs.json.{JsObject, JsValue}
@@ -51,9 +51,9 @@ trait DecoratorChatClient extends KindBasedChatClient {
   override def supportsTools: Boolean = chatClient.supportsTools
   override def supportsCompletion: Boolean = chatClient.supportsCompletion
   override def supportsResponses: Boolean = chatClient.supportsResponses
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = chatClient.listModels(raw, attrs)
-  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.invoke(kind, prompt, attrs, originalBody)
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = chatClient.invokeStream(kind, prompt, attrs, originalBody)
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = chatClient.listModels(raw, attrs)
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.invoke(kind, prompt, attrs, originalBody)
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = chatClient.invokeStream(kind, prompt, attrs, originalBody)
 }
 
 object EmbeddingModelClientDecorators {
@@ -73,7 +73,7 @@ object EmbeddingModelClientDecorators {
 
 trait DecoratorEmbeddingModelClient extends EmbeddingModelClient {
   def embeddingModelClient: EmbeddingModelClient
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     embeddingModelClient.embed(opts, rawBody, attrs)
   }
 }
@@ -97,11 +97,11 @@ trait DecoratorAudioModelClient extends AudioModelClient {
   override def supportsStt: Boolean = audioModelClient.supportsStt
   override def supportsTts: Boolean = audioModelClient.supportsTts
   override def supportsTranslation: Boolean = audioModelClient.supportsTranslation
-  override def translate(options: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = audioModelClient.translate(options, rawBody, attrs)
-  override def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = audioModelClient.speechToText(options, rawBody, attrs)
-  override def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = audioModelClient.textToSpeech(options, rawBody, attrs)
-  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = audioModelClient.listModels(raw)
-  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = audioModelClient.listVoices(raw)
+  override def translate(options: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = audioModelClient.translate(options, rawBody, attrs)
+  override def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = audioModelClient.speechToText(options, rawBody, attrs)
+  override def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = audioModelClient.textToSpeech(options, rawBody, attrs)
+  override def listModels(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = audioModelClient.listModels(raw)
+  override def listVoices(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = audioModelClient.listVoices(raw)
 }
 
 object ImageModelClientDecorators {
@@ -122,13 +122,13 @@ trait DecoratorImageModelClient extends ImageModelClient {
   def imageModelClient: ImageModelClient
   override def supportsEdit: Boolean = imageModelClient.supportsEdit
   override def supportsGeneration: Boolean = imageModelClient.supportsGeneration
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = super.generate(opts, rawBody, attrs)
-  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = super.edit(opts, rawBody, attrs)
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = super.generate(opts, rawBody, attrs)
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = super.edit(opts, rawBody, attrs)
 }
 
 trait DecoratorModerationModelClient extends ModerationModelClient {
   def moderationModelClient: ModerationModelClient
-  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = moderationModelClient.moderate(opts, rawBody, attrs)
+  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = moderationModelClient.moderate(opts, rawBody, attrs)
 }
 
 object ModerationModelClientDecorators {
@@ -148,7 +148,7 @@ object ModerationModelClientDecorators {
 trait DecoratorVideoModelClient extends VideoModelClient {
   def videoModelClient: VideoModelClient
   override def supportsTextToVideo: Boolean = videoModelClient.supportsTextToVideo
-  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = videoModelClient.generate(opts, rawBody, attrs)
+  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = videoModelClient.generate(opts, rawBody, attrs)
 }
 
 object VideosGenModelClientDecorators {
@@ -168,8 +168,8 @@ object VideosGenModelClientDecorators {
 trait DecoratorOcrModelClient extends OcrModelClient {
   def ocrModelClient: OcrModelClient
   override def supportsOcr: Boolean = ocrModelClient.supportsOcr
-  override def ocr(options: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = ocrModelClient.ocr(options, rawBody, attrs)
-  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = ocrModelClient.listModels(raw)
+  override def ocr(options: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = ocrModelClient.ocr(options, rawBody, attrs)
+  override def listModels(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = ocrModelClient.listModels(raw)
 }
 
 object OcrModelClientDecorators {

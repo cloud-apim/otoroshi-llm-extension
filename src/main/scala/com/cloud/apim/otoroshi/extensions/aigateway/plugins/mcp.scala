@@ -1,43 +1,41 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.actor.{Actor, ActorRef, PoisonPill, Props}
-import akka.http.scaladsl.model.Uri
-import akka.stream.scaladsl.{Flow, Sink, Source, SourceQueueWithComplete}
-import akka.stream.{Materializer, OverflowStrategy}
-import akka.util.ByteString
+import org.apache.pekko.actor.{Actor, ActorRef, PoisonPill, Props}
+import org.apache.pekko.http.scaladsl.model.Uri
+import org.apache.pekko.stream.scaladsl.{Flow, Sink, Source, SourceQueueWithComplete}
+import org.apache.pekko.stream.{Materializer, OverflowStrategy}
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatMessage
-import com.cloud.apim.otoroshi.extensions.aigateway.agents.InlineFunction
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailItem, GuardrailResult, Guardrails}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{LlmToolFunction, McpConnector, McpConnectorRules, McpConnectorTransport, McpConnectorTransportKind, McpRegistryConfig, McpSupport, McpVirtualServer}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{McpConnector, McpConnectorRules, McpConnectorTransport, McpConnectorTransportKind, McpSupport, McpVirtualServer}
 import dev.langchain4j.agent.tool.ToolSpecification
-import dev.langchain4j.mcp.client.{McpBlobResourceContents, McpResourceContents, McpTextResourceContents}
-import dev.langchain4j.model.chat.request.json.JsonSchemaElement
+import dev.langchain4j.mcp.client.McpResourceContents
 import otoroshi.auth.OAuth2ModuleConfig
 import otoroshi.env.Env
 import otoroshi.events.AuditEvent
-import otoroshi.models.{InHeader, InQueryParam, JWKSAlgoSettings, JwtTokenLocation, LocalJwtVerifier}
-import otoroshi.next.plugins.{OIDCAuthToken, OIDCAuthTokenConfig, OIDCJwtVerifierConfig}
+import otoroshi.models.{InHeader, InQueryParam, JWKSAlgoSettings, LocalJwtVerifier}
+import otoroshi.next.plugins.{OIDCAuthToken, OIDCAuthTokenConfig}
 import otoroshi.next.models.{NgPluginInstance, NgPluginInstanceConfig}
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.next.workflow.WorkflowRun
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
 import otoroshi.utils.http.RequestImplicits.EnhancedRequestHeader
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.http.websocket.Message
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.libs.streams.ActorFlow
 import play.api.libs.ws.DefaultBodyWritables.writeableOf_urlEncodedSimpleForm
+import play.api.libs.ws.WSBodyWritables.given
 import play.api.libs.typedmap.TypedKey
 import play.api.mvc.{Result, Results}
 
-import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicReference}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 import scala.collection.concurrent.TrieMap
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.concurrent.{ExecutionContext, Future}
-import scala.jdk.CollectionConverters._
+import scala.jdk.CollectionConverters.*
 import scala.util.{Failure, Success, Try}
 
 object McpOAuthFilterUtils {
@@ -59,7 +57,7 @@ object McpOAuthFilterUtils {
     if (parts.length < 2) Set.empty[String] else scopesFromClaims(parts(1).decodeBase64.parseJson)
   }.getOrElse(Set.empty)
 
-  def unauthorizedResult(ctx: NgAccessContext, config: McpProxyEndpointConfig, oidcModule: OAuth2ModuleConfig)(implicit env: Env, ec: ExecutionContext): Result = {
+  def unauthorizedResult(ctx: NgAccessContext, config: McpProxyEndpointConfig, oidcModule: OAuth2ModuleConfig)(using env: Env, ec: ExecutionContext): Result = {
     val realmName = oidcModule.cookieSuffix(ctx.route.legacy)
     val authPrmUrl = config.authPrmUrl.getOrElse(s"${ctx.request.theProtocol}://${ctx.request.theHost}/.well-known/oauth-protected-resource")
     Results.Status(401)(Json.obj("error" -> "unauthorized"))
@@ -70,7 +68,7 @@ object McpOAuthFilterUtils {
   // RFC 7662 token introspection, implemented locally so it works against the published Otoroshi
   // 17.11.0 (no dependency on the core `introspectTokenSafe`). Mirrors the legacy core introspection.
   // TODO(otoroshi with introspectTokenSafe published): delete this and call oidcModule.introspectTokenSafe.
-  def introspectToken(oidcModule: OAuth2ModuleConfig, token: String)(implicit env: Env, ec: ExecutionContext): Future[Option[JsValue]] = {
+  def introspectToken(oidcModule: OAuth2ModuleConfig, token: String)(using env: Env, ec: ExecutionContext): Future[Option[JsValue]] = {
     val clientSecret = Option(oidcModule.clientSecret).filterNot(_.trim.isEmpty)
     val builder      = env.MtlsWs.url(oidcModule.introspectionUrl, oidcModule.mtlsConfig)
     val future       = if (oidcModule.useJson) {
@@ -82,7 +80,7 @@ object McpOAuthFilterUtils {
       builder.post(
         Map("token" -> token, "client_id" -> oidcModule.clientId) ++
           clientSecret.toSeq.map(s => ("client_secret" -> s))
-      )(writeableOf_urlEncodedSimpleForm)
+      )(using writeableOf_urlEncodedSimpleForm)
     }
     future
       .map(resp => if (resp.status == 200 && (resp.json \ "active").asOpt[Boolean].getOrElse(false)) Some(resp.json) else None)
@@ -92,7 +90,7 @@ object McpOAuthFilterUtils {
   // Audience binding (RFC 8707): the token `aud` claim (string OR array) must match this MCP server's
   // URL, mirroring the core getSession check but array-aware. Used locally until the core patch ships.
   // TODO(otoroshi with array-aware getSession published): remove and rely on getSession validateAudience.
-  def audienceMatches(token: String, ctx: NgAccessContext)(implicit env: Env): Boolean = {
+  def audienceMatches(token: String, ctx: NgAccessContext)(using env: Env): Boolean = {
     Try {
       val parts = token.split("\\.")
       if (parts.length < 2) {
@@ -113,13 +111,13 @@ object McpOAuthFilterUtils {
     }.getOrElse(false)
   }
 
-  def access(ctx: NgAccessContext, internalName: String)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+  def access(ctx: NgAccessContext, internalName: String)(using env: Env, ec: ExecutionContext): Future[NgAccess] = {
     val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default).resolve()
     config.authModuleRef match {
       case None if !config.enforceOAuth => NgAccess.NgAllowed.vfuture
-      case None if config.enforceOAuth  => NgAccess.NgDenied(Results.BadRequest(Json.obj("error" -> "no auth. module setup"))).vfuture
+      case None                            => NgAccess.NgDenied(Results.BadRequest(Json.obj("error" -> "no auth. module setup"))).vfuture
       case Some(_) if !config.enforceOAuth => NgAccess.NgAllowed.vfuture
-      case Some(authModuleId) if config.enforceOAuth =>
+      case Some(authModuleId)              =>
         env.proxyState.authModule(authModuleId) match {
           case None    => NgAccess.NgDenied(Results.BadRequest(Json.obj("error" -> "auth. module not found"))).vfuture
           case Some(m) =>
@@ -162,7 +160,7 @@ object McpOAuthFilterUtils {
                           Some(token)
                         )
                         .map {
-                          case Left(result) => NgAccess.NgDenied(customResult)
+                          case Left(_) => NgAccess.NgDenied(customResult)
                           case Right(r)     => r
                         }
                     }
@@ -192,7 +190,7 @@ object McpOAuthFilterUtils {
                         ctx.user,
                         ctx.attrs.get(otoroshi.plugins.Keys.ElCtxKey).getOrElse(Map.empty),
                         ctx.attrs
-                      ) { t =>
+                      ) { _ =>
                         ctx.attrs.put(McpUserAuthTokenKey -> token)
                         ctx.attrs.put(McpGrantedScopesKey -> scopesFromJwt(token))
                         // Audience binding (RFC 8707) done locally so it accepts `aud` as a string OR an
@@ -217,7 +215,7 @@ object McpOAuthFilterUtils {
                         }
                       }
                       .map {
-                        case Left(result) => NgAccess.NgDenied(customResult)
+                        case Left(_) => NgAccess.NgDenied(customResult)
                         case Right(r)     => r
                       }
                 }
@@ -280,7 +278,7 @@ case class McpStaticResource(
 
   // contents entry returned by resources/read for this resource (a single content block).
   // emitAudit gates the McpResourceFetchAudit event for the outbound url fetch (metrics are always recorded).
-  def read(attrs: TypedMap, allowedHosts: Seq[String], emitAudit: Boolean = false)(implicit env: Env, ec: ExecutionContext): Future[JsObject] = {
+  def read(attrs: TypedMap, allowedHosts: Seq[String], emitAudit: Boolean = false)(using env: Env, ec: ExecutionContext): Future[JsObject] = {
     val base = Json.obj("uri" -> uri)
     url match {
       case Some(rawUrl) =>
@@ -294,21 +292,21 @@ case class McpStaticResource(
           if (forwardAuth) ev.replace("{input_token}", inputToken) else ev
         }
         val finalUrl = render(rawUrl)
-        val finalHeaders = headers.mapValues(render).toSeq
+        val finalHeaders = headers.view.mapValues(render).toSeq
         if (!hostAllowed(finalUrl, allowedHosts)) {
           McpStaticResource.markFetchMetrics(0L, isError = true)
           if (emitAudit) McpStaticResource.emitFetch(uri, finalUrl, 0L, None, Some("host not allowed"), attrs)
           Future.successful(withMime(base, None) ++ Json.obj("text" -> s"fetching resource is not allowed for this host") ++ metaJson)
         } else {
           val start = System.currentTimeMillis()
-          env.Ws.url(finalUrl).withHttpHeaders(finalHeaders: _*).withRequestTimeout(timeout).get().map { resp =>
+          env.Ws.url(finalUrl).withHttpHeaders(finalHeaders*).withRequestTimeout(timeout).get().map { resp =>
             val dur = System.currentTimeMillis() - start
             val isErr = resp.status >= 400
             McpStaticResource.markFetchMetrics(dur, isErr)
             if (emitAudit) McpStaticResource.emitFetch(uri, finalUrl, dur, Some(resp.status), if (isErr) Some(s"status ${resp.status}") else None, attrs)
             val ct = Option(resp.contentType)
             if (urlAs == "blob") withMime(base, ct) ++ Json.obj("blob" -> resp.bodyAsBytes.encodeBase64.utf8String) ++ metaJson
-            else withMime(base, ct) ++ Json.obj("text" -> resp.body) ++ metaJson
+            else withMime(base, ct) ++ Json.obj("text" -> (resp.body: String)) ++ metaJson
           }.recover { case e =>
             val dur = System.currentTimeMillis() - start
             McpStaticResource.markFetchMetrics(dur, isError = true)
@@ -330,7 +328,7 @@ object McpStaticResource {
 
   // Real-time metrics for the outbound fetch of a managed resource served from a `url` (always on when env
   // metrics are enabled, independent of the audit flag). Namespaced apart from mcp.client.* (connectors).
-  def markFetchMetrics(durationMs: Long, isError: Boolean)(implicit env: Env): Unit = {
+  def markFetchMetrics(durationMs: Long, isError: Boolean)(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     env.metrics.counterInc("mcp.resource.fetch.calls")
     if (isError) env.metrics.counterInc("mcp.resource.fetch.errors")
@@ -339,7 +337,7 @@ object McpStaticResource {
 
   // Audit event for the outbound fetch of a managed resource (mirrors McpClientAudit but for the env.Ws fetch
   // that does not go through an McpConnector). Gated by the virtual server's emit_audit_events flag.
-  def emitFetch(uri: String, url: String, duration: Long, httpStatus: Option[Int], error: Option[String], attrs: TypedMap)(implicit env: Env): Unit = {
+  def emitFetch(uri: String, url: String, duration: Long, httpStatus: Option[Int], error: Option[String], attrs: TypedMap)(using env: Env): Unit = {
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
@@ -462,7 +460,7 @@ case class McpStaticPrompt(
     meta.map(m => Json.obj("_meta" -> m)).getOrElse(Json.obj())
 
   // prompts/get response payload (description + rendered messages)
-  def getJson(args: Map[String, String], attrs: TypedMap)(implicit env: Env): JsObject = {
+  def getJson(args: Map[String, String], attrs: TypedMap)(using env: Env): JsObject = {
     def render(t: String): String = {
       val withArgs = args.foldLeft(t) { case (acc, (k, v)) => acc.replace("{{" + k + "}}", v) }
       withArgs.evaluateEl(attrs)
@@ -784,7 +782,7 @@ case class McpProxyEndpointConfig(
 
   // When `serverRef` points to an existing McpVirtualServer, start from its config and overlay these inline
   // overrides. Otherwise return this config unchanged (full backward compatibility for ref-less routes).
-  def resolve()(implicit env: Env): McpProxyEndpointConfig = {
+  def resolve()(using env: Env): McpProxyEndpointConfig = {
     serverRef.flatMap(r => env.adminExtensions.extension[AiExtension].get.states.mcpVirtualServer(r)) match {
       case Some(server) => server.config.overriddenBy(this)
       case None => this
@@ -833,7 +831,7 @@ case class McpProxyEndpointConfig(
    * capability only when at least one connector exposes something in it. Local workflow
    * functions (`functionRefs`) count as tools.
    */
-  def computeCapabilities(attrs: TypedMap, includeLogging: Boolean)(implicit env: Env, ec: ExecutionContext): Future[JsObject] = {
+  def computeCapabilities(attrs: TypedMap, includeLogging: Boolean)(using env: Env, ec: ExecutionContext): Future[JsObject] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val hasLocalFunctions = functionRefs.flatMap(r => ext.states.toolFunction(r)).nonEmpty
     val connectors = mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(applyFiltersTo)
@@ -1162,7 +1160,7 @@ object McpProxyEndpointConfig {
         opaqueToken = json.select("opaque_token").asOptBoolean.getOrElse(false),
         useIntrospection = json.select("use_introspection").asOptBoolean.getOrElse(false),
         toolScopes = json.select("tool_scopes").asOpt[Map[String, Seq[String]]].orElse(
-          json.select("tool_scopes").asOpt[Map[String, String]].map(_.mapValues(_.split(",").map(_.trim).toSeq)),
+          json.select("tool_scopes").asOpt[Map[String, String]].map(_.view.mapValues(_.split(",").map(_.trim).toSeq).toMap),
         ).getOrElse(Map.empty),
         toolCacheTtls = json.select("tool_cache_ttls").asOpt[Map[String, Long]].getOrElse(Map.empty),
         toolRateLimits = json.select("tool_rate_limits").asOpt[Map[String, Long]].getOrElse(Map.empty),
@@ -1183,13 +1181,13 @@ object McpProxyEndpointConfig {
         excludeResourceTemplateUris = json.select("exclude_resource_template_uris").asOpt[Seq[String]].getOrElse(Seq.empty),
         includePrompts = json.select("include_prompts").asOpt[Seq[String]].getOrElse(Seq.empty),
         excludePrompts = json.select("exclude_prompts").asOpt[Seq[String]].getOrElse(Seq.empty),
-        allowRules = json.select("allow_rules").asOpt(McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
-        disallowRules = json.select("disallow_rules").asOpt(McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
+        allowRules = json.select("allow_rules").asOpt(using McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
+        disallowRules = json.select("disallow_rules").asOpt(using McpConnectorRules.format).getOrElse(McpConnectorRules.empty),
         resources = json.select("resources").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap(v => McpStaticResource.format.reads(v).asOpt),
         resourceFetchAllowedHosts = json.select("resource_fetch_allowed_hosts").asOpt[Seq[String]].getOrElse(Seq.empty),
         prompts = json.select("prompts").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap(v => McpStaticPrompt.format.reads(v).asOpt),
-        overlays = json.select("overlays").asOpt(McpItemOverlays.format).getOrElse(McpItemOverlays.empty),
-        zeroTrust = json.select("zero_trust").asOpt(McpZeroTrustConfig.format).getOrElse(McpZeroTrustConfig.empty),
+        overlays = json.select("overlays").asOpt(using McpItemOverlays.format).getOrElse(McpItemOverlays.empty),
+        zeroTrust = json.select("zero_trust").asOpt(using McpZeroTrustConfig.format).getOrElse(McpZeroTrustConfig.empty),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -1211,7 +1209,7 @@ object McpAuditHelper {
 
   // Real-time metrics for the MCP server/exposition side (always on when env metrics are enabled,
   // independent of the opt-in `emit_audit_events`). Flat metric names with the method encoded in the name.
-  def markMetrics(method: String, durationMs: Long, isError: Boolean)(implicit env: Env): Unit = {
+  def markMetrics(method: String, durationMs: Long, isError: Boolean)(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     val m = method.replace('/', '.')
     env.metrics.counterInc("mcp.server.calls")
@@ -1232,7 +1230,7 @@ object McpAuditHelper {
     error: Option[String],
     attrs: TypedMap,
     response: JsValue = JsNull
-  )(implicit env: Env): Unit = {
+  )(using env: Env): Unit = {
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
     val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
@@ -1292,12 +1290,12 @@ object McpToolPinning {
     canonicalize(relevant).sha256
   }
 
-  private def pinKey(ident: String, epoch: Long, tool: String)(implicit env: Env): String =
+  private def pinKey(ident: String, epoch: Long, tool: String)(using env: Env): String =
     s"${env.storageRoot}:llmext:mcp:pin:$epoch:${ident.sha256}:$tool"
 
   // TOFU check: an explicit pinned hash (config) is authoritative; otherwise the first sighting is pinned in
   // the datastore and subsequent sightings are compared against it.
-  def check(z: McpZeroTrustConfig, ident: String, toolJson: JsObject)(implicit env: Env, ec: ExecutionContext): Future[PinVerdict] = {
+  def check(z: McpZeroTrustConfig, ident: String, toolJson: JsObject)(using env: Env, ec: ExecutionContext): Future[PinVerdict] = {
     val tool = (toolJson \ "name").asOpt[String].getOrElse("")
     val fp = fingerprint(toolJson)
     z.pinnedHashes.get(tool) match {
@@ -1319,7 +1317,7 @@ object McpToolPinning {
 // description or a tool result), sourced from an explicit list of GuardrailItems instead of a provider's
 // guardrails. Short-circuits on the first Denied; an erroring guardrail is skipped (never blocks).
 object McpZeroTrust {
-  def scan(items: Seq[GuardrailItem], text: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[GuardrailResult] = {
+  def scan(items: Seq[GuardrailItem], text: String, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[GuardrailResult] = {
     val msg = ChatMessage.userStrInput(text)
     def loop(seq: Seq[GuardrailItem]): Future[GuardrailResult] = seq.headOption match {
       case None => Future.successful(GuardrailResult.GuardrailPass)
@@ -1375,7 +1373,7 @@ object McpRedaction {
 // Emits a correlated audit/analytics event (+ metrics) whenever a zero-trust control fires. Routes through the
 // existing data-exporter pipeline (SIEM/Kafka/ES/...) like McpAudit. `blocked` distinguishes monitor vs enforce.
 object McpZeroTrustAudit {
-  def alert(kind: String, tool: String, detail: JsObject, blocked: Boolean, attrs: TypedMap)(implicit env: Env): Unit = {
+  def alert(kind: String, tool: String, detail: JsObject, blocked: Boolean, attrs: TypedMap)(using env: Env): Unit = {
     if (env.metricsEnabled) {
       env.metrics.counterInc(s"mcp.zerotrust.$kind.alerts")
       if (blocked) env.metrics.counterInc(s"mcp.zerotrust.$kind.blocks")
@@ -1412,7 +1410,7 @@ object McpProxyLogic {
   // Meta connector exposing the 5 virtualization tools (list_servers / list_tools / get_tool_schema /
   // search_tools / execute) - same behavior as a Meta connector. Local functions stay listed directly,
   // and resources/prompts are not affected.
-  private def toolConnectors(config: McpProxyEndpointConfig)(implicit env: Env): Seq[McpConnector] = {
+  private def toolConnectors(config: McpProxyEndpointConfig)(using env: Env): Seq[McpConnector] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     if (config.exposeAsMeta) {
       Seq(McpConnector(
@@ -1429,7 +1427,7 @@ object McpProxyLogic {
     }
   }
 
-  def toolsList(config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
+  def toolsList(config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val mcpConnectors = toolConnectors(config)
@@ -1472,7 +1470,7 @@ object McpProxyLogic {
 
   // Applies the two list-time zero-trust controls (A. pinning, B. description scan) to the tool list. A tool is
   // dropped only when the corresponding `*Enforce` flag is on; otherwise it stays and only an alert is emitted.
-  private def applyZeroTrustToList(config: McpProxyEndpointConfig, tools: Seq[JsValue], attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
+  private def applyZeroTrustToList(config: McpProxyEndpointConfig, tools: Seq[JsValue], attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
     val z = config.zeroTrust
     if (!z.pinningEnabled && !z.scanDescriptions) Future.successful(tools)
     else {
@@ -1514,7 +1512,7 @@ object McpProxyLogic {
   }
 
   // Per-tool, per-consumer fixed-window (60s) rate limit, backed by the shared datastore (cluster-wide).
-  private def rateLimitAllows(config: McpProxyEndpointConfig, name: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Boolean] = {
+  private def rateLimitAllows(config: McpProxyEndpointConfig, name: String, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Boolean] = {
     val limit = config.toolRateLimits.get(name).orElse(config.toolRateLimits.get("*")).getOrElse(0L)
     if (limit <= 0L) Future.successful(true)
     else {
@@ -1530,7 +1528,7 @@ object McpProxyLogic {
   // results are cached; the key includes the config identity to avoid cross-server collisions. The cached
   // value is the already-secured payload (post result-scan + redaction), so cache hits stay clean and the
   // guardrails don't re-run on every hit.
-  private def cachedCallTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
+  private def cachedCallTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
     val ttl = config.toolCacheTtls.get(name).orElse(config.toolCacheTtls.get("*")).getOrElse(0L)
     if (ttl <= 0L) securedCallTool(config, name, arguments, attrs)
     else {
@@ -1557,7 +1555,7 @@ object McpProxyLogic {
 
   // Executes the tool then applies the two result-time zero-trust controls (B. result guardrail scan,
   // C. result redaction). A scan denial under enforce returns Left (blocked, never cached).
-  private def securedCallTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
+  private def securedCallTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
     val z = config.zeroTrust
     callToolInternal(config, name, arguments, attrs).flatMap {
       case Right(payload) =>
@@ -1582,7 +1580,7 @@ object McpProxyLogic {
   // At call time (defense in depth): if any list-time control is in enforce mode, the tool must still be a
   // member of the secured tools/list. This blocks direct calls to a tool that pinning or a description
   // guardrail removed — even from a client that never issued tools/list.
-  private def pinningCallCheck(config: McpProxyEndpointConfig, name: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Option[String]] = {
+  private def pinningCallCheck(config: McpProxyEndpointConfig, name: String, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Option[String]] = {
     val z = config.zeroTrust
     val enforcesListMembership = (z.pinningEnabled && z.pinningEnforce) || (z.scanDescriptions && z.guardrailsEnforce)
     if (!enforcesListMembership) Future.successful(None)
@@ -1595,7 +1593,7 @@ object McpProxyLogic {
   // Resolves and executes a tool call. Left = unknown tool / denied, Right = the result payload. Pipeline:
   // scope→tool authorization → zero-trust list re-check (enforce) → argument redaction → per-tool rate limit
   // → per-tool result cache (wrapping execution + result scan + result redaction).
-  def callTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
+  def callTool(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
     val z = config.zeroTrust
     val granted = attrs.get(McpOAuthFilterUtils.McpGrantedScopesKey).getOrElse(Set.empty[String])
     if (!config.toolAllowedForScopes(name, granted)) Future.successful(Left(name))
@@ -1610,7 +1608,7 @@ object McpProxyLogic {
     }
   }
 
-  private def callToolInternal(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
+  private def callToolInternal(config: McpProxyEndpointConfig, name: String, arguments: JsObject, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[String, JsObject]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val functions = config.functionRefs.flatMap(r => ext.states.toolFunction(r))
     val functionsMap = functions.map(f => (f.name, f)).toMap
@@ -1630,7 +1628,7 @@ object McpProxyLogic {
   }
 
   // Full "resources" array: this server's managed (static) resources + every connector's resources.
-  def resourcesList(config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
+  def resourcesList(config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     val staticJson: Seq[JsValue] = config.resources.filter(r => config.matchesResource(r.name)).map(_.listJson)
@@ -1643,7 +1641,7 @@ object McpProxyLogic {
 
   // Reads a resource by uri. Managed (static) resources take precedence; otherwise it falls back to the
   // upstream connectors. Returns the `contents` array (empty when nothing matches).
-  def readResource(config: McpProxyEndpointConfig, uri: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsObject]] = {
+  def readResource(config: McpProxyEndpointConfig, uri: String, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Seq[JsObject]] = {
     config.resources.find(_.uri == uri) match {
       case Some(res) => res.read(attrs, config.resourceFetchAllowedHosts, config.emitAuditEvents).map(Seq(_))
       case None =>
@@ -1661,7 +1659,7 @@ object McpProxyLogic {
   }
 
   // Full "resourceTemplates" array: every connector's resource templates (no managed templates), overlaid.
-  def templatesList(config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
+  def templatesList(config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     // recover per connector: a connector that doesn't support resources/templates/list (-32601) must not break the aggregate
@@ -1669,7 +1667,7 @@ object McpProxyLogic {
   }
 
   // Full "prompts" array: this server's managed (static) prompts + every connector's prompts.
-  def promptsList(config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
+  def promptsList(config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
     val staticJson: Seq[JsValue] = config.prompts.filter(p => config.matchesPrompt(p.name)).map(_.listJson)
@@ -1682,9 +1680,9 @@ object McpProxyLogic {
 
   // Resolves a prompts/get. Managed (static) prompts take precedence; otherwise it falls back to the upstream
   // connectors. Returns the `{ description, messages }` payload.
-  def getPrompt(config: McpProxyEndpointConfig, name: String, arguments: Map[String, Object], attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[JsObject] = {
+  def getPrompt(config: McpProxyEndpointConfig, name: String, arguments: Map[String, Object], attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[JsObject] = {
     config.prompts.find(_.name == name) match {
-      case Some(prompt) => Future.successful(prompt.getJson(arguments.mapValues(_.toString).toMap, attrs))
+      case Some(prompt) => Future.successful(prompt.getJson(arguments.view.mapValues(_.toString).toMap, attrs))
       case None =>
         val ext = env.adminExtensions.extension[AiExtension].get
         val mcpConnectors = config.mcpRefs.flatMap(r => ext.states.mcpConnector(r)).map(config.applyFiltersTo)
@@ -1717,7 +1715,7 @@ case class SseSession(
   ref: AtomicReference[SourceQueueWithComplete[JsValue]] = new AtomicReference[SourceQueueWithComplete[JsValue]]()
 ) {
 
-  def init(): Source[JsValue, _] = {
+  def init(): Source[JsValue, ?] = {
     val stream = Source
       .queue[JsValue](1000, OverflowStrategy.dropHead)
       .takeWhile(_ => !finished.get())
@@ -1727,7 +1725,7 @@ case class SseSession(
     stream
   }
 
-  def send(id: Long, payload: JsValue)(implicit ec: ExecutionContext): Unit = {
+  def send(id: Long, payload: JsValue)(using ec: ExecutionContext): Unit = {
     if (!canceledRequests.contains(id)) {
       Option(ref.get()).foreach(_.offer(Json.obj(
         "jsonrpc" -> "2.0",
@@ -1779,7 +1777,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     ().vfuture
   }
 
-  override def access(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+  override def access(ctx: NgAccessContext)(using env: Env, ec: ExecutionContext): Future[NgAccess] = {
     McpOAuthFilterUtils.access(ctx, internalName)
   }
 
@@ -1788,7 +1786,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     NgProxyEngineError.NgResultProxyEngineError(Results.Status(status)(Json.obj("error" -> msg))).leftf
   }
 
-  def jsonRpcResponse(id: Long, payload: JsValue)(implicit attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def jsonRpcResponse(id: Long, payload: JsValue)(using attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val envelope = Json.obj(
       "jsonrpc" -> "2.0",
       "id" -> id,
@@ -1798,12 +1796,12 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(envelope)), None).rightf
   }
 
-  def emptyResp(id: Long)(implicit attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def emptyResp(id: Long)(using attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     jsonRpcResponse(id, Json.obj())
   }
 
-  def initialize(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def initialize(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     config.computeCapabilities(attrs, includeLogging = false).flatMap { capabilities =>
       val response = Json.obj(
         "protocolVersion" -> "2025-06-18", //"2024-11-05",
@@ -1818,8 +1816,8 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  def getToolList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def getToolList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     McpProxyLogic.toolsList(config, attrs).flatMap { tools =>
       val response = Json.obj("tools" -> JsArray(tools))
       session.send(id, response)
@@ -1827,8 +1825,8 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  def toolsCall(id: Long, session: SseSession, request: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def toolsCall(id: Long, session: SseSession, request: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val name = params.select("name").asString
     val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
@@ -1842,8 +1840,8 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  def getResourcesList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def getResourcesList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     McpProxyLogic.resourcesList(config, attrs).flatMap { resources =>
       val payload = Json.obj("resources" -> JsArray(resources))
       session.send(id, payload)
@@ -1851,8 +1849,8 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  def getPromptsList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def getPromptsList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     McpProxyLogic.promptsList(config, attrs).flatMap { prompts =>
       val payload = Json.obj("prompts" -> JsArray(prompts))
       session.send(id, payload)
@@ -1860,8 +1858,8 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  def getTemplatesList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def getTemplatesList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     McpProxyLogic.templatesList(config, attrs).flatMap { templates =>
       val payload = Json.obj("templates" -> JsArray(templates))
       session.send(id, payload)
@@ -1869,8 +1867,8 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  def readResource(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def readResource(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     json.select("params").select("uri").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter"))
       case Some(uri) =>
@@ -1882,13 +1880,13 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  def getPromptHandler(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def getPromptHandler(id: Long, json: JsValue, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     json.select("params").select("name").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter"))
       case Some(name) =>
         val arguments: Map[String, Object] = json.select("params").select("arguments").asOpt[JsObject].map { obj =>
-          obj.value.mapValues(v => v.asOpt[String].getOrElse(v.stringify).asInstanceOf[Object]).toMap
+          obj.value.view.mapValues(v => v.asOpt[String].getOrElse(v.stringify).asInstanceOf[Object]).toMap
         }.getOrElse(Map.empty)
         McpProxyLogic.getPrompt(config, name, arguments, attrs).flatMap { payload =>
           session.send(id, payload)
@@ -1897,15 +1895,15 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default).resolve()
     if (ctx.request.method.toLowerCase() == "get") {
       val sessionId = if (env.isDev) ctx.request.queryParam("sessionId").getOrElse(IdGenerator.token(16)) else IdGenerator.token(16)
       val session = SseSession(sessionId)
       // println(s"adding session: ${sessionId}")
       sessions.put(sessionId, session)
-      val sessionSource: Source[ByteString, _] = session.init().map(v => s"event: message\ndata: ${v.stringify}\n\n".byteString)
-      val source: Source[ByteString, _] = Source.single(ByteString(s"event: endpoint\ndata: ${ctx.rawRequest.path}?sessionId=${sessionId}\n\n"))
+      val sessionSource: Source[ByteString, ?] = session.init().map(v => s"event: message\ndata: ${v.stringify}\n\n".byteString)
+      val source: Source[ByteString, ?] = Source.single(ByteString(s"event: endpoint\ndata: ${ctx.rawRequest.path}?sessionId=${sessionId}\n\n"))
         .concat(sessionSource)
         .alsoTo(Sink.onComplete {
           case _ =>
@@ -1939,9 +1937,9 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
               ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
                 // println(s"received client command raw ${sessionId} : ${bodyRaw.utf8String}")
                 Try(bodyRaw.utf8String.parseJson) match {
-                  case Failure(e) => error(400,"error while parsing json-rpc payload")
+                  case Failure(_) => error(400,"error while parsing json-rpc payload")
                   case Success(json) => {
-                    implicit val _attrs: TypedMap = ctx.attrs
+                    given _attrs: TypedMap = ctx.attrs
                     val id = json.select("id").asOpt[Long].getOrElse(0L)
                     val method = json.select("method").asOpt[String].getOrElse("--")
                     val start = System.currentTimeMillis()
@@ -2034,14 +2032,14 @@ class McpWebsocketEndpoint extends NgWebsocketBackendPlugin with NgAccessValidat
     ().vfuture
   }
 
-  override def access(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+  override def access(ctx: NgAccessContext)(using env: Env, ec: ExecutionContext): Future[NgAccess] = {
     McpOAuthFilterUtils.access(ctx, internalName)
   }
 
-  override def callBackend(ctx: NgWebsocketPluginContext)(implicit env: Env, ec: ExecutionContext): Flow[Message, Message, _] = {
+  override def callBackend(ctx: NgWebsocketPluginContext)(using env: Env, ec: ExecutionContext): Flow[Message, Message, ?] = {
     val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default).resolve()
     ActorFlow
-      .actorRef(out => McpActor.props(out, config, env, ctx.attrs))(env.otoroshiActorSystem, env.otoroshiMaterializer)
+      .actorRef(out => McpActor.props(out, config, env, ctx.attrs))(using env.otoroshiActorSystem, env.otoroshiMaterializer)
   }
 }
 
@@ -2051,7 +2049,7 @@ object McpActor {
 
 class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: TypedMap) extends Actor {
 
-  implicit val ec = env.otoroshiExecutionContext
+  given ec: ExecutionContext = env.otoroshiExecutionContext
 
   val ready = new AtomicBoolean(false)
   val canceledRequests = new TrieMap[Long, Unit]()
@@ -2088,8 +2086,8 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
   }
 
   def initialize(id: Long): Future[JsValue] = {
-    implicit val e: Env = env
-    implicit val ec: ExecutionContext = env.otoroshiExecutionContext
+    given e: Env = env
+    given ec: ExecutionContext = env.otoroshiExecutionContext
     config.computeCapabilities(attrs, includeLogging = false).map { capabilities =>
       val response = Json.obj(
         "protocolVersion" -> "2025-06-18",//"2024-11-05",
@@ -2104,16 +2102,16 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
   }
 
   def getToolList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap): Future[JsValue] = {
-    implicit val ec: ExecutionContext = env.otoroshiExecutionContext
-    implicit val ev: Env = env
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
     McpProxyLogic.toolsList(config, attrs).map { tools =>
       jsonRpcResponse(id, Json.obj("tools" -> JsArray(tools)))
     }
   }
 
   def toolsCall(id: Long, request: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap): Future[JsValue] = {
-    implicit val ec: ExecutionContext = env.otoroshiExecutionContext
-    implicit val ev: Env = env
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val name = params.select("name").asString
     val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
@@ -2124,30 +2122,30 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
   }
 
   def getResourcesList(id: Long, attrs: TypedMap): Future[JsValue] = {
-    McpProxyLogic.resourcesList(config, attrs)(env, ec).map { resources =>
+    McpProxyLogic.resourcesList(config, attrs)(using env, ec).map { resources =>
       jsonRpcResponse(id, Json.obj("resources" -> JsArray(resources)))
-    }(ec)
+    }(using ec)
   }
 
   def getPromptsList(id: Long, attrs: TypedMap): Future[JsValue] = {
-    McpProxyLogic.promptsList(config, attrs)(env, ec).map { prompts =>
+    McpProxyLogic.promptsList(config, attrs)(using env, ec).map { prompts =>
       jsonRpcResponse(id, Json.obj("prompts" -> JsArray(prompts)))
-    }(ec)
+    }(using ec)
   }
 
   def getTemplatesList(id: Long, attrs: TypedMap): Future[JsValue] = {
-    McpProxyLogic.templatesList(config, attrs)(env, ec).map { templates =>
+    McpProxyLogic.templatesList(config, attrs)(using env, ec).map { templates =>
       jsonRpcResponse(id, Json.obj("templates" -> JsArray(templates)))
-    }(ec)
+    }(using ec)
   }
 
   def readResource(id: Long, json: JsValue, attrs: TypedMap): Future[JsValue] = {
     json.select("params").select("uri").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter")).vfuture
       case Some(uri) =>
-        McpProxyLogic.readResource(config, uri, attrs)(env, ec).map { contents =>
+        McpProxyLogic.readResource(config, uri, attrs)(using env, ec).map { contents =>
           jsonRpcResponse(id, Json.obj("contents" -> JsArray(contents)))
-        }(ec)
+        }(using ec)
     }
   }
 
@@ -2156,18 +2154,18 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter")).vfuture
       case Some(name) =>
         val arguments: Map[String, Object] = json.select("params").select("arguments").asOpt[JsObject].map { obj =>
-          obj.value.mapValues(v => v.asOpt[String].getOrElse(v.stringify).asInstanceOf[Object]).toMap
+          obj.value.view.mapValues(v => v.asOpt[String].getOrElse(v.stringify).asInstanceOf[Object]).toMap
         }.getOrElse(Map.empty)
-        McpProxyLogic.getPrompt(config, name, arguments, attrs)(env, ec).map { payload =>
+        McpProxyLogic.getPrompt(config, name, arguments, attrs)(using env, ec).map { payload =>
           jsonRpcResponse(id, payload)
-        }(ec)
+        }(using ec)
     }
   }
 
   def handle(data: String): Unit = {
     // println(s"handle ws raw message: ${data}")
     Try(data.parseJson) match {
-      case Failure(e) => send(jsonRpcError(0, 400, "error while parsing json-rpc payload", Json.obj()))
+      case Failure(_) => send(jsonRpcError(0, 400, "error while parsing json-rpc payload", Json.obj()))
       case Success(json) => {
         val id = json.select("id").asOpt[Long].getOrElse(0L)
         val method = json.select("method").asOpt[String].getOrElse("--")
@@ -2208,17 +2206,17 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
         }
         resp.onComplete { r =>
           val dur = System.currentTimeMillis() - start
-          McpAuditHelper.markMetrics(method, dur, isError = r.isFailure)(env)
+          McpAuditHelper.markMetrics(method, dur, isError = r.isFailure)(using env)
           if (config.emitAuditEvents) {
             r match {
               case Success(response) =>
-                McpAuditHelper.emit(method, id, json, dur, "websocket", None, attrs, response)(env)
+                McpAuditHelper.emit(method, id, json, dur, "websocket", None, attrs, response)(using env)
               case Failure(ex) =>
-                McpAuditHelper.emit(method, id, json, dur, "websocket", Some(ex.getMessage), attrs)(env)
+                McpAuditHelper.emit(method, id, json, dur, "websocket", Some(ex.getMessage), attrs)(using env)
             }
           }
         }
-        resp.map(r => send(r))(env.otoroshiExecutionContext)
+        resp.map(r => send(r))(using env.otoroshiExecutionContext)
       }
     }
   }
@@ -2263,7 +2261,7 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     NgProxyEngineError.NgResultProxyEngineError(Results.Status(status)(Json.obj("error" -> msg))).leftf
   }
 
-  def jsonRpcResponse(id: Long, payload: JsValue)(implicit attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def jsonRpcResponse(id: Long, payload: JsValue)(using attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val envelope = Json.obj(
       "jsonrpc" -> "2.0",
       "id" -> id,
@@ -2273,12 +2271,12 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(envelope)), None).rightf
   }
 
-  def emptyResp(id: Long)(implicit attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def emptyResp(id: Long)(using attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     jsonRpcResponse(id, Json.obj())
   }
 
-  def initialize(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def initialize(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     config.computeCapabilities(attrs, includeLogging = false).flatMap { capabilities =>
       val response = Json.obj(
         "protocolVersion" -> "2025-06-18", //"2024-11-05",
@@ -2292,15 +2290,15 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  def getToolList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def getToolList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     McpProxyLogic.toolsList(config, attrs).flatMap { tools =>
       jsonRpcResponse(id, Json.obj("tools" -> JsArray(tools)))
     }
   }
 
-  def toolsCall(id: Long, request: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def toolsCall(id: Long, request: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val name = params.select("name").asString
     val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
@@ -2310,29 +2308,29 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  def getResourcesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def getResourcesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     McpProxyLogic.resourcesList(config, attrs).flatMap { resources =>
       jsonRpcResponse(id, Json.obj("resources" -> JsArray(resources)))
     }
   }
 
-  def getPromptsList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def getPromptsList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     McpProxyLogic.promptsList(config, attrs).flatMap { prompts =>
       jsonRpcResponse(id, Json.obj("prompts" -> JsArray(prompts)))
     }
   }
 
-  def getTemplatesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def getTemplatesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     McpProxyLogic.templatesList(config, attrs).flatMap { templates =>
       jsonRpcResponse(id, Json.obj("templates" -> JsArray(templates)))
     }
   }
 
-  def readResource(id: Long, json: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def readResource(id: Long, json: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     json.select("params").select("uri").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter"))
       case Some(uri) =>
@@ -2342,13 +2340,13 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  def getPromptHandler(id: Long, json: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    implicit val _attrs: TypedMap = attrs
+  def getPromptHandler(id: Long, json: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    given _attrs: TypedMap = attrs
     json.select("params").select("name").asOpt[String] match {
       case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter"))
       case Some(name) =>
         val arguments: Map[String, Object] = json.select("params").select("arguments").asOpt[JsObject].map { obj =>
-          obj.value.mapValues(v => v.asOpt[String].getOrElse(v.stringify).asInstanceOf[Object]).toMap
+          obj.value.view.mapValues(v => v.asOpt[String].getOrElse(v.stringify).asInstanceOf[Object]).toMap
         }.getOrElse(Map.empty)
         McpProxyLogic.getPrompt(config, name, arguments, attrs).flatMap { payload =>
           jsonRpcResponse(id, payload)
@@ -2356,18 +2354,18 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     }
   }
 
-  override def access(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+  override def access(ctx: NgAccessContext)(using env: Env, ec: ExecutionContext): Future[NgAccess] = {
     McpOAuthFilterUtils.access(ctx, internalName)
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default).resolve()
     if (ctx.request.hasBody && ctx.request.method.toLowerCase() == "post") {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         Try(bodyRaw.utf8String.parseJson) match {
-          case Failure(e) => error(400,"error while parsing json-rpc payload")
+          case Failure(_) => error(400,"error while parsing json-rpc payload")
           case Success(json) => {
-            implicit val _attrs: TypedMap = ctx.attrs
+            given _attrs: TypedMap = ctx.attrs
             // println(s"mcp in >>> ${json.prettify}")
             val id = json.select("id").asOpt[Long].getOrElse(0L)
             val method = json.select("method").asOpt[String].getOrElse("--")
@@ -2426,7 +2424,7 @@ case class McpProtectedResourceMetadataConfig(
   def json: JsValue = McpProtectedResourceMetadataConfig.format.writes(this)
   // effective auth module: the explicit authModuleRef, else the one configured on the referenced MCP
   // virtual server (so the preset can drive both plugins from just a server ref).
-  def effectiveAuthModuleRef(implicit env: Env): Option[String] = authModuleRef.orElse {
+  def effectiveAuthModuleRef(using env: Env): Option[String] = authModuleRef.orElse {
     serverRef
       .flatMap(r => env.adminExtensions.extension[AiExtension].flatMap(_.states.mcpVirtualServer(r)))
       .flatMap(_.config.authModuleRef)
@@ -2533,7 +2531,7 @@ class McpProtectedResourceMetadata extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpProtectedResourceMetadataConfig.format).getOrElse(McpProtectedResourceMetadataConfig.default)
     config.effectiveAuthModuleRef match {
       case None =>
@@ -2807,7 +2805,7 @@ class McpRegistryWellKnown extends NgBackendCall {
   override def configFlow: Seq[String] = McpRegistryWellKnownConfig.configFlow
   override def configSchema: Option[JsObject] = McpRegistryWellKnownConfig.configSchema
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpRegistryWellKnownConfig.format).getOrElse(McpRegistryWellKnownConfig.default)
     val registryUrl = config.registryUrl.filter(_.trim.nonEmpty).getOrElse(s"${ctx.rawRequest.theProtocol}://${ctx.rawRequest.theHost}/v0")
     val doc = Json.obj(
@@ -2895,7 +2893,7 @@ class McpRegistryApi extends NgBackendCall {
   override def configFlow: Seq[String] = McpRegistryApiConfig.configFlow
   override def configSchema: Option[JsObject] = McpRegistryApiConfig.configSchema
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpRegistryApiConfig.format).getOrElse(McpRegistryApiConfig.default)
     val allServers = env.adminExtensions.extension[AiExtension].get.states.allMcpVirtualServers()
     // restrict to the subset this registry exposes (all / by ref / by tag / route's tenant)
@@ -3050,7 +3048,7 @@ object McpExpositionScanner {
 
   // https://<host[/frontend-path]><exposition-path>, normalizing slashes. Scheme is assumed https (Otoroshi
   // default; it isn't stored on the route — which is exactly why the admin confirms the suggestion).
-  def deriveUrl(domainAndPathRaw: String, includePath: Option[String], forceHttps: Boolean)(implicit env: Env): String = {
+  def deriveUrl(domainAndPathRaw: String, includePath: Option[String], forceHttps: Boolean)(using env: Env): String = {
     val base = domainAndPathRaw.trim.stripSuffix("/")
     val p = includePath.map(_.trim).filter(_.nonEmpty).map(s => if (s.startsWith("/")) s else "/" + s).getOrElse("")
     val url = if (forceHttps) {
@@ -3091,7 +3089,7 @@ object McpExpositionScanner {
     )
   }
 
-  def scan(vsId: String)(implicit env: Env): Seq[Candidate] = {
+  def scan(vsId: String)(using env: Env): Seq[Candidate] = {
     env.proxyState.allRoutes().filter(_.enabled).flatMap { route =>
       val slots = route.plugins.slots.filter(_.enabled)
       val mcpSlots = slots.filter(s => slotReferences(s.plugin, s.config.raw, vsId))

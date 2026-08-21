@@ -1,18 +1,18 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.stream.alpakka.s3.scaladsl.S3
-import akka.stream.alpakka.s3._
-import akka.stream.scaladsl.Sink
-import akka.stream.{Attributes, Materializer}
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.stream.connectors.s3.scaladsl.S3
+import org.apache.pekko.stream.connectors.s3.*
+import org.apache.pekko.stream.scaladsl.{Keep, Sink}
+import org.apache.pekko.stream.{Attributes, Materializer}
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import dev.langchain4j.data.segment.TextSegment
 import otoroshi.env.Env
 import otoroshi.storage.drivers.inmemory.S3Configuration
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 import software.amazon.awssdk.auth.credentials.{AwsBasicCredentials, StaticCredentialsProvider}
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.regions.providers.AwsRegionProvider
@@ -23,18 +23,18 @@ import java.util.concurrent.atomic.AtomicReference
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{ExecutionContext, Future}
-import scala.jdk.CollectionConverters._
+import scala.jdk.CollectionConverters.*
 
 class AllMiniLmL6V2EmbeddingModelClient(val options: JsObject, id: String) extends EmbeddingModelClient {
 
   lazy val embeddingModel = new dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel()
 
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
-    val r = embeddingModel.embedAll(seqAsJavaList(opts.input.map(s => TextSegment.from(s))))
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    val r = embeddingModel.embedAll(opts.input.map(s => TextSegment.from(s)).asJava)
     try {
       Right(EmbeddingResponse(
         model = "all-minilm-l6-v2",
-        embeddings = r.content().asScala.map(e => Embedding(e.vector())),
+        embeddings = r.content().asScala.toSeq.map(e => Embedding(e.vector())),
         metadata = EmbeddingResponseMetadata(-1L),
       )).vfuture
     } catch {
@@ -53,7 +53,7 @@ class LocalEmbeddingStoreClient(val config: JsObject, _storeId: String) extends 
   private lazy val connection: JsObject = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
   private lazy val _sessionId: Option[String] = connection.select("session_id").asOptString
 
-  private def getStore()(implicit ec: ExecutionContext, env: Env): Future[dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]] = {
+  private def getStore()(using ec: ExecutionContext, env: Env): Future[dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]] = {
     val id = _sessionId match {
       case Some(sessionId) => s"${_storeId}:${sessionId}"
       case None => _storeId
@@ -78,7 +78,7 @@ class LocalEmbeddingStoreClient(val config: JsObject, _storeId: String) extends 
     }
   }
 
-  override def add(options: EmbeddingAddOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def add(options: EmbeddingAddOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     getStore().map { store =>
       val lcEmbedding = new dev.langchain4j.data.embedding.Embedding(options.embedding.vector)
       store.add(options.id, lcEmbedding, TextSegment.from(options.input))
@@ -86,14 +86,14 @@ class LocalEmbeddingStoreClient(val config: JsObject, _storeId: String) extends 
     }
   }
 
-  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     getStore().map { store =>
       store.remove(options.id)
       ().right
     }
   }
 
-  override def search(options: EmbeddingSearchOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
+  override def search(options: EmbeddingSearchOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
     getStore().flatMap { store =>
       try {
         val lcEmbedding = new dev.langchain4j.data.embedding.Embedding(options.embedding.vector)
@@ -135,42 +135,39 @@ class LocalEmbeddingStoreClient(val config: JsObject, _storeId: String) extends 
     S3Attributes.settings(settings)
   }
 
-  private def fileContent(key: String, config: S3Configuration)(implicit
+  private def fileContent(key: String, config: S3Configuration)(using
                                                                 ec: ExecutionContext,
                                                                 mat: Materializer
   ): Future[Option[(ObjectMetadata, ByteString)]] = {
-    S3.download(config.bucket, key)
+    // S3.download is deprecated in pekko-connectors: getObject streams the bytes and
+    // materializes the metadata, and signals a missing object with a NoSuchKey S3Exception
+    // instead of an empty Option
+    val (metadataF, contentF) = S3
+      .getObject(config.bucket, key)
       .withAttributes(s3ClientSettingsAttrs(config))
-      .runWith(Sink.headOption)
-      .map(_.flatten)
-      .flatMap { opt =>
-        opt
-          .map {
-            case (source, om) => {
-              source.runFold(ByteString.empty)(_ ++ _).map { content =>
-                (om, content).some
-              }
-            }
-          }
-          .getOrElse(None.vfuture)
-      }
+      .toMat(Sink.fold(ByteString.empty)(_ ++ _))(Keep.both)
+      .run()
+    metadataF
+      .zip(contentF)
+      .map(_.some)
+      .recover { case e: S3Exception if e.code == "NoSuchKey" => None }
   }
 
-  private def getDefaultCode()(implicit env: Env, ec: ExecutionContext): Future[String] = {
+  private def getDefaultCode()(using env: Env, ec: ExecutionContext): Future[String] = {
     """{"entries":[]}""".vfuture
   }
 
-  private def getInitialStoreContent(path: String, headers: Map[String, String])(implicit env: Env, ec: ExecutionContext): Future[String] = {
+  private def getInitialStoreContent(path: String, headers: Map[String, String])(using env: Env, ec: ExecutionContext): Future[String] = {
     import LocalEmbeddingStoreClient.logger
     if (path.startsWith("https://") || path.startsWith("http://")) {
       env.Ws.url(path)
         .withFollowRedirects(true)
         .withRequestTimeout(30.seconds)
-        .withHttpHeaders(headers.toSeq: _*)
+        .withHttpHeaders(headers.toSeq*)
         .get()
         .flatMap { response =>
           if (response.status == 200) {
-            response.body.vfuture
+            (response.body: String).vfuture
           } else {
             getDefaultCode()
           }
@@ -185,8 +182,8 @@ class LocalEmbeddingStoreClient(val config: JsObject, _storeId: String) extends 
       }
     } else if (path.startsWith("s3://")) {
       logger.info(s"fetching from S3: ${path}")
-      val config = S3Configuration.format.reads(JsObject(headers.mapValues(_.json))).get
-      fileContent(path.replaceFirst("s3://", ""), config)(env.otoroshiExecutionContext, env.otoroshiMaterializer).flatMap {
+      val config = S3Configuration.format.reads(JsObject(headers.view.mapValues(_.json).toMap)).get
+      fileContent(path.replaceFirst("s3://", ""), config)(using env.otoroshiExecutionContext, env.otoroshiMaterializer).flatMap {
         case None => {
           logger.info(s"unable to fetch from S3: ${path}")
           getDefaultCode()
@@ -220,21 +217,21 @@ object LocalPersistentMemoryClient {
 
 class LocalPersistentMemoryClient(val config: JsObject, id: String) extends PersistentMemoryClient {
 
-  private def getMemory(sessionId: String)(implicit env: Env, ec: ExecutionContext): LocalPersistentMemoryClientMemory = {
+  private def getMemory(sessionId: String)(using env: Env, ec: ExecutionContext): LocalPersistentMemoryClientMemory = {
     val memories = LocalPersistentMemoryClient.memories.getOrElseUpdate(id, new TrieMap[String, LocalPersistentMemoryClientMemory]())
     memories.getOrElseUpdate(sessionId, LocalPersistentMemoryClientMemory(sessionId))
   }
 
-  override def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     getMemory(sessionId).updateMessages(messages)
     ().rightf
   }
 
-  override def getMessages(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
+  override def getMessages(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
     getMemory(sessionId).getMessages().rightf
   }
 
-  override def clearMemory(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def clearMemory(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     getMemory(sessionId).clearMessages().rightf
   }
 }

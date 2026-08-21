@@ -1,17 +1,17 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.stream.scaladsl.FileIO
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.scaladsl.FileIO
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AudioModel
 import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions}
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.http._
-import play.api.libs.json._
+import play.api.http.*
+import play.api.libs.json.*
 import play.api.mvc.{RequestHeader, Result, Results}
 import play.core.parsers.Multipart
 
@@ -52,7 +52,7 @@ object OpenAICompatTextToSpeechConfig {
     }
   }
 
-  def getProvidersMap(config: OpenAICompatTextToSpeechConfig)(implicit ec: ExecutionContext, env: Env): (Map[String, AudioModel], Map[String, AudioModel]) = {
+  def getProvidersMap(config: OpenAICompatTextToSpeechConfig)(using ec: ExecutionContext, env: Env): (Map[String, AudioModel], Map[String, AudioModel]) = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val providers = config.refs.flatMap(ref => ext.states.audioModel(ref))
     val providersByName = providers.map { provider =>
@@ -63,7 +63,7 @@ object OpenAICompatTextToSpeechConfig {
     (providersById, providersByName)
   }
 
-  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatTextToSpeechConfig)(implicit ec: ExecutionContext, env: Env): JsValue = {
+  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatTextToSpeechConfig)(using ec: ExecutionContext, env: Env): JsValue = {
     _jsonBody.select("model").asOpt[String] match {
       case Some(value) if value.contains("###") => {
         val parts = value.split("###")
@@ -101,7 +101,7 @@ object OpenAICompatTextToSpeechConfig {
 }
 
 object OpenAICompatTextToSpeech {
-  def handleRequest(config: OpenAICompatTextToSpeechConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: OpenAICompatTextToSpeechConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
       val _jsonBody = bodyRaw.utf8String.parseJson
@@ -157,7 +157,7 @@ class OpenAICompatTextToSpeech extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(OpenAICompatTextToSpeechConfig.format).getOrElse(OpenAICompatTextToSpeechConfig.default)
     OpenAICompatTextToSpeech.handleRequest(config, ctx)
   }
@@ -201,7 +201,7 @@ object OpenAICompatSpeechToTextConfig {
     }
   }
 
-  def getProvidersMap(config: OpenAICompatSpeechToTextConfig)(implicit ec: ExecutionContext, env: Env): (Map[String, AudioModel], Map[String, AudioModel]) = {
+  def getProvidersMap(config: OpenAICompatSpeechToTextConfig)(using ec: ExecutionContext, env: Env): (Map[String, AudioModel], Map[String, AudioModel]) = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val providers = config.refs.flatMap(ref => ext.states.audioModel(ref))
     val providersByName = providers.map { provider =>
@@ -212,7 +212,7 @@ object OpenAICompatSpeechToTextConfig {
     (providersById, providersByName)
   }
 
-  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatSpeechToTextConfig)(implicit ec: ExecutionContext, env: Env): JsValue = {
+  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatSpeechToTextConfig)(using ec: ExecutionContext, env: Env): JsValue = {
     _jsonBody.select("model").asOpt[String] match {
       case Some(value) if value.contains("###") => {
         val parts = value.split("###")
@@ -250,7 +250,7 @@ object OpenAICompatSpeechToTextConfig {
 }
 
 object OpenAICompatSpeechToText {
-  def handleRequest(config: OpenAICompatSpeechToTextConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: OpenAICompatSpeechToTextConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     Multipart.multipartParser(
       config.maxSizeUpload,
@@ -345,14 +345,14 @@ class OpenAICompatSpeechToText extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(OpenAICompatSpeechToTextConfig.format).getOrElse(OpenAICompatSpeechToTextConfig.default)
     OpenAICompatSpeechToText.handleRequest(config, ctx)
   }
 }
 
 object OpenAICompatTranslation {
-  def handleRequest(config: OpenAICompatSpeechToTextConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: OpenAICompatSpeechToTextConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     Multipart.multipartParser(
       config.maxSizeUpload,
@@ -447,7 +447,7 @@ class OpenAICompatTranslation extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(OpenAICompatSpeechToTextConfig.format).getOrElse(OpenAICompatSpeechToTextConfig.default)
     OpenAICompatTranslation.handleRequest(config, ctx)
   }

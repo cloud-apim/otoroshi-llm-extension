@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.{JsArray, JsNull, JsObject, JsString, Json}
 
 

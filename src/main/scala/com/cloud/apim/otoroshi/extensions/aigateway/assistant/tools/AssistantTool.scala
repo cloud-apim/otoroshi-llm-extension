@@ -4,7 +4,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.assistant.AssistantConfigura
 import otoroshi.env.Env
 import otoroshi.models.BackOfficeUser
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -14,7 +14,7 @@ case class ToolDefinition(name: String, description: String, parameters: JsObjec
 
 trait AssistantTool {
   def definition: ToolDefinition
-  def call(arguments: JsValue, ctx: ToolCallContext)(implicit ec: ExecutionContext): Future[String]
+  def call(arguments: JsValue, ctx: ToolCallContext)(using ec: ExecutionContext): Future[String]
 
   def openaiJson: JsObject = Json.obj(
     "type" -> "function",

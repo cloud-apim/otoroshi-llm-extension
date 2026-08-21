@@ -1,22 +1,22 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
 import otoroshi.cluster.Cluster
 import otoroshi.env.Env
 import otoroshi.gateway.Retry
 import otoroshi.models.{ApiKey, IpFiltering}
-import otoroshi.next.extensions._
-import otoroshi.next.plugins.api._
-import otoroshi.utils.RegexPool
-import otoroshi.utils.http.Implicits._
-import otoroshi.utils.http.RequestImplicits._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.extensions.*
+import otoroshi.next.plugins.api.*
+import otoroshi.utils.http.Implicits.*
+import otoroshi.utils.http.RequestImplicits.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.libs.ws.WSAuthScheme
-import play.api.mvc._
+import play.api.libs.ws.WSBodyWritables.given
+import play.api.mvc.*
 
 import java.security.MessageDigest
 import java.time.Instant
@@ -25,9 +25,10 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
-import scala.concurrent._
-import scala.concurrent.duration._
+import scala.concurrent.*
+import scala.concurrent.duration.*
 import scala.util.{Failure, Random, Success, Try}
+import org.apache.pekko.actor.Scheduler
 
 case class PowConfig(
   difficulty: Int = 8,
@@ -90,7 +91,7 @@ case class PowConfig(
     }
   }
 
-  def isHeaderBypassed(req: RequestHeader)(implicit env: Env): Boolean = {
+  def isHeaderBypassed(req: RequestHeader)(using env: Env): Boolean = {
     if (allowedHeaders.isEmpty && blockedHeaders.isEmpty) {
       false
     } else if (allowedHeaders.nonEmpty && allowedHeaders.exists {
@@ -106,7 +107,7 @@ case class PowConfig(
     }
   }
 
-  def isBypassed(req: RequestHeader)(implicit env: Env): Boolean = {
+  def isBypassed(req: RequestHeader)(using env: Env): Boolean = {
     isIpBypassed(req.theIpAddress) && isUserAgentBypassed(req.theUserAgent) && isHeaderBypassed(req)
   }
 }
@@ -272,7 +273,7 @@ object Pow {
       val n = Integer.parseInt(c.toString, 16)
       val bin = f"$n%4s".replace(' ', '0')
       bin
-    }.takeWhile(_ == '0').length
+    }.takeWhile(_ == '0').size
   }
 
   private def hmacSha256(data: String, secret: String): String = {
@@ -283,7 +284,7 @@ object Pow {
 
   case class PowToken(exp: Long, ip: Option[String], ua: Option[String])
   object PowToken {
-    implicit val f: OFormat[PowToken] = Json.format[PowToken]
+    given f: OFormat[PowToken] = Json.format[PowToken]
   }
 
   def signToken(tok: PowToken, secret: String): String = {
@@ -312,7 +313,7 @@ object ProofOfWorkPlugin {
 
   private val counter = new AtomicInteger(0)
 
-  private def prefixKey(implicit env: Env) = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:pow_challenge_tokens:"
+  private def prefixKey(using env: Env) = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:pow_challenge_tokens:"
 
   private def otoroshiUrl(env: Env): String = {
     val config = env.clusterConfig
@@ -321,10 +322,9 @@ object ProofOfWorkPlugin {
   }
 
   // POST /api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/:key
-  def handlePowChallengeCreate(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]])(implicit env: Env): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handlePowChallengeCreate(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]])(using env: Env): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
     ctx.named("key") match {
       case None => Results.BadRequest(Json.obj("error" -> "no key found")).vfuture
       case Some(challengeId) => {
@@ -334,7 +334,7 @@ object ProofOfWorkPlugin {
             val bodyJson = body.utf8String.parseJson
             val challenge = bodyJson.select("challenge").asObject
             val conf = PowConfig.format.reads(bodyJson.select("conf").asObject).get
-            setChallenge(challengeId, challenge, conf)(env, ec).map { _ =>
+            setChallenge(challengeId, challenge, conf)(using env, ec).map { _ =>
               Results.NoContent
             }
           }
@@ -344,14 +344,12 @@ object ProofOfWorkPlugin {
   }
 
   // GET /api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/:key
-  def handlePowChallengeRead(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]])(implicit env: Env): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handlePowChallengeRead(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]])(using env: Env): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
     ctx.named("key") match {
       case None => Results.BadRequest(Json.obj("error" -> "no key found")).vfuture
       case Some(challengeId) => {
-        getChallenge(challengeId, PowConfig.default)(env, ec).map {
+        getChallenge(challengeId, PowConfig.default)(using env, ec).map {
           case Some(challenge) => Results.Ok(challenge)
           case None => Results.NotFound(Json.obj("error" -> "challenge not found"))
         }
@@ -360,30 +358,28 @@ object ProofOfWorkPlugin {
   }
 
   // DELETE /api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/:key
-  def handlePowChallengeDelete(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]])(implicit env: Env): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handlePowChallengeDelete(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]])(using env: Env): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
     ctx.named("key") match {
       case None => Results.BadRequest(Json.obj("error" -> "no key found")).vfuture
       case Some(challengeId) => {
-        deleteChallenge(challengeId)(env, ec).map { _ =>
+        deleteChallenge(challengeId)(using env, ec).map { _ =>
           Results.NoContent
         }
       }
     }
   }
 
-  def callLeaderChallengeRead(challengeId: String)(implicit env: Env, ec: ExecutionContext): Future[Option[JsObject]] = {
+  def callLeaderChallengeRead(challengeId: String)(using env: Env, ec: ExecutionContext): Future[Option[JsObject]] = {
     val config = env.clusterConfig
-    implicit val sc = env.otoroshiScheduler
+    given sc: Scheduler = env.otoroshiScheduler
     Retry
       .retry(
         times = config.worker.retries,
         delay = config.retryDelay,
         factor = config.retryFactor,
         ctx = "leader-read-challenge-token"
-      ) { tryCount =>
+      ) { _ =>
         if (Cluster.logger.isDebugEnabled)
           Cluster.logger.debug(s"Reading challenge $challengeId from Otoroshi leader cluster")
         env.MtlsWs
@@ -406,7 +402,7 @@ object ProofOfWorkPlugin {
             }
           }
       }
-      .recover { case e =>
+      .recover { case _ =>
         if (Cluster.logger.isDebugEnabled)
           Cluster.logger.debug(
             s"[${env.clusterConfig.mode.name}] Error while reading challenge $challengeId from Otoroshi leader cluster"
@@ -415,16 +411,16 @@ object ProofOfWorkPlugin {
       }
   }
 
-  def callLeaderChallengeDelete(challengeId: String)(implicit env: Env, ec: ExecutionContext): Future[Unit] = {
+  def callLeaderChallengeDelete(challengeId: String)(using env: Env, ec: ExecutionContext): Future[Unit] = {
     val config = env.clusterConfig
-    implicit val sc = env.otoroshiScheduler
+    given sc: Scheduler = env.otoroshiScheduler
     Retry
       .retry(
         times = config.worker.retries,
         delay = config.retryDelay,
         factor = config.retryFactor,
         ctx = "leader-delete-challenge-token"
-      ) { tryCount =>
+      ) { _ =>
         if (Cluster.logger.isDebugEnabled)
           Cluster.logger.debug(s"Deleting challenge $challengeId from Otoroshi leader cluster")
         env.MtlsWs
@@ -439,29 +435,28 @@ object ProofOfWorkPlugin {
           .withRequestTimeout(Duration(config.worker.timeout, TimeUnit.MILLISECONDS))
           .withMaybeProxyServer(config.proxy)
           .delete()
-          .map { resp =>
+          .map { _ =>
             ()
           }
       }
-      .recover { case e =>
+      .recover { case _ =>
         if (Cluster.logger.isDebugEnabled)
           Cluster.logger.debug(
             s"[${env.clusterConfig.mode.name}] Error while deleting challenge $challengeId from Otoroshi leader cluster"
           )
-        None
       }
   }
 
-  def callLeaderChallengeWrite(challengeId: String, challenge: JsObject, conf: PowConfig)(implicit env: Env, ec: ExecutionContext): Future[Unit] = {
+  def callLeaderChallengeWrite(challengeId: String, challenge: JsObject, conf: PowConfig)(using env: Env, ec: ExecutionContext): Future[Unit] = {
     val config = env.clusterConfig
-    implicit val sc = env.otoroshiScheduler
+    given sc: Scheduler = env.otoroshiScheduler
     Retry
       .retry(
         times = config.worker.retries,
         delay = config.retryDelay,
         factor = config.retryFactor,
         ctx = "leader-push-challeng-token"
-      ) { tryCount =>
+      ) { _ =>
         if (Cluster.logger.isDebugEnabled)
           Cluster.logger.debug(s"Pushing challenge $challengeId to Otoroshi leader cluster")
         env.MtlsWs
@@ -476,20 +471,19 @@ object ProofOfWorkPlugin {
           .withRequestTimeout(Duration(config.worker.timeout, TimeUnit.MILLISECONDS))
           .withMaybeProxyServer(config.proxy)
           .post(Json.obj("challenge" -> challenge, "conf" -> conf.json))
-          .map { resp =>
+          .map { _ =>
             ()
           }
       }
-      .recover { case e =>
+      .recover { case _ =>
         if (Cluster.logger.isDebugEnabled)
           Cluster.logger.debug(
             s"[${env.clusterConfig.mode.name}] Error while pushing challenge $challengeId to Otoroshi leader cluster"
           )
-        None
       }
   }
 
-  def getChallenge(challengeId: String, conf: PowConfig)(implicit env: Env, ec: ExecutionContext): Future[Option[JsObject]] = {
+  def getChallenge(challengeId: String, conf: PowConfig)(using env: Env, ec: ExecutionContext): Future[Option[JsObject]] = {
     val key = s"$prefixKey$challengeId"
     env.datastores.rawDataStore.get(key) flatMap {
       case None if env.clusterConfig.mode.isWorker => ProofOfWorkPlugin.callLeaderChallengeRead(challengeId).map { r =>
@@ -503,7 +497,7 @@ object ProofOfWorkPlugin {
     }
   }
 
-  def setChallenge(challengeId: String, challenge: JsObject, conf: PowConfig)(implicit env: Env, ec: ExecutionContext): Future[Unit] = {
+  def setChallenge(challengeId: String, challenge: JsObject, conf: PowConfig)(using env: Env, ec: ExecutionContext): Future[Unit] = {
     val key = s"$prefixKey$challengeId"
     env.datastores.rawDataStore.set(key, challenge.stringify.byteString, Some(conf.challengeTtlSeconds.seconds.toMillis)).flatMap {
       case _ if env.clusterConfig.mode.isWorker => ProofOfWorkPlugin.callLeaderChallengeWrite(challengeId, challenge, conf)
@@ -511,7 +505,7 @@ object ProofOfWorkPlugin {
     }
   }
 
-  def deleteChallenge(challengeId: String)(implicit env: Env, ec: ExecutionContext): Future[Unit] = {
+  def deleteChallenge(challengeId: String)(using env: Env, ec: ExecutionContext): Future[Unit] = {
     val key = s"$prefixKey$challengeId"
     env.datastores.rawDataStore.del(Seq(key)).flatMap {
       case _ if env.clusterConfig.mode.isWorker => ProofOfWorkPlugin.callLeaderChallengeDelete(challengeId)
@@ -538,7 +532,7 @@ class ProofOfWorkPlugin extends NgRequestTransformer {
   override def transformsResponse: Boolean = false
   override def transformsRequest: Boolean = true
 
-  override def transformRequest(ctx: NgTransformerRequestContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
+  override def transformRequest(ctx: NgTransformerRequestContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     val config = ctx.cachedConfig(internalName)(PowConfig.format).getOrElse(PowConfig.default)
     if (config.isBypassed(ctx.request)) {
       ctx.otoroshiRequest.rightf
@@ -563,7 +557,7 @@ class ProofOfWorkPlugin extends NgRequestTransformer {
     }
   }
 
-  private def powPage(state: String, challenge: JsObject)(implicit env: Env): Result = {
+  private def powPage(state: String, challenge: JsObject)(using env: Env): Result = {
     val html =
       s"""<!doctype html>
 <meta charset="utf-8">
@@ -648,7 +642,7 @@ class ProofOfWorkPlugin extends NgRequestTransformer {
     Results.Ok(html).as("text/html")
   }
 
-  private def powChallenge(state: String, conf: PowConfig)(implicit env: Env, ec: ExecutionContext): Future[JsObject] = {
+  private def powChallenge(state: String, conf: PowConfig)(using env: Env, ec: ExecutionContext): Future[JsObject] = {
     val challenge = Random.alphanumeric.take(16).mkString
     val payload   = Json.obj(
       "state"      -> state,
@@ -666,7 +660,7 @@ class ProofOfWorkPlugin extends NgRequestTransformer {
     }
   }
 
-  private def powVerify(body: JsValue, conf: PowConfig, req: RequestHeader)(implicit env: Env, ec: ExecutionContext): Future[Result] = {
+  private def powVerify(body: JsValue, conf: PowConfig, req: RequestHeader)(using env: Env, ec: ExecutionContext): Future[Result] = {
     val challenge = (body \ "challenge").as[String]
     val nonce     = (body \ "nonce").as[String]
     val hash      = (body \ "hash").as[String]

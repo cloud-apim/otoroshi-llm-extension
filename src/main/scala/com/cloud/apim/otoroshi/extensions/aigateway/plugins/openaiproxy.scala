@@ -1,15 +1,15 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage, OpenAiResponsesBodyConverter, ResponsesStreamAccumulator}
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import otoroshi.security.IdGenerator
 import play.api.libs.json.{JsArray, JsNull, JsObject, JsValue, Json}
@@ -28,7 +28,7 @@ object OpenAiCompatProxy {
     }
   }
 
-  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config)
     val provider: Option[AiProvider] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
@@ -75,7 +75,7 @@ object OpenAiCompatProxy {
             client.call(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiJson(client.computeModel(jsonBody).getOrElse("none"), env))
-                .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
+                .withHeaders(response.metadata.cacheHeaders.toSeq*)), None))
             }
           }
         } else {
@@ -85,7 +85,7 @@ object OpenAiCompatProxy {
     }
   }
 
-  def handleRequest(config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     if (ctx.request.hasBody) {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         try {
@@ -126,7 +126,7 @@ class OpenAiCompatProxy extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
     OpenAiCompatProxy.handleRequest(config, ctx)
   }
@@ -155,7 +155,7 @@ class OpenAiCompletionProxy extends NgBackendCall {
     ().vfuture
   }
 
-  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config)
     val provider: Option[AiProvider] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
@@ -169,7 +169,6 @@ class OpenAiCompletionProxy extends NgBackendCall {
       case Some(client) => {
         val stream = ctx.request.queryParam("stream").contains("true") || ctx.request.header("x-stream").contains("true") || jsonBody.select("stream").asOpt[Boolean].contains(true)
         val echo = jsonBody.select("echo").asOptBoolean.getOrElse(false)
-        val suffix = jsonBody.select("suffix").asOptString
 
         val requestMessages: Seq[JsObject] = ctx.attrs.get(AiPluginsKeys.PromptTemplateKey) match {
           case None => Seq(Json.obj("role" -> "user", "content" -> jsonBody.select("prompt").asString))
@@ -205,7 +204,7 @@ class OpenAiCompletionProxy extends NgBackendCall {
             client.tryCompletion(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiCompletionJson(client.computeModel(jsonBody).getOrElse("none"), echo, messages.head.content, env))
-                .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
+                .withHeaders(response.metadata.cacheHeaders.toSeq*)), None))
             }
           }
         } else {
@@ -225,7 +224,7 @@ class OpenAiCompletionProxy extends NgBackendCall {
     }
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     if (ctx.request.hasBody) {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         try {
@@ -245,7 +244,7 @@ class OpenAiCompletionProxy extends NgBackendCall {
 
 object OpenAiResponsesProxy {
 
-  def call(_jsb: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def call(_jsb: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val _jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsb, config)
     val provider: Option[AiProvider] = _jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
@@ -330,7 +329,7 @@ object OpenAiResponsesProxy {
 
                 // materialized by `concatLazy` only once the content events are done, which is what
                 // makes the accumulated text, tool calls and usage available here
-                val footerEvents = Source.lazily(() => {
+                val footerEvents = Source.lazySource(() => {
                   val text = acc.wholeText
                   val completedContentPart = Json.obj(
                     "type" -> "output_text",
@@ -345,7 +344,7 @@ object OpenAiResponsesProxy {
                     "content" -> JsArray(Seq(completedContentPart))
                   )
                   // tool calls streamed as deltas are reported as `function_call` output items
-                  val functionCallItems = acc.functionCallItems(idx => s"fc_${IdGenerator.token(24)}")
+                  val functionCallItems = acc.functionCallItems(_ => s"fc_${IdGenerator.token(24)}")
                   val completedResponse = Json.obj(
                     "id" -> responseId,
                     "object" -> "response",
@@ -397,7 +396,7 @@ object OpenAiResponsesProxy {
             client.tryResponse(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.openaiResponseJson(client.computeModel(jsonBody).getOrElse("none"), env))
-                .withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
+                .withHeaders(response.metadata.cacheHeaders.toSeq*)), None))
             }
           }
         } else {
@@ -407,7 +406,7 @@ object OpenAiResponsesProxy {
     }
   }
 
-  def handleRequest(config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     if (ctx.request.hasBody) {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         try {
@@ -448,7 +447,7 @@ class OpenAiResponsesProxy extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
     OpenAiResponsesProxy.handleRequest(config, ctx)
   }

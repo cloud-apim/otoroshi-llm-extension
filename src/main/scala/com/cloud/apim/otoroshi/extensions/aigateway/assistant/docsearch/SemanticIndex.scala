@@ -6,7 +6,7 @@ import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2Embedding
 import dev.langchain4j.store.embedding.EmbeddingSearchRequest
 import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters.*
 
 final class SemanticIndex private (
   store: InMemoryEmbeddingStore[TextSegment],

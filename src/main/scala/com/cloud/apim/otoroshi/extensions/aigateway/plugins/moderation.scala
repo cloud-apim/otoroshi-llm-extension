@@ -1,15 +1,15 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.ModerationModelClientInputOptions
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.ModerationModel
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -48,7 +48,7 @@ object OpenAICompatModerationConfig {
       case Success(value) => JsSuccess(value)
     }
   }
-  def getProvidersMap(config: OpenAICompatModerationConfig)(implicit ec: ExecutionContext, env: Env): (Map[String, ModerationModel], Map[String, ModerationModel]) = {
+  def getProvidersMap(config: OpenAICompatModerationConfig)(using ec: ExecutionContext, env: Env): (Map[String, ModerationModel], Map[String, ModerationModel]) = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val providers = config.refs.flatMap(ref => ext.states.moderationModel(ref))
     val providersByName = providers.map { provider =>
@@ -59,7 +59,7 @@ object OpenAICompatModerationConfig {
     (providersById, providersByName)
   }
 
-  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatModerationConfig)(implicit ec: ExecutionContext, env: Env): JsValue = {
+  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatModerationConfig)(using ec: ExecutionContext, env: Env): JsValue = {
     _jsonBody.select("model").asOpt[String] match {
       case Some(value) if value.contains("###") => {
         val parts = value.split("###")
@@ -97,7 +97,7 @@ object OpenAICompatModerationConfig {
 }
 
 object OpenAICompatModeration {
-  def handleRequest(config: OpenAICompatModerationConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: OpenAICompatModerationConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
       val _jsonBody = bodyRaw.utf8String.parseJson
@@ -151,7 +151,7 @@ class OpenAICompatModeration extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(OpenAICompatModerationConfig.format).getOrElse(OpenAICompatModerationConfig.default)
     OpenAICompatModeration.handleRequest(config, ctx)
   }

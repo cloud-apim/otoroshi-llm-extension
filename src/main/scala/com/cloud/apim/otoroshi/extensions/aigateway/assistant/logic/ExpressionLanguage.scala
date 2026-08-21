@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic
 
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import scala.util.matching.Regex
 

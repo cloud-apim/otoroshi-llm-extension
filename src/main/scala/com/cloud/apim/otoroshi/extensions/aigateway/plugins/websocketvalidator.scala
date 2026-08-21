@@ -4,8 +4,8 @@ import com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiPromptRequestConfi
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
 import otoroshi.env.Env
 import otoroshi.next.plugins.RejectStrategy
-import otoroshi.next.plugins.api._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.plugins.api.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.http.websocket.{CloseCodes, TextMessage}
 import play.api.libs.json.{JsObject, Json}
@@ -13,6 +13,7 @@ import play.api.libs.json.{JsObject, Json}
 import java.util.regex.Pattern.CASE_INSENSITIVE
 import java.util.regex.{MatchResult, Matcher, Pattern}
 import scala.concurrent.{ExecutionContext, Future}
+import org.apache.pekko.stream.Materializer
 
 class AiWebsocketMessageValidator extends NgWebsocketValidatorPlugin {
 
@@ -37,9 +38,9 @@ class AiWebsocketMessageValidator extends NgWebsocketValidatorPlugin {
     ().vfuture
   }
 
-  override def onRequestMessage(ctx: NgWebsocketPluginContext, message: WebsocketMessage)(implicit env: Env, ec: ExecutionContext): Future[Either[NgWebsocketError, WebsocketMessage]] = {
+  override def onRequestMessage(ctx: NgWebsocketPluginContext, message: WebsocketMessage)(using env: Env, ec: ExecutionContext): Future[Either[NgWebsocketError, WebsocketMessage]] = {
     val config = ctx.cachedConfig(internalName)(AiPromptRequestConfig.format).getOrElse(AiPromptRequestConfig())
-    implicit val mat = env.otoroshiMaterializer
+    given mat: Materializer = env.otoroshiMaterializer
     if (message.isText) {
       message.str().flatMap { str =>
         env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref)) match {

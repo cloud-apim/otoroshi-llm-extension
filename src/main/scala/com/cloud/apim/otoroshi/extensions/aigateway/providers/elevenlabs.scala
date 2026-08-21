@@ -1,17 +1,18 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, AudioTranscriptionResponseMetadata}
+import org.apache.pekko.http.scaladsl.model.{ContentType, HttpEntity, Multipart}
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioTranscriptionResponse, AudioTranscriptionResponseMetadata}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
-import scala.concurrent._
-import scala.concurrent.duration._
+import scala.concurrent.*
+import scala.concurrent.duration.*
 
 object ElevenLabsModels {
   val DEFAULT = "eleven_monolingual_v1"
@@ -24,9 +25,9 @@ object ElevenLabsApi {
 }
 
 class ElevenLabsApi(baseUrl: String = ElevenLabsApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("ElevenLabs", method, url, body)(env)
+    ProviderHelpers.logCall("ElevenLabs", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -41,10 +42,10 @@ class ElevenLabsApi(baseUrl: String = ElevenLabsApi.baseUrl, token: String, time
       .withRequestTimeout(timeout)
       .execute()
   }
-  def rawCallForm(method: String, path: String, body: Multipart)(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("ElevenLabs", method, url, None)(env)
-    val entity = body.toEntity()
+    ProviderHelpers.logCall("ElevenLabs", method, url, None)(using env)
+    val entity = body.toEntity
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -86,7 +87,7 @@ class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenL
   override def supportsStt: Boolean = sttOptions.enabled
   override def supportsTranslation: Boolean = false
 
-  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+  override def listVoices(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     api.rawCall("GET", "/v2/voices?include_total_count=true", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("voices").as[List[JsObject]].map(obj => AudioGenVoice(obj.select("voice_id").asString, obj.select("name").asString))
@@ -97,7 +98,7 @@ class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenL
     }
   }
 
-  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
     val finalModel: String = opts.model.getOrElse(ttsOptions.model)
     val finalVoice: String = opts.voice.getOrElse(ttsOptions.voice)
     val finalFormat: String = opts.responseFormat.getOrElse(ttsOptions.format)
@@ -117,7 +118,7 @@ class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenL
     }
   }
 
-  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model).getOrElse("scribe_v1")
     val language = opts.language.orElse(sttOptions.language)
     val parts = List(
@@ -136,7 +137,7 @@ class ElevenLabsAudioModelClient(val api: ElevenLabsApi, val ttsOptions: ElevenL
         HttpEntity(language.byteString),
       )
     }
-    val form = Multipart.FormData(parts: _*)
+    val form = Multipart.FormData(parts*)
     api.rawCallForm("POST", "/v1/speech-to-text", form).map { response =>
       if (response.status == 200) {
         AudioTranscriptionResponse(response.json.select("text").asString, AudioTranscriptionResponseMetadata.empty).right

@@ -1,25 +1,26 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.{Sink, Source, StreamConverters}
-import akka.util.ByteString
+import org.apache.pekko.stream.scaladsl.{Sink, Source, StreamConverters}
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.Types.ValueOrRange
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.Configuration
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.libs.typedmap.TypedKey
 
 import java.util.concurrent.atomic.AtomicReference
 import scala.collection.mutable
 import scala.concurrent.duration.DurationInt
 import scala.concurrent.{ExecutionContext, Future, Promise}
-import scala.math._
-import scala.util._
+import scala.math.*
+import scala.util.*
+import org.apache.pekko.stream.Materializer
 
 /**
  * This code is a scala port of the [EcoLogits](https://github.com/genai-impact/ecologits) project
@@ -244,7 +245,7 @@ object LLMImpactModel {
     val gpuTotalEnergy = ValueOrRange * (gpuEnergy, gpuRequiredCount.toDouble)
     ValueOrRange * (gpuTotalEnergy, pue) match {
       case total => ValueOrRange * (Left(serverEnergy), pue) match {
-        case Right(serverPart) => Right(RangeValue(serverPart.min + total.right.get.min, serverPart.max + total.right.get.max))
+        case Right(serverPart) => Right(RangeValue(serverPart.min + total.toOption.get.min, serverPart.max + total.toOption.get.max))
         case Left(serverPart) =>
           total match {
             case Left(gpuPart)   => Left(serverPart + gpuPart)
@@ -641,8 +642,8 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
   val electricityMixes = default_electricityMixes ++ custom_electricityMixes ++ user_electricityMixes
 
   def getResourceCode(path: String): String = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
     env.environment.resourceAsStream(path)
       .map(stream => StreamConverters.fromInputStream(() => stream).runFold(ByteString.empty)(_++_).awaitf(10.seconds).utf8String)
       .getOrElse(s"'resource ${path} not found !'")
@@ -752,7 +753,7 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
     }
   }
 
-  private def handleStream(attrs: TypedMap, originalBody: JsValue)(f: => Future[Either[JsValue, Source[ChatResponseChunk, _]]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  private def handleStream(attrs: TypedMap, originalBody: JsValue)(f: => Future[Either[JsValue, Source[ChatResponseChunk, ?]]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     getProvider() match {
       case None => f // unsupported provider
       case Some(provider) => {
@@ -767,7 +768,7 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
             val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_impacts")).contains("true")
             val addCostsInResp = ext.llmImpactsSettings.embedImpactsInResponses || enableInRequest
             if (ext.llmImpacts.canHandle(finalProvider, modelName)) {
-              resp.applyOnIf(addCostsInResp) { src =>
+              (resp: Source[ChatResponseChunk, Any]).applyOnIf(addCostsInResp) { src =>
                 src.map(r => r.copy(choices = r.choices.map(c => c.copy(finishReason = None))))
               }.alsoTo(Sink.onComplete { _ =>
                 val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
@@ -778,7 +779,7 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
                   provider = finalProvider,
                   modelName = modelName,
                   outputTokenCount = (generationTokens + reasoningTokens).toInt,
-                  requestLatency = System.currentTimeMillis() - start,
+                  requestLatency = (System.currentTimeMillis() - start).toDouble,
                   electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
                 ) match {
                   case Left(_) => promise.trySuccess(None)
@@ -810,7 +811,7 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
     }
   }
 
-  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     getProvider() match {
       case None => chatClient.invoke(kind, prompt, attrs, originalBody) // unsupported provider
       case Some(provider) => {
@@ -824,10 +825,10 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
               provider = originalProvider.metadata.getOrElse("eco-impacts-provider", provider),
               modelName = originalProvider.metadata.getOrElse("eco-impacts-model", getModel(originalBody)),
               outputTokenCount = (usage.generationTokens + usage.reasoningTokens).toInt,
-              requestLatency = System.currentTimeMillis() - start,
+              requestLatency = (System.currentTimeMillis() - start).toDouble,
               electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
             ) match {
-              case Left(err) => Right(resp)
+              case Left(_) => Right(resp)
               case Right(impacts) => {
                 attrs.put(ChatClientWithEcoImpact.key -> impacts)
                 // impacts.json(ext.llmImpactsSettings.embedDescriptionInJson).prettify.debugPrintln
@@ -845,7 +846,7 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
     }
   }
 
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     handleStream(attrs, originalBody) {
       chatClient.invokeStream(kind, prompt, attrs, originalBody)
     }

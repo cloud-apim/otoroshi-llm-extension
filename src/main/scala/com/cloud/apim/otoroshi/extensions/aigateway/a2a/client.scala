@@ -2,13 +2,14 @@ package com.cloud.apim.otoroshi.extensions.aigateway.a2a
 
 import otoroshi.env.Env
 import otoroshi.next.models.NgTlsConfig
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
 import scala.collection.concurrent.TrieMap
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Try
+import play.api.libs.ws.WSBodyWritables.given
 
 // HTTP client used by A2AConnector to talk to a remote A2A agent over the JSON-RPC binding.
 // - fetches and caches the Agent Card (agent-card.json, fallback agent.json), detecting the protocol version
@@ -20,18 +21,18 @@ object A2AClient {
   private val cardCache = new TrieMap[String, (AgentCard, A2AVersion, Long)]()
   private val cardTtlMillis: Long = 5 * 60 * 1000L
 
-  private def wsCall(url: String, method: String, headers: Seq[(String, String)], tls: NgTlsConfig, timeout: FiniteDuration, body: Option[JsValue])(implicit env: Env, ec: ExecutionContext): Future[(Int, String)] = {
+  private def wsCall(url: String, method: String, headers: Seq[(String, String)], tls: NgTlsConfig, timeout: FiniteDuration, body: Option[JsValue])(using env: Env, ec: ExecutionContext): Future[(Int, String)] = {
     env.MtlsWs
       .url(url, tls.legacy)
       .withMethod(method)
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .applyOnWithOpt(body) { case (b, js) => b.withBody(js.stringify) }
       .execute()
       .map(r => (r.status, r.body))
   }
 
-  def fetchAgentCard(cacheId: String, baseUrl: String, cardPath: String, fallbackPath: String, headers: Seq[(String, String)], tls: NgTlsConfig, timeout: FiniteDuration, forceRefresh: Boolean = false)(implicit env: Env, ec: ExecutionContext): Future[Either[JsValue, (AgentCard, A2AVersion)]] = {
+  def fetchAgentCard(cacheId: String, baseUrl: String, cardPath: String, fallbackPath: String, headers: Seq[(String, String)], tls: NgTlsConfig, timeout: FiniteDuration, forceRefresh: Boolean = false)(using env: Env, ec: ExecutionContext): Future[Either[JsValue, (AgentCard, A2AVersion)]] = {
     val now = System.currentTimeMillis()
     cardCache.get(cacheId) match {
       case Some((card, version, ts)) if !forceRefresh && (now - ts) < cardTtlMillis => Right((card, version)).vfuture
@@ -68,7 +69,7 @@ object A2AClient {
       .getOrElse(fallback)
   }
 
-  def sendMessage(endpointUrl: String, version: A2AVersion, headers: Seq[(String, String)], tls: NgTlsConfig, timeout: FiniteDuration, message: A2AMessage, tenant: Option[String] = None)(implicit env: Env, ec: ExecutionContext): Future[Either[JsValue, String]] = {
+  def sendMessage(endpointUrl: String, version: A2AVersion, headers: Seq[(String, String)], tls: NgTlsConfig, timeout: FiniteDuration, message: A2AMessage, tenant: Option[String] = None)(using env: Env, ec: ExecutionContext): Future[Either[JsValue, String]] = {
     val method = if (version.isLegacy) "message/send" else "SendMessage"
     val msgJson = if (version.isLegacy) legacyMessageJson(message) else message.json
     val params = Json.obj("message" -> msgJson).applyOnWithOpt(tenant) { case (o, t) => o ++ Json.obj("tenant" -> t) }
@@ -90,7 +91,7 @@ object A2AClient {
 
   // streaming variant (connector streaming, Phase 4): POST with SSE accept, read the body, accumulate the text from
   // artifactUpdate/message/task events. Result is the same String the tool layer expects.
-  def sendStreamingMessage(endpointUrl: String, version: A2AVersion, headers: Seq[(String, String)], tls: NgTlsConfig, timeout: FiniteDuration, message: A2AMessage, tenant: Option[String] = None)(implicit env: Env, ec: ExecutionContext): Future[Either[JsValue, String]] = {
+  def sendStreamingMessage(endpointUrl: String, version: A2AVersion, headers: Seq[(String, String)], tls: NgTlsConfig, timeout: FiniteDuration, message: A2AMessage, tenant: Option[String] = None)(using env: Env, ec: ExecutionContext): Future[Either[JsValue, String]] = {
     val method = if (version.isLegacy) "message/stream" else "SendStreamingMessage"
     val msgJson = if (version.isLegacy) legacyMessageJson(message) else message.json
     val params = Json.obj("message" -> msgJson).applyOnWithOpt(tenant) { case (o, t) => o ++ Json.obj("tenant" -> t) }
@@ -119,7 +120,7 @@ object A2AClient {
 
   // OAuth2 client credentials token fetch + cache (Phase 4)
   private val tokenCache = new TrieMap[String, (String, Long)]()
-  def fetchOAuthToken(tokenUrl: String, clientId: String, clientSecret: String, scope: Option[String], tls: NgTlsConfig, timeout: FiniteDuration)(implicit env: Env, ec: ExecutionContext): Future[Either[JsValue, String]] = {
+  def fetchOAuthToken(tokenUrl: String, clientId: String, clientSecret: String, scope: Option[String], tls: NgTlsConfig, timeout: FiniteDuration)(using env: Env, ec: ExecutionContext): Future[Either[JsValue, String]] = {
     val cacheKey = s"$tokenUrl|$clientId|${scope.getOrElse("")}"
     val now = System.currentTimeMillis()
     tokenCache.get(cacheKey) match {
@@ -135,7 +136,7 @@ object A2AClient {
               val expiresIn = Try(Json.parse(r.body)).toOption.flatMap(js => (js \ "expires_in").asOpt[Long]).getOrElse(3600L)
               tokenCache.put(cacheKey, (tok, now + expiresIn * 1000))
               Right(tok)
-            case None => Left(Json.obj("error" -> "oauth token fetch failed", "status" -> r.status, "body" -> r.body))
+            case None => Left(Json.obj("error" -> "oauth token fetch failed", "status" -> r.status, "body" -> (r.body: String)))
           }
         }.recover { case e: Throwable => Left(Json.obj("error" -> s"oauth token fetch failed: ${e.getMessage}")) }
     }
@@ -165,12 +166,12 @@ object A2AClient {
   }
 
   // fire-and-forget push notification webhook (Phase 4). Payload is a StreamResponse object ({ "task": … }).
-  def push(config: A2APushConfig, payload: JsValue, timeout: FiniteDuration = 10.seconds)(implicit env: Env, ec: ExecutionContext): Future[Unit] = {
+  def push(config: A2APushConfig, payload: JsValue, timeout: FiniteDuration = 10.seconds)(using env: Env, ec: ExecutionContext): Future[Unit] = {
     val authHeader = config.authentication.flatMap(_.header).toSeq
     val tokenHeader = config.token.map(t => "X-A2A-Notification-Token" -> t).toSeq
     val hdrs = Seq("Content-Type" -> A2A.mediaType) ++ authHeader ++ tokenHeader
     env.MtlsWs.url(config.url, NgTlsConfig().legacy).withMethod("POST")
-      .withHttpHeaders(hdrs: _*).withRequestTimeout(timeout).withBody(Json.stringify(payload)).execute()
+      .withHttpHeaders(hdrs*).withRequestTimeout(timeout).withBody(Json.stringify(payload)).execute()
       .map(_ => ()).recover { case _ => () }
   }
 

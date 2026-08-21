@@ -1,17 +1,17 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.ModerationModelClient
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ImageModelClientDecorators, ModerationModelClientDecorators}
-import com.cloud.apim.otoroshi.extensions.aigateway.providers._
-import otoroshi.api._
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ModerationModelClientDecorators
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
+import otoroshi.api.*
 import otoroshi.env.Env
-import otoroshi.models._
+import otoroshi.models.*
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
-import otoroshi.storage._
-import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
-import play.api.libs.json._
+import otoroshi.storage.*
+import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.*
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -42,7 +42,7 @@ case class ModerationModel(
 
   def slugName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
 
-  def getModerationModelClient()(implicit env: Env): Option[ModerationModelClient] = {
+  def getModerationModelClient()(using env: Env): Option[ModerationModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
@@ -71,19 +71,19 @@ object ModerationModel {
   // provider here is the only change required.
   val clientBuilders: Map[String, ModerationModel.ClientContext => Option[ModerationModelClient]] = Map(
     "openai" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
       val opts = OpenAiModerationModelClientOptions.fromJson(options)
       new OpenAiModerationModelClient(api, opts, id).some
     },
     "mistral" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val opts = MistralAiModerationModelClientOptions.fromJson(options)
       new MistralAiModerationModelClient(api, opts, id).some
     },
     "openai-compatible" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       // generic OpenAI-compatible moderation endpoint: base url, display name, headers and param
       // mappings are all driven by the connection config (dynamic name).
       val providerName = connection.select("provider_name").asOpt[String]
@@ -106,7 +106,7 @@ object ModerationModel {
       new OpenAiModerationModelClient(api, opts, id).some
     },
     "ovh-ai-endpoints" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       // OVH AI Endpoints moderation through their unified OpenAI-compatible API
       val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
       val opts = OpenAiModerationModelClientOptions.fromJson(options)
@@ -160,7 +160,7 @@ object ModerationModel {
         extractIdf = c => datastores.moderationModelsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, p, _) => {
           p.get("kind").map(_.toLowerCase()) match {
             case Some("openai") => ModerationModel(
               id = IdGenerator.namedId("provider", env),
@@ -233,7 +233,7 @@ class KvModerationModelsDataStore(extensionId: AdminExtensionId, redisCli: Redis
     with RedisLikeStore[ModerationModel] {
   override def fmt: Format[ModerationModel] = ModerationModel.format
 
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
 
   override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:moderationmodels:$id"
 

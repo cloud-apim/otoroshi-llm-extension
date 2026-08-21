@@ -3,8 +3,8 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ContextSettings, PromptContext}
 import com.cloud.apim.otoroshi.extensions.aigateway.{LlmExtensionOneOtoroshiServerPerSuite, LlmProviders}
 import otoroshi.models.EntityLocation
-import otoroshi.next.models._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.models.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy
 import play.api.libs.json.{JsObject, JsValue, Json}
 import play.api.libs.ws.WSResponse
@@ -21,7 +21,7 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   val (ollama1Port, _) = createTestServerWithRoutes("ollama1", routes => routes.post("/api/chat", (req, response) => {
     req.receive().retain().asString().flatMap { body =>
       val json = body.parseJson
-      println("____received", json.select("context").asOpt[JsValue])
+      println(("____received", json.select("context").asOpt[JsValue]))
       val messages = json.select("messages").as[Seq[JsObject]]
       responses.put("latest", messages)
       // println("received: -----------------------------------" + json.prettify)

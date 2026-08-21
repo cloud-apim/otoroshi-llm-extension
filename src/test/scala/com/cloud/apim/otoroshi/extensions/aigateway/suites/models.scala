@@ -3,8 +3,8 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ModelSettings}
 import otoroshi.models.EntityLocation
-import otoroshi.next.models._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.models.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{OpenAiCompatModels, OpenAiCompatProxy}
 import play.api.libs.json.{JsObject, Json}
 
@@ -65,7 +65,7 @@ class ProviderModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
     {
       val r = client.call("GET", s"http://test.oto.tools:${port}/models", Map.empty, None).awaitf(30.seconds)
-      val models = r.body.parseJson.select("data").as[Seq[JsObject]]
+      val models = (r.body: String).parseJson.select("data").as[Seq[JsObject]]
       println(s"models: ${models.size}")
       assertEquals(models.size, 13)
     }
@@ -76,7 +76,7 @@ class ProviderModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         .awaitf(10.seconds)
       await(2.seconds)
       val r = client.call("GET", s"http://test.oto.tools:${port}/models", Map.empty, None).awaitf(30.seconds)
-      val models = r.body.parseJson.select("data").as[Seq[JsObject]]
+      val models = (r.body: String).parseJson.select("data").as[Seq[JsObject]]
       println(s"models: ${models.size}")
       assertEquals(models.size, 1)
     }
@@ -87,7 +87,7 @@ class ProviderModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         .awaitf(10.seconds)
       await(2.seconds)
       val r = client.call("GET", s"http://test.oto.tools:${port}/models", Map.empty, None).awaitf(30.seconds)
-      val models = r.body.parseJson.select("data").as[Seq[JsObject]]
+      val models = (r.body: String).parseJson.select("data").as[Seq[JsObject]]
       println(s"models: ${models.size}")
       assertEquals(models.size, 2)
     }
@@ -98,7 +98,7 @@ class ProviderModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         .awaitf(10.seconds)
       await(2.seconds)
       val r = client.call("GET", s"http://test.oto.tools:${port}/models", Map.empty, None).awaitf(30.seconds)
-      val models = r.body.parseJson.select("data").as[Seq[JsObject]]
+      val models = (r.body: String).parseJson.select("data").as[Seq[JsObject]]
       println(s"models: ${models.size}")
       assertEquals(models.size, 7)
     }

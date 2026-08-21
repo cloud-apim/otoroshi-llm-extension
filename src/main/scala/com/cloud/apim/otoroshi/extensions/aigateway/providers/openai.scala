@@ -1,18 +1,18 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
-import akka.stream.scaladsl.{Framing, Source}
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
+import org.apache.pekko.stream.scaladsl.{Framing, Source}
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json.{JsArray, JsNull, JsObject, JsString, JsValue, Json}
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
-import java.util.concurrent.atomic.AtomicLong
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -190,17 +190,17 @@ class OpenAiApi(
     }
   }
 
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     val uri = Uri(url)
-    ProviderHelpers.logCall(providerName, method, url, body)(env)
+    ProviderHelpers.logCall(providerName, method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
         resolvedHeaders ++ Seq(
           "Accept" -> "application/json",
           "Host" -> uri.authority.host.toString()
-        ): _*
+        )*
       ).applyOnWithOpt(applyParamMappings(body)) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
@@ -216,18 +216,18 @@ class OpenAiApi(
       // }
   }
 
-  def rawCallForm(method: String, path: String, body: Multipart)(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     val uri = Uri(url)
-    ProviderHelpers.logCall(providerName, method, url, None)(env)
-    val entity = body.toEntity()
+    ProviderHelpers.logCall(providerName, method, url, None)(using env)
+    val entity = body.toEntity
     env.Ws
       .url(url)
       .withHttpHeaders(
         resolvedHeaders ++ Seq(
           "Accept" -> "application/json",
           "Host" -> uri.authority.host.toString(),
-          "Content-Type" -> entity.contentType.toString()): _*
+          "Content-Type" -> entity.contentType.toString())*
       )
       .withBody(entity.dataBytes)
       .withMethod(method)
@@ -240,14 +240,14 @@ class OpenAiApi(
       // }
   }
 
-  override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
+  override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
     rawCall(method, path, body).map(r => ProviderHelpers.wrapResponse(providerName, r, env) { resp =>
       acc.updateOpenai(resp.json.select("usage").asOpt[JsObject])
-      OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+      OpenAiApiResponse(resp.status, resp.headers.view.mapValues(_.last).toMap, resp.json)
     })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (currentCallCounter >= maxCalls) {
       return call(method, path, body, acc)
@@ -261,7 +261,7 @@ class OpenAiApi(
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, providerName, attrs, nameToFunction)(ec, env)
+              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, providerName, attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -280,16 +280,16 @@ class OpenAiApi(
     }
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {
     val url = s"${baseUrl}${path}"
     val uri = Uri(url)
-    ProviderHelpers.logStream(providerName, method, url, body)(env)
+    ProviderHelpers.logStream(providerName, method, url, body)(using env)
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
         resolvedHeaders ++ Seq(
           "Accept" -> "application/json",
-          "Host" -> uri.authority.host.toString()): _*
+          "Host" -> uri.authority.host.toString())*
       ).applyOnWithOpt(applyParamMappings(body)) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
@@ -320,16 +320,16 @@ class OpenAiApi(
   }
 
   /** raw streamed POST, used by the native /responses path */
-  def rawStream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawStream(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     val uri = Uri(url)
-    ProviderHelpers.logStream(providerName, method, url, body)(env)
+    ProviderHelpers.logStream(providerName, method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
         resolvedHeaders ++ Seq(
           "Accept" -> "text/event-stream",
-          "Host" -> uri.authority.host.toString()): _*
+          "Host" -> uri.authority.host.toString())*
       ).applyOnWithOpt(applyParamMappings(body)) {
         case (builder, body) => builder
           .addHttpHeaders("Content-Type" -> "application/json")
@@ -340,7 +340,7 @@ class OpenAiApi(
       .stream()
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {
     if (currentCallCounter >= maxCalls) {
       return stream(method, path, body, acc)
     }
@@ -360,12 +360,11 @@ class OpenAiApi(
           var isToolCallEnded = false
           var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
           var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
-          var toolCallUsage: OpenAiChatResponseChunkUsage = null
-          val newSource: Source[OpenAiChatResponseChunk, _]  = res._1.flatMapConcat { chunk =>
+          val newSource: Source[OpenAiChatResponseChunk, ?]  = res._1.flatMapConcat { chunk =>
             if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
               isToolCall = true
               toolCalls = chunk.choices.head.delta.head.tool_calls
-              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => ""): _*)
+              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => "")*)
               Source.empty
             } else if (isToolCall && !isToolCallEnded) {
               if (chunk.choices.head.finish_reason.contains("tool_calls")) {
@@ -384,12 +383,11 @@ class OpenAiApi(
                 }}
               Source.empty
             } else if (isToolCall && isToolCallEnded) {
-              toolCallUsage = chunk.usage.get
               val calls = toolCalls.zipWithIndex.map {
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, providerName, attrs, nameToFunction)(ec, env)
+              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, providerName, attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps.map { resp =>
@@ -547,7 +545,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = completion //api.supportsCompletion
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val _mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = _mergedOptions.select("model").asOptString.orElse(computeModel(_mergedOptions)).getOrElse("--")
@@ -565,7 +563,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     callF.map {
       case Left(err) => err.left
       case Right((source, resp)) =>
-        source
+        (source: Source[OpenAiChatResponseChunk, Any])
           .applyOnIf(accumulateStreamConsumptions)(
             _.map { chunk =>
               if (chunk.choices.exists(_.finish_reason.contains("stop"))) {
@@ -598,7 +596,6 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
                     val newArr = arr ++ Seq(slug)
                     obj ++ Json.obj("ai" -> newArr)
                   }
-                  case Some(other) => other
                   case None => Json.obj("ai" -> Seq(slug))
                 }
               }
@@ -637,7 +634,6 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
                     val newArr = arr ++ Seq(slug)
                     obj ++ Json.obj("ai" -> newArr)
                   }
-                  case Some(other) => other
                   case None => Json.obj("ai" -> Seq(slug))
                 }
                 true
@@ -669,7 +665,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val _mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = _mergedOptions.select("model").asOptString.orElse(computeModel(_mergedOptions)).getOrElse("--")
@@ -716,7 +712,6 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
             val newArr = arr ++ Seq(slug)
             obj ++ Json.obj("ai" -> newArr)
           }
-          case Some(other) => other
           case None => Json.obj("ai" -> Seq(slug))
         }
         val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
@@ -728,7 +723,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
       }
   }
 
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val _mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = _mergedOptions.select("model").asString
@@ -767,7 +762,6 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
           val newArr = arr ++ Seq(slug)
           obj ++ Json.obj("ai" -> newArr)
         }
-        case Some(other) => other
         case None => Json.obj("ai" -> Seq(slug))
       }
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
@@ -778,7 +772,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     }
   }
 
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", modelsPath, None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString)
@@ -810,8 +804,8 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     mcpExcludeFunctions = options.mcpExcludeFunctions,
     maxFunctionCalls = options.maxFunctionCalls,
   )
-  override protected def responsesRawCall(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawCall("POST", "/responses", body.some)
-  override protected def responsesRawStream(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawStream("POST", "/responses", (body.asObject ++ Json.obj("stream" -> true)).some)
+  override protected def responsesRawCall(body: JsValue)(using ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawCall("POST", "/responses", body.some)
+  override protected def responsesRawStream(body: JsValue)(using ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawStream("POST", "/responses", (body.asObject ++ Json.obj("stream" -> true)).some)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -828,7 +822,7 @@ object OpenAiEmbeddingModelClientOptions {
 
 class OpenAiEmbeddingModelClient(val api: OpenAiApi, val options: OpenAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
 
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
     api.rawCall("POST", "/embeddings", (options.raw ++ Json.obj("input" -> opts.input, "model" -> finalModel)).some).map { resp =>
       if (resp.status == 200) {
@@ -863,7 +857,7 @@ object OpenAiModerationModelClientOptions {
 
 class OpenAiModerationModelClient(val api: OpenAiApi, val options: OpenAiModerationModelClientOptions, id: String) extends ModerationModelClient {
 
-  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
+  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
     val body = Json.obj(
       "input" -> JsArray(opts.input.map(_.openaiJson)),
@@ -871,7 +865,7 @@ class OpenAiModerationModelClient(val api: OpenAiApi, val options: OpenAiModerat
     )
     api.rawCall("POST", "/moderations", body.some).map { resp =>
       if (resp.status == 200) {
-        val headers = resp.headers.mapValues(_.last)
+        val headers = resp.headers.view.mapValues(_.last).toMap
         Right(ModerationResponse(
           model = resp.json.select("model").asString,
           moderationResults = resp.json.select("results").as[Seq[JsObject]].map(o => ModerationResult(
@@ -943,7 +937,7 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
   override def supportsStt: Boolean = sttOptions.enabled
   override def supportsTranslation: Boolean = translationOptions.enabled
 
-  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = {
+  override def listModels(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = {
     Right(
       List(
         AudioGenModel("tts-1", "tts-1"),
@@ -953,13 +947,13 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
     ).vfuture
   }
 
-  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+  override def listVoices(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     List(
       "alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"
     ).map(v => AudioGenVoice(v, v)).rightf
   }
 
-  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model)
     val prompt = opts.prompt.orElse(sttOptions.prompt)
     val responseFormat = opts.responseFormat.orElse(sttOptions.responseFormat)
@@ -994,18 +988,18 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
           HttpEntity(temperature.toString.byteString),
         )
       }
-    val form = Multipart.FormData(parts: _*)
+    val form = Multipart.FormData(parts*)
     api.rawCallForm("POST", "/audio/translations", form).map { response =>
       if (response.status == 200) {
         val body = response.json
-        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.view.mapValues(_.last).toMap)).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
     }
   }
 
-  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
     val instructionsOpt: Option[String] = opts.instructions.orElse(ttsOptions.instructions)
     val responseFormatOpt: Option[String] = opts.responseFormat.orElse(ttsOptions.responseFormat)
     val speedOpt: Option[Double] = opts.speed.orElse(ttsOptions.speed)
@@ -1032,7 +1026,7 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
     }
   }
 
-  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model)
     val language = opts.language.orElse(sttOptions.language)
     val prompt = opts.prompt.orElse(sttOptions.prompt)
@@ -1073,11 +1067,11 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
           HttpEntity(temperature.toString.byteString),
         )
       }
-    val form = Multipart.FormData(parts: _*)
+    val form = Multipart.FormData(parts*)
     api.rawCallForm("POST", "/audio/transcriptions", form).map { response =>
       if (response.status == 200) {
         val body = response.json
-        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.view.mapValues(_.last).toMap)).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
@@ -1126,7 +1120,7 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
   override def supportsGeneration: Boolean = genOptions.enabled
   override def supportsEdit: Boolean = editOptions.enabled
 
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel = opts.model.orElse(genOptions.model).getOrElse("gpt-image-1")
     val body = Json.obj(
         "prompt" -> opts.prompt,
@@ -1148,7 +1142,7 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
 
     api.rawCall("POST", "/images/generations", body.some).map { resp =>
       if (resp.status == 200) {
-        val headers = resp.headers.mapValues(_.last)
+        val headers = resp.headers.view.mapValues(_.last).toMap
         Right(ImagesGenResponse(
           created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
           images = resp.json.select("data").asOpt[Seq[JsObject]].map(_.map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String]))).getOrElse(Seq.empty),
@@ -1175,13 +1169,11 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
   }
 
 
-  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel = opts.model.orElse(editOptions.model).getOrElse("gpt-image-1")
     val model = finalModel
     val background = opts.background.orElse(editOptions.background)
     val n = opts.n.orElse(editOptions.n)
-    val prompt = opts.prompt
-    val responseFormat = opts.responseFormat.orElse(editOptions.responseFormat)
     val quality = opts.quality.orElse(editOptions.quality)
     val size = opts.size.orElse(editOptions.size)
     val parts = opts.images.map(i => Multipart.FormData.BodyPart(
@@ -1223,10 +1215,10 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
           HttpEntity(size.byteString),
         )
       }
-    val form = Multipart.FormData(parts: _*)
+    val form = Multipart.FormData(parts*)
     api.rawCallForm("POST", "/images/edits", form).map { resp =>
       if (resp.status == 200) {
-        val headers = resp.headers.mapValues(_.last)
+        val headers = resp.headers.view.mapValues(_.last).toMap
         Right(ImagesGenResponse(
           created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
           images = resp.json.select("data").as[Seq[JsObject]].map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String])),

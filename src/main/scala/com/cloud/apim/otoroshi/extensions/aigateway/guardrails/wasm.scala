@@ -3,17 +3,17 @@ package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.LlmToolFunctionBackendOptions.getCode
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmToolFunction}
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import io.otoroshi.wasm4s.scaladsl.{ResultsWrapper, WasmFunctionParameters}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.{JsArray, JsNull, JsObject, JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
 
 object WasmGuardrail {
-  def handleCallResult(from: String, res: Either[JsValue, (String, ResultsWrapper)])(implicit ec: ExecutionContext, env: Env): GuardrailResult = res match {
+  def handleCallResult(from: String, res: Either[JsValue, (String, ResultsWrapper)])(using ec: ExecutionContext, env: Env): GuardrailResult = res match {
     case Left(err) =>
       err.prettify
       GuardrailResult.GuardrailError(err.stringify)
@@ -53,7 +53,7 @@ class WasmGuardrail extends Guardrail {
 
   override def manyMessages: Boolean = true
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val wasmPlugin: Option[String] = config.select("wasmPlugin").asOpt[String].orElse(config.select("plugin_ref").asOpt[String]).filter(_.trim.nonEmpty)
     wasmPlugin match {
       case None => GuardrailResult.GuardrailError("error, not wasm plugin ref").vfuture
@@ -112,7 +112,7 @@ class QuickJsGuardrail extends Guardrail {
        |""".stripMargin.vfuture
   }
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val jsPath: Option[String] = config.select("jsPath").asOpt[String].orElse(config.select("quickjs_path").asOpt[String]).filter(_.trim.nonEmpty)
     jsPath match {
       case None => GuardrailResult.GuardrailError("error, not wasm plugin ref").vfuture
@@ -120,7 +120,7 @@ class QuickJsGuardrail extends Guardrail {
         getCode(path, Map.empty, getDefaultGuardrailCallCode).flatMap { code =>
           env.wasmIntegration.wasmVmFor(LlmToolFunction.wasmConfigRef).flatMap {
             case None =>  GuardrailResult.GuardrailError("unable to create wasm vm").vfuture
-            case Some((vm, localconfig)) => {
+            case Some((vm, _)) => {
               val arr = messages.map {
                 case i: InputChatMessage => i.json(ChatMessageContentFlavor.Common)
                 case o: OutputChatMessage => o.json

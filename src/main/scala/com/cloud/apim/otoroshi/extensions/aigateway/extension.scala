@@ -1,27 +1,29 @@
 package otoroshi_plugins.com.cloud.apim.extensions.aigateway
 
-import akka.stream.scaladsl.{Source, StreamConverters}
-import akka.util.ByteString
+import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.OtoroshiAssistant
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsTracking, CostsTrackingSettings, LLMImpacts, LLMImpactsSettings}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities._
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.*
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHardcodedItems
-import com.cloud.apim.otoroshi.extensions.aigateway.providers._
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage, KreuzbergHelper, WorkflowFunctionsInitializer}
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
-import otoroshi.models._
-import otoroshi.next.extensions.{AdminExtensionAdminApiRoute, _}
+import otoroshi.models.*
+import otoroshi.next.extensions.*
 import otoroshi.utils.TypedMap
 import otoroshi.utils.cache.types.UnboundedTrieMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiLlmProxy, ProofOfWorkPlugin}
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.{RequestHeader, Result, Results}
 import play.api.{Configuration, Logger}
 
 import scala.concurrent.Future
 import scala.concurrent.duration.DurationInt
+import scala.concurrent.ExecutionContext
+import org.apache.pekko.stream.Materializer
 
 class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val providersDatastore: AiProviderDataStore = new KvAiProviderDataStore(extensionId, env.datastores.redis, env)
@@ -255,8 +257,8 @@ class AiExtension(val env: Env) extends AdminExtension {
     logger.info("the 'AI - LLM Extension' is enabled !")
     JlamaChatClient.computeCanExecuteJlama(logger.some)
     KreuzbergHelper.computeCanExecuteKreuzberg(logger.some)
-    implicit val ev = env
-    implicit val ec = env.otoroshiExecutionContext
+    given ev: Env = env
+    given ec: ExecutionContext = env.otoroshiExecutionContext
     WorkflowFunctionsInitializer.initDefaults()
     AiBudgetClusterAgent.start(env, this)
     env.datastores.wasmPluginsDataStore.findById(LlmToolFunction.wasmPluginId).flatMap {
@@ -284,8 +286,8 @@ class AiExtension(val env: Env) extends AdminExtension {
   )
 
   def getResourceCode(path: String): String = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
     env.environment.resourceAsStream(path)
       .map(stream => StreamConverters.fromInputStream(() => stream).runFold(ByteString.empty)(_ ++ _).awaitf(10.seconds).utf8String)
       .getOrElse(s"'resource ${path} not found !'")
@@ -314,10 +316,10 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val workflowNodeSwitchFile = getResourceCode("cloudapim/extensions/ai/WorkflowNodes.js")
   lazy val imgCode = getResourceCode("cloudapim/extensions/ai/undraw_visionary_technology_re_jfp7.svg")
 
-  def handleProviderTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleProviderTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
+    given ev: Env = env
     (body match {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
@@ -366,10 +368,10 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleContextTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleContextTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
+    given ev: Env = env
     (body match {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
@@ -412,10 +414,10 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleTemplateTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleTemplateTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
+    given ev: Env = env
     (body match {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
@@ -453,10 +455,10 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handlePromptTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handlePromptTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
+    given ev: Env = env
     (body match {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
@@ -488,10 +490,10 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleFunctionTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleFunctionTest(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
+    given ev: Env = env
     (body match {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
@@ -499,7 +501,7 @@ class AiExtension(val env: Env) extends AdminExtension {
         bodyJson.select("function").asOpt[JsObject] match {
           case None => Results.Ok(Json.obj("done" -> false, "error" -> "no provider")).vfuture
           case Some(function) => LlmToolFunction.format.reads(function) match {
-            case JsError(err) => Results.Ok(Json.obj("done" -> false, "error" -> "bad function format")).vfuture
+            case JsError(_) => Results.Ok(Json.obj("done" -> false, "error" -> "bad function format")).vfuture
             case JsSuccess(function, _) => {
               val params = bodyJson.select("parameters").asOptString.getOrElse("")
               function.call(params, TypedMap.empty).map { res =>
@@ -518,10 +520,10 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleGenAudioVoicesFetch(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleGenAudioVoicesFetch(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
+    given ev: Env = env
     (body match {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
@@ -535,8 +537,6 @@ class AiExtension(val env: Env) extends AdminExtension {
               AudioModel.format.reads(edited) match {
                 case JsError(errors) => Results.Ok(Json.obj("done" -> false, "error" -> "bad provider format")).vfuture
                 case JsSuccess(audioModel, _) => {
-                  val token = audioModel.config.select("token").asOptString.getOrElse("--")
-                  val key = s"${audioModel.id}-${token}".sha256
                   val forceUpdate: Boolean = req.getQueryString("force").contains("true")
                   if (forceUpdate) {
                     logger.info(s"forcing models reload for ${audioModel.name} / ${audioModel.id}")
@@ -566,10 +566,10 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleProviderModelsFetch(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleProviderModelsFetch(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
+    given ev: Env = env
     (body match {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
@@ -620,14 +620,14 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleJlamaStatus(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
+  def handleJlamaStatus(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
     Results.Ok(Json.obj("can_execute" -> JlamaChatClient.canExecuteJlama, "msg" -> JlamaChatClient.errorMsg)).vfuture
   }
 
   // Registry UI assistant: lists the routes that expose a given MCP virtual server, with a derived public URL
   // and detected auth, so the admin can fill `registry.url` (and validate OAuth/apikey/mTLS).
-  def handleMcpExpositionRoutesScan(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ev = env
+  def handleMcpExpositionRoutesScan(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ev: Env = env
     req.getQueryString("server") match {
       case None => Results.BadRequest(Json.obj("error" -> "missing 'server' query param")).vfuture
       case Some(vsId) =>
@@ -636,9 +636,9 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleRemainingBudget(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val ev = env
+  def handleRemainingBudget(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
     req.getQueryString("budget") match {
       case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
       case Some(budgetId) => {
@@ -654,9 +654,9 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleRemainingBudgetReset(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val ev = env
+  def handleRemainingBudgetReset(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
     val all = req.getQueryString("all").contains("true")
     req.getQueryString("budget") match {
       case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
@@ -670,10 +670,10 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleBudgetClusterDeltaReceive(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleBudgetClusterDeltaReceive(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
+    given ev: Env = env
     (body match {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
@@ -751,10 +751,9 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleBugdetReset(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleBugdetReset(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
     val all = req.getQueryString("all").contains("true")
     ctx.named("id") match {
       case None => Results.BadRequest(Json.obj("error" -> "no budget id found")).vfuture
@@ -772,10 +771,9 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handleCurrentBudgetConsumption(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
-    implicit val ev = env
+  def handleCurrentBudgetConsumption(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
     ctx.named("id") match {
       case None => Results.BadRequest(Json.obj("error" -> "no budget id found")).vfuture
       case Some(budgetId) => {
@@ -791,21 +789,21 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
-  def handlePowChallengeCreate(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
-    ProofOfWorkPlugin.handlePowChallengeCreate(ctx, req, apikey, body)(env)
+  def handlePowChallengeCreate(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] = {
+    ProofOfWorkPlugin.handlePowChallengeCreate(ctx, req, apikey, body)(using env)
   }
 
-  def handlePowChallengeRead(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
-    ProofOfWorkPlugin.handlePowChallengeRead(ctx, req, apikey, body)(env)
+  def handlePowChallengeRead(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] = {
+    ProofOfWorkPlugin.handlePowChallengeRead(ctx, req, apikey, body)(using env)
   }
 
-  def handlePowChallengeDelete(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
-    ProofOfWorkPlugin.handlePowChallengeDelete(ctx, req, apikey, body)(env)
+  def handlePowChallengeDelete(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] = {
+    ProofOfWorkPlugin.handlePowChallengeDelete(ctx, req, apikey, body)(using env)
   }
 
   // Catalog of every provider type the gateway supports, with their capabilities. Filter with one or
   // more `capabilities` query params (repeatable and/or comma-separated); a provider must expose ALL.
-  def handleProvidersCatalog(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+  def handleProvidersCatalog(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] = {
     val requested = (req.queryString.getOrElse("capabilities", Seq.empty) ++ req.queryString.getOrElse("capability", Seq.empty))
       .flatMap(_.split(",")).map(_.trim).filter(_.nonEmpty)
     Results.Ok(Json.obj(
@@ -815,7 +813,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   }
 
   // List of model types (modalities) the gateway supports, each with the providers exposing it.
-  def handleModelCapabilities(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, _]]): Future[Result] = {
+  def handleModelCapabilities(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] = {
     Results.Ok(Json.obj(
       "object" -> "list",
       "data" -> AiProvidersCatalog.capabilitiesJson
@@ -951,13 +949,13 @@ class AiExtension(val env: Env) extends AdminExtension {
   override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
     AdminExtensionAssetRoute(
       path = "/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg",
-      handle = (ctx: AdminExtensionRouterContext[AdminExtensionAssetRoute], req: RequestHeader) => {
+      handle = (_: AdminExtensionRouterContext[AdminExtensionAssetRoute], _: RequestHeader) => {
         Results.Ok(imgCode).as("image/svg+xml").vfuture
       }
     ),
     AdminExtensionAssetRoute(
       path = "/extensions/assets/cloud-apim/extensions/ai-extension/extension.js",
-      handle = (ctx: AdminExtensionRouterContext[AdminExtensionAssetRoute], req: RequestHeader) => {
+      handle = (_: AdminExtensionRouterContext[AdminExtensionAssetRoute], _: RequestHeader) => {
         Results.Ok(
           s"""(function() {
             |  const extensionId = "${id.value}";
@@ -2042,8 +2040,8 @@ class AiExtension(val env: Env) extends AdminExtension {
   )
 
   override def syncStates(): Future[Unit] = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val ev = env
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
     for {
       providers <- datastores.providersDatastore.findAllAndFillSecrets()
       templates <- datastores.promptTemplatesDatastore.findAllAndFillSecrets()

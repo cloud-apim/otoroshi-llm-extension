@@ -1,23 +1,25 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
-import akka.stream.Materializer
+import org.apache.pekko.stream.Materializer
 import com.cloud.apim.otoroshi.extensions.aigateway.{LLmExtensionSuite, LlmExtensionOneOtoroshiServerPerSuite, LlmProviders, OtoroshiClient, TestLlmProviderSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.domains.LlmProviderUtils
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmToolFunction, LlmToolFunctionBackend, LlmToolFunctionBackendKind, LlmToolFunctionBackendOptions}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.OVHAiEndpointsApi
 import otoroshi.api.Otoroshi
 import otoroshi.models.WasmPlugin
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{OpenAiCompatModels, OpenAiCompatProxy}
 import play.api.libs.json.{JsObject, Json}
 
 import java.util.UUID
+import scala.compiletime.uninitialized
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
+import otoroshi.env.Env
 
 class ProvidersSuite extends LLmExtensionSuite {
 
-  def testChatCompletionWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(implicit ec: ExecutionContext, mat: Materializer): Unit = {
+  def testChatCompletionWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(using ec: ExecutionContext, mat: Materializer): Unit = {
     val token = sys.env(provider.envToken)
     val port = client.port
     val providerId = s"provider_${UUID.randomUUID().toString}"
@@ -104,7 +106,7 @@ class ProvidersSuite extends LLmExtensionSuite {
     await(1300.millis)
   }
 
-  def testChatCompletionStreamingWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(implicit ec: ExecutionContext, mat: Materializer): Unit = {
+  def testChatCompletionStreamingWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(using ec: ExecutionContext, mat: Materializer): Unit = {
     val token = sys.env(provider.envToken)
     val port = client.port
     val providerId = s"provider_${UUID.randomUUID().toString}"
@@ -190,7 +192,7 @@ class ProvidersSuite extends LLmExtensionSuite {
     await(1300.millis)
   }
 
-  def testCompletionWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(implicit ec: ExecutionContext, mat: Materializer): Unit = {
+  def testCompletionWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(using ec: ExecutionContext, mat: Materializer): Unit = {
     val port = client.port
     val token = sys.env(provider.envToken)
     val providerId = s"provider_${UUID.randomUUID().toString}"
@@ -272,7 +274,7 @@ class ProvidersSuite extends LLmExtensionSuite {
     await(1300.millis)
   }
 
-  def testModelsWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(implicit ec: ExecutionContext, mat: Materializer): Unit = {
+  def testModelsWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(using ec: ExecutionContext, mat: Materializer): Unit = {
 
     val port = client.port
     val providerId = s"provider_${UUID.randomUUID().toString}"
@@ -352,7 +354,7 @@ class ProvidersSuite extends LLmExtensionSuite {
     await(1300.millis)
   }
 
-  def testToolsCallWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(implicit ec: ExecutionContext, mat: Materializer): Unit = {
+  def testToolsCallWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(using ec: ExecutionContext, mat: Materializer): Unit = {
     val token = sys.env(provider.envToken)
     val port = client.port
     val providerId = s"provider_${UUID.randomUUID().toString}"
@@ -456,7 +458,7 @@ class ProvidersSuite extends LLmExtensionSuite {
       description = "This plugin provides the runtime for the wasm backed LLM tool calls",
       config = LlmToolFunction.wasmConfig
     ).json.stringify.byteString
-    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
+    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(using otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
     await(1300.millis)
     val resp = client.call("POST", s"http://${provider.name}.oto.tools:${port}/chat", Map.empty, Some(Json.parse(
       s"""{
@@ -484,7 +486,7 @@ class ProvidersSuite extends LLmExtensionSuite {
     await(1300.millis)
   }
 
-  def testToolsCallStreamWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(implicit ec: ExecutionContext, mat: Materializer): Unit = {
+  def testToolsCallStreamWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(using ec: ExecutionContext, mat: Materializer): Unit = {
     val token = sys.env(provider.envToken)
     val port = client.port
     val providerId = s"provider_${UUID.randomUUID().toString}"
@@ -588,7 +590,7 @@ class ProvidersSuite extends LLmExtensionSuite {
       description = "This plugin provides the runtime for the wasm backed LLM tool calls",
       config = LlmToolFunction.wasmConfig
     ).json.stringify.byteString
-    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
+    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(using otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
     await(1300.millis)
     val resp = client.stream("POST", s"http://${provider.name}.oto.tools:${port}/chat?stream=true", Map.empty, Some(Json.parse(
       s"""{
@@ -619,10 +621,10 @@ class ProvidersSuite extends LLmExtensionSuite {
   }
 
   val port: Int = freePort
-  var otoroshi: Otoroshi = _
-  var client: OtoroshiClient = _
-  implicit var ec: ExecutionContext = _
-  implicit var mat: Materializer = _
+  var otoroshi: Otoroshi = uninitialized
+  var client: OtoroshiClient = uninitialized
+  implicit var ec: ExecutionContext = uninitialized
+  implicit var mat: Materializer = uninitialized
 
   override def beforeAll(): Unit = {
     otoroshi = startOtoroshiServer(port)
@@ -1218,15 +1220,15 @@ class OvhModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
   test("test".ignore) {
 
-    implicit val env = otoroshi.env
-    implicit val ec = otoroshi.env.otoroshiExecutionContext
+    given env: Env = otoroshi.env
+    given ec: ExecutionContext = otoroshi.env.otoroshiExecutionContext
 
     OVHAiEndpointsApi.getModelsList().flatMap {
-      case Left(err) => ().vfuture
+      case Left(_) => ().vfuture
       case Right(list) => {
         list.mapAsync { ref =>
           OVHAiEndpointsApi.getModel(ref.name).map {
-            case Left(err) => ()
+            case Left(_) => ()
             case Right(model) => {
               val r = client.call("GET", model.documentation_url, Map.empty, None).awaitf(30.seconds)
               r.body.split("\n").toSeq.filter { line =>
@@ -1340,7 +1342,7 @@ class OvhModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         )
       )
     )).awaitf(awaitFor)
-    println(resp4.status, resp4.body)
+    println((resp4.status, resp4.body))
     // val reasoning = resp.json.at("choices.0.message.reasoning_details").asOptString
     // assert(reasoning.isDefined, s"[${provider.name}] no reasoning content")
     // assert(reasoning.get.nonEmpty, s"[${provider.name}] no reasoning")
@@ -1355,10 +1357,10 @@ class OvhModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 class StreamingWithAuditingSuite extends LLmExtensionSuite {
 
   val port: Int = freePort
-  var otoroshi: Otoroshi = _
-  var client: OtoroshiClient = _
-  implicit var ec: ExecutionContext = _
-  implicit var mat: Materializer = _
+  var otoroshi: Otoroshi = uninitialized
+  var client: OtoroshiClient = uninitialized
+  implicit var ec: ExecutionContext = uninitialized
+  implicit var mat: Materializer = uninitialized
 
   override def beforeAll(): Unit = {
     otoroshi = startOtoroshiServer(port)
@@ -1371,7 +1373,7 @@ class StreamingWithAuditingSuite extends LLmExtensionSuite {
     otoroshi.stop()
   }
 
-  def testChatCompletionStreamingWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(implicit ec: ExecutionContext, mat: Materializer): Unit = {
+  def testChatCompletionStreamingWith(provider: TestLlmProviderSettings, client: OtoroshiClient, awaitFor: FiniteDuration)(using ec: ExecutionContext, mat: Materializer): Unit = {
     val token = sys.env(provider.envToken)
     val port = client.port
     val providerId = s"provider_${UUID.randomUUID().toString}"
@@ -1544,7 +1546,7 @@ class MistralSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         )
       )
     )).awaitf(awaitFor)
-    println(resp4.status, resp4.body)
+    println((resp4.status, resp4.body))
     client.forLlmEntity("providers").deleteEntity(llmprovider)
     client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
     await(1300.millis)

@@ -9,7 +9,7 @@ import org.apache.lucene.search.IndexSearcher
 import org.apache.lucene.search.similarities.BM25Similarity
 import org.apache.lucene.store.ByteBuffersDirectory
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters.*
 
 final class LexicalIndex private (
   directory: ByteBuffersDirectory,
