@@ -1,14 +1,15 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.stream.scaladsl._
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
-import com.cloud.apim.otoroshi.extensions.aigateway.entities._
+import org.apache.pekko.stream.scaladsl.*
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.*
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -23,9 +24,9 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
   val supportsStreaming: Boolean = true
   override def supportsCompletion: Boolean = false
 
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("X.ai", method, url, body)(env)
+    ProviderHelpers.logCall("X.ai", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -45,9 +46,9 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
   }
 
   /** raw streamed POST, used by the native /responses path */
-  def rawStream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawStream(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logStream("X.ai", method, url, body)(env)
+    ProviderHelpers.logStream("X.ai", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -63,14 +64,14 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
       .stream()
   }
 
-  override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
+  override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
     rawCall(method, path, body).map(r => ProviderHelpers.wrapResponse("X.ai", r, env) { resp =>
       acc.updateOpenai(resp.json.select("usage").asOpt[JsObject])
-      OpenAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+      OpenAiApiResponse(resp.status, resp.headers.view.mapValues(_.last).toMap, resp.json)
     })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
     if (currentCallCounter >= maxCalls) {
       return call(method, path, body, acc)
     }
@@ -84,7 +85,7 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, "xai", attrs, nameToFunction)(ec, env)
+              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, "xai", attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -101,9 +102,9 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
     }
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logStream("X.ai", method, url, body)(env)
+    ProviderHelpers.logStream("X.ai", method, url, body)(using env)
     env.Ws
       .url(s"${baseUrl}${path}")
       .withHttpHeaders(
@@ -138,7 +139,7 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
       })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {
     if (currentCallCounter >= maxCalls) {
       return stream(method, path, body, acc)
     }
@@ -151,12 +152,11 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
           var isToolCallEnded = false
           var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
           var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
-          var toolCallUsage: OpenAiChatResponseChunkUsage = null
           val newSource = res._1.flatMapConcat { chunk =>
             if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
               isToolCall = true
               toolCalls = chunk.choices.head.delta.head.tool_calls
-              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => ""): _*)
+              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => "")*)
               Source.empty
             } else if (isToolCall && !isToolCallEnded) {
               if (chunk.choices.head.finish_reason.contains("tool_calls")) {
@@ -175,12 +175,11 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
                 }}
               Source.empty
             } else if (isToolCall && isToolCallEnded) {
-              toolCallUsage = chunk.usage.get
               val calls = toolCalls.zipWithIndex.map {
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, "xai", attrs, nameToFunction)(ec, env)
+              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, "xai", attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -325,12 +324,10 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     mcpExcludeFunctions = options.mcpExcludeFunctions,
     maxFunctionCalls = options.maxFunctionCalls,
   )
-  override protected def responsesRawCall(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawCall("POST", "/v1/responses", body.some)
-  override protected def responsesRawStream(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawStream("POST", "/v1/responses", (body.asObject ++ Json.obj("stream" -> true)).some)
+  override protected def responsesRawCall(body: JsValue)(using ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawCall("POST", "/v1/responses", body.some)
+  override protected def responsesRawStream(body: JsValue)(using ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawStream("POST", "/v1/responses", (body.asObject ++ Json.obj("stream" -> true)).some)
 
   override def transformOpenAIInputBodyToProviderInputBody(inputBody: JsObject): JsObject = {
-    val model = inputBody.select("model").asOptString.orElse(computeModel(inputBody)).getOrElse("--")
-    val reasoningEffort = inputBody.select("reasoningEffort").asOptString.orElse(inputBody.select("reasoning_effort").asOptString)
     (inputBody - "reasoningEffort" - "reasoning_effort")
       //.applyOnWithOpt(reasoningEffort) {
       //  case (obj, r) if model.startsWith("grok-4") && model.contains("reasoning") && !model.contains("non-reasoning") =>
@@ -340,7 +337,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
       //}
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -390,7 +387,6 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
                   val newArr = arr ++ Seq(slug)
                   obj ++ Json.obj("ai" -> newArr)
                 }
-                case Some(other) => other
                 case None => Json.obj("ai" -> Seq(slug))
               }
             }
@@ -428,7 +424,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -474,7 +470,6 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
           val newArr = arr ++ Seq(slug)
           obj ++ Json.obj("ai" -> newArr)
         }
-        case Some(other) => other
         case None => Json.obj("ai" -> Seq(slug))
       }
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
@@ -486,7 +481,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     }
   }
 
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/v1/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
@@ -496,7 +491,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
     }
   }
 
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -534,7 +529,6 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
           val newArr = arr ++ Seq(slug)
           obj ++ Json.obj("ai" -> newArr)
         }
-        case Some(other) => other
         case None => Json.obj("ai" -> Seq(slug))
       }
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
@@ -556,7 +550,7 @@ object XAiEmbeddingModelClientOptions {
 
 class XAiEmbeddingModelClient(val api: XAiApi, val options: XAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
 
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
     api.rawCall("POST", "/v1/embeddings", (options.raw ++ Json.obj("input" -> opts.input, "model" -> finalModel)).some).map { resp =>
       if (resp.status == 200) {
@@ -591,7 +585,7 @@ object XAiImageModelClientOptions {
 
 class XAiImageModelClient(val api: XAiApi, val genOptions: XAiImageModelClientOptions, id: String) extends ImageModelClient {
 
-  def listImagesGenModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  def listImagesGenModels()(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/v1/image-generation-models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("models").as[List[JsObject]].map(obj => obj.select("id").asString))
@@ -604,7 +598,7 @@ class XAiImageModelClient(val api: XAiApi, val genOptions: XAiImageModelClientOp
   override def supportsGeneration: Boolean = genOptions.enabled
   override def supportsEdit: Boolean = false
 
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = opts.model.orElse(genOptions.model).getOrElse("grok-2-image")
     val body = Json.obj(
         "prompt" -> opts.prompt,
@@ -616,7 +610,7 @@ class XAiImageModelClient(val api: XAiApi, val genOptions: XAiImageModelClientOp
 
     api.rawCall("POST", "/images/generations", body.some).map { resp =>
       if (resp.status == 200) {
-        val headers = resp.headers.mapValues(_.last)
+        val headers = resp.headers.view.mapValues(_.last).toMap
         Right(ImagesGenResponse(
           created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
           images = resp.json.select("data").as[Seq[JsObject]].map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String])),

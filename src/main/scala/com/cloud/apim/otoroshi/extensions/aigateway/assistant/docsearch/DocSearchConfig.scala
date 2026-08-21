@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.docsearch
 
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 
 final case class CorpusSource(id: String, url: String, baseUrl: String)
 

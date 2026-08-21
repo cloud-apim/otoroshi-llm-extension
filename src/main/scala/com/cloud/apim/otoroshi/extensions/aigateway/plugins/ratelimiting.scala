@@ -1,19 +1,19 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
+import org.apache.pekko.stream.Materializer
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatClient
 import otoroshi.el.GlobalExpressionLanguage
 import otoroshi.env.Env
 import otoroshi.gateway.Errors
 import otoroshi.next.plugins.NgCustomThrottling
-import otoroshi.next.plugins.api._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.plugins.api.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.{Result, Results}
 
 import scala.concurrent.{ExecutionContext, Future}
-import scala.util._
+import scala.util.*
 
 case class LlmTokensRateLimitingValidatorConfig(windowMillis: String, groupExpr: String, _throttlingQuota: String) extends NgPluginConfig {
   def json: JsValue = LlmTokensRateLimitingValidatorConfig.format.writes(this)
@@ -81,14 +81,14 @@ object LlmTokensRateLimitingValidatorConfig {
 }
 
 object StringImpls {
-  implicit class StringExt(val s: String) extends AnyVal {
+  extension (s: String) {
     def toLongOrElse(default: Long): Long = if (s.isEmpty) default else Try(s.toLong).getOrElse(default)
   }
 }
 
 class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTransformer {
 
-  import StringImpls._
+  import StringImpls.*
 
   override def steps: Seq[NgStep]                = Seq(NgStep.ValidateAccess, NgStep.TransformResponse)
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -113,7 +113,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     ().vfuture
   }
 
-  private def throttlingKey(name: String, group: String, ctx: NgAccessContext)(implicit env: Env): String = {
+  private def throttlingKey(name: String, group: String, ctx: NgAccessContext)(using env: Env): String = {
     NgCustomThrottling.throttlingKey(computeExpr(name, ctx, env), computeExpr(group, ctx, env))
   }
 
@@ -125,20 +125,6 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
       route = ctx.route.some,
       apiKey = ctx.apikey,
       user = ctx.user,
-      context = Map.empty,
-      attrs = ctx.attrs,
-      env = env
-    )
-  }
-
-  private def computeExprAfter(expr: String, ctx: NgAfterRequestContext, env: Env): String = {
-    GlobalExpressionLanguage.apply(
-      value = expr,
-      req = ctx.request.some,
-      service = ctx.route.legacy.some,
-      route = ctx.route.some,
-      user = ctx.attrs.get(otoroshi.plugins.Keys.UserKey),
-      apiKey = ctx.attrs.get(otoroshi.plugins.Keys.ApiKeyKey),
       context = Map.empty,
       attrs = ctx.attrs,
       env = env
@@ -173,7 +159,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     )
   }
 
-  private def updateQuotas(ctx: NgTransformerResponseContext, qconf: LlmTokensRateLimitingValidatorConfig)(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+  private def updateQuotas(ctx: NgTransformerResponseContext, qconf: LlmTokensRateLimitingValidatorConfig)(using ec: ExecutionContext, env: Env): Future[Unit] = {
     val group = computeExprAfter(qconf.groupExpr, ctx, env)
     val expr  = computeExprAfter(defaultExpr, ctx, env)
     val windowMillis = computeExprAfter(qconf.windowMillis, ctx, env).trim.toLongOrElse(10000)
@@ -199,7 +185,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     }.getOrElse(().vfuture)
   }
 
-  private def updateQuotas(ctx: NgTransformerErrorContext, qconf: LlmTokensRateLimitingValidatorConfig)(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+  private def updateQuotas(ctx: NgTransformerErrorContext, qconf: LlmTokensRateLimitingValidatorConfig)(using ec: ExecutionContext, env: Env): Future[Unit] = {
     val group = computeExprAfter(qconf.groupExpr, ctx, env)
     val expr  = computeExprAfter(defaultExpr, ctx, env)
     val windowMillis = computeExprAfter(qconf.windowMillis, ctx, env).trim.toLongOrElse(10000L)
@@ -227,7 +213,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
   private def withingQuotas(
                              ctx: NgAccessContext,
                              qconf: LlmTokensRateLimitingValidatorConfig
-                           )(implicit ec: ExecutionContext, env: Env): Future[Boolean] = {
+                           )(using ec: ExecutionContext, env: Env): Future[Boolean] = {
     val value = qconf.throttlingQuota(ctx, env)
     val key = throttlingKey(computeExpr(defaultExpr, ctx, env), computeExpr(qconf.groupExpr, ctx, env), ctx)
     // println(s"checking '${key}' under ${value}")
@@ -251,7 +237,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
       }
   }
 
-  private def tooMuchTokens(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+  private def tooMuchTokens(ctx: NgAccessContext)(using env: Env, ec: ExecutionContext): Future[NgAccess] = {
     Errors
       .craftResponseResult(
         "too many tokens used",
@@ -267,7 +253,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
       .map(r => NgAccess.NgDenied(r))
   }
 
-  override def access(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+  override def access(ctx: NgAccessContext)(using env: Env, ec: ExecutionContext): Future[NgAccess] = {
     val config = ctx.cachedConfig(internalName)(LlmTokensRateLimitingValidatorConfig.format).getOrElse(LlmTokensRateLimitingValidatorConfig.default)
     val windowMillis = computeExpr(config.windowMillis, ctx, env).trim
     ctx.attrs.put(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey -> Map(
@@ -279,7 +265,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     }
   }
 
-  override def transformResponse(ctx: NgTransformerResponseContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
+  override def transformResponse(ctx: NgTransformerResponseContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpResponse]] = {
     val config = ctx.cachedConfig(internalName)(LlmTokensRateLimitingValidatorConfig.format).getOrElse(LlmTokensRateLimitingValidatorConfig.default)
     updateQuotas(ctx, config).map { _ =>
       val headers = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).getOrElse(Map.empty[String, String])
@@ -302,7 +288,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     }
   }
 
-  override def transformError(ctx: NgTransformerErrorContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[NgPluginHttpResponse] = {
+  override def transformError(ctx: NgTransformerErrorContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[NgPluginHttpResponse] = {
     val config = ctx.cachedConfig(internalName)(LlmTokensRateLimitingValidatorConfig.format).getOrElse(LlmTokensRateLimitingValidatorConfig.default)
     updateQuotas(ctx, config).map { _ =>
       val headers = ctx.attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).getOrElse(Map.empty[String, String])
@@ -325,7 +311,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     }
   }
 
-  override def afterRequest(ctx: NgAfterRequestContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Unit] = {
+  override def afterRequest(ctx: NgAfterRequestContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Unit] = {
     // val config = ctx.cachedConfig(internalName)(LlmTokensRateLimitingValidatorConfig.format).getOrElse(LlmTokensRateLimitingValidatorConfig.default)
     // updateQuotas(ctx, config)
     ().vfuture

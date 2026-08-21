@@ -1,12 +1,10 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, CacheSettings}
-import com.google.common.base.Charsets
-import otoroshi.events.DataExporter
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.models.{DataExporterConfig, DataExporterConfigFiltering, DataExporterConfigTypeWebhook, EntityLocation, Webhook}
-import otoroshi.next.models._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.models.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy
 import play.api.libs.json.Json
 import play.api.libs.ws.WSResponse
@@ -134,7 +132,7 @@ class AuditingSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       ))).awaitf(30.seconds)
     }
 
-    for (i <- 0 until 20) {
+    for (_ <- 0 until 20) {
       val res = call("llama3.2")
       assertEquals(res.status, 200, "status should be 200")
     }

@@ -1,16 +1,17 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
-import scala.concurrent._
-import scala.concurrent.duration._
+import scala.concurrent.*
+import scala.concurrent.duration.*
 
 // OpenRouter - https://openrouter.ai/docs/api/api-reference
 // OpenRouter audio support is speech-to-text (STT, /audio/transcriptions) and text-to-speech
@@ -29,9 +30,9 @@ object OpenRouterApi {
 
 class OpenRouterApi(baseUrl: String = OpenRouterApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
 
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("OpenRouter", method, url, body)(env)
+    ProviderHelpers.logCall("OpenRouter", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -47,9 +48,9 @@ class OpenRouterApi(baseUrl: String = OpenRouterApi.baseUrl, token: String, time
       .execute()
   }
 
-  def rawCallStream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCallStream(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("OpenRouter", method, url, body)(env)
+    ProviderHelpers.logCall("OpenRouter", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -126,19 +127,19 @@ class OpenRouterAudioModelClient(val api: OpenRouterApi, val ttsOptions: OpenRou
     case None => "audio/pcm"
   }
 
-  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = {
+  override def listModels(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = {
     Right(List(
       AudioGenModel(OpenRouterApi.defaultSttModel, OpenRouterApi.defaultSttModel),
       AudioGenModel(OpenRouterApi.defaultTtsModel, OpenRouterApi.defaultTtsModel),
     )).vfuture
   }
 
-  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+  override def listVoices(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     // OpenRouter voices are provider-specific (depend on the selected TTS model), no enumeration endpoint.
     List.empty.rightf
   }
 
-  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
     val responseFormatOpt: Option[String] = opts.responseFormat.orElse(ttsOptions.responseFormat)
     val speedOpt: Option[Double] = opts.speed.orElse(ttsOptions.speed)
     val body = Json.obj(
@@ -159,12 +160,12 @@ class OpenRouterAudioModelClient(val api: OpenRouterApi, val ttsOptions: OpenRou
     }
   }
 
-  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model).getOrElse(OpenRouterApi.defaultSttModel)
     val language = opts.language.orElse(sttOptions.language)
     val temperature = opts.temperature.orElse(sttOptions.temperature)
     val format = resolveSttFormat(opts)
-    opts.file.runFold(ByteString.empty)(_ ++ _)(env.otoroshiMaterializer).flatMap { bytes =>
+    opts.file.runFold(ByteString.empty)(_ ++ _)(using env.otoroshiMaterializer).flatMap { bytes =>
       val body = Json.obj(
         "model" -> model,
         "input_audio" -> Json.obj(
@@ -179,7 +180,7 @@ class OpenRouterAudioModelClient(val api: OpenRouterApi, val ttsOptions: OpenRou
       api.rawCall("POST", "/audio/transcriptions", body.some).map { response =>
         if (response.status == 200) {
           val resp = response.json
-          AudioTranscriptionResponse(resp.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(resp.asObject, response.headers.mapValues(_.last))).right
+          AudioTranscriptionResponse(resp.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(resp.asObject, response.headers.view.mapValues(_.last).toMap)).right
         } else {
           Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
         }
@@ -213,8 +214,8 @@ class OpenRouterImageModelClient(val api: OpenRouterApi, val genOptions: OpenRou
   override def supportsEdit: Boolean = editOptions.enabled
 
   // turn an uploaded image (a streamed source of bytes) into the base64 data URL OpenRouter expects
-  private def imageToDataUrl(img: ImageFile)(implicit ec: ExecutionContext, env: Env): Future[String] = {
-    img.bytes.runFold(ByteString.empty)(_ ++ _)(env.otoroshiMaterializer).map { bytes =>
+  private def imageToDataUrl(img: ImageFile)(using ec: ExecutionContext, env: Env): Future[String] = {
+    img.bytes.runFold(ByteString.empty)(_ ++ _)(using env.otoroshiMaterializer).map { bytes =>
       val ct = Option(img.contentType).filter(_.startsWith("image/")).getOrElse("image/png")
       s"data:${ct};base64,${bytes.encodeBase64.utf8String}"
     }
@@ -235,7 +236,7 @@ class OpenRouterImageModelClient(val api: OpenRouterApi, val genOptions: OpenRou
   private def parseResponse(resp: WSResponse): Either[JsValue, ImagesGenResponse] = {
     if (resp.status == 200) {
       val json = resp.json
-      val headers = resp.headers.mapValues(_.last)
+      val headers = resp.headers.view.mapValues(_.last).toMap
       val message = json.select("choices").asOpt[Seq[JsObject]].flatMap(_.headOption)
         .flatMap(_.select("message").asOpt[JsObject]).getOrElse(Json.obj())
       val text = message.select("content").asOptString.filter(_.nonEmpty)
@@ -275,13 +276,13 @@ class OpenRouterImageModelClient(val api: OpenRouterApi, val genOptions: OpenRou
     }
   }
 
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel = opts.model.orElse(genOptions.model).getOrElse(OpenRouterApi.defaultImageModel)
     val body = chatBody(finalModel, opts.prompt, Seq.empty, genOptions.modalities)
     api.rawCall("POST", "/chat/completions", body.some).map(parseResponse)
   }
 
-  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel = opts.model.orElse(editOptions.model).getOrElse(OpenRouterApi.defaultImageModel)
     Future.sequence(opts.images.map(imageToDataUrl)).flatMap { dataUrls =>
       val body = chatBody(finalModel, opts.prompt, dataUrls, editOptions.modalities)
@@ -342,16 +343,16 @@ class OpenRouterVideoModelClient(val api: OpenRouterApi, val genOptions: OpenRou
   }
 
   // poll GET /videos/{id} until the job completes, fails, or we run out of attempts
-  private def pollUntilDone(jobId: String, attemptsLeft: Int)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
+  private def pollUntilDone(jobId: String, attemptsLeft: Int)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
     if (attemptsLeft <= 0) {
       Left(Json.obj("error" -> "video generation timed out while polling", "job_id" -> jobId)).vfuture
     } else {
-      akka.pattern.after(genOptions.pollInterval, env.otoroshiScheduler)(Future.successful(()))(ec).flatMap { _ =>
+      org.apache.pekko.pattern.after(genOptions.pollInterval, env.otoroshiScheduler)(Future.successful(()))(using ec).flatMap { _ =>
         api.rawCall("GET", s"/videos/${jobId}", None).flatMap { resp =>
           if (resp.status == 200) {
             val json = resp.json
             json.select("status").asOptString.getOrElse("pending").toLowerCase match {
-              case "completed" => buildResponse(json, resp.headers.mapValues(_.last)).vfuture
+              case "completed" => buildResponse(json, resp.headers.view.mapValues(_.last).toMap).vfuture
               case s if terminalFailures.contains(s) => Left(Json.obj("error" -> s"video generation $s", "body" -> json)).vfuture
               case _ => pollUntilDone(jobId, attemptsLeft - 1)
             }
@@ -363,7 +364,7 @@ class OpenRouterVideoModelClient(val api: OpenRouterApi, val genOptions: OpenRou
     }
   }
 
-  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
+  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
     val finalModel: String = opts.model.orElse(genOptions.model).getOrElse(OpenRouterApi.defaultVideoModel)
     // gateway duration is a string (e.g. "8" or "5s"); OpenRouter wants an integer number of seconds
     val durationOpt: Option[Int] = opts.duration.flatMap(d => "\\d+".r.findFirstIn(d.trim)).flatMap(s => scala.util.Try(s.toInt).toOption).orElse(genOptions.duration)
@@ -383,13 +384,13 @@ class OpenRouterVideoModelClient(val api: OpenRouterApi, val genOptions: OpenRou
           case None => Left(Json.obj("error" -> "no job id in response", "body" -> json)).vfuture
           case Some(jobId) =>
             json.select("status").asOptString.getOrElse("pending").toLowerCase match {
-              case "completed" => buildResponse(json, resp.headers.mapValues(_.last)).vfuture
+              case "completed" => buildResponse(json, resp.headers.view.mapValues(_.last).toMap).vfuture
               case s if terminalFailures.contains(s) => Left(Json.obj("error" -> s"video generation $s", "body" -> json)).vfuture
               case _ => pollUntilDone(jobId, genOptions.maxPollAttempts)
             }
         }
       } else {
-        Left(Json.obj("error" -> "Bad response", "status" -> resp.status, "body" -> resp.body)).vfuture
+        Left(Json.obj("error" -> "Bad response", "status" -> resp.status, "body" -> (resp.body: String))).vfuture
       }
     }
   }

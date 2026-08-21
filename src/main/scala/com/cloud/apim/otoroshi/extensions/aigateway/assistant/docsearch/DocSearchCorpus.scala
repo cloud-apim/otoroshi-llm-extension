@@ -1,10 +1,10 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.docsearch
 
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.concurrent.{ExecutionContext, Future}
 
 private object DocSearchCorpusLog {
@@ -26,7 +26,7 @@ object DocSearchCorpus {
     source: CorpusSource,
     previousEtag: Option[String],
     previousLastModified: Option[String]
-  )(implicit ec: ExecutionContext, env: Env): Future[CorpusFetchResult] = {
+  )(using ec: ExecutionContext, env: Env): Future[CorpusFetchResult] = {
     val logger = DocSearchCorpusLog.logger
     val baseHeaders: Seq[(String, String)] = Seq(
       "Accept" -> "application/json",
@@ -42,7 +42,7 @@ object DocSearchCorpus {
       logger.debug(s"doc-search fetch start: corpus=${source.id} url=${source.url}$conditionalNote")
     }
     env.Ws.url(source.url)
-      .withHttpHeaders((baseHeaders ++ conditional): _*)
+      .withHttpHeaders((baseHeaders ++ conditional)*)
       .withFollowRedirects(true)
       .withRequestTimeout(fetchTimeout)
       .get()

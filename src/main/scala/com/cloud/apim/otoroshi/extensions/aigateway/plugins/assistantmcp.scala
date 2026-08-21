@@ -1,16 +1,16 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.AssistantConfiguration
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools.{ToolCallContext, ToolRegistry}
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -170,7 +170,7 @@ class AssistantMcpEndpoint extends NgBackendCall {
     jsonRpcOk(id, Json.obj("tools" -> JsArray(tools)))
   }
 
-  private def toolsCall(id: JsValue, request: JsValue, config: AssistantMcpEndpointConfig)(implicit env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  private def toolsCall(id: JsValue, request: JsValue, config: AssistantMcpEndpointConfig)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
     val toolName = params.select("name").asOpt[String].getOrElse("")
     val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
@@ -210,7 +210,7 @@ class AssistantMcpEndpoint extends NgBackendCall {
     }
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(AssistantMcpEndpointConfig.format).getOrElse(AssistantMcpEndpointConfig.default)
     val method = ctx.request.method.toLowerCase()
     if (method != "post") {

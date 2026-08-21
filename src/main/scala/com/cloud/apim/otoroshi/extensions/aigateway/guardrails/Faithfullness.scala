@@ -1,11 +1,11 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmValidationSettings}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt, InputChatMessage, OutputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, Json}
 
@@ -25,7 +25,7 @@ class FaithfulnessGuardrail extends Guardrail {
 
   def fail(): Future[GuardrailResult] = GuardrailResult.GuardrailDenied(s"request content is not faithful to the provided context").vfuture
 
-  def createStatements(userInput: String, ref: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[String]] = {
+  def createStatements(userInput: String, ref: String, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Seq[String]] = {
     val instructions = """Given a question and an answer, analyze the complexity of each sentence in the answer.
         |Break down each sentence into one or more fully understandable statements.
         |Ensure that no pronouns are used in any statement.
@@ -51,7 +51,7 @@ class FaithfulnessGuardrail extends Guardrail {
     }
   }
 
-  def createVerdicts(context: String, statements: Seq[String], outOfScope: Boolean, ref: String, attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Future[Seq[FaithfulnessOutput]] = {
+  def createVerdicts(context: String, statements: Seq[String], outOfScope: Boolean, ref: String, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Seq[FaithfulnessOutput]] = {
     val instructions_notOutOfScope =
       """Your task is to judge the faithfulness of a series of statements based on a given context.
         |For each statement you must return verdict as 1 if the statement can be directly inferred based
@@ -96,7 +96,7 @@ class FaithfulnessGuardrail extends Guardrail {
   }
 
 
-  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val provider = config.select("ref").asOpt[String].orElse(config.select("provider").asOpt[String]).get
     val outOfScope = config.select("exclude_out_of_scope_statements").asOptBoolean.getOrElse(true)
     val context = config.select("context").asOpt[Seq[String]].map(_.mkString(". ")).orElse(config.select("context").asOpt[String]).getOrElse("--")

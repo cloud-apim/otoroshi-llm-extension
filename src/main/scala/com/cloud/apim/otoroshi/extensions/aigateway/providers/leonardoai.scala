@@ -1,11 +1,12 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
@@ -17,9 +18,9 @@ object LeonardoAIApi {
 
 class LeonardoAIApi(baseUrl: String = LeonardoAIApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
 
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("LeonardoAI", method, url, body)(env)
+    ProviderHelpers.logCall("LeonardoAI", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -60,7 +61,7 @@ class LeonardoAIImageModelClient(val api: LeonardoAIApi, val genOptions: Leonard
   override def supportsGeneration: Boolean = genOptions.enabled
   override def supportsEdit: Boolean = false
 
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = opts.model.orElse(genOptions.model).getOrElse("6b645e3a-d64f-4341-a6d8-7a3690fbf042")
     val body = Json.obj(
       "prompt" -> opts.prompt,
@@ -73,7 +74,7 @@ class LeonardoAIImageModelClient(val api: LeonardoAIApi, val genOptions: Leonard
 
     api.rawCall("POST", s"/generations", body.some).map { resp =>
       if (resp.status == 200) {
-        val headers = resp.headers.mapValues(_.last)
+        val headers = resp.headers.view.mapValues(_.last).toMap
         Right(ImagesGenResponse(
           created = System.currentTimeMillis(),
           images = Seq(ImagesGen(None, None, resp.json.select("sdGenerationJob").select("generationId").asOpt[String].map(id => s"https://cloud.leonardo.ai/api/rest/v1/generations/${id}"))),

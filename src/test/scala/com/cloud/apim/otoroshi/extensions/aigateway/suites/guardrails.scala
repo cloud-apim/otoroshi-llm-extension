@@ -5,7 +5,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailItem, G
 import com.cloud.apim.otoroshi.extensions.aigateway.domains.LlmProviderUtils
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmToolFunction}
 import otoroshi.models.WasmPlugin
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.Json
 import reactor.core.publisher.Mono
 
@@ -130,7 +130,7 @@ class QuickJsGuardrailSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       description = "This plugin provides the runtime for the wasm backed LLM tool calls",
       config = LlmToolFunction.wasmConfig
     ).json.stringify.byteString
-    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
+    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(using otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
     await(1300.millis)
 
     {

@@ -1,10 +1,10 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
-import com.cloud.apim.otoroshi.extensions.aigateway.entities._
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.*
 import otoroshi.models.{EntityLocation, WasmPlugin}
-import otoroshi.next.models._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.models.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpRespEndpoint, McpSseEndpoint, McpWebsocketEndpoint, OpenAiCompatProxy}
 import play.api.libs.json.{JsObject, Json}
 import reactor.core.publisher.Mono
@@ -343,7 +343,7 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     /////////                                  test                                                          ///////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     var messages = Seq.empty[JsObject]
-    val (pushRef, cancel) = client.ws(s"ws://test.oto.tools:${port}/ws") { ref =>
+    val (pushRef, cancel) = client.ws(s"ws://test.oto.tools:${port}/ws") { _ =>
       (message: String) => {
         messages = messages :+ message.parseJson.asObject
       }
@@ -543,7 +543,7 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       description = "This plugin provides the runtime for the wasm backed LLM tool calls",
       config = LlmToolFunction.wasmConfig
     ).json.stringify.byteString
-    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
+    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(using otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
     await(2.seconds)
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /////////                                  test                                                          ///////////
@@ -633,7 +633,7 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       description = "This plugin provides the runtime for the wasm backed LLM tool calls",
       config = LlmToolFunction.wasmConfig
     ).json.stringify.byteString
-    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
+    otoroshi.env.datastores.rawDataStore.set(s"otoroshi:wasm-plugins:${LlmToolFunction.wasmPluginId}", payload, None)(using otoroshi.executionContext, otoroshi.env).awaitf(10.seconds)
     await(2.seconds)
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /////////                                  test                                                          ///////////

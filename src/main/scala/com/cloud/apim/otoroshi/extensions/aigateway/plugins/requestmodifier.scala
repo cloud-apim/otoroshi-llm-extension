@@ -1,14 +1,14 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.NotUsed
-import akka.stream.Materializer
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
+import org.apache.pekko.NotUsed
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiPromptRequestConfig
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.plugins.api.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, Json}
 import play.api.mvc.{Result, Results}
@@ -42,7 +42,7 @@ class AiRequestBodyModifier extends NgRequestTransformer {
     ().vfuture
   }
 
-  override def transformRequest(ctx: NgTransformerRequestContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
+  override def transformRequest(ctx: NgTransformerRequestContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     val config = ctx.cachedConfig(internalName)(AiPromptRequestConfig.format).getOrElse(AiPromptRequestConfig.default)
     if (ctx.otoroshiRequest.hasBody) {
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref)) match {

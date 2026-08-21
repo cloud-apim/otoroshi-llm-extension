@@ -1,14 +1,14 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.stream.scaladsl.{Framing, Source}
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.stream.scaladsl.{Framing, Source}
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{A2ASupport, GenericApiResponseChoiceMessageToolCall, LlmFunctions}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
 
 import java.util.concurrent.atomic.AtomicReference
@@ -59,9 +59,9 @@ trait NativeResponsesSupport extends ChatClient {
   /** parameters the provider documents as unsupported on its `/responses` endpoint */
   protected def responsesUnsupportedParams: Seq[String] = Seq.empty
   /** POST the payload to the provider's `/responses` endpoint */
-  protected def responsesRawCall(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse]
+  protected def responsesRawCall(body: JsValue)(using ec: ExecutionContext, env: Env): Future[WSResponse]
   /** same, as a stream of `text/event-stream` bytes */
-  protected def responsesRawStream(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse]
+  protected def responsesRawStream(body: JsValue)(using ec: ExecutionContext, env: Env): Future[WSResponse]
 
   override def supportsResponses: Boolean = responsesEnabled
 
@@ -70,7 +70,7 @@ trait NativeResponsesSupport extends ChatClient {
   // the payload to POST, the model it targets, and whether the gateway injected its own tools —
   // only then does it execute the tool calls itself. Tools declared by the caller are its own
   // business: their calls are returned to it, exactly like on the chat/completions path.
-  private def payload(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): (JsObject, String, Boolean) = {
+  private def payload(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): (JsObject, String, Boolean) = {
     val body = originalBody.asObject - "messages" - "provider" - "input" - "instructions"
     val merged = if (responsesAllowConfigOverride) responsesChatOptions.deepMerge(body) else responsesChatOptions
     val params = responsesUnsupportedParams.foldLeft(OpenAiResponsesBodyConverter.toResponsesBody(merged))(_ - _)
@@ -107,7 +107,6 @@ trait NativeResponsesSupport extends ChatClient {
         val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
         obj ++ Json.obj("ai" -> (arr ++ Seq(slug)))
       }
-      case Some(other) => other
       case None => Json.obj("ai" -> Seq(slug))
     }
   }
@@ -127,17 +126,17 @@ trait NativeResponsesSupport extends ChatClient {
 
   // ---- blocking ---------------------------------------------------------------------------
 
-  private def rawJsonCall(body: JsObject, acc: UsageAccumulator)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (JsValue, Map[String, String])]] = {
+  private def rawJsonCall(body: JsObject, acc: UsageAccumulator)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (JsValue, Map[String, String])]] = {
     responsesRawCall(body).map(r => ProviderHelpers.wrapResponse(responsesProviderKind, r, env) { resp =>
       acc.updateOpenaiResponses(resp.json.select("usage").asOpt[JsObject])
-      (resp.json, resp.headers.mapValues(_.last))
+      (resp.json, resp.headers.view.mapValues(_.last).toMap)
     })
   }
 
   // Tool loop of the responses API: `function_call` output items are executed and appended back to
   // `input` as `function_call` + `function_call_output` items (the chat/completions loop appends
   // assistant/tool messages instead).
-  private def callWithToolSupport(body: JsObject, attrs: TypedMap, nameToFunction: Map[String, String], currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (JsValue, Map[String, String])]] = {
+  private def callWithToolSupport(body: JsObject, attrs: TypedMap, nameToFunction: Map[String, String], currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (JsValue, Map[String, String])]] = {
     if (currentCallCounter >= responsesToolsOptions.maxFunctionCalls) {
       return rawJsonCall(body, acc)
     }
@@ -159,7 +158,7 @@ trait NativeResponsesSupport extends ChatClient {
               "function" -> Json.obj("name" -> name, "arguments" -> arguments),
             ))
           }
-          LlmFunctions.callToolsOpenai(calls, responsesToolsOptions.mcpConnectors, responsesProviderKind, attrs, nameToFunction)(ec, env).flatMap { callResps =>
+          LlmFunctions.callToolsOpenai(calls, responsesToolsOptions.mcpConnectors, responsesProviderKind, attrs, nameToFunction)(using ec, env).flatMap { callResps =>
             val previousInput = body.select("input").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
             // the tool results come back as chat messages, turn them into responses input items
             val resultItems = OpenAiResponsesBodyConverter.chatMessagesToInput(callResps.map(_.asObject)).value.map(_.asObject)
@@ -171,7 +170,7 @@ trait NativeResponsesSupport extends ChatClient {
     }
   }
 
-  final override def response(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  final override def response(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     if (!responsesEnabled) {
       return super.response(prompt, attrs, originalBody)
     }
@@ -198,7 +197,7 @@ trait NativeResponsesSupport extends ChatClient {
 
   // ---- streaming --------------------------------------------------------------------------
 
-  final override def responseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  final override def responseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     if (!responsesEnabled) {
       return super.responseStream(prompt, attrs, originalBody)
     }
@@ -218,7 +217,7 @@ trait NativeResponsesSupport extends ChatClient {
     })
   }
 
-  private def eventToChunks(event: JsValue, responseId: AtomicReference[String], finalModel: String, resp: WSResponse, acc: UsageAccumulator, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Source[ChatResponseChunk, _] = {
+  private def eventToChunks(event: JsValue, responseId: AtomicReference[String], finalModel: String, resp: WSResponse, acc: UsageAccumulator, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Source[ChatResponseChunk, ?] = {
     val typ = event.select("type").asOptString.getOrElse("")
     val created = System.currentTimeMillis() / 1000L
     def chunk(delta: ChatResponseChunkChoiceDelta, finishReason: Option[String] = None, usage: Option[ChatResponseMetadataUsage] = None): ChatResponseChunk = {
@@ -259,7 +258,7 @@ trait NativeResponsesSupport extends ChatClient {
       case "response.completed" => {
         // usage is only read here: `response.created` / `response.in_progress` carry "usage": null
         acc.updateOpenaiResponses(event.at("response.usage").asOpt[JsObject])
-        val usage = metadataFrom(resp.headers.mapValues(_.last), acc.usage())
+        val usage = metadataFrom(resp.headers.view.mapValues(_.last).toMap, acc.usage())
         registerUsage(usage, finalModel, resp.header("openai-processing-ms").map(_.toLong).getOrElse(0L), attrs)
         val hadToolCalls = event.at("response.output").asOpt[Seq[JsObject]].getOrElse(Seq.empty).exists(_.select("type").asOptString.contains("function_call"))
         Source.single(chunk(

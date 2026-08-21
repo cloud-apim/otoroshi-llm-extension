@@ -2,13 +2,13 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
 import otoroshi.env.Env
-import otoroshi.models._
+import otoroshi.models.*
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
-import otoroshi.storage._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.storage.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiGatewayExtensionDatastores, AiGatewayExtensionState}
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import scala.util.{Failure, Success, Try}
 
@@ -68,7 +68,7 @@ object PromptTemplate {
         extractIdf = c => datastores.promptTemplatesDatastore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, _, _) => {
           PromptTemplate(
             id = IdGenerator.namedId("prompt-template", env),
             name = "Prompt template",
@@ -98,7 +98,7 @@ class KvPromptTemplateDataStore(extensionId: AdminExtensionId, redisCli: RedisLi
   extends PromptTemplateDataStore
     with RedisLikeStore[PromptTemplate] {
   override def fmt: Format[PromptTemplate]                  = PromptTemplate.format
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
   override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:templates:$id"
   override def extractId(value: PromptTemplate): String    = value.id
 }

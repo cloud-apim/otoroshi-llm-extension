@@ -1,18 +1,18 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools
 
-import akka.http.scaladsl.model.Uri
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
+import org.apache.pekko.http.scaladsl.model.Uri
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic.{AdminClient, AdminCredentials, ExpressionLanguage}
 import otoroshi.env.Env
 import otoroshi.models.ApiKey
-import otoroshi.next.proxy.{BackOfficeRequest, ProxyEngine, RelayRoutingRequest}
+import otoroshi.next.proxy.ProxyEngine
 import otoroshi.script.RequestHandler
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.libs.typedmap.TypedMap
 import play.api.mvc.request.{Cell, RemoteConnection, RequestAttrKey, RequestTarget}
-import play.api.mvc.{Cookies, EssentialAction, Headers, Request, Results}
+import play.api.mvc.{Cookies, Headers, Request, Results}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -76,7 +76,7 @@ class ExecuteTool extends AssistantTool {
     ),
   )
 
-  override def call(arguments: JsValue, ctx: ToolCallContext)(implicit ec: ExecutionContext): Future[String] = {
+  override def call(arguments: JsValue, ctx: ToolCallContext)(using ec: ExecutionContext): Future[String] = {
     if (!ctx.config.allowApiUsage) {
       Future.successful("Error: Admin API usage is disabled. You have to enabled it in danger zone")
     } else {
@@ -89,7 +89,7 @@ class ExecuteTool extends AssistantTool {
         case None =>
           Future.successful("Error: admin API credentials are not configured for the assistant. The 'execute' tool is unavailable until they are wired up. Use 'search' for discovery and answer with concrete payload examples instead.")
         case Some(creds) =>
-          implicit val env = ctx.env
+          given env: Env = ctx.env
           runSequentially(creds, ctx, requests, 0, Vector.empty)
             .map(entries => JsObject(entries))
             .map(json => AssistantTool.truncate(Json.prettyPrint(json)))
@@ -107,7 +107,7 @@ class ExecuteTool extends AssistantTool {
     requests: Seq[JsObject],
     idx: Int,
     acc: Vector[(String, JsValue)],
-  )(implicit ec: ExecutionContext, env: otoroshi.env.Env): Future[Vector[(String, JsValue)]] = {
+  )(using ec: ExecutionContext, env: otoroshi.env.Env): Future[Vector[(String, JsValue)]] = {
     if (idx >= requests.size) Future.successful(acc)
     else {
       val rawReq = requests(idx)
@@ -118,7 +118,7 @@ class ExecuteTool extends AssistantTool {
     }
   }
 
-  private def runSingle(creds: AdminCredentials, ctx: ToolCallContext, rawReq: JsObject, refCtx: Map[String, JsValue])(implicit ec: ExecutionContext, env: otoroshi.env.Env): Future[JsValue] = {
+  private def runSingle(creds: AdminCredentials, ctx: ToolCallContext, rawReq: JsObject, refCtx: Map[String, JsValue])(using ec: ExecutionContext, env: otoroshi.env.Env): Future[JsValue] = {
     ExpressionLanguage.expandValue(rawReq, refCtx) match {
       case Left(err) => Future.successful(Json.obj("error" -> s"unresolved expression: $err"))
       case Right(expanded) =>
@@ -147,9 +147,9 @@ class ExecuteTool extends AssistantTool {
           val host = env.adminApiExposedHost
           val apikey = creds.apikey
           val request = new AssistantRequest(host, method, url, opts, apikey, env)
-          val engine = env.scriptManager.getAnyScript[RequestHandler](s"cp:${classOf[ProxyEngine].getName}").right.get
+          val engine = env.scriptManager.getAnyScript[RequestHandler](s"cp:${classOf[ProxyEngine].getName}").toOption.get
           engine.handle(request, _ => Results.InternalServerError("bad default routing").vfuture).flatMap { resp =>
-            resp.body.dataStream.runFold(ByteString.empty)(_ ++ _)(env.otoroshiMaterializer).map { bodyRaw =>
+            resp.body.dataStream.runFold(ByteString.empty)(_ ++ _)(using env.otoroshiMaterializer).map { bodyRaw =>
               val ctype = resp.header.headers.getIgnoreCase("content-type").getOrElse("text/plain")
               val body: JsValue = if (ctype.startsWith("application/json")) bodyRaw.utf8String.parseJson else bodyRaw.utf8String.json
               Json.obj(
@@ -165,7 +165,7 @@ class ExecuteTool extends AssistantTool {
 
 }
 
-class AssistantRequest(_host: String, m: String, _url: String, opts: AdminClient.CallOptions, apikey: ApiKey, env: Env) extends Request[Source[ByteString, _]] {
+class AssistantRequest(_host: String, m: String, _url: String, opts: AdminClient.CallOptions, apikey: ApiKey, env: Env) extends Request[Source[ByteString, ?]] {
 
 
   val bodyBs  = opts.body.map(_.stringify.byteString)
@@ -180,13 +180,13 @@ class AssistantRequest(_host: String, m: String, _url: String, opts: AdminClient
 
   override def hasBody: Boolean = opts.body.isDefined
 
-  override def body: Source[ByteString, _] = opts.body.map(json => Source.single(json.stringify.byteString)).getOrElse(Source.empty[ByteString])
+  override def body: Source[ByteString, ?] = opts.body.map(json => Source.single(json.stringify.byteString)).getOrElse(Source.empty[ByteString])
 
   override def connection: RemoteConnection = RemoteConnection("127.0.0.1", true, None)
 
   override def method: String = m.toUpperCase()
 
-  override def target: RequestTarget = RequestTarget(_url, Uri(_url).path.toString(), opts.query.mapValues(v => Seq(v)))
+  override def target: RequestTarget = RequestTarget(_url, Uri(_url).path.toString(), opts.query.view.mapValues(v => Seq(v)).toMap)
 
   override def version: String = "HTTP/1.1"
 
@@ -198,7 +198,7 @@ class AssistantRequest(_host: String, m: String, _url: String, opts: AdminClient
         "Content-Type" -> "application/json",
         "Content-Length" -> bodyBsSize.toString,
         "Authorization" -> s"Bearer ${apikey.toBearer()}"
-      ): _*
+      )*
     )
   } else {
     Headers.apply(
@@ -206,7 +206,7 @@ class AssistantRequest(_host: String, m: String, _url: String, opts: AdminClient
         "Host" -> _host,
         "Accept" -> "application/json",
         "Authorization" -> s"Bearer ${apikey.toBearer()}"
-      ): _*
+      )*
     )
   }
 }

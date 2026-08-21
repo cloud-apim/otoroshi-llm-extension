@@ -1,8 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools
 
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic.DocResource
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -33,7 +33,7 @@ class DocTool extends AssistantTool {
     ),
   )
 
-  override def call(arguments: JsValue, ctx: ToolCallContext)(implicit ec: ExecutionContext): Future[String] = {
+  override def call(arguments: JsValue, ctx: ToolCallContext)(using ec: ExecutionContext): Future[String] = {
     val topic = arguments.select("topic").asOpt[String].map(_.trim).filter(_.nonEmpty)
     val url = arguments.select("url").asOpt[String].map(_.trim).filter(_.nonEmpty)
 
@@ -41,7 +41,7 @@ class DocTool extends AssistantTool {
 
     val resultF = if (topic.isDefined && url.isDefined) Future.successful("Error: provide either 'topic' or 'url', not both.")
     else url match {
-      case Some(u) => fetchUrl(u)(ec, ctx.env)
+      case Some(u) => fetchUrl(u)(using ec, ctx.env)
       case None => Future.successful(renderStartingPoints(topic))
     }
     resultF.map { response =>
@@ -62,7 +62,7 @@ class DocTool extends AssistantTool {
     }
   }
 
-  private def fetchUrl(url: String)(implicit ec: ExecutionContext, env: otoroshi.env.Env): Future[String] = {
+  private def fetchUrl(url: String)(using ec: ExecutionContext, env: otoroshi.env.Env): Future[String] = {
     DocResource.fetch(url).map {
       case DocResource.FetchResult.Ok(content) => AssistantTool.truncate(content)
       case DocResource.FetchResult.InvalidUrl(msg) => s"Error: $msg"

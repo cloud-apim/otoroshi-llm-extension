@@ -1,13 +1,14 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.{JsObject, JsValue, Json}
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
+import play.api.libs.ws.WSBodyWritables.given
 
 case class CloudflareApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
   def json: JsValue = Json.obj(
@@ -27,9 +28,9 @@ class CloudflareApi(val accountId: String, val modelName: String, token: String,
   override def supportsTools: Boolean = false
   override def supportsCompletion: Boolean = false
 
-  override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, CloudflareApiResponse]] = {
+  override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, CloudflareApiResponse]] = {
     val url = s"${CloudflareApi.url(accountId, modelName)}"
-    ProviderHelpers.logCall("Cloudflare", method, url, body)(env)
+    ProviderHelpers.logCall("Cloudflare", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -45,7 +46,7 @@ class CloudflareApi(val accountId: String, val modelName: String, token: String,
       .execute()
       .map(r => ProviderHelpers.wrapResponse("Cloudflare", r, env) { resp =>
         acc.updateOpenai(resp.json.select("usage").asOpt[JsObject])
-        CloudflareApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+        CloudflareApiResponse(resp.status, resp.headers.view.mapValues(_.last).toMap, resp.json)
       })
   }
 }
@@ -101,7 +102,7 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
 
   override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(api.modelName.some)
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val startTime = System.currentTimeMillis()
@@ -138,7 +139,6 @@ class CloudflareChatClient(api: CloudflareApi, options: CloudflareChatClientOpti
             val newArr = arr ++ Seq(slug)
             obj ++ Json.obj("ai" -> newArr)
           }
-          case Some(other) => other
           case None => Json.obj("ai" -> Seq(slug))
         }
         val role = resp.body.select("role").asOpt[String].getOrElse("assistant")

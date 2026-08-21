@@ -17,7 +17,7 @@ import scala.util.{Failure, Success}
 object AiMetrics {
 
   // calls/errors/duration for a single AI operation, plus aggregate and per-provider-kind breakdown.
-  def markOperation(op: String, providerKind: Option[String], durationMs: Long, isError: Boolean)(implicit env: Env): Unit = {
+  def markOperation(op: String, providerKind: Option[String], durationMs: Long, isError: Boolean)(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     val kind = providerKind.map(_.trim.toLowerCase).filter(_.nonEmpty)
     env.metrics.counterInc("ai.calls")
@@ -32,7 +32,7 @@ object AiMetrics {
   }
 
   // cumulative token counters (counterIncOf increments by amount) — gives token-rate / totals in dashboards.
-  def markTokens(promptT: Int, genT: Int, reasoningT: Int)(implicit env: Env): Unit = {
+  def markTokens(promptT: Int, genT: Int, reasoningT: Int)(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     if (promptT > 0) env.metrics.counterIncOf("ai.tokens.prompt", promptT.toLong)
     if (genT > 0) env.metrics.counterIncOf("ai.tokens.generation", genT.toLong)
@@ -42,13 +42,13 @@ object AiMetrics {
   }
 
   // cumulative cost in micro-USD (rounded). Precise accounting stays in LLMUsageAudit / budgets.
-  def markCost(total: Double)(implicit env: Env): Unit = {
+  def markCost(total: Double)(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     if (total > 0) env.metrics.counterIncOf("ai.cost.micro_usd", Math.round(total * 1000000.0))
   }
 
   // cache hit/miss; kind = "simple" | "semantic".
-  def markCache(kind: String, hit: Boolean)(implicit env: Env): Unit = {
+  def markCache(kind: String, hit: Boolean)(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     val outcome = if (hit) "hit" else "miss"
     env.metrics.counterInc(s"ai.cache.$outcome")
@@ -56,30 +56,30 @@ object AiMetrics {
   }
 
   // per-guardrail outcome; kind = guardrail key (regex, llm, prompt_injection, ...), outcome = pass|deny|error.
-  def markGuardrail(kind: String, outcome: String)(implicit env: Env): Unit = {
+  def markGuardrail(kind: String, outcome: String)(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     env.metrics.counterInc("ai.guardrail.calls")
     env.metrics.counterInc(s"ai.guardrail.$outcome")
     env.metrics.counterInc(s"ai.guardrail.$kind.$outcome")
   }
 
-  def markFallback()(implicit env: Env): Unit = {
+  def markFallback()(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     env.metrics.counterInc("ai.fallback.calls")
   }
 
-  def markBudgetExceeded()(implicit env: Env): Unit = {
+  def markBudgetExceeded()(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     env.metrics.counterInc("ai.budget.exceeded")
   }
 
-  def markModelConstraintDenied()(implicit env: Env): Unit = {
+  def markModelConstraintDenied()(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     env.metrics.counterInc("ai.model_constraint.denied")
   }
 
   // circuit-breaker state transition; state = open|close|half_open.
-  def markCircuit(state: String)(implicit env: Env): Unit = {
+  def markCircuit(state: String)(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     env.metrics.counterInc(s"ai.circuit.$state")
   }
@@ -88,7 +88,7 @@ object AiMetrics {
   // Left carries a "budget exceeded" error), and runs `onSuccess` (e.g. token/cost metrics) only on Right.
   // For streaming ops the Right is the source returned before consumption, so duration is time-to-stream-start
   // and token/cost metrics must be recorded separately at stream completion.
-  def around[T](op: String, providerKind: String, start: Long, f: Future[Either[JsValue, T]])(onSuccess: T => Unit)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
+  def around[T](op: String, providerKind: String, start: Long, f: Future[Either[JsValue, T]])(onSuccess: T => Unit)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     f.andThen {
       case Success(Right(v)) =>
         markOperation(op, Some(providerKind), System.currentTimeMillis() - start, isError = false)

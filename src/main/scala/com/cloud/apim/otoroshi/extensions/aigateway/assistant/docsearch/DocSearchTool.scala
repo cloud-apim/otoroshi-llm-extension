@@ -1,9 +1,9 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.assistant.docsearch
 
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools.{AssistantTool, ToolCallContext, ToolDefinition}
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -43,7 +43,7 @@ class DocSearchTool extends AssistantTool {
     )
   )
 
-  override def call(arguments: JsValue, ctx: ToolCallContext)(implicit ec: ExecutionContext): Future[String] = {
+  override def call(arguments: JsValue, ctx: ToolCallContext)(using ec: ExecutionContext): Future[String] = {
     val query = arguments.select("query").asOpt[String].map(_.trim).getOrElse("")
     if (query.isEmpty) {
       logger.warn("doc_search called with empty query")
@@ -53,7 +53,7 @@ class DocSearchTool extends AssistantTool {
     val index = DocSearchIndex.get()
     if (logger.isDebugEnabled) logger.debug(s"doc_search call: query=${quote(query)} corpus=${corpus.getOrElse("<all>")} index.ready=${index.isReady} index.building=${index.isBuilding}")
     val startedAt = System.currentTimeMillis()
-    implicit val env: otoroshi.env.Env = ctx.env
+    given env: otoroshi.env.Env = ctx.env
     index.search(query, corpus).map {
       case Left(message) =>
         val took = System.currentTimeMillis() - startedAt

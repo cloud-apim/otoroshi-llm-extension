@@ -1,11 +1,11 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.stream.scaladsl.Source
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.stream.scaladsl.Source
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
 import play.api.libs.json.{JsObject, JsValue, Json}
 import reactor.core.publisher.Sinks
@@ -41,7 +41,7 @@ class JlamaChatClient(options: JlamaChatClientOptions, id: String) extends ChatC
   lazy val canExecuteJlama: Boolean = JlamaChatClient.canExecuteJlama
   lazy val errorMsg: String = JlamaChatClient.errorMsg
 
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     if (canExecuteJlama) {
       JlamaChatClient.models.keys.toList.rightf
     } else {
@@ -59,7 +59,7 @@ class JlamaChatClient(options: JlamaChatClientOptions, id: String) extends ChatC
     JlamaChatClientOptions(opts)
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     if (canExecuteJlama) {
       JlamaChatClient.generate(prompt, attrs, computeOptions(originalBody), id)
     } else {
@@ -67,7 +67,7 @@ class JlamaChatClient(options: JlamaChatClientOptions, id: String) extends ChatC
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     if (canExecuteJlama) {
       JlamaChatClient.stream(prompt, attrs, computeOptions(originalBody), id).future
     } else {
@@ -75,7 +75,7 @@ class JlamaChatClient(options: JlamaChatClientOptions, id: String) extends ChatC
     }
   }
 
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     if (canExecuteJlama) {
       JlamaChatClient.generate(prompt, attrs, computeOptions(originalBody), id)
     } else {
@@ -83,7 +83,7 @@ class JlamaChatClient(options: JlamaChatClientOptions, id: String) extends ChatC
     }
   }
 
-  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     if (canExecuteJlama) {
       JlamaChatClient.stream(prompt, attrs, computeOptions(originalBody), id).future
     } else {
@@ -219,7 +219,6 @@ object JlamaChatClient {
             val newArr = arr ++ Seq(slug)
             obj ++ Json.obj("ai" -> newArr)
           }
-          case Some(other) => other
           case None => Json.obj("ai" -> Seq(slug))
         }
         ChatResponse(
@@ -242,10 +241,10 @@ object JlamaChatClient {
       } catch {
         case e: Throwable => Left(Json.obj("error" -> e.getMessage))
       }
-    }(ecccc)
+    }(using ecccc)
   }
 
-  def stream(prompt: ChatPrompt, attrs: TypedMap, options: JlamaChatClientOptions, id: String): Either[JsValue, Source[ChatResponseChunk, _]] = {
+  def stream(prompt: ChatPrompt, attrs: TypedMap, options: JlamaChatClientOptions, id: String): Either[JsValue, Source[ChatResponseChunk, ?]] = {
     val hotSource = Sinks.many().unicast().onBackpressureBuffer[ChatResponseChunk]()
     val hotFlux   = hotSource.asFlux()
       try {
@@ -302,11 +301,10 @@ object JlamaChatClient {
               val newArr = arr ++ Seq(slug)
               obj ++ Json.obj("ai" -> newArr)
             }
-            case Some(other) => other
             case None => Json.obj("ai" -> Seq(slug))
           }
           hotSource.tryEmitComplete()
-        }(ecccc)
+        }(using ecccc)
       } catch {
         case t: Throwable => {
           hotSource.tryEmitError(t)

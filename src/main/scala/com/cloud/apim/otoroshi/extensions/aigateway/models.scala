@@ -1,20 +1,17 @@
 package com.cloud.apim.otoroshi.extensions.aigateway
 
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsOutput, ImpactsOutput}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions}
-import diffson.DiffOps
 import otoroshi.env.Env
-import otoroshi.gateway.Errors.messages
 import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AnthropicStreamResponseState
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.libs.typedmap.TypedKey
-import play.api.mvc.RequestHeader
 
 import java.nio.ByteOrder
 import java.util.Base64
@@ -161,6 +158,7 @@ object ChatMessageContent {
             val base64 = base.split("base64,")(1).byteString.decodeBase64
             (None, base64.some, media)
           }
+          case other => throw new IllegalArgumentException(s"unsupported image_url.url: ${other}")
         }
         ImageContent(openaiMediaType, openaiUrl, openaiData)
       }
@@ -169,6 +167,7 @@ object ChatMessageContent {
         val format = json.at("input_audio.format").asString match {
           case "wav" => "audio/x-wav"
           case "mp3" => "audio/mpeg3"
+          case other => throw new IllegalArgumentException(s"unsupported input_audio.format: ${other}")
         }
         AudioContent(format, None, data.some)
       }
@@ -464,7 +463,7 @@ case class InputChatMessage(role: String, contentParts: Seq[ChatMessageContent],
     case (obj, tool_call_id) => obj ++ Json.obj("tool_call_id" -> tool_call_id)
   }.applyOnWithOpt(tool_calls) {
     case (obj, tool_calls) => obj ++ Json.obj("tool_calls" -> tool_calls)
-  }.applyOnIf(flavor == ChatMessageContentFlavor.Anthropic && isSystem) { obj =>
+  }.applyOnIf(flavor == ChatMessageContentFlavor.Anthropic && isSystem) { _ =>
      Json.obj("type" -> "text", "text" -> wholeTextContent)
   }.applyOnIf(flavor == ChatMessageContentFlavor.Ollama && hasImage) { obj =>
     val aggContent = contentParts.collect {
@@ -818,7 +817,7 @@ case class ChatResponse(
       case (o, budget) => o ++ Json.obj("budget" -> budget._1.jsonWithRemaining(budget._2))
     }
   }
-  def toSource(model: String): Source[ChatResponseChunk, _] = {
+  def toSource(model: String): Source[ChatResponseChunk, ?] = {
     val id = s"chatgen-${IdGenerator.token(32)}"
     val finalModel = raw.select("model").asOpt[String].getOrElse(model)
     Source(generations.toList)
@@ -832,7 +831,7 @@ case class ChatResponse(
         ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(None, None), Some("stop"))))
       ))
   }
-  def toResponseSource(model: String): Source[ChatResponseChunk, _] = toSource(model)
+  def toResponseSource(model: String): Source[ChatResponseChunk, ?] = toSource(model)
 }
 sealed trait ChatResponseCacheStatus {
   def name: String
@@ -978,7 +977,7 @@ case class ChatResponseChunkChoiceDelta(
   }.applyOnWithOpt(reasoning.filter(_.nonEmpty)) {
     case (o, reasoning) => o ++ Json.obj("reasoning_content" -> reasoning)
   }.applyOnWithOpt(refusal) {
-    case (o, content) => o ++ Json.obj("refusal" -> refusal)
+    case (o, _) => o ++ Json.obj("refusal" -> refusal)
   }.applyOnIf(tool_calls.nonEmpty) { o =>
     o ++ Json.obj("tool_calls" -> JsArray(tool_calls.map(_.json)))
   }
@@ -1003,7 +1002,7 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
     "finish_reason" -> finishReason.map(_.json).getOrElse(JsNull).asValue
   )
   def hasToolCall: Boolean = delta.tool_calls.nonEmpty
-  def anthropicContentBlockDeltaJson(env: Env, state: AnthropicStreamResponseState): Source[ByteString, _] = {
+  def anthropicContentBlockDeltaJson(env: Env, state: AnthropicStreamResponseState): Source[ByteString, ?] = {
     var list = Seq.empty[ByteString]
     if (delta.tool_calls.nonEmpty) {
       if (!state.textDone.get() && !state.toolCallsStarted.get()) {
@@ -1114,7 +1113,7 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
   def eventSource(env: Env): ByteString = s"data: ${json(env).stringify}\n\n".byteString
   def openaiEventSource(env: Env): ByteString = s"data: ${openaiJson(env).stringify}\n\n".byteString
   def openaiCompletionEventSource(env: Env): ByteString = s"data: ${openaiCompletionJson(env).stringify}\n\n".byteString
-  def anthropicContentBlockDeltaEventSource(env: Env, state: AnthropicStreamResponseState): Source[ByteString, _] = {
+  def anthropicContentBlockDeltaEventSource(env: Env, state: AnthropicStreamResponseState): Source[ByteString, ?] = {
     Source(choices.toList).flatMapConcat { choice =>
       choice.anthropicContentBlockDeltaJson(env, state)
     }
@@ -1204,7 +1203,7 @@ object EmbeddingClientInputOptions {
 }
 
 trait EmbeddingModelClient {
-  def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]]
+  def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]]
 }
 
 object EmbeddingModelClient {
@@ -1295,9 +1294,9 @@ object EmbeddingSearchOptions {
 }
 
 trait EmbeddingStoreClient {
-  def add(options: EmbeddingAddOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
-  def remove(options: EmbeddingRemoveOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
-  def search(options: EmbeddingSearchOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]]
+  def add(options: EmbeddingAddOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def remove(options: EmbeddingRemoveOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def search(options: EmbeddingSearchOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]]
 }
 
 case class PersistedChatMessage(raw: JsObject) {
@@ -1314,7 +1313,7 @@ object PersistedChatMessage {
 
 trait PersistentMemoryClient {
   def config: JsObject
-  def addMessages(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  def addMessages(sessionId: String, messages: Seq[PersistedChatMessage])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     getMessages(sessionId).flatMap {
       case Left(error) => error.leftf
       case Right(oldMessages) => {
@@ -1328,10 +1327,10 @@ trait PersistentMemoryClient {
       }
     }
   }
-  def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
-  def getMessages(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]]
-  def clearMemory(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
-  def applyStrategy(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
+  def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def getMessages(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]]
+  def clearMemory(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]]
+  def applyStrategy(sessionId: String, messages: Seq[PersistedChatMessage])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
     val options = config.select("options")
     options.select("strategy").asOptString.getOrElse("message_window") match {
       case "message_window" => {
@@ -1517,7 +1516,7 @@ object ModerationModelClientInputOptions {
 }
 
 trait ModerationModelClient {
-  def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]]
+  def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]]
 }
 
 object ModerationModelClient {
@@ -1655,7 +1654,7 @@ object AudioModelClientTextToSpeechInputOptions {
 }
 
 case class AudioModelClientSpeechToTextInputOptions(
-  file: Source[ByteString, _],
+  file: Source[ByteString, ?],
   fileName: Option[String],
   fileContentType: String,
   fileLength: Long,
@@ -1703,7 +1702,7 @@ object AudioModelClientSpeechToTextInputOptions {
 
 
 case class AudioModelClientTranslationInputOptions(
-  file: Source[ByteString, _],
+  file: Source[ByteString, ?],
   fileName: Option[String],
   fileContentType: String,
   fileLength: Long,
@@ -1751,17 +1750,17 @@ trait AudioModelClient {
   def supportsStt: Boolean
   def supportsTranslation: Boolean
 
-  def translate(options: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  def translate(options: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     Left(Json.obj("error" -> "audio translation not supported")).vfuture
   }
-  def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     Left(Json.obj("error" -> "speech to text not supported")).vfuture
   }
-  def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+  def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
     Left(Json.obj("error" -> "text to speech not supported")).vfuture
   }
-  def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
-  def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = Left(Json.obj("error" -> "voices list not supported")).vfuture
+  def listModels(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
+  def listVoices(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = Left(Json.obj("error" -> "voices list not supported")).vfuture
 }
 
 object AudioModelClient {
@@ -1876,8 +1875,8 @@ case class OcrModelClientResponse(model: String, text: String, pages: Seq[OcrMod
 
 trait OcrModelClient {
   def supportsOcr: Boolean = true
-  def ocr(options: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]]
-  def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
+  def ocr(options: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]]
+  def listModels(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
 }
 
 object OcrModelClient {
@@ -1962,7 +1961,7 @@ case class SearchEngineResponse(
 }
 
 trait SearchEngineClient {
-  def search(options: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]]
+  def search(options: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]]
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2020,7 +2019,7 @@ object ImageModelClientGenerationInputOptions {
   }
 }
 
-case class ImageFile(bytes: Source[ByteString, _],
+case class ImageFile(bytes: Source[ByteString, ?],
                      name: Option[String],
                      contentType: String,
                      length: Long)
@@ -2122,8 +2121,8 @@ case class ImagesGenResponse(
 trait ImageModelClient {
   def supportsGeneration: Boolean
   def supportsEdit: Boolean
-  def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = Json.obj("error" -> "Image generation not supported").leftf
-  def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = Json.obj("error" -> "Image edition not supported").leftf
+  def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = Json.obj("error" -> "Image generation not supported").leftf
+  def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = Json.obj("error" -> "Image edition not supported").leftf
 }
 
 object ImageModelClient {
@@ -2222,7 +2221,7 @@ object VideoModelClientTextToVideoInputOptions {
 
 trait VideoModelClient {
   def supportsTextToVideo: Boolean
-  def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]]
+  def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]]
 }
 
 object VideoModelClient {
@@ -2274,7 +2273,7 @@ trait ChatClient {
 
   def transformOpenAIInputBodyToProviderInputBody(inputBody: JsObject): JsObject = inputBody
 
-  def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
+  def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
 
   /**
    * Single blocking entry point. Implemented once by every decorator (see `DecoratorChatClient`) and
@@ -2285,22 +2284,22 @@ trait ChatClient {
    * never forward the caller's own `messages` / `input` array: decorators (prompt contexts,
    * persistent memory, guardrail transforms) rewrite the prompt and never touch `originalBody`.
    */
-  def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = kind match {
+  def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = kind match {
     case ChatCallKind.Chat => call(prompt, attrs, originalBody)
     case ChatCallKind.Completion => completion(prompt, attrs, originalBody)
     case ChatCallKind.Responses => response(prompt, attrs, originalBody)
   }
 
   /** streaming counterpart of `invoke`, same contract */
-  def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = kind match {
+  def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = kind match {
     case ChatCallKind.Chat => stream(prompt, attrs, originalBody)
     case ChatCallKind.Completion => completionStream(prompt, attrs, originalBody)
     case ChatCallKind.Responses => responseStream(prompt, attrs, originalBody)
   }
 
-  def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]]
+  def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]]
 
-  def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     Left(Json.obj("error" -> "completion not supported")).vfuture
   }
 
@@ -2309,23 +2308,23 @@ trait ChatClient {
    * converting the body with `OpenAiResponsesBodyConverter` — tools included — which is the right
    * behaviour for every provider without a native `/responses` endpoint.
    */
-  def response(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  def response(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     call(prompt, attrs, OpenAiResponsesBodyConverter.toChatCompletionsBody(originalBody))
   }
 
-  def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     Left(Json.obj("error" -> "streaming not supported")).future
   }
 
-  def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     Left(Json.obj("error" -> "streaming not supported")).future
   }
 
-  def responseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  def responseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     stream(prompt, attrs, OpenAiResponsesBodyConverter.toChatCompletionsBody(originalBody))
   }
 
-  final def tryStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  final def tryStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     if (supportsStreaming) {
       stream(prompt, attrs, originalBody)
     } else {
@@ -2336,7 +2335,7 @@ trait ChatClient {
     }
   }
 
-  def tryCompletion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  def tryCompletion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     if (supportsCompletion) {
       completion(prompt, attrs, originalBody)
     } else {
@@ -2345,7 +2344,7 @@ trait ChatClient {
     }
   }
 
-  final def tryCompletionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  final def tryCompletionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     if (supportsStreaming) {
       completionStream(prompt, attrs, originalBody)
     } else {
@@ -2359,11 +2358,11 @@ trait ChatClient {
 
   // `response` already handles the non-native case by degrading to /chat/completions, so there is
   // nothing left to try: kept for symmetry with tryCompletion/tryStream at the call sites.
-  final def tryResponse(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  final def tryResponse(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     response(prompt, attrs, originalBody)
   }
 
-  final def tryResponseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  final def tryResponseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     if (supportsStreaming) {
       responseStream(prompt, attrs, originalBody)
     } else {
@@ -2382,12 +2381,12 @@ trait ChatClient {
  * `/responses`, which is exactly the class of bug this trait exists to prevent.
  */
 trait KindBasedChatClient extends ChatClient {
-  final override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = invoke(ChatCallKind.Chat, prompt, attrs, originalBody)
-  final override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = invoke(ChatCallKind.Completion, prompt, attrs, originalBody)
-  final override def response(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = invoke(ChatCallKind.Responses, prompt, attrs, originalBody)
-  final override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = invokeStream(ChatCallKind.Chat, prompt, attrs, originalBody)
-  final override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = invokeStream(ChatCallKind.Completion, prompt, attrs, originalBody)
-  final override def responseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = invokeStream(ChatCallKind.Responses, prompt, attrs, originalBody)
+  final override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = invoke(ChatCallKind.Chat, prompt, attrs, originalBody)
+  final override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = invoke(ChatCallKind.Completion, prompt, attrs, originalBody)
+  final override def response(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = invoke(ChatCallKind.Responses, prompt, attrs, originalBody)
+  final override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = invokeStream(ChatCallKind.Chat, prompt, attrs, originalBody)
+  final override def completionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = invokeStream(ChatCallKind.Completion, prompt, attrs, originalBody)
+  final override def responseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = invokeStream(ChatCallKind.Responses, prompt, attrs, originalBody)
 }
 
 object ChatClient {

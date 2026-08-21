@@ -1,14 +1,15 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
+import play.api.libs.ws.WSBodyWritables.given
 
 object ElasticsearchEmbeddingStoreClient {
   lazy val logger = Logger("ElasticsearchEmbeddingStoreClient")
@@ -40,10 +41,10 @@ class ElasticsearchEmbeddingStoreClient(val config: JsObject, _storeId: String) 
     base ++ auth
   }
 
-  private def ensureIndex()(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  private def ensureIndex()(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(s"$baseUrl/$index")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .head()
       .flatMap { resp =>
@@ -52,7 +53,7 @@ class ElasticsearchEmbeddingStoreClient(val config: JsObject, _storeId: String) 
         } else {
           env.Ws
             .url(s"$baseUrl/$index")
-            .withHttpHeaders(headers: _*)
+            .withHttpHeaders(headers*)
             .withRequestTimeout(timeout)
             .put(Json.obj(
               "mappings" -> Json.obj(
@@ -72,20 +73,20 @@ class ElasticsearchEmbeddingStoreClient(val config: JsObject, _storeId: String) 
               if (createResp.status == 200 || createResp.status == 201) {
                 Right(())
               } else {
-                Left(Json.obj("error" -> s"Elasticsearch index creation error: ${createResp.status}", "body" -> createResp.body))
+                Left(Json.obj("error" -> s"Elasticsearch index creation error: ${createResp.status}", "body" -> (createResp.body: String)))
               }
             }
         }
       }
   }
 
-  override def add(options: EmbeddingAddOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def add(options: EmbeddingAddOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     ensureIndex().flatMap {
       case Left(err) => Left(err).vfuture
       case Right(_) =>
         env.Ws
           .url(s"$baseUrl/$index/_doc/${options.id}")
-          .withHttpHeaders(headers: _*)
+          .withHttpHeaders(headers*)
           .withRequestTimeout(timeout)
           .put(Json.obj(
             "doc_id" -> options.id,
@@ -96,31 +97,31 @@ class ElasticsearchEmbeddingStoreClient(val config: JsObject, _storeId: String) 
             if (resp.status == 200 || resp.status == 201) {
               Right(())
             } else {
-              Left(Json.obj("error" -> s"Elasticsearch add error: ${resp.status}", "body" -> resp.body))
+              Left(Json.obj("error" -> s"Elasticsearch add error: ${resp.status}", "body" -> (resp.body: String)))
             }
           }
     }
   }
 
-  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(s"$baseUrl/$index/_doc/${options.id}")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .delete()
       .map { resp =>
         if (resp.status == 200 || resp.status == 404) {
           Right(())
         } else {
-          Left(Json.obj("error" -> s"Elasticsearch delete error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Elasticsearch delete error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }
 
-  override def search(options: EmbeddingSearchOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
+  override def search(options: EmbeddingSearchOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
     env.Ws
       .url(s"$baseUrl/$index/_search")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .post(Json.obj(
         "size" -> options.maxResults,
@@ -148,7 +149,7 @@ class ElasticsearchEmbeddingStoreClient(val config: JsObject, _storeId: String) 
           }
           Right(EmbeddingSearchResponse(matches))
         } else {
-          Left(Json.obj("error" -> s"Elasticsearch search error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Elasticsearch search error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }

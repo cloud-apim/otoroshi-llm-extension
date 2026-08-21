@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+
 object GeminiApi {
   def baseUrl: String = "https://generativelanguage.googleapis.com/v1beta/openai"
   def url(model: String, token: String): String = {
@@ -30,7 +31,7 @@ class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.s
 
   override def supportsTools: Boolean = false
 
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = GeminiApi.genericUrl(path, token)
     ProviderHelpers.logCall("Gemini", method, url, body)(env)
     env.Ws
@@ -47,7 +48,7 @@ class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.s
       .execute()
   }
 
-  def call(method: String, patkh: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[Either[JsValue, GeminiApiResponse]] = {
+  def call(method: String, patkh: String, body: Option[JsValue])(using ec: ExecutionContext): Future[Either[JsValue, GeminiApiResponse]] = {
     val finalModel = Option(patkh).filter(_.nonEmpty).getOrElse(model)
     val url = s"${GeminiApi.url(finalModel, token)}"
     ProviderHelpers.logCall("Gemini", method, url, body)(env)
@@ -64,7 +65,7 @@ class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.s
       .withRequestTimeout(timeout)
       .execute()
       .map(r => ProviderHelpers.wrapResponse("Gemini", r, env) { resp =>
-        GeminiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+        GeminiApiResponse(resp.status, resp.headers.view.mapValues(_.last).toMap, resp.json)
       })
   }
 
@@ -122,7 +123,7 @@ class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: Str
 
   override def model: Option[String] = api.model.some
 
-  override def listModels()(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels()(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("models").as[List[JsObject]].map(obj => obj.select("name").asString.replaceFirst("models/", "")))
@@ -132,7 +133,7 @@ class GeminiChatClient(api: GeminiApi, options: GeminiChatClientOptions, id: Str
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider" - "model"
     val bodyOpts = obody.select("generationConfig").asOpt[JsObject].getOrElse(Json.obj())
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(bodyOpts) else options.jsonForCall

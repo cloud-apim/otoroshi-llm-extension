@@ -1,13 +1,13 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
+import org.apache.pekko.stream.Materializer
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvidersCatalog
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -16,7 +16,7 @@ object LlmModelCapabilities {
 
   // Returns every model type (modality) Otoroshi LLM supports — text, audio, image, ocr,
   // embedding, moderation, video — each with the provider ids exposing it.
-  def handleRequest(ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
       Results.Ok(Json.obj(
         "object" -> "list",
@@ -47,7 +47,7 @@ class LlmModelCapabilities extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     LlmModelCapabilities.handleRequest(ctx)
   }
 }

@@ -1,13 +1,13 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, InputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.InputChatMessage
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.NgPluginConfig
 import otoroshi.utils.RegexPool
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.libs.typedmap.TypedKey
 
 import scala.concurrent.ExecutionContext
@@ -21,7 +21,7 @@ object AiPluginsKeys {
 
 case class AiPromptRequestConfig(ref: String = "", _prompt: String = "", promptRef: Option[String] = None, contextRef: Option[String] = None, extractor: Option[String] = None) extends NgPluginConfig {
   def json: JsValue = AiPromptRequestConfig.format.writes(this)
-  def preChatMessages(implicit env: Env): Seq[InputChatMessage] = {
+  def preChatMessages(using env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -33,7 +33,7 @@ case class AiPromptRequestConfig(ref: String = "", _prompt: String = "", promptR
       }
     }
   }
-  def postChatMessages(implicit env: Env): Seq[InputChatMessage] = {
+  def postChatMessages(using env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -45,7 +45,7 @@ case class AiPromptRequestConfig(ref: String = "", _prompt: String = "", promptR
       }
     }
   }
-  def prompt(implicit env: Env): String = promptRef match {
+  def prompt(using env: Env): String = promptRef match {
     case None => _prompt
     case Some(ref) => env.adminExtensions.extension[AiExtension] match {
       case None => _prompt
@@ -226,7 +226,7 @@ object AiPluginRefsConfig {
       case Success(value) => JsSuccess(value)
     }
   }
-  def getProvidersMap(config: AiPluginRefsConfig)(implicit ec: ExecutionContext, env: Env): (Map[String, AiProvider], Map[String, AiProvider]) = {
+  def getProvidersMap(config: AiPluginRefsConfig)(using ec: ExecutionContext, env: Env): (Map[String, AiProvider], Map[String, AiProvider]) = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val providers = config.refs.flatMap(ref => ext.states.provider(ref))
     val providersByName = providers.map { provider =>
@@ -237,7 +237,7 @@ object AiPluginRefsConfig {
     (providersById, providersByName)
   }
 
-  def extractProviderFromModelInBody(_jsonBody: JsValue, config: AiPluginRefsConfig)(implicit ec: ExecutionContext, env: Env): JsValue = {
+  def extractProviderFromModelInBody(_jsonBody: JsValue, config: AiPluginRefsConfig)(using ec: ExecutionContext, env: Env): JsValue = {
     _jsonBody.select("model").asOpt[String] match {
       case Some(value) if value.contains("###") => {
         val parts = value.split("###")

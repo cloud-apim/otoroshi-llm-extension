@@ -1,15 +1,15 @@
 package com.cloud.apim.otoroshi.extensions.aigateway
 
-import akka.stream.scaladsl.FileIO
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.agents._
+import org.apache.pekko.stream.scaladsl.FileIO
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.agents.*
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailResult, Guardrails}
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.{PlaceholderAllocator, RampartEngine, RampartPiiGuardrail}
 import otoroshi.env.Env
-import otoroshi.next.workflow._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.workflow.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import java.io.File
 import java.nio.file.Files
@@ -201,7 +201,7 @@ class AgentFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val agent = AgentConfig.from(args)
     val rcfg = AgentRunConfig.from(args.select("run_config").asOpt[JsObject].getOrElse(Json.obj()))
     val input: AgentInput = args.select("input")
@@ -209,7 +209,7 @@ class AgentFunction extends WorkflowFunction {
       .map(v => WorkflowOperator.processOperators(v, wfr, env))
       .map {
         case JsString(str) => AgentInput.from(str)
-        case JsArray(seq) => AgentInput(seq.map(v => ChatMessage.inputJson(v.asObject)))
+        case JsArray(seq) => AgentInput(seq.toSeq.map(v => ChatMessage.inputJson(v.asObject)))
         case obj @ JsObject(_) => AgentInput(Seq(ChatMessage.inputJson(obj)))
         case _ => AgentInput.empty
       }
@@ -282,7 +282,7 @@ class MemoryAddMessagesFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -354,7 +354,7 @@ class MemoryClearMessagesFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -428,7 +428,7 @@ class MemoryGetMessagesFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -496,7 +496,7 @@ class GuardrailCallFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val kind = args.select("kind").asString
     val config = args.select("config").asOpt[JsObject].getOrElse(Json.obj())
     val messages: Seq[ChatMessage] = args.select("input").asOptString match {
@@ -558,7 +558,7 @@ class RampartRedactFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     args.select("input").asOptString match {
       case None => WorkflowError("missing 'input' string", Some(Json.obj()), None).leftf
       case Some(text) =>
@@ -655,7 +655,7 @@ class VectorStoreAddFunction extends WorkflowFunction {
     )
   ))
 
-  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+  override def call(args: JsObject)(using env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -730,7 +730,7 @@ class VectorStoreRemoveFunction extends WorkflowFunction {
     )
   ))
 
-  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+  override def call(args: JsObject)(using env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -813,7 +813,7 @@ class VectorStoreSearchFunction extends WorkflowFunction {
     )
   ))
 
-  override def call(args: JsObject)(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+  override def call(args: JsObject)(using env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -893,7 +893,7 @@ class ModerationCallFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -977,7 +977,7 @@ class GenerateVideoFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -1055,7 +1055,7 @@ class CallMcpFunctionFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val function = args.select("function").asString
     val arguments = args.select("arguments").asOpt[JsObject].map(_.stringify)
@@ -1112,7 +1112,7 @@ class CallA2aAgentFunction extends WorkflowFunction {
     "args" -> Json.obj("connector" -> "a2a-connector_xxx", "skill" -> "main", "message" -> "Plan a route from Paris to Lyon")
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val connectorId = args.select("connector").asString
     val skill = args.select("skill").asOpt[String].getOrElse("")
     val message = args.select("message").asOpt[String].orElse(args.select("message").asOpt[JsObject].map(_.stringify)).getOrElse("")
@@ -1182,7 +1182,7 @@ class CallToolFunctionFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val arguments = args.select("arguments").asOpt[JsObject].map(_.stringify)
       .orElse(args.select("arguments").asOpt[JsArray].map(_.stringify))
@@ -1276,7 +1276,7 @@ class GenerateImageFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -1365,7 +1365,7 @@ class ComputeEmbeddingFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -1461,7 +1461,7 @@ class LlmCallFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val openai  = args.select("openai_format").asOptBoolean.getOrElse(true)
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
@@ -1574,7 +1574,7 @@ class AudioTtsFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val base64Encode = args.select("encode_base64").asOpt[Boolean].getOrElse(false)
@@ -1586,11 +1586,11 @@ class AudioTtsFunction extends WorkflowFunction {
         case None => WorkflowError(s"unable to instantiate client for audio provider", Some(Json.obj("provider_id" -> provider.id)), None).leftf
         case Some(client) => client.textToSpeech(AudioModelClientTextToSpeechInputOptions.format.reads(payload).get, payload, wfr.attrs).flatMap {
           case Left(error) => WorkflowError(s"error while calling audio model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).leftf
-          case Right(response) if base64Encode => response._1.runFold(ByteString.empty)(_ ++ _)(env.otoroshiMaterializer).map { bs =>
+          case Right(response) if base64Encode => response._1.runFold(ByteString.empty)(_ ++ _)(using env.otoroshiMaterializer).map { bs =>
             Json.obj("content_type" -> response._2, "base64" -> bs.encodeBase64.utf8String).right
           }
           case Right(response) =>
-            response._1.runWith(FileIO.toPath(fileDest.toPath))(env.otoroshiMaterializer).map { res =>
+            response._1.runWith(FileIO.toPath(fileDest.toPath))(using env.otoroshiMaterializer).map { _ =>
               Json.obj("content_type" -> response._2, "file_out" -> fileDest.getAbsolutePath).right
             }
         }
@@ -1672,7 +1672,7 @@ class AudioSttFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val base64Decode = args.select("decode_base64").asOpt[Boolean].getOrElse(false)
@@ -1774,7 +1774,7 @@ class OcrCallFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val fileIn = args.select("file_in").asOpt[String]
@@ -1884,7 +1884,7 @@ class SearchEngineSearchFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     val provider  = args.select("provider").asString
     val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
     val extension = env.adminExtensions.extension[AiExtension].get
@@ -1978,7 +1978,7 @@ class ContentToMarkdownFunction extends WorkflowFunction {
     )
   ))
 
-  override def callWithRun(args: JsObject)(implicit env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
     if (!KreuzbergHelper.canExecuteKreuzberg) {
       return WorkflowError(KreuzbergHelper.errorMsg, None, None).leftf
     }

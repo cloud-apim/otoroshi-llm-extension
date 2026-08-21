@@ -1,18 +1,19 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
-import akka.stream.scaladsl.{Framing, Source}
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
+import org.apache.pekko.stream.scaladsl.{Framing, Source}
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
-import scala.concurrent._
-import scala.concurrent.duration._
+import scala.concurrent.*
+import scala.concurrent.duration.*
 
 
 case class MistralAiApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
@@ -53,9 +54,9 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
     }
   }
 
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("Mistral", method, url, body)(env)
+    ProviderHelpers.logCall("Mistral", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -71,11 +72,11 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
       .execute()
   }
 
-  def rawCallForm(method: String, path: String, body: Multipart)(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     val uri = Uri(url)
-    ProviderHelpers.logCall("Mistral", method, url, None)(env)
-    val entity = body.toEntity()
+    ProviderHelpers.logCall("Mistral", method, url, None)(using env)
+    val entity = body.toEntity
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -90,15 +91,15 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
       .execute()
   }
 
-  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, MistralAiApiResponse]] = {
+  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, MistralAiApiResponse]] = {
     rawCall(method, path, body)
       .map(r => ProviderHelpers.wrapResponse("Mistral", r, env) { resp =>
         acc.updateOpenai(resp.json.select("usage").asOpt[JsObject])
-        MistralAiApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+        MistralAiApiResponse(resp.status, resp.headers.view.mapValues(_.last).toMap, resp.json)
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, MistralAiApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, MistralAiApiResponse]] = {
     if (currentCallCounter >= maxCalls) {
       return call(method, path, body, acc)
     }
@@ -112,7 +113,7 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, "mistral", attrs, nameToFunction)(ec, env)
+              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, "mistral", attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -130,9 +131,9 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
   }
 
 
-  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logStream("Mistral", method, url, body)(env)
+    ProviderHelpers.logStream("Mistral", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -168,7 +169,7 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
       })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {
     if (currentCallCounter >= maxCalls) {
       return stream(method, path, body, acc)
     }
@@ -181,12 +182,11 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
           var isToolCallEnded = false
           var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
           var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
-          var toolCallUsage: OpenAiChatResponseChunkUsage = null
           val newSource = res._1.flatMapConcat { chunk =>
             if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
               isToolCall = true
               toolCalls = chunk.choices.head.delta.head.tool_calls
-              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => ""): _*)
+              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => "")*)
               Source.empty
             } else if (isToolCall && !isToolCallEnded) {
               if (chunk.choices.head.finish_reason.contains("tool_calls")) {
@@ -205,12 +205,11 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
                 }}
               Source.empty
             } else if (isToolCall && isToolCallEnded) {
-              toolCallUsage = chunk.usage.get
               val calls = toolCalls.zipWithIndex.map {
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, "mistral", attrs, nameToFunction)(ec, env)
+              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, "mistral", attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -377,7 +376,6 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
   override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
 
   override def transformOpenAIInputBodyToProviderInputBody(inputBody: JsObject): JsObject = {
-    val model = inputBody.select("model").asOptString.orElse(computeModel(inputBody)).getOrElse("--")
     val maxCompletionTokens = inputBody.select("max_completion_tokens").asOptLong
     //val reasoningEffort = inputBody.select("reasoning_effort").asOptString
     (inputBody - "max_completion_tokens")// - "reasoning_effort")
@@ -392,7 +390,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
       // }
   }
 
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
@@ -402,7 +400,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -449,7 +447,6 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
           val newArr = arr ++ Seq(slug)
           obj ++ Json.obj("ai" -> newArr)
         }
-        case Some(other) => other
         case None => Json.obj("ai" -> Seq(slug))
       }
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
@@ -465,11 +462,10 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
-    val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty || options.a2aConnectors.nonEmpty)) {
@@ -515,7 +511,6 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
                   val newArr = arr ++ Seq(slug)
                   obj ++ Json.obj("ai" -> newArr)
                 }
-                case Some(other) => other
                 case None => Json.obj("ai" -> Seq(slug))
               }
               val hasToolCalls = chunk.choices.exists(_.finish_reason.contains("tool_calls"))
@@ -547,7 +542,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
     }
   }
 
-  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def completion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider" - "prompt"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -586,7 +581,6 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
           val newArr = arr ++ Seq(slug)
           obj ++ Json.obj("ai" -> newArr)
         }
-        case Some(other) => other
         case None => Json.obj("ai" -> Seq(slug))
       }
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
@@ -610,7 +604,7 @@ object MistralAiEmbeddingModelClientOptions {
 
 class MistralAiEmbeddingModelClient(val api: MistralAiApi, val options: MistralAiEmbeddingModelClientOptions, id: String) extends EmbeddingModelClient {
 
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
     api.rawCall("POST", "/embeddings", (options.raw ++ Json.obj("input" -> opts.input, "model" -> finalModel)).some).map { resp =>
       if (resp.status == 200) {
@@ -642,7 +636,7 @@ object MistralAiModerationModelClientOptions {
 
 class MistralAiModerationModelClient(val api: MistralAiApi, val options: MistralAiModerationModelClientOptions, id: String) extends ModerationModelClient {
 
-  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
+  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
     val finalModel: String = opts.model.getOrElse(options.model)
     val body = Json.obj(
       "input" -> JsArray(opts.input.filter(_.isText).map(_.mistralJson)),
@@ -650,7 +644,7 @@ class MistralAiModerationModelClient(val api: MistralAiApi, val options: Mistral
     )
     api.rawCall("POST", "/moderations", body.some).map { resp =>
       if (resp.status == 200) {
-        val headers = resp.headers.mapValues(_.last)
+        val headers = resp.headers.view.mapValues(_.last).toMap
         Right(ModerationResponse(
           model = resp.json.select("model").asString,
           moderationResults = resp.json.select("results").as[Seq[JsObject]].map(o => ModerationResult(
@@ -697,7 +691,7 @@ class MistralAIAudioModelClient(val api: MistralAiApi, val sttOptions: MistralAi
   override def supportsStt: Boolean = sttOptions.enabled
   override def supportsTranslation: Boolean = false
 
-  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = {
+  override def listModels(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenModel]]] = {
     Right(
       List(
         AudioGenModel("voxtral-mini-latest", "voxtral-mini-latest"),
@@ -706,11 +700,11 @@ class MistralAIAudioModelClient(val api: MistralAiApi, val sttOptions: MistralAi
     ).vfuture
   }
 
-  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+  override def listVoices(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     List.empty.rightf
   }
 
-  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model)
     val language = opts.language.orElse(sttOptions.language)
     val diarize = rawBody.select("diarize").asOptBoolean.orElse(sttOptions.diarize)
@@ -744,11 +738,11 @@ class MistralAIAudioModelClient(val api: MistralAiApi, val sttOptions: MistralAi
           HttpEntity(temperature.toString.byteString),
         )
       }
-    val form = Multipart.FormData(parts: _*)
+    val form = Multipart.FormData(parts*)
     api.rawCallForm("POST", "/audio/transcriptions", form).map { response =>
       if (response.status == 200) {
         val body = response.json
-        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.view.mapValues(_.last).toMap)).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
@@ -770,14 +764,14 @@ object MistralOcrModelClientOptions {
 
 class MistralOcrModelClient(val api: MistralAiApi, val options: MistralOcrModelClientOptions, id: String) extends OcrModelClient {
 
-  override def listModels(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = {
+  override def listModels(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[OcrGenModel]]] = {
     Right(List(
       OcrGenModel("mistral-ocr-latest", "mistral-ocr-latest"),
       OcrGenModel("mistral-ocr-2505", "mistral-ocr-2505"),
     )).vfuture
   }
 
-  override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
+  override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
     val model = opts.model.getOrElse(options.model)
     // Build the Mistral document reference: a remote url, or an inline base64 data-uri.
     val documentOpt: Option[JsObject] = opts.url match {

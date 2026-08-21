@@ -11,6 +11,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.{AtomicBoolean, AtomicReference}
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration.FiniteDuration
+import play.api.libs.ws.WSBodyWritables.given
 
 
 object WsMcpTransport {
@@ -41,7 +42,7 @@ class WsMcpTransport(
                       timeout: FiniteDuration,
                       log: Boolean,
                       name: String = "ws-mcp",
-                    )(implicit ec: ExecutionContext, env: Env) extends McpTransport {
+                    )(using ec: ExecutionContext, env: Env) extends McpTransport {
 
   private val mapper: ObjectMapper = WsMcpTransport.OBJECT_MAPPER
   private val logger: Logger = WsMcpTransport.logger
@@ -126,7 +127,7 @@ class WsMcpTransport(
 
     val started = System.currentTimeMillis()
     env.Ws.url(url)
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .withMethod("POST")
       .withBody(body)
@@ -161,13 +162,13 @@ class WsMcpTransport(
           val err = new RuntimeException(s"Unexpected status code $status: ${raw.take(500)}")
           future.completeExceptionally(err)
         }
-      }(ec)
+      }(using ec)
       .recover {
         case t: Throwable =>
           trace(s"error: ${t.getClass.getSimpleName}: ${t.getMessage}")
           future.completeExceptionally(t)
           Option(onFailureRef.get()).foreach(_.run())
-      }(ec)
+      }(using ec)
 
     future
   }

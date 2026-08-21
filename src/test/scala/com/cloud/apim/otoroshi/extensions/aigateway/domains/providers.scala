@@ -10,12 +10,12 @@ import scala.concurrent.duration.DurationInt
 
 object LlmProviderUtils extends Assertions {
 
-  def createProvider(client: OtoroshiClient)(provider: AiProvider)(implicit ec: ExecutionContext) = {
+  def createProvider(client: OtoroshiClient)(provider: AiProvider)(using ec: ExecutionContext) = {
     val providerRes = client.forLlmEntity("providers").createEntity(provider).awaitf(10.seconds)
     assert(providerRes.created, s"[${provider.provider}] provider has not been created")
   }
 
-  def upsertProvider(client: OtoroshiClient)(provider: AiProvider)(implicit ec: ExecutionContext) = {
+  def upsertProvider(client: OtoroshiClient)(provider: AiProvider)(using ec: ExecutionContext) = {
     val providerRes = client.forLlmEntity("providers").upsertEntity(provider).awaitf(10.seconds)
     assert(providerRes.createdOrUpdated, s"[${provider.provider}] provider has not been created/updated")
   }

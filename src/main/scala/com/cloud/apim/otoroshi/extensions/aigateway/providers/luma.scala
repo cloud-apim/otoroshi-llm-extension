@@ -1,11 +1,12 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
@@ -17,9 +18,9 @@ object LumaApi {
 
 class LumaApi(baseUrl: String = LumaApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
 
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("Luma", method, url, body)(env)
+    ProviderHelpers.logCall("Luma", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -57,7 +58,7 @@ class LumaImageModelClient(val api: LumaApi, val genOptions: LumaImageModelClien
   override def supportsGeneration: Boolean = genOptions.enabled
   override def supportsEdit: Boolean = false
 
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel: String = opts.model.orElse(genOptions.model).getOrElse("photon-1")
     val body = Json.obj(
       "prompt" -> opts.prompt,
@@ -66,7 +67,7 @@ class LumaImageModelClient(val api: LumaApi, val genOptions: LumaImageModelClien
     api.rawCall("POST", "/dream-machine/v1/generations/image", body.some).map { resp =>
       if (resp.status == 200) {
         val imageUrl = resp.json.at("assets.image").asOptString
-        val headers = resp.headers.mapValues(_.last)
+        val headers = resp.headers.view.mapValues(_.last).toMap
         Right(ImagesGenResponse(
           created = resp.json.select("created_at").asOpt[Long].getOrElse(-1L),
           images = Seq(ImagesGen(None, None, imageUrl)),
@@ -114,7 +115,7 @@ class LumaVideoModelClient(val api: LumaApi, val genOptions: LumaVideoModelClien
 
   override def supportsTextToVideo: Boolean = genOptions.enabled
 
-  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
+  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
     val finalModel: String = opts.model.orElse(genOptions.model).getOrElse("photon-1")
     val body = Json.obj(
       "prompt" -> opts.prompt,
@@ -128,7 +129,7 @@ class LumaVideoModelClient(val api: LumaApi, val genOptions: LumaVideoModelClien
     api.rawCall("POST", "/dream-machine/v1/generations", body.some).map { resp =>
       if (resp.status == 200) {
         val imageUrl = resp.json.at("assets.video").asOptString
-        val headers = resp.headers.mapValues(_.last)
+        val headers = resp.headers.view.mapValues(_.last).toMap
         Right(VideosGenResponse(
           created = resp.json.select("created_at").asOpt[Long].getOrElse(-1L),
           videos = Seq(VideosGen(None, None, imageUrl)),

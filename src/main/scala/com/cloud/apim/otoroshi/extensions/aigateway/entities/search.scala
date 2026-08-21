@@ -1,18 +1,18 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
-import akka.stream.scaladsl.{Sink, Source}
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.{SearchEngineClient, SearchEngineSearchOptions}
-import com.cloud.apim.otoroshi.extensions.aigateway.providers._
-import otoroshi.api._
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
+import otoroshi.api.*
 import otoroshi.env.Env
-import otoroshi.models._
+import otoroshi.models.*
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
-import otoroshi.storage._
+import otoroshi.storage.*
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.*
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -43,7 +43,7 @@ case class SearchEngine(
 
   def slugName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
 
-  def getSearchEngineClient()(implicit env: Env): Option[SearchEngineClient] = {
+  def getSearchEngineClient()(using env: Env): Option[SearchEngineClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val _token = connection.select("token").asOpt[String].getOrElse("xxx")
@@ -184,7 +184,7 @@ object SearchEngine {
         extractIdf = c => datastores.searchEnginesDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => SearchEngine.template(p.get("kind").map(_.toLowerCase()).getOrElse("staan"), env).json,
+        tmpl = (_, p, _) => SearchEngine.template(p.get("kind").map(_.toLowerCase()).getOrElse("staan"), env).json,
         canRead = true,
         canCreate = true,
         canUpdate = true,
@@ -232,22 +232,22 @@ object SearchEngineSupport {
     }
   }
 
-  def tools(engines: Seq[String])(implicit env: Env): Seq[JsObject] = {
+  def tools(engines: Seq[String])(using env: Env): Seq[JsObject] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     engines.flatMap(ext.states.searchEngine).map(se => decl(se, anthropic = false))
   }
 
-  def toolsAnthropic(engines: Seq[String])(implicit env: Env): Seq[JsObject] = {
+  def toolsAnthropic(engines: Seq[String])(using env: Env): Seq[JsObject] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     engines.flatMap(ext.states.searchEngine).map(se => decl(se, anthropic = true))
   }
 
   // engine ids are id-safe so no name hashing is needed (unlike mcp/wasm); returns an empty name map.
-  def toolsCohere(engines: Seq[String])(implicit env: Env): (Seq[JsObject], Map[String, String]) = {
+  def toolsCohere(engines: Seq[String])(using env: Env): (Seq[JsObject], Map[String, String]) = {
     (tools(engines), Map.empty[String, String])
   }
 
-  private def executeSearch(engineId: String, argsJson: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+  private def executeSearch(engineId: String, argsJson: String, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[String] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     ext.states.searchEngine(engineId).flatMap(_.getSearchEngineClient()) match {
       case None => s"unknown or unavailable search engine: ${engineId}".vfuture
@@ -262,25 +262,25 @@ object SearchEngineSupport {
     }
   }
 
-  private def runGeneric(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  private def runGeneric(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, ?])(using ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
         executeSearch(toolCall.function.searchEngineId, toolCall.function.arguments, attrs).map(r => (r, toolCall))
       }
       .flatMapConcat { case (resp, tc) => f(resp, tc) }
-      .runWith(Sink.seq)(env.otoroshiMaterializer)
+      .runWith(Sink.seq)(using env.otoroshiMaterializer)
   }
 
-  private def runAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  private def runAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, AnthropicApiResponseChoiceMessageToolCall) => Source[JsValue, ?])(using ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
         executeSearch(toolCall.searchEngineId, toolCall.arguments, attrs).map(r => (r, toolCall))
       }
       .flatMapConcat { case (resp, tc) => f(resp, tc) }
-      .runWith(Sink.seq)(env.otoroshiMaterializer)
+      .runWith(Sink.seq)(using env.otoroshiMaterializer)
   }
 
-  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     runGeneric(functions, attrs) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
         "role" -> "tool",
@@ -292,7 +292,7 @@ object SearchEngineSupport {
     }
   }
 
-  def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     runGeneric(functions, attrs) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "content" -> "", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
         "role" -> "tool",
@@ -301,11 +301,11 @@ object SearchEngineSupport {
     }
   }
 
-  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     callToolsOpenai(functions, providerName, attrs)
   }
 
-  def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     runAnthropic(functions, attrs) { (resp, tc) =>
       Source(List(
         Json.obj("role" -> "assistant", "content" -> Json.arr(Json.obj(
@@ -330,7 +330,7 @@ class KvSearchEnginesDataStore(extensionId: AdminExtensionId, redisCli: RedisLik
     with RedisLikeStore[SearchEngine] {
   override def fmt: Format[SearchEngine] = SearchEngine.format
 
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
 
   override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:searchengines:$id"
 

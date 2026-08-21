@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.Json
 import reactor.core.publisher.Mono
 import reactor.netty.ByteBufFlux

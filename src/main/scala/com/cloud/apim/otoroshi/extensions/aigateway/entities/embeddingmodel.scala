@@ -2,16 +2,16 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.EmbeddingModelClient
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.EmbeddingModelClientDecorators
-import com.cloud.apim.otoroshi.extensions.aigateway.providers._
-import otoroshi.api._
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
+import otoroshi.api.*
 import otoroshi.env.Env
-import otoroshi.models._
+import otoroshi.models.*
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
-import otoroshi.storage._
-import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
-import play.api.libs.json._
+import otoroshi.storage.*
+import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.*
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -35,7 +35,7 @@ case class EmbeddingModel(
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
   def slugName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
-  def getEmbeddingModelClient()(implicit env: Env): Option[EmbeddingModelClient] = {
+  def getEmbeddingModelClient()(using env: Env): Option[EmbeddingModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
@@ -66,13 +66,13 @@ object EmbeddingModel {
   val clientBuilders: Map[String, EmbeddingModel.ClientContext => Option[EmbeddingModelClient]] = {
     val explicit: Map[String, EmbeddingModel.ClientContext => Option[EmbeddingModelClient]] = Map(
       "openai" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "OpenAI", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       },
       "azure-openai" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val resourceName = connection.select("resource_name").as[String]
         val deploymentId = connection.select("deployment_id").as[String]
         val version = connection.select("api_version").asOpt[String].getOrElse("v1")
@@ -88,67 +88,67 @@ object EmbeddingModel {
         }
       },
       "azure-ai-foundry" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new OpenAiApi(baseUrl.getOrElse(AzureAiFoundry.baseUrl), token, timeout.getOrElse(30.seconds), providerName = "Azure AI Foundry", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       },
       "scaleway" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Scaleway", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       },
       "cloud-temple" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Cloud Temple", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       },
       "deepseek" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Deepseek", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       },
       "gemini" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "gemini", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       },
       "huggingface" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new OpenAiApi(baseUrl.getOrElse(HuggingfaceApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "huggingface", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       },
       "mistral" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new MistralAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(30.seconds), env = env)
         val opts = MistralAiEmbeddingModelClientOptions.fromJson(options)
         new MistralAiEmbeddingModelClient(api, opts, id).some
       },
       "ollama" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new OllamaAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(10.seconds), env = env)
         val opts = OllamaEmbeddingModelClientOptions.fromJson(options)
         new OllamaEmbeddingModelClient(api, opts, id).some
       },
       "x-ai" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = XAiEmbeddingModelClientOptions.fromJson(options)
         new XAiEmbeddingModelClient(api, opts, id).some
       },
       "cohere" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new CohereAiApi(baseUrl.getOrElse(CohereAiApi.baseUrl), token, timeout.getOrElse(10.seconds), env = env)
         val opts = CohereAiEmbeddingModelClientOptions.fromJson(options)
         new CohereAiEmbeddingModelClient(api, opts, id).some
       },
       "openai-compatible" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         // generic OpenAI-compatible embedding endpoint: base url, display name, headers and param
         // mappings are all driven by the connection config (dynamic name).
         val providerName = connection.select("provider_name").asOpt[String]
@@ -171,20 +171,20 @@ object EmbeddingModel {
         new OpenAiEmbeddingModelClient(api, opts, id).some
       },
       "ovh-ai-endpoints" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(10.seconds), providerName = "OVH", env = env)
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       },
       "all-minilm-l6-v2" -> { (c: ClientContext) =>
-        import c._
+        import c.*
         new AllMiniLmL6V2EmbeddingModelClient(options, id).some
       },
     )
     val likes: Map[String, EmbeddingModel.ClientContext => Option[EmbeddingModelClient]] =
       OpenAiLikeProviders.all.filter(_.supportsEmbeddings).map { provDef =>
         provDef.id -> { (c: ClientContext) =>
-          import c._
+          import c.*
           val api = new OpenAiApi(
             _baseUrl = baseUrl.getOrElse(provDef.baseUrl),
             token = token,
@@ -244,7 +244,7 @@ object EmbeddingModel {
         extractIdf = c => datastores.embeddingModelsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, p, _) => {
           p.get("kind").map(_.toLowerCase()) match {
             case Some("openai") => EmbeddingModel(
               id = IdGenerator.namedId("embedding-model", env),
@@ -316,7 +316,7 @@ class KvEmbeddingModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisL
   extends EmbeddingModelsDataStore
     with RedisLikeStore[EmbeddingModel] {
   override def fmt: Format[EmbeddingModel]                  = EmbeddingModel.format
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
   override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:embmods:$id"
   override def extractId(value: EmbeddingModel): String    = value.id
 }

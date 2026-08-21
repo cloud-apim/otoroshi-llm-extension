@@ -1,19 +1,20 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.agents
 
-import akka.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.Guardrails
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
-import otoroshi.next.workflow.{Node, NodeLike, NoopNode, WorkflowAdminExtension, WorkflowError, WorkflowOperator, WorkflowRun}
+import otoroshi.next.workflow.{Node, NodeLike, NoopNode, WorkflowError, WorkflowOperator, WorkflowRun}
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.libs.typedmap.TypedKey
 
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Try
+import org.apache.pekko.stream.Materializer
 
 object InlineFunctions {
   val InlineFunctionsKey = TypedKey[Map[String, InlineFunction]]("cloud-apim.ai-gateway.InlineFunctions")
@@ -209,13 +210,13 @@ case class AgentConfig(
   guardrails: Guardrails = Guardrails(Seq.empty),
   builtInTools: AgentBuiltInTools = AgentBuiltInTools.empty,
 ) {
-  def runStr(input: String, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(implicit env: Env):  Future[Either[JsValue, String]] = {
-    run(AgentInput.from(input), rcfg, attrs, wfr).map(_.map(_.wholeTextContent))(env.otoroshiExecutionContext)
+  def runStr(input: String, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(using env: Env):  Future[Either[JsValue, String]] = {
+    run(AgentInput.from(input), rcfg, attrs, wfr).map(_.map(_.wholeTextContent))(using env.otoroshiExecutionContext)
   }
-  def run(input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(implicit env: Env):  Future[Either[JsValue, AgentOutput]] = {
+  def run(input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(using env: Env):  Future[Either[JsValue, AgentOutput]] = {
     new AgentRunner(env).run(this, input, rcfg, attrs, wfr)
   }
-  def stream(input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(implicit env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  def stream(input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun])(using env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     new AgentRunner(env).stream(this, input, rcfg, attrs, wfr)
   }
   def toHandoff(): Handoff = {
@@ -286,7 +287,7 @@ object AgentConfig {
                   } else {
                     wfr.memory.set("tool_input", args.json)
                   }
-                  node.internalRun(wfr, Seq.empty, Seq.empty)(env, ec).map {
+                  node.internalRun(wfr, Seq.empty, Seq.empty)(using env, ec).map {
                     case Left(err) =>
                       wfr.attrs.get(otoroshi.next.workflow.WorkflowAdminExtension.liveUpdatesSourceKey).foreach { source =>
                         source.tryEmitNext(Json.obj("kind" -> "progress", "data" -> Json.obj(
@@ -310,7 +311,7 @@ object AgentConfig {
                       }
                       //println(s"responssssss: ${v.stringify}")
                       v.stringify
-                  }(ec)
+                  }(using ec)
                 }
               }
             },
@@ -360,9 +361,9 @@ object AgentInput {
 
 class AgentRunner(env: Env) {
 
-  implicit val ev = env
-  implicit val ec = env.otoroshiExecutionContext
-  implicit val mat = env.otoroshiMaterializer
+  given ev: Env = env
+  given ec: ExecutionContext = env.otoroshiExecutionContext
+  given mat: Materializer = env.otoroshiMaterializer
 
   lazy val ext = env.adminExtensions.extension[AiExtension].get
 
@@ -374,7 +375,7 @@ class AgentRunner(env: Env) {
   // + mcp_connectors + search_engines + memory + guardrails) but calls tryStream instead of call. Streaming supports
   // wasm/mcp tools (streamWithToolSupport in providers); handoffs and built-in tools need the multi-turn run loop and
   // are therefore not streamable here (caller should fall back to run()).
-  def stream(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  def stream(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     if (agent.handoffs.exists(_.enabled) || agent.builtInTools.hasAnyEnabled) {
       Json.obj("error" -> "streaming not supported for agents with handoffs or built-in tools").leftf
     } else {
@@ -428,7 +429,7 @@ class AgentRunner(env: Env) {
     }
   }
 
-  private def internalRun(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig = AgentRunConfig(), ctx: AgentContext = AgentContext(), attrs: TypedMap = TypedMap.empty, wfr: Option[WorkflowRun]): Future[Either[JsValue, AgentOutput]] = {
+  private def internalRun(agent: AgentConfig, input: AgentInput, rcfg: AgentRunConfig, ctx: AgentContext, attrs: TypedMap, wfr: Option[WorkflowRun]): Future[Either[JsValue, AgentOutput]] = {
     if (ctx.iteration > rcfg.maxTurns) {
       Json.obj("error" -> "Max turns reached").leftf
     } else {
@@ -528,7 +529,7 @@ class AgentRunner(env: Env) {
                             }.find(tuple => possibleNames.contains(tuple._1))
                             handoff_call match {
                               case None => Json.obj("error" -> "no handoff found").leftf
-                              case Some((name, handoff_call)) => {
+                              case Some((name, _)) => {
                                 val handoff = agent.handoffs.find(_.functionName == name).get
                                 handoff.on_handoff.foreach(_.apply(input))
                                 internalRun(handoff.agent, input, rcfg.copy(
@@ -672,7 +673,7 @@ class RouterNode(val json: JsObject) extends Node {
                     wfr: WorkflowRun,
                     prefix: Seq[Int],
                     from: Seq[Int]
-                  )(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+                  )(using env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     if (from.nonEmpty) {
       WorkflowError(
         s"Router Node (${prefix.mkString(".")}) does not support resume: ${from.mkString(".")}",
@@ -751,7 +752,7 @@ class RouterNode(val json: JsObject) extends Node {
                             }.find(tuple => possibleNames.contains(tuple._1))
                             handoff_call match {
                               case None => WorkflowError("no handoff found").leftf
-                              case Some((name, handoff_call, idx)) => {
+                              case Some((name, _, idx)) => {
                                 val handoff = paths.find(_.id == name).get
                                 handoff.internalRun(wfr, prefix :+ idx, from).recover { case t: Throwable =>
                                   WorkflowError(s"caught exception on task '${id}' at path: '${handoff.id}'", None, Some(t)).left
@@ -807,7 +808,7 @@ class AiAgentMcpToolsNode(val json: JsObject) extends Node {
     "mcp_ref" -> "xxxxx",
   ))
 
-  override def run(wfr: WorkflowRun, prefix: Seq[Int], from: Seq[Int])(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+  override def run(wfr: WorkflowRun, prefix: Seq[Int], from: Seq[Int])(using env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     JsNull.rightf
   }
 
@@ -1008,7 +1009,7 @@ class AiAgentNode(val json: JsObject) extends Node {
                     wfr: WorkflowRun,
                     prefix: Seq[Int],
                     from: Seq[Int]
-                  )(implicit env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+                  )(using env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
     if (from.nonEmpty) {
       WorkflowError(
         s"AI Agent Node (${prefix.mkString(".")}) does not support resume: ${from.mkString(".")}",
@@ -1023,7 +1024,7 @@ class AiAgentNode(val json: JsObject) extends Node {
         .map(v => WorkflowOperator.processOperators(v, wfr, env))
         .map {
           case JsString(str) => AgentInput.from(str)
-          case JsArray(seq) => AgentInput(seq.map(v => ChatMessage.inputJson(v.asObject)))
+          case JsArray(seq) => AgentInput(seq.toSeq.map(v => ChatMessage.inputJson(v.asObject)))
           case obj @ JsObject(_) => AgentInput(Seq(ChatMessage.inputJson(obj)))
           case _ => AgentInput.empty
         }

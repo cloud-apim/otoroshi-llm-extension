@@ -6,17 +6,17 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import com.cloud.apim.otoroshi.extensions.aigateway.KreuzbergHelper
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.{LettuceRedisClientManager, PgPoolManager}
-import otoroshi.el.GlobalExpressionLanguage
 import otoroshi.env.Env
 import otoroshi.next.workflow.WorkflowRun
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters.*
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.Try
+import play.api.libs.ws.WSBodyWritables.given
 
 object BuiltInToolsFactory {
 
@@ -33,7 +33,7 @@ object BuiltInToolsFactory {
     promise.future
   }
 
-  private def ensurePgKvTable(pool: io.vertx.pgclient.PgPool)(implicit ec: ExecutionContext): Future[Unit] = {
+  private def ensurePgKvTable(pool: io.vertx.sqlclient.Pool)(using ec: ExecutionContext): Future[Unit] = {
     val key = pool.toString
     if (verifiedPgKvTables.contains(key)) {
       Future.successful(())
@@ -302,7 +302,7 @@ object BuiltInToolsFactory {
           required = Seq("command")
         ),
         call = (args, _, _, innerEc) => {
-          implicit val ec: ExecutionContext = innerEc
+          given ec: ExecutionContext = innerEc
           val json = Try(Json.parse(args)).getOrElse(Json.obj())
           val command = json.select("command").asOptString.getOrElse("")
           val cwd = json.select("cwd").asOptString.getOrElse(allowedPaths.head)
@@ -316,7 +316,7 @@ object BuiltInToolsFactory {
                 pb.redirectErrorStream(true)
                 val process = pb.start()
                 val outputFuture = Future {
-                  scala.io.Source.fromInputStream(process.getInputStream)("UTF-8").mkString
+                  scala.io.Source.fromInputStream(process.getInputStream)(using "UTF-8").mkString
                 }
                 val completed = process.waitFor(timeoutMs.toLong, TimeUnit.MILLISECONDS)
                 if (!completed) {
@@ -433,7 +433,7 @@ object BuiltInToolsFactory {
           strict = false,
           parameters = Json.obj()
         ),
-        call = (args, _, _, _) => {
+        call = (_, _, _, _) => {
           val tasks = scratchpadRef.get().tasks.map(t => Json.obj("id" -> t.id, "title" -> t.title, "description" -> t.description, "status" -> t.status))
           Future.successful(Json.obj("tasks" -> tasks).stringify)
         }
@@ -488,7 +488,7 @@ object BuiltInToolsFactory {
           strict = false,
           parameters = Json.obj()
         ),
-        call = (args, _, _, _) => {
+        call = (_, _, _, _) => {
           val plan = scratchpadRef.get().plan
           plan match {
             case None => Future.successful(Json.obj("plan" -> JsNull).stringify)
@@ -556,7 +556,7 @@ object BuiltInToolsFactory {
           strict = false,
           parameters = Json.obj()
         ),
-        call = (args, _, _, _) => {
+        call = (_, _, _, _) => {
           val notes = scratchpadRef.get().notes
           Future.successful(Json.obj("entries" -> JsObject(notes.toSeq)).stringify)
         }
@@ -580,7 +580,7 @@ object BuiltInToolsFactory {
           required = Seq("objective")
         ),
         call = (args, _, innerEnv, innerEc) => {
-          implicit val implEc: ExecutionContext = innerEc
+          given implEc: ExecutionContext = innerEc
           val json = Try(Json.parse(args)).getOrElse(Json.obj())
           val objective = json.select("objective").asOptString.getOrElse("")
           val agentName = json.select("agent_name").asOptString
@@ -630,7 +630,7 @@ object BuiltInToolsFactory {
           required = Seq("url")
         ),
         call = (args, _, innerEnv, innerEc) => {
-          implicit val implEc: ExecutionContext = innerEc
+          given implEc: ExecutionContext = innerEc
           val json = Try(Json.parse(args)).getOrElse(Json.obj())
           val url = json.select("url").asOptString.getOrElse("")
           val method = json.select("method").asOptString.getOrElse("GET").toUpperCase
@@ -640,11 +640,11 @@ object BuiltInToolsFactory {
           val convertToMarkdown = json.select("convert_to_markdown").asOpt[Boolean].getOrElse(false)
 
           try {
-            val headerSeq = headers.fields.map { case (k, v) => (k, v.asOpt[String].getOrElse(v.toString())) }
+            val headerSeq = headers.fields.toSeq.map { case (k, v) => (k, v.asOpt[String].getOrElse(v.toString())) }
             var req = innerEnv.Ws
               .url(url)
               .withRequestTimeout(scala.concurrent.duration.Duration(timeout.toLong, "millis"))
-              .withHttpHeaders(headerSeq: _*)
+              .withHttpHeaders(headerSeq*)
               .withFollowRedirects(true)
             req = bodyOpt match {
               case Some(JsString(s)) => req.withBody(s)
@@ -656,7 +656,7 @@ object BuiltInToolsFactory {
               val respHeaders = resp.headers.map { case (k, v) => k -> JsString(v.mkString(", ")) }
               if (convertToMarkdown) {
                 val contentType = resp.header("Content-Type").getOrElse("application/octet-stream").split(";").head.trim
-                KreuzbergHelper.extractFromBytes(resp.bodyAsBytes.toArray, contentType)(env, implEc).map { markdown =>
+                KreuzbergHelper.extractFromBytes(resp.bodyAsBytes.toArray, contentType)(using env, implEc).map { markdown =>
                   Json.obj(
                     "status" -> resp.status,
                     "headers" -> JsObject(respHeaders.toSeq),
@@ -704,8 +704,8 @@ object BuiltInToolsFactory {
           )
         ),
         call = (args, _, innerEnv, innerEc) => {
-          implicit val implEc: ExecutionContext = innerEc
-          implicit val implEnv: Env = innerEnv
+          given implEc: ExecutionContext = innerEc
+          given implEnv: Env = innerEnv
           val json = Try(Json.parse(args)).getOrElse(Json.obj())
           val urlOpt = json.select("url").asOptString
           val contentOpt = json.select("content").asOptString
@@ -751,7 +751,7 @@ object BuiltInToolsFactory {
           required = Seq("objective", "instructions")
         ),
         call = (args, _, innerEnv, innerEc) => {
-          implicit val implEc: ExecutionContext = innerEc
+          given implEc: ExecutionContext = innerEc
           val json = Try(Json.parse(args)).getOrElse(Json.obj())
           val objective = json.select("objective").asOptString.getOrElse("")
           val instructions = json.select("instructions").asOptString.getOrElse("")
@@ -795,7 +795,7 @@ object BuiltInToolsFactory {
     if (config.isEnabled("persistent_kv_set")) {
       val kvUri = config.persistentKvUri.get
       val rawNamespace = config.persistentKvNamespace.getOrElse(s"agent-kv:${agent.name}:default")
-      val namespace = if (rawNamespace.contains("${")) rawNamespace.evaluateEl(attrs)(env) else rawNamespace
+      val namespace = if (rawNamespace.contains("${")) rawNamespace.evaluateEl(attrs)(using env) else rawNamespace
       val isRedis = kvUri.startsWith("redis://") || kvUri.startsWith("rediss://")
 
       tools += InlineFunction(
@@ -810,7 +810,7 @@ object BuiltInToolsFactory {
           required = Seq("key", "value")
         ),
         call = (args, _, _, innerEc) => {
-          implicit val ec: ExecutionContext = innerEc
+          given ec: ExecutionContext = innerEc
           val json = Try(Json.parse(args)).getOrElse(Json.obj())
           val key = json.select("key").asOptString.getOrElse("_")
           val value = json.select("value").asOpt[JsValue].map(Json.stringify).getOrElse(json.select("value").asOptString.getOrElse(""))
@@ -842,7 +842,7 @@ object BuiltInToolsFactory {
           required = Seq("key")
         ),
         call = (args, _, _, innerEc) => {
-          implicit val ec: ExecutionContext = innerEc
+          given ec: ExecutionContext = innerEc
           val json = Try(Json.parse(args)).getOrElse(Json.obj())
           val key = json.select("key").asOptString.getOrElse("_")
           if (isRedis) {
@@ -879,7 +879,7 @@ object BuiltInToolsFactory {
           required = Seq("key")
         ),
         call = (args, _, _, innerEc) => {
-          implicit val ec: ExecutionContext = innerEc
+          given ec: ExecutionContext = innerEc
           val json = Try(Json.parse(args)).getOrElse(Json.obj())
           val key = json.select("key").asOptString.getOrElse("_")
           if (isRedis) {
@@ -905,8 +905,8 @@ object BuiltInToolsFactory {
           strict = false,
           parameters = Json.obj()
         ),
-        call = (args, _, _, innerEc) => {
-          implicit val ec: ExecutionContext = innerEc
+        call = (_, _, _, innerEc) => {
+          given ec: ExecutionContext = innerEc
           if (isRedis) {
             val conn = LettuceRedisClientManager.getConnection(kvUri)
             toScalaFuture(conn.async().hgetall(namespace))

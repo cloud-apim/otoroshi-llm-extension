@@ -1,15 +1,15 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.EmbeddingClientInputOptions
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.EmbeddingModel
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -48,7 +48,7 @@ object OpenAICompatEmbeddingConfig {
       case Success(value) => JsSuccess(value)
     }
   }
-  def getProvidersMap(config: OpenAICompatEmbeddingConfig)(implicit ec: ExecutionContext, env: Env): (Map[String, EmbeddingModel], Map[String, EmbeddingModel]) = {
+  def getProvidersMap(config: OpenAICompatEmbeddingConfig)(using ec: ExecutionContext, env: Env): (Map[String, EmbeddingModel], Map[String, EmbeddingModel]) = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val providers = config.refs.flatMap(ref => ext.states.embeddingModel(ref))
     val providersByName = providers.map { provider =>
@@ -59,7 +59,7 @@ object OpenAICompatEmbeddingConfig {
     (providersById, providersByName)
   }
 
-  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatEmbeddingConfig)(implicit ec: ExecutionContext, env: Env): JsValue = {
+  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatEmbeddingConfig)(using ec: ExecutionContext, env: Env): JsValue = {
     _jsonBody.select("model").asOpt[String] match {
       case Some(value) if value.contains("###") => {
         val parts = value.split("###")
@@ -97,7 +97,7 @@ object OpenAICompatEmbeddingConfig {
 }
 
 object OpenAICompatEmbedding {
-  def handleRequest(config: OpenAICompatEmbeddingConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: OpenAICompatEmbeddingConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
       val _jsonBody = bodyRaw.utf8String.parseJson
@@ -151,7 +151,7 @@ class OpenAICompatEmbedding extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(OpenAICompatEmbeddingConfig.format).getOrElse(OpenAICompatEmbeddingConfig.default)
     OpenAICompatEmbedding.handleRequest(config, ctx)
   }

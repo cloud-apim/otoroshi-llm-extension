@@ -1,15 +1,15 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, SearchEngineSearchOptions}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.SearchEngine
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -51,7 +51,7 @@ object SearchEngineProxyConfig {
     }
   }
 
-  def resolveProvider(jsonBody: JsObject, config: SearchEngineProxyConfig)(implicit ec: ExecutionContext, env: Env): Option[SearchEngine] = {
+  def resolveProvider(jsonBody: JsObject, config: SearchEngineProxyConfig)(using ec: ExecutionContext, env: Env): Option[SearchEngine] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     jsonBody.select("provider").asOpt[String]
       .filter(v => config.refs.contains(v))
@@ -61,7 +61,7 @@ object SearchEngineProxyConfig {
 }
 
 object SearchEngineProxy {
-  def handleRequest(config: SearchEngineProxyConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: SearchEngineProxyConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
       val jsonBody: JsObject = (if (bodyRaw.isEmpty) Json.obj() else bodyRaw.utf8String.parseJson).asObject
       SearchEngineProxyConfig.resolveProvider(jsonBody, config) match {
@@ -106,7 +106,7 @@ class SearchEngineProxy extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(SearchEngineProxyConfig.format).getOrElse(SearchEngineProxyConfig.default)
     SearchEngineProxy.handleRequest(config, ctx)
   }

@@ -1,13 +1,13 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, KindBasedChatClient}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -73,7 +73,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   override def isCohere: Boolean = false
   override def isAnthropic: Boolean = false
 
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     Right(List("code-router", "auto-router", "fusion-router")).vfuture
   }
 
@@ -81,7 +81,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     p.options.select("model").asOptString.getOrElse("--")
 
   // blended price = 1 x input + 3 x output per token (generations are output-heavy)
-  private def candidateCost(p: AiProvider, model: String)(implicit env: Env): Option[BigDecimal] = {
+  private def candidateCost(p: AiProvider, model: String)(using env: Env): Option[BigDecimal] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val litellmProvider = ext.costsTracking.getProvider(p.provider)
     litellmProvider.flatMap(lp => ext.costsTracking.getModel(lp, model))
@@ -90,7 +90,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   }
 
   // resolve a refs list (Seq[String] of ids, or Seq[{ref}]) into candidates, skipping self-references
-  private def resolveCandidates(refsKey: String, refKey: String)(implicit env: Env): Seq[RouterCandidate] = {
+  private def resolveCandidates(refsKey: String, refKey: String)(using env: Env): Seq[RouterCandidate] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val refs: Seq[String] = provider.options.select(refsKey).asOpt[Seq[String]]
       .orElse(provider.options.select(refsKey).asOpt[Seq[JsObject]].map(_.map(_.select(refKey).asString)))
@@ -107,7 +107,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   //  code-router : cheapest candidate above a quality floor, then cascade by quality/cost
   ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-  private def codeOrderedCandidates(originalBody: JsValue)(implicit env: Env): Seq[AiProvider] = {
+  private def codeOrderedCandidates(originalBody: JsValue)(using env: Env): Seq[AiProvider] = {
     val resolved = resolveCandidates("code_router_refs", "code_router_ref")
     if (resolved.isEmpty) {
       Seq.empty
@@ -146,7 +146,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     cands.sortBy(c => -desirability(c))
   }
 
-  private def judgeClient(cands: Seq[RouterCandidate])(implicit env: Env): Option[ChatClient] = {
+  private def judgeClient(cands: Seq[RouterCandidate])(using env: Env): Option[ChatClient] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     provider.options.select("auto_router_classifier_ref").asOptString
       .flatMap(r => ext.states.provider(r)).filterNot(_.id == provider.id).flatMap(_.getChatClient())
@@ -178,7 +178,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     }
   }
 
-  private def pickWithJudge(prompt: ChatPrompt, cands: Seq[RouterCandidate], tradeoff: Double)(implicit ec: ExecutionContext, env: Env): Future[Option[RouterCandidate]] = {
+  private def pickWithJudge(prompt: ChatPrompt, cands: Seq[RouterCandidate], tradeoff: Double)(using ec: ExecutionContext, env: Env): Future[Option[RouterCandidate]] = {
     judgeClient(cands) match {
       case None => Future.successful(None)
       case Some(jclient) =>
@@ -207,7 +207,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     }
   }
 
-  private def autoOrderedCandidates(prompt: ChatPrompt, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Seq[AiProvider]] = {
+  private def autoOrderedCandidates(prompt: ChatPrompt, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Seq[AiProvider]] = {
     val allCands = resolveCandidates("auto_router_refs", "auto_router_ref")
     // optional allowed_models filter (wildcard patterns), from the request body or the provider config
     val allowed = originalBody.select("allowed_models").asOpt[Seq[String]]
@@ -240,7 +240,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     prompt.messages.map(m => s"${m.role}: ${m.wholeTextContent}").mkString("\n").take(8000)
 
   // a configured aux provider (judge or synthesizer), falling back to the highest-quality panel member
-  private def fusionAuxClient(refKey: String, panel: Seq[RouterCandidate])(implicit env: Env): Option[ChatClient] = {
+  private def fusionAuxClient(refKey: String, panel: Seq[RouterCandidate])(using env: Env): Option[ChatClient] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     provider.options.select(refKey).asOptString
       .flatMap(r => ext.states.provider(r)).filterNot(_.id == provider.id).flatMap(_.getChatClient())
@@ -249,7 +249,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
 
   // run the whole fusion pipeline up to (but excluding) the final synthesis call, returning the
   // synthesizer client + the synthesis prompt + the body to call it with.
-  private def prepareFusion(prompt: ChatPrompt, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (ChatClient, ChatPrompt, JsObject)]] = {
+  private def prepareFusion(prompt: ChatPrompt, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (ChatClient, ChatPrompt, JsObject)]] = {
     val panel = resolveCandidates("fusion_router_refs", "fusion_router_ref").take(8)
     if (panel.isEmpty) {
       Json.obj("error" -> "no panel provider configured for the otoroshi fusion-router (set options.fusion_router_refs)").leftf
@@ -308,14 +308,14 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     }
   }
 
-  private def fusionCall(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  private def fusionCall(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     prepareFusion(prompt, originalBody).flatMap {
       case Left(err) => err.leftf
       case Right((client, synthPrompt, body)) => client.call(synthPrompt, attrs, body)
     }
   }
 
-  private def fusionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  private def fusionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     prepareFusion(prompt, originalBody).flatMap {
       case Left(err) => err.leftf
       case Right((client, synthPrompt, body)) => client.stream(synthPrompt, attrs, body)
@@ -329,7 +329,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   private def isFusion(originalBody: JsValue): Boolean =
     originalBody.select("model").asOptString.exists(_.toLowerCase.contains("fusion"))
 
-  private def execute[T](prompt: ChatPrompt, originalBody: JsValue)(f: (ChatClient, JsValue) => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
+  private def execute[T](prompt: ChatPrompt, originalBody: JsValue)(f: (ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val requestedModel = originalBody.select("model").asOptString.getOrElse("code-router").toLowerCase
     val orderedF: Future[Seq[AiProvider]] =
       if (requestedModel.contains("auto")) autoOrderedCandidates(prompt, originalBody)
@@ -358,12 +358,12 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     }
   }
 
-  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     if (isFusion(originalBody)) fusionCall(prompt, attrs, originalBody)
     else execute(prompt, originalBody)((client, body) => client.invoke(kind, prompt, attrs, body))
   }
 
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     if (isFusion(originalBody)) fusionStream(prompt, attrs, originalBody)
     else execute(prompt, originalBody)((client, body) => client.invokeStream(kind, prompt, attrs, body))
   }

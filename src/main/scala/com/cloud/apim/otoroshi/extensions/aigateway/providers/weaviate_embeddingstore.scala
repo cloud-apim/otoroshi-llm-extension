@@ -1,14 +1,15 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
+import play.api.libs.ws.WSBodyWritables.given
 
 object WeaviateEmbeddingStoreClient {
   lazy val logger = Logger("WeaviateEmbeddingStoreClient")
@@ -30,10 +31,10 @@ class WeaviateEmbeddingStoreClient(val config: JsObject, _storeId: String) exten
     }
   }
 
-  private def ensureClass()(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  private def ensureClass()(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(s"$baseUrl/v1/schema/$className")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .get()
       .flatMap { resp =>
@@ -42,7 +43,7 @@ class WeaviateEmbeddingStoreClient(val config: JsObject, _storeId: String) exten
         } else {
           env.Ws
             .url(s"$baseUrl/v1/schema")
-            .withHttpHeaders(headers: _*)
+            .withHttpHeaders(headers*)
             .withRequestTimeout(timeout)
             .post(Json.obj(
               "class" -> className,
@@ -56,20 +57,20 @@ class WeaviateEmbeddingStoreClient(val config: JsObject, _storeId: String) exten
               if (createResp.status == 200 || createResp.status == 201) {
                 Right(())
               } else {
-                Left(Json.obj("error" -> s"Weaviate class creation error: ${createResp.status}", "body" -> createResp.body))
+                Left(Json.obj("error" -> s"Weaviate class creation error: ${createResp.status}", "body" -> (createResp.body: String)))
               }
             }
         }
       }
   }
 
-  override def add(options: EmbeddingAddOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def add(options: EmbeddingAddOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     ensureClass().flatMap {
       case Left(err) => Left(err).vfuture
       case Right(_) =>
         env.Ws
           .url(s"$baseUrl/v1/objects")
-          .withHttpHeaders(headers: _*)
+          .withHttpHeaders(headers*)
           .withRequestTimeout(timeout)
           .post(Json.obj(
             "class" -> className,
@@ -87,28 +88,28 @@ class WeaviateEmbeddingStoreClient(val config: JsObject, _storeId: String) exten
               // Object already exists, update it
               Right(())
             } else {
-              Left(Json.obj("error" -> s"Weaviate add error: ${resp.status}", "body" -> resp.body))
+              Left(Json.obj("error" -> s"Weaviate add error: ${resp.status}", "body" -> (resp.body: String)))
             }
           }
     }
   }
 
-  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(s"$baseUrl/v1/objects/$className/${options.id}")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .delete()
       .map { resp =>
         if (resp.status == 204 || resp.status == 404) {
           Right(())
         } else {
-          Left(Json.obj("error" -> s"Weaviate delete error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Weaviate delete error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }
 
-  override def search(options: EmbeddingSearchOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
+  override def search(options: EmbeddingSearchOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
     val graphql = Json.obj(
       "query" ->
         s"""{
@@ -130,7 +131,7 @@ class WeaviateEmbeddingStoreClient(val config: JsObject, _storeId: String) exten
     )
     env.Ws
       .url(s"$baseUrl/v1/graphql")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .post(graphql)
       .map { resp =>
@@ -150,7 +151,7 @@ class WeaviateEmbeddingStoreClient(val config: JsObject, _storeId: String) exten
           }
           Right(EmbeddingSearchResponse(matches))
         } else {
-          Left(Json.obj("error" -> s"Weaviate search error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Weaviate search error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }

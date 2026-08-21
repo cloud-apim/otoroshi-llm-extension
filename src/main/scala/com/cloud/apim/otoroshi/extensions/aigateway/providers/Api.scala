@@ -1,10 +1,10 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatResponseMetadataUsage
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsValue, Json}
 import play.api.libs.ws.WSResponse
@@ -19,13 +19,13 @@ trait ApiClient[Resp, Chunk] {
   def supportsStreaming: Boolean
   def supportsCompletion: Boolean
 
-  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]]
-  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
+  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, Resp]]
+  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
     call(method, path, body, acc)
   }
 
-  def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[Chunk, _], WSResponse)]]
-  def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[Chunk, _], WSResponse)]] = {
+  def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[Chunk, ?], WSResponse)]]
+  def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[Chunk, ?], WSResponse)]] = {
     stream(method, path, body, acc)
   }
 }
@@ -36,8 +36,8 @@ trait NoStreamingApiClient[Resp] {
   def supportsCompletion: Boolean
   final def supportsStreaming: Boolean = false
 
-  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]]
-  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
+  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, Resp]]
+  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, Resp]] = {
     call(method, path, body, acc)
   }
 }
@@ -63,7 +63,7 @@ object ProviderHelpers {
   def logBadResponse(from: String, resp: WSResponse): Unit = {
     AiExtension.logger.error(s"Response with error from '${from}': ${resp.status} - ${resp.body}")
   }
-  def logCall(from: String, method: String, url: String, body: Option[JsValue] = None, opts: Map[String, String] = Map.empty)(implicit env: Env): Unit = {
+  def logCall(from: String, method: String, url: String, body: Option[JsValue] = None, opts: Map[String, String] = Map.empty)(using env: Env): Unit = {
     if (env.isDev || AiExtension.logger.isDebugEnabled) {
       val msg = s"calling provider '${from}' - ${method} - ${url} - ${opts} - ${body.map(_.prettify).getOrElse("")}"
       if (env.isDev) {
@@ -74,7 +74,7 @@ object ProviderHelpers {
       }
     }
   }
-  def logStream(from: String, method: String, url: String, body: Option[JsValue] = None, opts: Map[String, String] = Map.empty)(implicit env: Env): Unit = {
+  def logStream(from: String, method: String, url: String, body: Option[JsValue] = None, opts: Map[String, String] = Map.empty)(using env: Env): Unit = {
     if (env.isDev || AiExtension.logger.isDebugEnabled) {
       val msg = s"stream provider '${from}' - ${method} - ${url} - ${opts} - ${body.map(_.prettify).getOrElse("")}"
       if (env.isDev) {

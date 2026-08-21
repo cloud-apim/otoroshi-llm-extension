@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic.Catalog
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpSupport
 import com.cloud.apim.otoroshi.extensions.aigateway.mcp.{OpenApiMcpClient, OpenApiSchema}
-import play.api.libs.json._
+import play.api.libs.json.*
 
 /**
  * Pure unit tests (no Otoroshi server) for the OpenAPI MCP connector building blocks:

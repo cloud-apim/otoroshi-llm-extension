@@ -1,9 +1,9 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.{Sink, Source}
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.LettuceRedisClientManager
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import com.github.benmanes.caffeine.cache.RemovalCause
 import com.github.blemale.scaffeine.Scaffeine
 import dev.langchain4j.data.segment.TextSegment
@@ -12,16 +12,17 @@ import io.lettuce.core.output.{IntegerOutput, NestedMultiOutput, StatusOutput}
 import io.lettuce.core.protocol.{CommandArgs, ProtocolKeyword}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsValue, Json, JsObject}
+import play.api.libs.json.{JsValue, Json}
 
 import java.nio.charset.StandardCharsets
 import java.nio.{ByteBuffer, ByteOrder}
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.{DurationInt, DurationLong, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future, Promise}
-import scala.jdk.CollectionConverters._
+import scala.jdk.CollectionConverters.*
+import io.lettuce.core.SetArgs
 
 // ---------------------------------------------------------------------------
 //  Entry point — picks the right implementation based on redis_url
@@ -46,11 +47,11 @@ object ChatClientWithSemanticCache {
    * If embeddingRef is set and points to a valid EmbeddingModel entity, use it.
    * Otherwise, fall back to the local AllMiniLmL6V2 model.
    */
-  def embedText(text: String, embeddingRef: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Array[Float]] = {
+  def embedText(text: String, embeddingRef: Option[String])(using ec: ExecutionContext, env: Env): Future[Array[Float]] = {
     embeddingRef.flatMap { ref =>
       env.adminExtensions.extension[AiExtension]
         .flatMap(_.states.embeddingModel(ref))
-        .flatMap(_.getEmbeddingModelClient()(env))
+        .flatMap(_.getEmbeddingModelClient()(using env))
     } match {
       case Some(client) =>
         client.embed(
@@ -76,27 +77,27 @@ object ChatClientWithSemanticCacheMemory {
   lazy val embeddingStores = new TrieMap[String, dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]]()
   lazy val cache = Scaffeine()
     .expireAfter[String, (FiniteDuration, ChatResponse, Long)](
-      create = (key, value) => value._1,
-      update = (key, value, currentDuration) => currentDuration,
-      read = (key, value, currentDuration) => currentDuration
+      create = (_, value) => value._1,
+      update = (_, _, currentDuration) => currentDuration,
+      read = (_, _, currentDuration) => currentDuration
     )
     .maximumSize(5000)
     .build[String, (FiniteDuration, ChatResponse, Long)]()
   lazy val stream_cache = Scaffeine()
     .expireAfter[String, (FiniteDuration, Seq[ChatResponseChunk], Long)](
-      create = (key, value) => value._1,
-      update = (key, value, currentDuration) => currentDuration,
-      read = (key, value, currentDuration) => currentDuration
+      create = (_, value) => value._1,
+      update = (_, _, currentDuration) => currentDuration,
+      read = (_, _, currentDuration) => currentDuration
     )
     .maximumSize(5000)
     .build[String, (FiniteDuration, Seq[ChatResponseChunk], Long)]()
   lazy val cacheEmbeddingCleanup = Scaffeine()
     .expireAfter[String, (FiniteDuration, Function[String, Unit])](
-      create = (key, value) => value._1,
-      update = (key, value, currentDuration) => currentDuration,
-      read = (key, value, currentDuration) => currentDuration
+      create = (_, value) => value._1,
+      update = (_, _, currentDuration) => currentDuration,
+      read = (_, _, currentDuration) => currentDuration
     )
-    .removalListener((key: String, value: (FiniteDuration, Function[String, Unit]), reason: RemovalCause) => {
+    .removalListener((key: String, value: (FiniteDuration, Function[String, Unit]), _: RemovalCause) => {
       value._2(key)
     })
     .maximumSize(5000)
@@ -112,7 +113,7 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
     new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
   }
 
-  private def notInCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  private def notInCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val embeddingStore = getStore
     val r = chatClient.invoke(kind, originalPrompt, attrs, originalBody)
     r.flatMap {
@@ -134,7 +135,7 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
     }
   }
 
-  private def notInCacheStream(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  private def notInCacheStream(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val embeddingStore = getStore
     val r = chatClient.invokeStream(kind, originalPrompt, attrs, originalBody)
     r.map {
@@ -158,7 +159,7 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
     }
   }
 
-  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
     val key = CacheKeys.forQuery(kind, query)
     ChatClientWithSemanticCacheMemory.cache.getIfPresent(key) match {
@@ -190,7 +191,7 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
     }
   }
 
-  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
     val key = CacheKeys.forQuery(kind, query)
     ChatClientWithSemanticCacheMemory.stream_cache.getIfPresent(key) match {
@@ -226,10 +227,10 @@ object ChatClientWithSemanticCacheRedis {
   private val verifiedIndices = new TrieMap[String, Int]()
   def resetVerifiedIndex(indexName: String): Unit = verifiedIndices.remove(indexName)
 
-  private def cmd(name: String): ProtocolKeyword = new ProtocolKeyword {
-    private val bytes = name.getBytes(StandardCharsets.US_ASCII)
+  private def cmd(cmdName: String): ProtocolKeyword = new ProtocolKeyword {
+    private val bytes = cmdName.getBytes(StandardCharsets.US_ASCII)
     override def getBytes: Array[Byte] = bytes
-    override def name(): String = name
+    override def name(): String = cmdName
   }
 
   val FT_CREATE: ProtocolKeyword = cmd("FT.CREATE")
@@ -239,7 +240,7 @@ object ChatClientWithSemanticCacheRedis {
 
 class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatClient: ChatClient, redisUrl: String) extends DecoratorChatClient {
 
-  import ChatClientWithSemanticCacheRedis._
+  import ChatClientWithSemanticCacheRedis.*
 
   private val ttl = originalProvider.cache.ttl
   private val minScore = originalProvider.cache.score
@@ -271,7 +272,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
 
   // --- index lifecycle ---
 
-  private def ensureIndex(dims: Int)(implicit ec: ExecutionContext): Future[Unit] = {
+  private def ensureIndex(dims: Int)(using ec: ExecutionContext): Future[Unit] = {
     if (verifiedIndices.contains(indexName)) {
       Future.successful(())
     } else {
@@ -299,7 +300,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
 
   // --- embedding store operations ---
 
-  private def storeEmbedding(key: String, query: String, vectorBytes: Array[Byte])(implicit ec: ExecutionContext): Future[Unit] = {
+  private def storeEmbedding(key: String, query: String, vectorBytes: Array[Byte])(using ec: ExecutionContext): Future[Unit] = {
     val hashKey = s"$embKeyPrefix$key"
     val args = new CommandArgs[String, String](StringCodec.UTF8)
       .addKey(hashKey)
@@ -314,7 +315,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
       .map(_ => ())
   }
 
-  private def searchSimilar(vectorBytes: Array[Byte])(implicit ec: ExecutionContext): Future[Option[(String, Double)]] = {
+  private def searchSimilar(vectorBytes: Array[Byte])(using ec: ExecutionContext): Future[Option[(String, Double)]] = {
     val query = s"*=>[KNN 1 @embedding $$vec AS vector_score]"
     val args = new CommandArgs[String, String](StringCodec.UTF8)
       .add(indexName)
@@ -333,7 +334,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
         } else {
           // [totalCount, key1, [field, value, ...]]
           val fields = list(2) match {
-            case l: java.util.List[_] => l.asScala.map(_.toString).toList
+            case l: java.util.List[?] => l.asScala.map(_.toString).toList
             case _ => List.empty[String]
           }
           val fieldMap = fields.grouped(2).collect { case List(k, v) => k -> v }.toMap
@@ -348,7 +349,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
 
   // --- response cache operations ---
 
-  private def redisGetResponse(key: String)(implicit ec: ExecutionContext): Future[Option[(ChatResponse, Long)]] = {
+  private def redisGetResponse(key: String)(using ec: ExecutionContext): Future[Option[(ChatResponse, Long)]] = {
     toFuture(conn.async().get(s"sem-cache:call:$key"))
       .map {
         case null => None
@@ -357,12 +358,12 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
       .recover { case _ => None }
   }
 
-  private def redisPutResponse(key: String, resp: ChatResponse)(implicit ec: ExecutionContext): Unit = {
+  private def redisPutResponse(key: String, resp: ChatResponse)(using ec: ExecutionContext): Unit = {
     val json = SimpleCacheSerialization.serializeResponse(resp, System.currentTimeMillis())
-    toFuture(conn.async().psetex(s"sem-cache:call:$key", ttl.toMillis, json))
+    toFuture(conn.async().set(s"sem-cache:call:$key", json, SetArgs.Builder.px(ttl.toMillis)))
   }
 
-  private def redisGetChunks(key: String)(implicit ec: ExecutionContext): Future[Option[(Seq[ChatResponseChunk], Long)]] = {
+  private def redisGetChunks(key: String)(using ec: ExecutionContext): Future[Option[(Seq[ChatResponseChunk], Long)]] = {
     toFuture(conn.async().get(s"sem-cache:stream:$key"))
       .map {
         case null => None
@@ -371,14 +372,14 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
       .recover { case _ => None }
   }
 
-  private def redisPutChunks(key: String, chunks: Seq[ChatResponseChunk])(implicit ec: ExecutionContext): Unit = {
+  private def redisPutChunks(key: String, chunks: Seq[ChatResponseChunk])(using ec: ExecutionContext): Unit = {
     val json = SimpleCacheSerialization.serializeChunks(chunks, System.currentTimeMillis())
-    toFuture(conn.async().psetex(s"sem-cache:stream:$key", ttl.toMillis, json))
+    toFuture(conn.async().set(s"sem-cache:stream:$key", json, SetArgs.Builder.px(ttl.toMillis)))
   }
 
   // --- cache miss handlers ---
 
-  private def notInCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  private def notInCache(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val r = chatClient.invoke(kind, originalPrompt, attrs, originalBody)
     r.flatMap {
       case Left(err) => err.leftf
@@ -402,7 +403,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
     }
   }
 
-  private def notInCacheStream(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  private def notInCacheStream(kind: ChatCallKind, key: String, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val r = chatClient.invokeStream(kind, originalPrompt, attrs, originalBody)
     r.map {
       case Left(err) => err.left
@@ -424,7 +425,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
 
   // --- main logic ---
 
-  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
     val key = CacheKeys.forQuery(kind, query)
     // 1. exact key lookup
@@ -456,7 +457,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
     }
   }
 
-  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
     val key = CacheKeys.forQuery(kind, query)
     // 1. exact key lookup

@@ -1,17 +1,17 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import akka.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
-import akka.stream.scaladsl.{Framing, Source}
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.http.scaladsl.model.{ContentType, HttpEntity, Multipart}
+import org.apache.pekko.stream.scaladsl.{Framing, Source}
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
-import java.io.{File, FileOutputStream}
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -39,9 +39,9 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
   val supportsStreaming: Boolean = true
   override def supportsCompletion: Boolean = false
 
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("Groq", method, url, body)(env)
+    ProviderHelpers.logCall("Groq", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -57,10 +57,10 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       .execute()
   }
 
-  def rawCallForm(method: String, path: String, body: Multipart)(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("Groq", method, url, None)(env)
-    val entity = body.toEntity()
+    ProviderHelpers.logCall("Groq", method, url, None)(using env)
+    val entity = body.toEntity
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -75,9 +75,9 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
   }
 
   /** raw streamed POST, used by the native /responses path */
-  def rawStream(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawStream(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logStream("Groq", method, url, body)(env)
+    ProviderHelpers.logStream("Groq", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -93,15 +93,15 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       .stream()
   }
 
-  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
+  def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
     rawCall(method, path, body)
       .map(r => ProviderHelpers.wrapResponse("Groq", r, env) { resp =>
         acc.updateOpenai(resp.json.select("usage").asOpt[JsObject])
-        GroqApiResponse(resp.status, resp.headers.mapValues(_.last), resp.json)
+        GroqApiResponse(resp.status, resp.headers.view.mapValues(_.last).toMap, resp.json)
       })
   }
 
-  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
+  override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {
     if (currentCallCounter >= maxCalls) {
       return call(method, path, body, acc)
     }
@@ -115,7 +115,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) // .map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
-              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, "groq", attrs, nameToFunction)(ec, env)
+              LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, "groq", attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -132,9 +132,9 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
     }
   }
 
-  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def stream(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logStream("Groq", method, url, body)(env)
+    ProviderHelpers.logStream("Groq", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -169,7 +169,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       })
   }
 
-  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(implicit ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = {
+  override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {
     if (currentCallCounter >= maxCalls) {
       return stream(method, path, body, acc)
     }
@@ -182,12 +182,11 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
           var isToolCallEnded = false
           var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
           var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
-          var toolCallUsage: OpenAiChatResponseChunkUsage = null
           val newSource = res._1.flatMapConcat { chunk =>
             if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
               isToolCall = true
               toolCalls = chunk.choices.head.delta.head.tool_calls
-              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => ""): _*)
+              toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => "")*)
               Source.empty
             } else if (isToolCall && !isToolCallEnded) {
               if (chunk.choices.head.finish_reason.contains("tool_calls")) {
@@ -206,12 +205,11 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
                 }}
               Source.empty
             } else if (isToolCall && isToolCallEnded) {
-              toolCallUsage = chunk.usage.get
               val calls = toolCalls.zipWithIndex.map {
                 case (toolCall, idx) =>
                   GenericApiResponseChoiceMessageToolCall(toolCall.raw.asObject.deepMerge(Json.obj("function" -> Json.obj("arguments" -> toolCallArgs(idx)))))
               }
-              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, _], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, "groq", attrs, nameToFunction)(ec, env)
+              val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, "groq", attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
                   val newMessages: Seq[JsValue] = messages ++ callResps
@@ -334,10 +332,10 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     mcpExcludeFunctions = options.mcpExcludeFunctions,
     maxFunctionCalls = options.maxFunctionCalls,
   )
-  override protected def responsesRawCall(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawCall("POST", "/openai/v1/responses", body.some)
-  override protected def responsesRawStream(body: JsValue)(implicit ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawStream("POST", "/openai/v1/responses", (body.asObject ++ Json.obj("stream" -> true)).some)
+  override protected def responsesRawCall(body: JsValue)(using ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawCall("POST", "/openai/v1/responses", body.some)
+  override protected def responsesRawStream(body: JsValue)(using ec: ExecutionContext, env: Env): Future[WSResponse] = api.rawStream("POST", "/openai/v1/responses", (body.asObject ++ Json.obj("stream" -> true)).some)
 
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     api.rawCall("GET", "/openai/v1/models", None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString))
@@ -347,7 +345,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     }
   }
 
-  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -393,7 +391,6 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
           val newArr = arr ++ Seq(slug)
           obj ++ Json.obj("ai" -> newArr)
         }
-        case Some(other) => other
         case None => Json.obj("ai" -> Seq(slug))
       }
       val messages = resp.body.select("choices").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
@@ -405,7 +402,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
     }
   }
 
-  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
@@ -454,7 +451,6 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
                   val newArr = arr ++ Seq(slug)
                   obj ++ Json.obj("ai" -> newArr)
                 }
-                case Some(other) => other
                 case None => Json.obj("ai" -> Seq(slug))
               }
               true
@@ -543,7 +539,7 @@ class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClien
   override def supportsStt: Boolean = sttOptions.enabled
   override def supportsTranslation: Boolean = translationOptions.enabled
 
-  override def listVoices(raw: Boolean)(implicit ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
+  override def listVoices(raw: Boolean)(using ec: ExecutionContext): Future[Either[JsValue, List[AudioGenVoice]]] = {
     Right(
       List(
         AudioGenVoice("Arista-PlayAI", "Arista-PlayAI"),
@@ -553,7 +549,7 @@ class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClien
     ).vfuture
   }
 
-  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model)
     val prompt = opts.prompt.orElse(sttOptions.prompt)
     val responseFormat = opts.responseFormat.orElse(sttOptions.responseFormat)
@@ -588,18 +584,18 @@ class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClien
           HttpEntity(temperature.toString.byteString),
         )
       }
-    val form = Multipart.FormData(parts: _*)
+    val form = Multipart.FormData(parts*)
     api.rawCallForm("POST", "/openai/v1/audio/translations", form).map { response =>
       if (response.status == 200) {
         val body = response.json
-        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.view.mapValues(_.last).toMap)).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
     }
   }
 
-  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val model = opts.model.orElse(sttOptions.model)
     val language = opts.language.orElse(sttOptions.language)
     val prompt = opts.prompt.orElse(sttOptions.prompt)
@@ -640,18 +636,18 @@ class GroqAudioModelClient(val api: GroqApi, val ttsOptions: GroqAudioModelClien
           HttpEntity(temperature.toString.byteString),
         )
       }
-    val form = Multipart.FormData(parts: _*)
+    val form = Multipart.FormData(parts*)
     api.rawCallForm("POST", "/openai/v1/audio/transcriptions", form).map { response =>
       if (response.status == 200) {
         val body = response.json
-        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.mapValues(_.last))).right
+        AudioTranscriptionResponse(body.select("text").asString, AudioTranscriptionResponseMetadata.fromOpenAiResponse(body.asObject, response.headers.view.mapValues(_.last).toMap)).right
       } else {
         Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
       }
     }
   }
 
-  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
     val instructionsOpt: Option[String] = opts.instructions.orElse(ttsOptions.instructions)
     val responseFormatOpt: Option[String] = opts.responseFormat.orElse(ttsOptions.responseFormat)
     val speedOpt: Option[Double] = opts.speed.orElse(ttsOptions.speed)

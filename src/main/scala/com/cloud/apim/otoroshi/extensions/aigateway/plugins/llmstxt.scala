@@ -1,18 +1,18 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.stream.scaladsl.Sink
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.scaladsl.Sink
 import com.github.blemale.scaffeine.{Cache, Scaffeine}
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 
@@ -123,7 +123,7 @@ class MarkdownAcceptPlugin extends NgBackendCall {
   override def callBackend(
     ctx: NgbBackendCallContext,
     delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]]
-  )(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
 
     val config = ctx.cachedConfig(internalName)(MarkdownAcceptConfig.format).getOrElse(MarkdownAcceptConfig.default)
     val acceptHeader = ctx.request.headers.get("Accept")
@@ -190,12 +190,12 @@ class MarkdownAcceptPlugin extends NgBackendCall {
   private def buildVariantRequest(
     ctx: NgbBackendCallContext,
     variantPath: String
-  )(implicit env: Env): play.api.libs.ws.WSRequest = {
+  )(using env: Env): play.api.libs.ws.WSRequest = {
     val url = s"${ctx.backend.baseUrl}$variantPath"
     val headers = ctx.request.headers.toSeq
 
     env.Ws.url(url)
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withMethod(ctx.request.method)
       .withRequestTimeout(ctx.route.backend.client.callTimeout.millis)
   }
@@ -211,7 +211,7 @@ class MarkdownAcceptPlugin extends NgBackendCall {
         contentLength,
         response.contentType.some
       )
-    ).withHeaders(response.headers.flatMap { case (k, vs) => vs.map(v => (k, v)) }.toSeq: _*)
+    ).withHeaders(response.headers.flatMap { case (k, vs) => vs.map(v => (k, v)) }.toSeq*)
 
     BackendCallResponse(NgPluginHttpResponse.fromResult(result), None)
   }
@@ -219,7 +219,7 @@ class MarkdownAcceptPlugin extends NgBackendCall {
   private def fetchVariant(
     ctx: NgbBackendCallContext,
     variantPath: String
-  )(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     buildVariantRequest(ctx, variantPath)
       .stream()
       .map { response =>
@@ -240,7 +240,7 @@ class MarkdownAcceptPlugin extends NgBackendCall {
     delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]],
     variants: Seq[String],
     cacheInfoOpt: Option[(Cache[String, Option[String]], String)]
-  )(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  )(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
 
     // Check if we have a recent server error cached
     // Use cache key from cacheInfoOpt or build it for error cache lookup

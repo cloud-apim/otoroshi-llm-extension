@@ -6,7 +6,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmVal
 import org.apache.commons.lang3.math.NumberUtils
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, Json}
 
@@ -250,7 +250,7 @@ abstract class HardCodedLLMGuardrail extends Guardrail {
     GuardrailResult.GuardrailDenied(msg).vfuture
   }
 
-  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(_messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val llmValidation = LlmValidationSettings.format.reads(config).getOrElse(LlmValidationSettings())
     llmValidation.provider match {
       case None => pass()

@@ -6,9 +6,9 @@ import otoroshi.models.{EntityLocation, EntityLocationSupport}
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
 import otoroshi.storage.{BasicStore, RedisLike, RedisLikeStore}
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiGatewayExtensionDatastores, AiGatewayExtensionState}
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import scala.util.{Failure, Success, Try}
 
@@ -69,7 +69,7 @@ object Prompt {
         extractIdf = c => datastores.promptsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, _, _) => {
           Prompt(
             id = IdGenerator.namedId("prompt", env),
             name = "Prompt",
@@ -99,7 +99,7 @@ class KvPromptDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _env
   extends PromptDataStore
     with RedisLikeStore[Prompt] {
   override def fmt: Format[Prompt]                  = Prompt.format
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
   override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:prompts:$id"
   override def extractId(value: Prompt): String    = value.id
 }

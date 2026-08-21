@@ -2,16 +2,16 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.ImageModelClient
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ImageModelClientDecorators
-import com.cloud.apim.otoroshi.extensions.aigateway.providers._
-import otoroshi.api._
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
+import otoroshi.api.*
 import otoroshi.env.Env
-import otoroshi.models._
+import otoroshi.models.*
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
-import otoroshi.storage._
-import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
-import play.api.libs.json._
+import otoroshi.storage.*
+import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.*
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
@@ -35,7 +35,7 @@ case class ImageModel(
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
   def slugName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
-  def getImageModelClient()(implicit env: Env): Option[ImageModelClient] = {
+  def getImageModelClient()(using env: Env): Option[ImageModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val genOptions = config.select("options").select("generation").asOpt[JsObject].getOrElse(Json.obj())
     val editOptions = config.select("options").select("edition").asOpt[JsObject].getOrElse(Json.obj())
@@ -64,34 +64,34 @@ object ImageModel {
   // `supportedProviders` (and the providers catalog) is derived from these keys.
   val clientBuilders: Map[String, ImageModel.ClientContext => Option[ImageModelClient]] = Map(
     "openai" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
       val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
       val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
       new OpenAiImageModelClient(api, opts, editOpts, id).some
     },
     "gemini" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Gemini", env = env)
       val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
       val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
       new OpenAiImageModelClient(api, opts, editOpts, id).some
     },
     "cloud-temple" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
       val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
       val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
       new OpenAiImageModelClient(api, opts, editOpts, id).some
     },
     "x-ai" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val opts = XAiImageModelClientOptions.fromJson(genOptions)
       new XAiImageModelClient(api, opts, id).some
     },
     "azure-openai" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val resourceName = connection.select("resource_name").as[String]
       val deploymentId = connection.select("deployment_id").as[String]
       val version = connection.select("api_version").asOpt[String].getOrElse("2024-02-01")
@@ -102,32 +102,32 @@ object ImageModel {
       new AzureOpenAiImageModelClient(api, opts, id).some
     },
     "luma" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val opts = LumaImageModelClientOptions.fromJson(genOptions)
       new LumaImageModelClient(api, opts, id).some
     },
     "leonardo-ai" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new LeonardoAIApi(baseUrl.getOrElse(LeonardoAIApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val opts = LeonardoAIImagesGenModelClientOptions.fromJson(genOptions)
       new LeonardoAIImageModelClient(api, opts, id).some
     },
     "hive" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new HiveApi(baseUrl.getOrElse(HiveApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val opts = HiveImageModelClientOptions.fromJson(genOptions)
       new HiveImageModelClient(api, opts, id).some
     },
     "openrouter" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
       val opts = OpenRouterImageModelClientOptions.fromJson(genOptions)
       val editOpts = OpenRouterImageModelClientOptions.fromJson(editOptions)
       new OpenRouterImageModelClient(api, opts, editOpts, id).some
     },
     "openai-compatible" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       // generic OpenAI-compatible image endpoint: base url, display name, headers and param
       // mappings are all driven by the connection config (dynamic name).
       val providerName = connection.select("provider_name").asOpt[String]
@@ -151,7 +151,7 @@ object ImageModel {
       new OpenAiImageModelClient(api, opts, editOpts, id).some
     },
     "ovh-ai-endpoints" -> { (c: ClientContext) =>
-      import c._
+      import c.*
       // OVH AI Endpoints images go through their unified OpenAI-compatible API
       val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
       val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
@@ -204,7 +204,7 @@ object ImageModel {
         extractIdf = c => datastores.imageModelsDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, p, _) => {
           p.get("kind").map(_.toLowerCase()) match {
             case Some("openai") => ImageModel(
               id = IdGenerator.namedId("image-model", env),
@@ -280,7 +280,7 @@ class KvImageModelsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike,
   extends ImageModelsDataStore
     with RedisLikeStore[ImageModel] {
   override def fmt: Format[ImageModel]                  = ImageModel.format
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
   override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:imagemodels:$id"
   override def extractId(value: ImageModel): String    = value.id
 }

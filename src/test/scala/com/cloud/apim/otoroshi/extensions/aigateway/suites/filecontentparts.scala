@@ -1,8 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessageContent, ChatMessageContentFlavor, InputChatMessage}
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
 // Pure unit tests for file content parts: openai `file` (chat/completions) and `input_file` (responses)
 // shapes must be parsed and then serialized with the right flavor for the target provider.

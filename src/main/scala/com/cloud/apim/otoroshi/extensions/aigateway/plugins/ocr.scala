@@ -1,16 +1,16 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, OcrModelClientInputOptions}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.OcrModel
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.http._
-import play.api.libs.json._
+import play.api.http.*
+import play.api.libs.json.*
 import play.api.mvc.{RequestHeader, Result, Results}
 import play.core.parsers.Multipart
 
@@ -55,7 +55,7 @@ object OpenAICompatOcrConfig {
     }
   }
 
-  def resolveProvider(jsonBody: JsObject, config: OpenAICompatOcrConfig)(implicit ec: ExecutionContext, env: Env): Option[OcrModel] = {
+  def resolveProvider(jsonBody: JsObject, config: OpenAICompatOcrConfig)(using ec: ExecutionContext, env: Env): Option[OcrModel] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap(r => ext.states.ocrModel(r))
       .orElse(config.refs.headOption.flatMap(r => ext.states.ocrModel(r)))
@@ -64,7 +64,7 @@ object OpenAICompatOcrConfig {
 
 object OpenAICompatOcr {
 
-  def handleRequest(config: OpenAICompatOcrConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: OpenAICompatOcrConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val isMultipart = ctx.rawRequest.contentType.exists(_.toLowerCase.contains("multipart/form-data"))
     if (isMultipart) {
       Multipart.multipartParser(
@@ -100,7 +100,7 @@ object OpenAICompatOcr {
     }
   }
 
-  private def executeOcr(config: OpenAICompatOcrConfig, jsonBody: JsObject, fileBytes: Option[ByteString], fileContentType: Option[String], fileName: Option[String], ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  private def executeOcr(config: OpenAICompatOcrConfig, jsonBody: JsObject, fileBytes: Option[ByteString], fileContentType: Option[String], fileName: Option[String], ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     OpenAICompatOcrConfig.resolveProvider(jsonBody, config) match {
       case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider not found"))).leftf
       case Some(model) => model.getOcrModelClient() match {
@@ -142,7 +142,7 @@ class OpenAICompatOcr extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(OpenAICompatOcrConfig.format).getOrElse(OpenAICompatOcrConfig.default)
     OpenAICompatOcr.handleRequest(config, ctx)
   }

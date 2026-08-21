@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.models.EntityLocation
-import otoroshi.next.models._
+import otoroshi.next.models.*
 import otoroshi.utils.syntax.implicits.BetterFuture
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy
 import play.api.libs.json.Json
@@ -186,11 +186,9 @@ class LoadBalancerSuite extends LlmExtensionOneOtoroshiServerPerSuite {
         ))
       ))).awaitf(30.seconds)
     }
-    val counterFoo = new AtomicInteger(0)
-    val counterBar = new AtomicInteger(0)
     val counterOllama1 = new AtomicInteger(0)
     val counterOllama2 = new AtomicInteger(0)
-    for (i <- 0 until 20) {
+    for (_ <- 0 until 20) {
       val res = call("foo")
       val body = res.body
       assertEquals(res.status, 200, "status should be 200")

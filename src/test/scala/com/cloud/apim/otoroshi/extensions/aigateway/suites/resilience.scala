@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.models.EntityLocation
-import otoroshi.next.models._
+import otoroshi.next.models.*
 import otoroshi.utils.syntax.implicits.BetterFuture
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy
 import play.api.libs.json.Json

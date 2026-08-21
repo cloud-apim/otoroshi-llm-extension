@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.OpenAiLikeProviders
-import play.api.libs.json._
+import play.api.libs.json.*
 
 /**
  * Catalog of every provider type Otoroshi LLM can talk to, together with the modalities

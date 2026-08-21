@@ -2,15 +2,14 @@ package com.cloud.apim.otoroshi.extensions.aigateway.assistant.logic
 
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools.ToolCallContext
 import otoroshi.env.Env
-import otoroshi.models.{ApiKey, BackOfficeUser}
-import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import otoroshi.models.ApiKey
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
 import java.net.URI
-import java.util.Base64
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.concurrent.{ExecutionContext, Future}
+import play.api.libs.ws.WSBodyWritables.given
 
 case class AdminCredentials(baseUrl: String, apikey: ApiKey) {
   def bearer: String = apikey.toBearer()
@@ -82,7 +81,7 @@ object AdminClient {
     if (parts.isEmpty) "" else parts.mkString("?", "&", "")
   }
 
-  def request(creds: AdminCredentials, method: String, path: String, opts: CallOptions = CallOptions())(implicit ec: ExecutionContext, env: Env): Future[Either[String, AdminResponse]] = {
+  def request(creds: AdminCredentials, method: String, path: String, opts: CallOptions = CallOptions())(using ec: ExecutionContext, env: Env): Future[Either[String, AdminResponse]] = {
     val resolvedPath = try interpolatePath(path, opts.pathParams) catch { case e: IllegalArgumentException => return Left(e.getMessage).vfuture }
     if (resolvedPath.matches("(?i)^[a-z][a-z0-9+.-]*:.*")) return Left(s"Refusing absolute URL in path: $resolvedPath").vfuture
     if (resolvedPath.startsWith("//")) return Left(s"Refusing protocol-relative path: $resolvedPath").vfuture
@@ -102,7 +101,7 @@ object AdminClient {
     val finalHeaders = if (hasBody) baseHeaders + ("Content-Type" -> "application/json") else baseHeaders
 
     var builder = env.Ws.url(finalUrl)
-      .withHttpHeaders(finalHeaders.toSeq: _*)
+      .withHttpHeaders(finalHeaders.toSeq*)
       .withMethod(httpMethod)
       .withRequestTimeout(defaultRequestTimeout)
       .withFollowRedirects(false)
@@ -123,7 +122,7 @@ object AdminClient {
     }.recover { case t: Throwable => Left(s"http call failed: ${t.getMessage}") }
   }
 
-  def call(creds: AdminCredentials, catalog: Catalog.Document, operationId: String, opts: CallOptions = CallOptions())(implicit ec: ExecutionContext, env: Env): Future[Either[String, AdminResponse]] = {
+  def call(creds: AdminCredentials, catalog: Catalog.Document, operationId: String, opts: CallOptions = CallOptions())(using ec: ExecutionContext, env: Env): Future[Either[String, AdminResponse]] = {
     catalog.byOperationId.get(operationId) match {
       case None => Left(s"Unknown operationId '$operationId'. Use the 'search' tool to discover operations.").vfuture
       case Some(op) => request(creds, op.method, op.path, opts)

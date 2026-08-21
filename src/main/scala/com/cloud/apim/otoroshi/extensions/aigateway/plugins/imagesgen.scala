@@ -1,17 +1,17 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.stream.scaladsl.FileIO
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AudioModel, ImageModel}
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.scaladsl.FileIO
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.ImageModel
 import com.cloud.apim.otoroshi.extensions.aigateway.{ImageFile, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions}
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.http.HttpErrorHandler
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.{RequestHeader, Result, Results}
 import play.core.parsers.Multipart
 
@@ -64,7 +64,7 @@ object OpenAiCompatImagesGenConfig {
     }
   }
 
-  def getProvidersMap(config: OpenAiCompatImagesGenConfig)(implicit ec: ExecutionContext, env: Env): (Map[String, ImageModel], Map[String, ImageModel]) = {
+  def getProvidersMap(config: OpenAiCompatImagesGenConfig)(using ec: ExecutionContext, env: Env): (Map[String, ImageModel], Map[String, ImageModel]) = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val providers = config.refs.flatMap(ref => ext.states.imageModel(ref))
     val providersByName = providers.map { provider =>
@@ -75,7 +75,7 @@ object OpenAiCompatImagesGenConfig {
     (providersById, providersByName)
   }
 
-  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAiCompatImagesGenConfig)(implicit ec: ExecutionContext, env: Env): JsValue = {
+  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAiCompatImagesGenConfig)(using ec: ExecutionContext, env: Env): JsValue = {
     _jsonBody.select("model").asOpt[String] match {
       case Some(value) if value.contains("###") => {
         val parts = value.split("###")
@@ -113,7 +113,7 @@ object OpenAiCompatImagesGenConfig {
 }
 
 object OpenAICompatImagesGen {
-  def handleRequest(config: OpenAiCompatImagesGenConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: OpenAiCompatImagesGenConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
       val _jsonBody = bodyRaw.utf8String.parseJson
@@ -174,7 +174,7 @@ class OpenAICompatImagesGen extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(OpenAiCompatImagesGenConfig.format).getOrElse(OpenAiCompatImagesGenConfig.default)
     OpenAICompatImagesGen.handleRequest(config, ctx)
   }
@@ -219,7 +219,7 @@ object OpenAICompatImagesEditConfig {
     }
   }
 
-  def getProvidersMap(config: OpenAICompatImagesEditConfig)(implicit ec: ExecutionContext, env: Env): (Map[String, ImageModel], Map[String, ImageModel]) = {
+  def getProvidersMap(config: OpenAICompatImagesEditConfig)(using ec: ExecutionContext, env: Env): (Map[String, ImageModel], Map[String, ImageModel]) = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val providers = config.refs.flatMap(ref => ext.states.imageModel(ref))
     val providersByName = providers.map { provider =>
@@ -230,7 +230,7 @@ object OpenAICompatImagesEditConfig {
     (providersById, providersByName)
   }
 
-  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatImagesEditConfig)(implicit ec: ExecutionContext, env: Env): JsValue = {
+  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatImagesEditConfig)(using ec: ExecutionContext, env: Env): JsValue = {
     _jsonBody.select("model").asOpt[String] match {
       case Some(value) if value.contains("###") => {
         val parts = value.split("###")
@@ -269,7 +269,7 @@ object OpenAICompatImagesEditConfig {
 
 
 object OpenAICompatImagesEdit {
-  def handleRequest(config: OpenAICompatImagesEditConfig, ctx: NgbBackendCallContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def handleRequest(config: OpenAICompatImagesEditConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     Multipart.multipartParser(
       config.maxSizeUpload,
@@ -354,7 +354,7 @@ class OpenAICompatImagesEdit extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(OpenAICompatImagesEditConfig.format).getOrElse(OpenAICompatImagesEditConfig.default)
     OpenAICompatImagesEdit.handleRequest(config, ctx)
   }

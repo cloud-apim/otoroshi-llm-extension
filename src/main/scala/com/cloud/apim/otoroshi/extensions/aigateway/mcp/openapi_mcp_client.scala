@@ -6,19 +6,20 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
 import dev.langchain4j.invocation.InvocationContext
-import dev.langchain4j.mcp.client._
-import dev.langchain4j.model.chat.request.json._
+import dev.langchain4j.mcp.client.*
+import dev.langchain4j.model.chat.request.json.*
 import dev.langchain4j.service.tool.ToolExecutionResult
 import otoroshi.env.Env
 import otoroshi.utils.RegexPool
-import otoroshi.utils.syntax.implicits._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import play.api.libs.json.*
 
 import java.{util => ju}
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters.*
 import scala.collection.concurrent.TrieMap
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.concurrent.{Await, ExecutionContext, Future}
+import play.api.libs.ws.WSBodyWritables.given
 
 /**
  * Converts an OpenAPI / JSON-Schema fragment (Play JSON) into a langchain4j `JsonSchemaElement`.
@@ -223,8 +224,7 @@ object OpenApiMcpClient {
 
 class OpenApiMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) extends McpClient {
 
-  private implicit val _env: Env = env
-  private implicit val _ec: ExecutionContext = ec
+  private given _ec: ExecutionContext = ec
 
   private def opts = connector.transport.openapiOptions
 
@@ -512,7 +512,7 @@ class OpenApiMcpClient(connector: McpConnector, env: Env, ec: ExecutionContext) 
               val hasBody = body.isDefined && method != "GET" && method != "HEAD"
               val headers = Map("Accept" -> "application/json") ++ opts.headers ++ headerParams.toMap ++ (if (hasBody) Map("Content-Type" -> "application/json") else Map.empty)
               var builder = env.Ws.url(finalUrl)
-                .withHttpHeaders(headers.toSeq: _*)
+                .withHttpHeaders(headers.toSeq*)
                 .withMethod(method)
                 .withRequestTimeout(opts.timeout)
                 .withFollowRedirects(false)

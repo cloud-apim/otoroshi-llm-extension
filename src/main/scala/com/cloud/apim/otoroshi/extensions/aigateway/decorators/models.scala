@@ -1,13 +1,13 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
+import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.AiMetrics
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel, ModelSettings, ModerationModel, VideoModel}
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioGenModel, AudioGenVoice, AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.{JsObject, JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -25,7 +25,7 @@ object ChatClientWithModelConstraints {
 class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
   // Left when the requested model is outside the allow-list of the provider, the apikey or the user
-  private def checkModel(originalBody: JsValue, attrs: TypedMap)(implicit env: Env): Either[JsValue, Unit] = {
+  private def checkModel(originalBody: JsValue, attrs: TypedMap)(using env: Env): Either[JsValue, Unit] = {
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     originalBody.select("model").asOptString.orElse(chatClient.computeModel(originalBody)) match {
@@ -35,21 +35,21 @@ class ChatClientWithModelConstraints(originalProvider: AiProvider, val chatClien
     }
   }
 
-  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     checkModel(originalBody, attrs) match {
       case Left(err) => err.leftf
       case Right(_) => chatClient.invoke(kind, prompt, attrs, originalBody)
     }
   }
 
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     checkModel(originalBody, attrs) match {
       case Left(err) => err.leftf
       case Right(_) => chatClient.invokeStream(kind, prompt, attrs, originalBody)
     }
   }
 
-  override def listModels(raw: Boolean, attrs: TypedMap)(implicit ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     chatClient.listModels(raw, attrs).map {
@@ -75,7 +75,7 @@ object EmbeddingModelClientWithModels {
 }
 
 class EmbeddingModelClientWithModels(originalModel: EmbeddingModel, val embeddingModelClient: EmbeddingModelClient) extends DecoratorEmbeddingModelClient {
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
@@ -94,7 +94,7 @@ object AudioModelClientWithModels {
 
 class AudioModelClientWithModels(originalModel: AudioModel, val audioModelClient: AudioModelClient) extends DecoratorAudioModelClient {
 
-  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
@@ -104,7 +104,7 @@ class AudioModelClientWithModels(originalModel: AudioModel, val audioModelClient
     }
   }
 
-  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
@@ -114,7 +114,7 @@ class AudioModelClientWithModels(originalModel: AudioModel, val audioModelClient
     }
   }
 
-  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
@@ -133,7 +133,7 @@ object ImageModelClientWithModels {
 
 class ImageModelClientWithModels(originalModel: ImageModel, val imageModelClient: ImageModelClient) extends DecoratorImageModelClient {
 
-  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
@@ -143,7 +143,7 @@ class ImageModelClientWithModels(originalModel: ImageModel, val imageModelClient
     }
   }
 
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
@@ -161,7 +161,7 @@ object ModerationModelClientWithModels {
 }
 
 class ModerationModelClientWithModels(originalModel: ModerationModel, val moderationModelClient: ModerationModelClient) extends DecoratorModerationModelClient {
-  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
+  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
    val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {
@@ -179,7 +179,7 @@ object VideoModelClientWithModels {
 }
 
 class VideoModelClientWithModels(originalModel: VideoModel, val videoModelClient: VideoModelClient) extends DecoratorVideoModelClient {
-  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
+  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
     val apikeyModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.ApiKeyKey))
     val userModels = ModelSettings.fromEntity(attrs.get(otoroshi.plugins.Keys.UserKey))
     opts.model match {

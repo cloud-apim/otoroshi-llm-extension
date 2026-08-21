@@ -1,14 +1,14 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.{Sink, Source, StreamConverters}
-import akka.util.ByteString
+import org.apache.pekko.stream.scaladsl.{Sink, Source, StreamConverters}
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import play.api.Configuration
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, JsValue, Json}
 import play.api.libs.typedmap.TypedKey
@@ -16,6 +16,7 @@ import play.api.libs.typedmap.TypedKey
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.concurrent.duration.DurationInt
+import org.apache.pekko.stream.Materializer
 
 case class CostsTrackingSettings(configuration: Configuration) {
   val embedDescriptionInJson = configuration.getOptional[Boolean]("embed-description-in-json").getOrElse(true)
@@ -122,8 +123,8 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
   val models: Map[String, CostModel] = litllmModels ++ customModels ++ userProvidedModels
 
   def getResourceCode(path: String): String = {
-    implicit val ec = env.otoroshiExecutionContext
-    implicit val mat = env.otoroshiMaterializer
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given mat: Materializer = env.otoroshiMaterializer
     env.environment.resourceAsStream(path)
       .map(stream => StreamConverters.fromInputStream(() => stream).runFold(ByteString.empty)(_++_).awaitf(10.seconds).utf8String)
       .getOrElse(s"'resource ${path} not found !'")
@@ -206,11 +207,11 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     if (allowConfigOverride) originalBody.select("model").asOptString.getOrElse(chatClient.computeModel(originalBody).getOrElse("--")) else chatClient.computeModel(originalBody).getOrElse("--")
   }
 
-  def getProvider()(implicit env: Env): Option[String] = {
+  def getProvider()(using env: Env): Option[String] = {
     env.adminExtensions.extension[AiExtension].flatMap(ext => ext.costsTracking.getProvider(originalProvider.provider))
   }
 
-  private def handleStream(attrs: TypedMap, originalBody: JsValue)(f: => Future[Either[JsValue, Source[ChatResponseChunk, _]]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  private def handleStream(attrs: TypedMap, originalBody: JsValue)(f: => Future[Either[JsValue, Source[ChatResponseChunk, ?]]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     getProvider() match {
       case None => f // unsupported provider
       case Some(provider) => {
@@ -225,7 +226,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
             val budgetInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_budget")).contains("true")
             val addCostsInResp = ext.costsTrackingSettings.embedCostsTrackingInResponses || enableInRequest
             if (ext.costsTracking.canHandle(finalProvider, model)) {
-              resp.applyOnIf(addCostsInResp) { src =>
+              (resp: Source[ChatResponseChunk, Any]).applyOnIf(addCostsInResp) { src =>
                 src.map(r => r.copy(choices = r.choices.map(c => c.copy(finishReason = None))))
               }.alsoTo(Sink.onComplete { _ =>
                 val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
@@ -268,7 +269,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     }
   }
 
-  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val budgetInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_budget")).contains("true")
     getProvider() match {
       case None => chatClient.invoke(kind, prompt, attrs, originalBody) // unsupported provider
@@ -285,7 +286,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
               outputTokens = usage.generationTokens,
               reasoningTokens = usage.reasoningTokens
             ) match {
-              case Left(err) =>
+              case Left(_) =>
                 Right(resp.copy(metadata = resp.metadata.copy(budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest))))
               case Right(costs) => {
                 attrs.put(ChatClientWithCostsTracking.key -> costs)
@@ -303,7 +304,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     }
   }
 
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     handleStream(attrs, originalBody) {
       chatClient.invokeStream(kind, prompt, attrs, originalBody)
     }

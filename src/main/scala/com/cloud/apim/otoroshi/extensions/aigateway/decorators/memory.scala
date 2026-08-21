@@ -1,17 +1,16 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.{Sink, Source}
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.el.GlobalExpressionLanguage
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
-import scala.tools.nsc.Global
 
 object ChatClientWithPersistentMemory {
   def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
@@ -26,7 +25,7 @@ object ChatClientWithPersistentMemory {
 class ChatClientWithPersistentMemory(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
   // resolves the memory client and the session id, then hands them to `f`
-  private def withMemory[T](attrs: TypedMap)(f: (PersistentMemoryClient, String) => Future[Either[JsValue, T]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
+  private def withMemory[T](attrs: TypedMap)(f: (PersistentMemoryClient, String) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val ref = originalProvider.memory.get
     env.adminExtensions.extension[AiExtension].get.states.persistentMemory(ref) match {
       case None => Json.obj("error" -> "memory provider not found").leftf
@@ -52,7 +51,7 @@ class ChatClientWithPersistentMemory(originalProvider: AiProvider, val chatClien
     }
   }
 
-  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     withMemory[ChatResponse](attrs) { (memClient, sessionId) =>
       memClient.getMessages(sessionId).flatMap {
         case Left(error) => error.leftf
@@ -75,8 +74,8 @@ class ChatClientWithPersistentMemory(originalProvider: AiProvider, val chatClien
     }
   }
 
-  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
-    withMemory[Source[ChatResponseChunk, _]](attrs) { (memClient, sessionId) =>
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
+    withMemory[Source[ChatResponseChunk, ?]](attrs) { (memClient, sessionId) =>
       memClient.getMessages(sessionId).flatMap {
         case Left(error) => error.leftf
         case Right(memoryMessages) => {

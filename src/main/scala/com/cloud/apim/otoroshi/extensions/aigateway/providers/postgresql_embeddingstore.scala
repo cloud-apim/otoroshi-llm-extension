@@ -1,10 +1,10 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.{ExecutionContext, Future}
@@ -17,8 +17,8 @@ object PostgresqlEmbeddingStoreClient {
 
 class PostgresqlEmbeddingStoreClient(val config: JsObject, _storeId: String) extends EmbeddingStoreClient {
 
-  import PgPoolManager._
-  import PostgresqlEmbeddingStoreClient._
+  import PgPoolManager.*
+  import PostgresqlEmbeddingStoreClient.*
 
   private lazy val connection: JsObject = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
   private lazy val uri: String = connection.select("uri").asOptString.getOrElse("postgresql://otoroshi:otoroshi@localhost:5432/otoroshi")
@@ -32,7 +32,7 @@ class PostgresqlEmbeddingStoreClient(val config: JsObject, _storeId: String) ext
   private def parseVector(str: String): Array[Float] =
     str.stripPrefix("[").stripSuffix("]").split(",").map(_.trim.toFloat)
 
-  private def ensureTable()(implicit ec: ExecutionContext): Future[Unit] = {
+  private def ensureTable()(using ec: ExecutionContext): Future[Unit] = {
     val key = s"$uri:$table"
     if (verifiedTables.contains(key)) {
       Future.successful(())
@@ -55,7 +55,7 @@ class PostgresqlEmbeddingStoreClient(val config: JsObject, _storeId: String) ext
     }
   }
 
-  override def add(options: EmbeddingAddOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def add(options: EmbeddingAddOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     ensureTable().flatMap { _ =>
       val vectorStr = vectorToString(options.embedding.vector)
       exec(pool,
@@ -67,7 +67,7 @@ class PostgresqlEmbeddingStoreClient(val config: JsObject, _storeId: String) ext
     }
   }
 
-  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     exec(pool, s"DELETE FROM $table WHERE id = $$1", Seq(options.id))
       .map(_ => Right(()))
       .recover { case e: Throwable =>
@@ -75,7 +75,7 @@ class PostgresqlEmbeddingStoreClient(val config: JsObject, _storeId: String) ext
       }
   }
 
-  override def search(options: EmbeddingSearchOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
+  override def search(options: EmbeddingSearchOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
     ensureTable().flatMap { _ =>
       val vectorStr = vectorToString(options.embedding.vector)
       query(pool,

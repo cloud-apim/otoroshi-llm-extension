@@ -1,14 +1,14 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
+import org.apache.pekko.stream.Materializer
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage}
 import otoroshi.env.Env
 import otoroshi.next.plugins.BodyHelper
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -16,7 +16,7 @@ import scala.util.{Failure, Success, Try}
 
 case class AiResponseGeneratorConfig(ref: String = "", _prompt: String = "", promptRef: Option[String] = None, contextRef: Option[String] = None, isResponse: Boolean = false, status: Int = 200, headers: Map[String, String] = Map.empty) extends NgPluginConfig {
   def json: JsValue = AiResponseGeneratorConfig.format.writes(this)
-  def prompt(implicit env: Env): String = promptRef match {
+  def prompt(using env: Env): String = promptRef match {
     case None => _prompt
     case Some(ref) => env.adminExtensions.extension[AiExtension] match {
       case None => _prompt
@@ -26,7 +26,7 @@ case class AiResponseGeneratorConfig(ref: String = "", _prompt: String = "", pro
       }
     }
   }
-  def preChatMessages(implicit env: Env): Seq[InputChatMessage] = {
+  def preChatMessages(using env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -38,7 +38,7 @@ case class AiResponseGeneratorConfig(ref: String = "", _prompt: String = "", pro
       }
     }
   }
-  def postChatMessages(implicit env: Env): Seq[InputChatMessage] = {
+  def postChatMessages(using env: Env): Seq[InputChatMessage] = {
     contextRef match {
       case None => Seq.empty
       case Some(ref) => env.adminExtensions.extension[AiExtension] match {
@@ -158,7 +158,7 @@ class AiResponseGenerator extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(AiResponseGeneratorConfig.format).getOrElse(AiResponseGeneratorConfig.default)
     env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref)) match {
       case None => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "provider not found")))).vfuture // TODO: rewrite error
@@ -177,15 +177,15 @@ class AiResponseGenerator extends NgBackendCall {
                 .getOrElse(Map("Content-Type" -> "application/json"))
               val contentType = headers.getIgnoreCase("Content-Type").getOrElse("application/json")
               Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
-                Results.Status(status)(body).withHeaders(headers.toSeq: _*).as(contentType)
+                Results.Status(status)(body).withHeaders(headers.toSeq*).as(contentType)
               ), None))
             }
-            case Right(resp) if !config.isResponse => {
+            case Right(resp) => {
               val status = config.status
               val headers = config.headers
               val contentType = headers.getIgnoreCase("Content-Type").orElse(headers.get("content-type")).getOrElse("application/json")
               Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
-                Results.Status(status)(resp.headGeneration.message.content.byteString).withHeaders(headers.toSeq: _*).as(contentType)
+                Results.Status(status)(resp.headGeneration.message.content.byteString).withHeaders(headers.toSeq*).as(contentType)
               ), None))
             }
           }

@@ -6,18 +6,19 @@ import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, Ch
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.{JsArray, JsObject}
 
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ExecutionContext, Future}
+import play.api.libs.ws.WSBodyWritables.given
 
 object WebhookGuardrail {
   val cache = Scaffeine()
     .expireAfter[String, (FiniteDuration, Boolean)](
-      create = (key, value) => value._1,
-      update = (key, value, currentDuration) => currentDuration,
-      read = (key, value, currentDuration) => currentDuration
+      create = (_, value) => value._1,
+      update = (_, _, currentDuration) => currentDuration,
+      read = (_, _, currentDuration) => currentDuration
     )
     .maximumSize(5000)
     .build[String, (FiniteDuration, Boolean)]()
@@ -31,7 +32,7 @@ class WebhookGuardrail extends Guardrail {
 
   override def manyMessages: Boolean = true
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val key = messages.map(m => s"${m.role}:${m.wholeTextContent}").mkString(",").sha512
     val httpValidation = HttpValidationSettings.format.reads(config).getOrElse(HttpValidationSettings())
     httpValidation.url match {
@@ -47,7 +48,7 @@ class WebhookGuardrail extends Guardrail {
             }
             env.Ws
               .url(httpValidation.url.get)
-              .withHttpHeaders(httpValidation.headers.toSeq: _*)
+              .withHttpHeaders(httpValidation.headers.toSeq*)
               .post(JsArray(arr)).flatMap { resp =>
                 if (resp.status != 200) {
                   WebhookGuardrail.cache.put(key, (httpValidation.ttl, false))

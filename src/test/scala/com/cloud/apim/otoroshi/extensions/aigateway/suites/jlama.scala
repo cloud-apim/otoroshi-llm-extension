@@ -5,7 +5,6 @@ import com.github.tjake.jlama.safetensors.DType
 import com.github.tjake.jlama.safetensors.prompt.PromptContext
 import com.github.tjake.jlama.util.Downloader
 
-import java.lang.management.ManagementFactory
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.function.BiConsumer
@@ -36,7 +35,7 @@ class JlamaSuite extends munit.FunSuite {
       println("=========================================================")
       println(s"[$i] Start")
       val counter = new AtomicInteger(0)
-      val r = m.generate(UUID.randomUUID(), ctx, 0.8f, 500, new BiConsumer[java.lang.String, java.lang.Float] {
+      val _ = m.generate(UUID.randomUUID(), ctx, 0.8f, 500, new BiConsumer[java.lang.String, java.lang.Float] {
         override def accept(t: java.lang.String, u: java.lang.Float): Unit = {
           counter.incrementAndGet()
           //println(s"on: ${t} - ${u}")

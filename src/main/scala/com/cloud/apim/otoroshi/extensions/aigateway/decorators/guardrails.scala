@@ -1,12 +1,12 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatCallKind, ChatClient, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata, InputChatMessage, OutputChatMessage}
-import com.cloud.apim.otoroshi.extensions.aigateway.guardrails._
+import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.*
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.{Format, JsArray, JsError, JsObject, JsResult, JsSuccess, JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -76,7 +76,7 @@ case class Guardrails(items: Seq[GuardrailItem]) {
   def isEmpty: Boolean = items.isEmpty
   def json: JsValue = Guardrails.format.writes(this)
 
-  def call(callPhase: GuardrailsCallPhase, messages: Seq[ChatMessage], originalProvider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  def call(callPhase: GuardrailsCallPhase, messages: Seq[ChatMessage], originalProvider: AiProvider, chatClient: ChatClient, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
 
     val allGuardrails = originalProvider.guardrails.items.filter(_.enabled).flatMap { item =>
       Guardrails.possibleGuardrails.get(item.guardrailId).map(guardrail => (item, guardrail))
@@ -192,7 +192,7 @@ trait Guardrail {
   def isBefore: Boolean
   def isAfter: Boolean
   def manyMessages: Boolean
-  def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult]
+  def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[GuardrailResult]
 }
 
 class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
@@ -205,7 +205,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
 
   // resolves the Before phase: Left = short-circuit result to render (deny/error),
   // Right = the effective prompt to forward (original on pass, rewritten on transform)
-  private def resolveBefore(originalPrompt: ChatPrompt, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[GuardrailResult, ChatPrompt]] = {
+  private def resolveBefore(originalPrompt: ChatPrompt, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[GuardrailResult, ChatPrompt]] = {
     originalProvider.guardrails.call(GuardrailsCallPhase.Before, originalPrompt.messages, originalProvider, chatClient, attrs).map {
       case GuardrailResult.GuardrailPass => Right(originalPrompt)
       case GuardrailResult.GuardrailTransform(newMessages) => Right(originalPrompt.copy(messages = newMessages.collect { case i: InputChatMessage => i }))
@@ -214,7 +214,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
   }
 
   // runs the After phase on a (non-streamed) response, re-inflating placeholders when a guardrail transforms the output
-  private def runAfter(r: ChatResponse, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  private def runAfter(r: ChatResponse, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     originalProvider.guardrails.call(GuardrailsCallPhase.After, r.generations.map(_.message), originalProvider, chatClient, attrs).map {
       case GuardrailResult.GuardrailError(err) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "after"))
       case GuardrailResult.GuardrailDenied(msg) if originalProvider.guardrailsFailOnDeny => Left(Json.obj("error" -> "guardrail_denied", "error_description" -> msg, "phase" -> "after"))
@@ -230,7 +230,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
     }
   }
 
-  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     resolveBefore(originalPrompt, attrs).flatMap {
       case Left(GuardrailResult.GuardrailError(err)) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
       case Left(GuardrailResult.GuardrailDenied(msg)) if originalProvider.guardrailsFailOnDeny => Left(Json.obj("error" -> "guardrail_denied", "error_description" -> msg, "phase" -> "before")).vfuture
@@ -243,7 +243,7 @@ class ChatClientWithGuardrailsValidation(originalProvider: AiProvider, val chatC
     }
   }
 
-  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     resolveBefore(originalPrompt, attrs).flatMap {
       case Left(GuardrailResult.GuardrailError(err)) => Left(Json.obj("error" -> "bad_request", "error_description" -> err, "phase" -> "before")).vfuture
       case Left(GuardrailResult.GuardrailDenied(msg)) => Right(deniedResponse(msg).toSource(originalBody.select("model").asOpt[String].getOrElse("model"))).vfuture

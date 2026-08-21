@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
-import akka.stream.scaladsl.{Sink, Source}
-import com.cloud.apim.otoroshi.extensions.aigateway.a2a._
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
+import com.cloud.apim.otoroshi.extensions.aigateway.a2a.*
 import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
 import otoroshi.env.Env
 import otoroshi.models.{EntityLocation, EntityLocationSupport}
@@ -10,13 +10,13 @@ import otoroshi.next.models.NgTlsConfig
 import otoroshi.security.IdGenerator
 import otoroshi.storage.{BasicStore, RedisLike, RedisLikeStore}
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiExtension, AiGatewayExtensionDatastores, AiGatewayExtensionState}
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.libs.typedmap.TypedKey
 
 import java.util.Base64
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.concurrent.{Await, ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
@@ -201,7 +201,7 @@ object A2AServer {
         extractIdf = c => datastores.a2aServersDatastore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, _, _) => {
           A2AServer(
             id = IdGenerator.namedId("a2a-server", env),
             enabled = true,
@@ -243,7 +243,7 @@ class KvA2AServersDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, 
   extends A2AServersDataStore
     with RedisLikeStore[A2AServer] {
   override def fmt: Format[A2AServer] = A2AServer.format
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
   override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:a2asrv:$id"
   override def extractId(value: A2AServer): String = value.id
 }
@@ -338,7 +338,7 @@ case class A2AConnector(
     }
 
   // resolve outgoing auth headers; oauth2_client_credentials fetches (and caches) a token asynchronously
-  def resolveHeaders()(implicit ec: ExecutionContext, env: Env): Future[Seq[(String, String)]] = {
+  def resolveHeaders()(using ec: ExecutionContext, env: Env): Future[Seq[(String, String)]] = {
     authentication.kind.toLowerCase match {
       case "oauth2_client_credentials" =>
         (authentication.tokenUrl, authentication.clientId, authentication.clientSecret) match {
@@ -354,7 +354,7 @@ case class A2AConnector(
   }
 
   // resolve the Agent Card (cached) and apply the skills_filter
-  def listSkills(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[AgentSkill]] = {
+  def listSkills(attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[AgentSkill]] = {
     resolveHeaders().flatMap { headers =>
       A2AClient.fetchAgentCard(id, url, agentCardPath, agentCardFallbackPath, headers, tls, timeoutDuration).map {
         case Left(_) => Seq.empty
@@ -365,12 +365,12 @@ case class A2AConnector(
     }
   }
 
-  def listSkillsBlocking(attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Seq[AgentSkill] = {
+  def listSkillsBlocking(attrs: TypedMap)(using ec: ExecutionContext, env: Env): Seq[AgentSkill] = {
     Try(Await.result(listSkills(attrs), timeoutDuration + 5.seconds)).getOrElse(Seq.empty)
   }
 
   // execute a skill: extract the `message` argument, send an A2A (streaming) SendMessage to the remote agent, return text
-  def call(skillId: String, args: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+  def call(skillId: String, args: String, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[String] = {
     val message: String = Try(Json.parse(args)).toOption.flatMap(_.select("message").asOpt[String]).getOrElse(args)
     resolveHeaders().flatMap { headers =>
       A2AClient.fetchAgentCard(id, url, agentCardPath, agentCardFallbackPath, headers, tls, timeoutDuration).flatMap {
@@ -426,7 +426,7 @@ object A2AConnector {
         agentCardFallbackPath = json.select("agent_card_fallback_path").asOpt[String].getOrElse(A2A.legacyWellKnownPath),
         a2aVersion = json.select("a2a_version").asOpt[String],
         authentication = json.select("authentication").asOpt[JsValue].map(A2AConnectorAuth.from).getOrElse(A2AConnectorAuth()),
-        tls = json.select("tls").asOpt(NgTlsConfig.format).getOrElse(NgTlsConfig()),
+        tls = json.select("tls").asOpt(using NgTlsConfig.format).getOrElse(NgTlsConfig()),
         timeout = json.select("timeout").asOpt[Long].getOrElse(30000L),
         streaming = json.select("streaming").asOpt[Boolean].getOrElse(false),
         skillsFilter = json.select("skills_filter").asOpt[Seq[String]].getOrElse(Seq.empty),
@@ -453,7 +453,7 @@ object A2AConnector {
         extractIdf = c => datastores.a2aConnectorsDatastore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, _, _) => {
           A2AConnector(
             id = IdGenerator.namedId("a2a-connector", env),
             enabled = true,
@@ -485,7 +485,7 @@ class KvA2AConnectorsDataStore(extensionId: AdminExtensionId, redisCli: RedisLik
   extends A2AConnectorsDataStore
     with RedisLikeStore[A2AConnector] {
   override def fmt: Format[A2AConnector] = A2AConnector.format
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
   override def key(id: String): String = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:a2aconntr:$id"
   override def extractId(value: A2AConnector): String = value.id
 }
@@ -511,7 +511,7 @@ object A2ASupport {
   )
 
   // the connector list comes from attrs (set by the provider before tool build/dispatch) — keeps build & dispatch in sync
-  private def connectorsWithSkills(attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Seq[(A2AConnector, Int, AgentSkill)] = {
+  private def connectorsWithSkills(attrs: TypedMap)(using env: Env, ec: ExecutionContext): Seq[(A2AConnector, Int, AgentSkill)] = {
     val connectors = attrs.get(A2AConnectorsKey).getOrElse(Seq.empty)
     val ext = env.adminExtensions.extension[AiExtension].get
     connectors.zipWithIndex.flatMap { case (cid, idx) => ext.states.a2aConnector(cid).filter(_.enabled).map(c => (c, idx)) }.flatMap {
@@ -519,7 +519,7 @@ object A2ASupport {
     }
   }
 
-  def tools(attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
+  def tools(attrs: TypedMap)(using env: Env, ec: ExecutionContext): Seq[JsObject] = {
     connectorsWithSkills(attrs).map { case (connector, idx, skill) =>
       Json.obj("type" -> "function", "function" -> Json.obj(
         "name" -> s"a2a___${idx}___${skill.id}",
@@ -530,7 +530,7 @@ object A2ASupport {
     }
   }
 
-  def toolsAnthropic(attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): Seq[JsObject] = {
+  def toolsAnthropic(attrs: TypedMap)(using env: Env, ec: ExecutionContext): Seq[JsObject] = {
     connectorsWithSkills(attrs).map { case (connector, idx, skill) =>
       Json.obj(
         "name" -> s"a2a___${idx}___${skill.id}",
@@ -540,7 +540,7 @@ object A2ASupport {
     }
   }
 
-  def toolsCohere(attrs: TypedMap)(implicit env: Env, ec: ExecutionContext): (Seq[JsObject], Map[String, String]) = {
+  def toolsCohere(attrs: TypedMap)(using env: Env, ec: ExecutionContext): (Seq[JsObject], Map[String, String]) = {
     val map = scala.collection.mutable.Map.empty[String, String]
     val tools = connectorsWithSkills(attrs).map { case (connector, idx, skill) =>
       val key = s"${idx}___${skill.id}".sha256
@@ -555,7 +555,7 @@ object A2ASupport {
     (tools, map.toMap)
   }
 
-  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsOpenai(functions: Seq[GenericApiResponseChoiceMessageToolCall], providerName: String, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     callTool(functions, attrs) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
         "role" -> "tool", "content" -> resp, "tool_call_id" -> tc.id
@@ -563,7 +563,7 @@ object A2ASupport {
     }
   }
 
-  def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsOllama(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     callTool(functions, attrs) { (resp, tc) =>
       Source(List(Json.obj("role" -> "assistant", "content" -> "", "tool_calls" -> Json.arr(tc.raw)), Json.obj(
         "role" -> "tool", "content" -> resp
@@ -571,7 +571,7 @@ object A2ASupport {
     }
   }
 
-  def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsAnthropic(functions: Seq[AnthropicApiResponseChoiceMessageToolCall], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val connectors = attrs.get(A2AConnectorsKey).getOrElse(Seq.empty)
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
@@ -583,10 +583,10 @@ object A2ASupport {
           Json.obj("role" -> "user", "content" -> Json.arr(Json.obj("type" -> "tool_result", "tool_use_id" -> tc.id, "content" -> resp)))
         ))
       }
-      .runWith(Sink.seq)(env.otoroshiMaterializer)
+      .runWith(Sink.seq)(using env.otoroshiMaterializer)
   }
 
-  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], fmap: Map[String, String], providerName: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  def callToolsCohere(functions: Seq[GenericApiResponseChoiceMessageToolCall], fmap: Map[String, String], providerName: String, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val connectors = attrs.get(A2AConnectorsKey).getOrElse(Seq.empty)
     Source(functions.toList)
       .mapAsync(1) { _toolCall =>
@@ -602,20 +602,20 @@ object A2ASupport {
           "role" -> "tool", "content" -> resp, "tool_call_id" -> tc.id
         )))
       }
-      .runWith(Sink.seq)(env.otoroshiMaterializer)
+      .runWith(Sink.seq)(using env.otoroshiMaterializer)
   }
 
-  private def callTool(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, _])(implicit ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
+  private def callTool(functions: Seq[GenericApiResponseChoiceMessageToolCall], attrs: TypedMap)(f: (String, GenericApiResponseChoiceMessageToolCall) => Source[JsValue, ?])(using ec: ExecutionContext, env: Env): Future[Seq[JsValue]] = {
     val connectors = attrs.get(A2AConnectorsKey).getOrElse(Seq.empty)
     Source(functions.toList)
       .mapAsync(1) { toolCall =>
         execute(connectors, toolCall.function.a2aConnectorId, toolCall.function.a2aFunctionName, toolCall.function.arguments, attrs).map(r => (r, toolCall))
       }
       .flatMapConcat { case (resp, tc) => f(resp, tc) }
-      .runWith(Sink.seq)(env.otoroshiMaterializer)
+      .runWith(Sink.seq)(using env.otoroshiMaterializer)
   }
 
-  private def execute(connectors: Seq[String], idx: Int, skillId: String, args: String, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[String] = {
+  private def execute(connectors: Seq[String], idx: Int, skillId: String, args: String, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[String] = {
     if (idx < 0 || idx >= connectors.size) {
       s"error: unknown a2a connector index ${idx}".vfuture
     } else {

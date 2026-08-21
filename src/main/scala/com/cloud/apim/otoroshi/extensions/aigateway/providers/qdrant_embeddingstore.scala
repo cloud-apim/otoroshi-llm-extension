@@ -1,14 +1,15 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 import scala.concurrent.{ExecutionContext, Future}
+import play.api.libs.ws.WSBodyWritables.given
 
 object QdrantEmbeddingStoreClient {
   lazy val logger = Logger("QdrantEmbeddingStoreClient")
@@ -32,10 +33,10 @@ class QdrantEmbeddingStoreClient(val config: JsObject, _storeId: String) extends
     }
   }
 
-  private def ensureCollection()(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  private def ensureCollection()(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(s"$baseUrl/collections/$collectionName")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .get()
       .flatMap { resp =>
@@ -44,7 +45,7 @@ class QdrantEmbeddingStoreClient(val config: JsObject, _storeId: String) extends
         } else {
           env.Ws
             .url(s"$baseUrl/collections/$collectionName")
-            .withHttpHeaders(headers: _*)
+            .withHttpHeaders(headers*)
             .withRequestTimeout(timeout)
             .put(Json.obj(
               "vectors" -> Json.obj(
@@ -56,20 +57,20 @@ class QdrantEmbeddingStoreClient(val config: JsObject, _storeId: String) extends
               if (createResp.status == 200 || createResp.status == 201) {
                 Right(())
               } else {
-                Left(Json.obj("error" -> s"Qdrant collection creation error: ${createResp.status}", "body" -> createResp.body))
+                Left(Json.obj("error" -> s"Qdrant collection creation error: ${createResp.status}", "body" -> (createResp.body: String)))
               }
             }
         }
       }
   }
 
-  override def add(options: EmbeddingAddOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def add(options: EmbeddingAddOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     ensureCollection().flatMap {
       case Left(err) => Left(err).vfuture
       case Right(_) =>
         env.Ws
           .url(s"$baseUrl/collections/$collectionName/points")
-          .withHttpHeaders(headers: _*)
+          .withHttpHeaders(headers*)
           .withRequestTimeout(timeout)
           .put(Json.obj(
             "points" -> Json.arr(Json.obj(
@@ -85,16 +86,16 @@ class QdrantEmbeddingStoreClient(val config: JsObject, _storeId: String) extends
             if (resp.status == 200) {
               Right(())
             } else {
-              Left(Json.obj("error" -> s"Qdrant add error: ${resp.status}", "body" -> resp.body))
+              Left(Json.obj("error" -> s"Qdrant add error: ${resp.status}", "body" -> (resp.body: String)))
             }
           }
     }
   }
 
-  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def remove(options: EmbeddingRemoveOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     env.Ws
       .url(s"$baseUrl/collections/$collectionName/points/delete")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .post(Json.obj(
         "points" -> Json.arr(options.id)
@@ -103,15 +104,15 @@ class QdrantEmbeddingStoreClient(val config: JsObject, _storeId: String) extends
         if (resp.status == 200) {
           Right(())
         } else {
-          Left(Json.obj("error" -> s"Qdrant delete error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Qdrant delete error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }
 
-  override def search(options: EmbeddingSearchOptions, raw: JsObject)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
+  override def search(options: EmbeddingSearchOptions, raw: JsObject)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingSearchResponse]] = {
     env.Ws
       .url(s"$baseUrl/collections/$collectionName/points/search")
-      .withHttpHeaders(headers: _*)
+      .withHttpHeaders(headers*)
       .withRequestTimeout(timeout)
       .post(Json.obj(
         "vector" -> Json.toJson(options.embedding.vector),
@@ -133,7 +134,7 @@ class QdrantEmbeddingStoreClient(val config: JsObject, _storeId: String) extends
           }
           Right(EmbeddingSearchResponse(matches))
         } else {
-          Left(Json.obj("error" -> s"Qdrant search error: ${resp.status}", "body" -> resp.body))
+          Left(Json.obj("error" -> s"Qdrant search error: ${resp.status}", "body" -> (resp.body: String)))
         }
       }
   }

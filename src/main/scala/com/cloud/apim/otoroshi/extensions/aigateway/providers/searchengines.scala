@@ -1,15 +1,16 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
-import play.api.libs.json._
+import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.*
+import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyWritables.given
 
 import java.net.URLEncoder
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 import scala.concurrent.{ExecutionContext, Future}
 
 object SearchEngineHelpers {
@@ -28,9 +29,9 @@ object StaanApi {
 }
 
 class StaanApi(baseUrl: String = StaanApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("Staan", method, url, body)(env)
+    ProviderHelpers.logCall("Staan", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -58,7 +59,7 @@ object StaanSearchOptions {
 }
 
 class StaanSearchClient(api: StaanApi, options: StaanSearchOptions, id: String) extends SearchEngineClient {
-  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
+  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
     val body = Json.obj("q" -> opts.query)
       .applyOnWithOpt(opts.market.orElse(options.market).orElse("fr-FR".some)) { case (o, v) => o ++ Json.obj("market" -> v) }
       .applyOnWithOpt(opts.maxResults.orElse(options.count)) { case (o, v) => o ++ Json.obj("count" -> v) }
@@ -83,7 +84,7 @@ class StaanSearchClient(api: StaanApi, options: StaanSearchOptions, id: String) 
         }
         SearchEngineResponse("staan", opts.query, None, results, json.asOpt[JsObject].getOrElse(Json.obj())).right
       } else {
-        Left(Json.obj("error" -> "bad response from staan", "status" -> resp.status, "body" -> resp.body))
+        Left(Json.obj("error" -> "bad response from staan", "status" -> resp.status, "body" -> (resp.body: String)))
       }
     }
   }
@@ -98,9 +99,9 @@ object TavilyApi {
 }
 
 class TavilyApi(baseUrl: String = TavilyApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("Tavily", method, url, body)(env)
+    ProviderHelpers.logCall("Tavily", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -127,7 +128,7 @@ object TavilySearchOptions {
 }
 
 class TavilySearchClient(api: TavilyApi, options: TavilySearchOptions, id: String) extends SearchEngineClient {
-  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
+  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
     val body = Json.obj("query" -> opts.query)
       .applyOnWithOpt(opts.maxResults.orElse(options.maxResults)) { case (o, v) => o ++ Json.obj("max_results" -> v) }
       .applyOnWithOpt(options.searchDepth) { case (o, v) => o ++ Json.obj("search_depth" -> v) }
@@ -150,7 +151,7 @@ class TavilySearchClient(api: TavilyApi, options: TavilySearchOptions, id: Strin
         }
         SearchEngineResponse("tavily", opts.query, json.select("answer").asOptString, results, json.asOpt[JsObject].getOrElse(Json.obj())).right
       } else {
-        Left(Json.obj("error" -> "bad response from tavily", "status" -> resp.status, "body" -> resp.body))
+        Left(Json.obj("error" -> "bad response from tavily", "status" -> resp.status, "body" -> (resp.body: String)))
       }
     }
   }
@@ -165,9 +166,9 @@ object BraveSearchApi {
 }
 
 class BraveSearchApi(baseUrl: String = BraveSearchApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
-  def rawGet(path: String)(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawGet(path: String)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("Brave", "GET", url, None)(env)
+    ProviderHelpers.logCall("Brave", "GET", url, None)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -191,7 +192,7 @@ object BraveSearchOptions {
 }
 
 class BraveSearchClient(api: BraveSearchApi, options: BraveSearchOptions, id: String) extends SearchEngineClient {
-  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
+  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
     val params = Seq(
       "q" -> opts.query,
       "count" -> opts.maxResults.map(_.toString).getOrElse(""),
@@ -215,7 +216,7 @@ class BraveSearchClient(api: BraveSearchApi, options: BraveSearchOptions, id: St
         }
         SearchEngineResponse("brave", opts.query, None, results, json.asOpt[JsObject].getOrElse(Json.obj())).right
       } else {
-        Left(Json.obj("error" -> "bad response from brave", "status" -> resp.status, "body" -> resp.body))
+        Left(Json.obj("error" -> "bad response from brave", "status" -> resp.status, "body" -> (resp.body: String)))
       }
     }
   }
@@ -230,9 +231,9 @@ object SearXNGApi {
 }
 
 class SearXNGApi(baseUrl: String = SearXNGApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
-  def rawGet(path: String)(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawGet(path: String)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("SearXNG", "GET", url, None)(env)
+    ProviderHelpers.logCall("SearXNG", "GET", url, None)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders("Accept" -> "application/json")
@@ -255,7 +256,7 @@ object SearXNGSearchOptions {
 }
 
 class SearXNGSearchClient(api: SearXNGApi, options: SearXNGSearchOptions, id: String) extends SearchEngineClient {
-  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
+  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
     val params = Seq(
       "q" -> opts.query,
       "format" -> "json",
@@ -281,7 +282,7 @@ class SearXNGSearchClient(api: SearXNGApi, options: SearXNGSearchOptions, id: St
         }
         SearchEngineResponse("searxng", opts.query, json.select("answers").asOpt[Seq[String]].flatMap(_.headOption), results, json.asOpt[JsObject].getOrElse(Json.obj())).right
       } else {
-        Left(Json.obj("error" -> "bad response from searxng", "status" -> resp.status, "body" -> resp.body))
+        Left(Json.obj("error" -> "bad response from searxng", "status" -> resp.status, "body" -> (resp.body: String)))
       }
     }
   }
@@ -297,9 +298,9 @@ object GoogleCseApi {
 
 class GoogleCseApi(baseUrl: String = GoogleCseApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
   val apiKey: String = token
-  def rawGet(path: String)(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawGet(path: String)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("GoogleCse", "GET", url, None)(env)
+    ProviderHelpers.logCall("GoogleCse", "GET", url, None)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders("Accept" -> "application/json")
@@ -319,7 +320,7 @@ object GoogleCseSearchOptions {
 }
 
 class GoogleCseSearchClient(api: GoogleCseApi, options: GoogleCseSearchOptions, id: String) extends SearchEngineClient {
-  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
+  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
     val params = Seq(
       "key" -> api.apiKey,
       "cx" -> options.cx.getOrElse(""),
@@ -343,7 +344,7 @@ class GoogleCseSearchClient(api: GoogleCseApi, options: GoogleCseSearchOptions, 
         }
         SearchEngineResponse("google", opts.query, None, results, json.asOpt[JsObject].getOrElse(Json.obj())).right
       } else {
-        Left(Json.obj("error" -> "bad response from google custom search", "status" -> resp.status, "body" -> resp.body))
+        Left(Json.obj("error" -> "bad response from google custom search", "status" -> resp.status, "body" -> (resp.body: String)))
       }
     }
   }
@@ -358,9 +359,9 @@ object SearchApiApi {
 }
 
 class SearchApiApi(baseUrl: String = SearchApiApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
-  def rawGet(path: String)(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawGet(path: String)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("SearchApi", "GET", url, None)(env)
+    ProviderHelpers.logCall("SearchApi", "GET", url, None)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -384,7 +385,7 @@ object SearchApiSearchOptions {
 }
 
 class SearchApiSearchClient(api: SearchApiApi, options: SearchApiSearchOptions, id: String) extends SearchEngineClient {
-  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
+  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
     val params = Seq(
       "engine" -> options.engine,
       "q" -> opts.query,
@@ -407,7 +408,7 @@ class SearchApiSearchClient(api: SearchApiApi, options: SearchApiSearchOptions, 
         }
         SearchEngineResponse("searchapi", opts.query, None, results, json.asOpt[JsObject].getOrElse(Json.obj())).right
       } else {
-        Left(Json.obj("error" -> "bad response from searchapi", "status" -> resp.status, "body" -> resp.body))
+        Left(Json.obj("error" -> "bad response from searchapi", "status" -> resp.status, "body" -> (resp.body: String)))
       }
     }
   }
@@ -424,9 +425,9 @@ object DuckDuckGoApi {
 }
 
 class DuckDuckGoApi(baseUrl: String = DuckDuckGoApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
-  def rawGet(path: String)(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawGet(path: String)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("DuckDuckGo", "GET", url, None)(env)
+    ProviderHelpers.logCall("DuckDuckGo", "GET", url, None)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders("Accept" -> "application/json")
@@ -451,7 +452,7 @@ class DuckDuckGoSearchClient(api: DuckDuckGoApi, options: DuckDuckGoSearchOption
     }
   }
 
-  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
+  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
     val params = Seq(
       "q" -> opts.query,
       "format" -> "json",
@@ -483,10 +484,10 @@ class DuckDuckGoSearchClient(api: DuckDuckGoApi, options: DuckDuckGoSearchOption
           val results = opts.maxResults.map(n => all.take(n)).getOrElse(all)
           SearchEngineResponse("duckduckgo", opts.query, json.select("AbstractText").asOptString.filter(_.nonEmpty), results, json.asOpt[JsObject].getOrElse(Json.obj())).right
         } catch {
-          case t: Throwable => Left(Json.obj("error" -> "bad response from duckduckgo", "status" -> resp.status, "body" -> resp.body))
+          case _: Throwable => Left(Json.obj("error" -> "bad response from duckduckgo", "status" -> resp.status, "body" -> (resp.body: String)))
         }
       } else {
-        Left(Json.obj("error" -> "bad response from duckduckgo", "status" -> resp.status, "body" -> resp.body))
+        Left(Json.obj("error" -> "bad response from duckduckgo", "status" -> resp.status, "body" -> (resp.body: String)))
       }
     }
   }
@@ -501,9 +502,9 @@ object ExaApi {
 }
 
 class ExaApi(baseUrl: String = ExaApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
-  def rawCall(method: String, path: String, body: Option[JsValue])(implicit ec: ExecutionContext): Future[WSResponse] = {
+  def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
-    ProviderHelpers.logCall("Exa", method, url, body)(env)
+    ProviderHelpers.logCall("Exa", method, url, body)(using env)
     env.Ws
       .url(url)
       .withHttpHeaders(
@@ -531,7 +532,7 @@ object ExaSearchOptions {
 }
 
 class ExaSearchClient(api: ExaApi, options: ExaSearchOptions, id: String) extends SearchEngineClient {
-  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
+  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
     val contents = Json.obj()
       .applyOnIf(options.highlights) { o => o ++ Json.obj("highlights" -> true) }
       .applyOnIf(options.text) { o => o ++ Json.obj("text" -> true) }
@@ -564,10 +565,10 @@ class ExaSearchClient(api: ExaApi, options: ExaSearchOptions, id: String) extend
           }
           SearchEngineResponse("exa", opts.query, None, results, json.asOpt[JsObject].getOrElse(Json.obj())).right
         } catch {
-          case t: Throwable => Left(Json.obj("error" -> "bad response from exa", "status" -> resp.status, "body" -> resp.body))
+          case _: Throwable => Left(Json.obj("error" -> "bad response from exa", "status" -> resp.status, "body" -> (resp.body: String)))
         }
       } else {
-        Left(Json.obj("error" -> "bad response from exa", "status" -> resp.status, "body" -> resp.body))
+        Left(Json.obj("error" -> "bad response from exa", "status" -> resp.status, "body" -> (resp.body: String)))
       }
     }
   }
@@ -581,7 +582,7 @@ class ExaSearchClient(api: ExaApi, options: ExaSearchOptions, id: String) extend
 // vector similarity search against the referenced embedding store. The (store, model) pair lives in the entity config
 // and is never exposed to the LLM (the tool is still named after the single, id-safe SearchEngine id, like web engines).
 class RagSearchClient(embeddingStoreId: String, embeddingModelId: String, maxResults: Int, minScore: Double, id: String) extends SearchEngineClient {
-  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
+  override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension]
     val modelClientOpt = ext.flatMap(_.states.embeddingModel(embeddingModelId)).flatMap(_.getEmbeddingModelClient())
     val storeClientOpt = ext.flatMap(_.states.embeddingStore(embeddingStoreId)).flatMap(_.getEmbeddingStoreClient())

@@ -33,14 +33,14 @@ final class DocSearchIndex(val config: DocSearchConfig) {
 
   def invalidate(): Unit = state.set(None)
 
-  def search(query: String, corpus: Option[String])(implicit ec: ExecutionContext, env: Env): Future[Either[String, Seq[DocSearchResult]]] = {
+  def search(query: String, corpus: Option[String])(using ec: ExecutionContext, env: Env): Future[Either[String, Seq[DocSearchResult]]] = {
     ensureFresh().map { _ =>
       state.get() match {
         case None =>
           if (building.get()) Left("doc search index is still being built — retry in a few seconds")
           else Left("doc search index is not available")
         case Some(s) =>
-          val filterCorpus: ((String, _)) => Boolean = {
+          val filterCorpus: ((String, ?)) => Boolean = {
             case (id, _) =>
               corpus match {
                 case None => true
@@ -64,7 +64,7 @@ final class DocSearchIndex(val config: DocSearchConfig) {
     }
   }
 
-  private def ensureFresh()(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+  private def ensureFresh()(using ec: ExecutionContext, env: Env): Future[Unit] = {
     val now = System.currentTimeMillis()
     state.get() match {
       case Some(s) if now - s.builtAt < config.ttl.toMillis => Future.successful(())
@@ -78,7 +78,7 @@ final class DocSearchIndex(val config: DocSearchConfig) {
     }
   }
 
-  private def triggerRebuild()(implicit ec: ExecutionContext, env: Env): Future[Unit] = {
+  private def triggerRebuild()(using ec: ExecutionContext, env: Env): Future[Unit] = {
     if (!building.compareAndSet(false, true)) {
       logger.debug("doc-search: rebuild already in progress, skipping")
       return Future.successful(())

@@ -1,10 +1,10 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.Logger
-import play.api.libs.json._
+import play.api.libs.json.*
 
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.{ExecutionContext, Future}
@@ -16,8 +16,8 @@ object PostgresqlPersistentMemoryClient {
 
 class PostgresqlPersistentMemoryClient(val config: JsObject, _memoryId: String) extends PersistentMemoryClient {
 
-  import PgPoolManager._
-  import PostgresqlPersistentMemoryClient._
+  import PgPoolManager.*
+  import PostgresqlPersistentMemoryClient.*
 
   private lazy val connection: JsObject = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
   private lazy val uri: String = connection.select("uri").asOptString.getOrElse("postgresql://otoroshi:otoroshi@localhost:5432/otoroshi")
@@ -27,7 +27,7 @@ class PostgresqlPersistentMemoryClient(val config: JsObject, _memoryId: String) 
 
   private def docId(sessionId: String): String = s"${_memoryId}_${sessionId}"
 
-  private def ensureTable()(implicit ec: ExecutionContext): Future[Unit] = {
+  private def ensureTable()(using ec: ExecutionContext): Future[Unit] = {
     val key = s"$uri:$table"
     if (verifiedTables.contains(key)) {
       Future.successful(())
@@ -51,7 +51,7 @@ class PostgresqlPersistentMemoryClient(val config: JsObject, _memoryId: String) 
     }
   }
 
-  override def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def updateMessages(sessionId: String, messages: Seq[PersistedChatMessage])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     ensureTable().flatMap { _ =>
       val json = Json.stringify(JsArray(messages.map(_.raw)))
       exec(pool,
@@ -63,7 +63,7 @@ class PostgresqlPersistentMemoryClient(val config: JsObject, _memoryId: String) 
     }
   }
 
-  override def getMessages(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
+  override def getMessages(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Seq[PersistedChatMessage]]] = {
     ensureTable().flatMap { _ =>
       query(pool,
         s"SELECT messages FROM $table WHERE id = $$1",
@@ -83,7 +83,7 @@ class PostgresqlPersistentMemoryClient(val config: JsObject, _memoryId: String) 
     }
   }
 
-  override def clearMemory(sessionId: String)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
+  override def clearMemory(sessionId: String)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Unit]] = {
     exec(pool, s"DELETE FROM $table WHERE id = $$1", Seq(docId(sessionId)))
       .map(_ => Right(()))
       .recover { case e: Throwable =>

@@ -6,7 +6,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
 import otoroshi.next.workflow.{Node, WorkflowAdminExtension}
 import otoroshi.utils.TypedMap
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.{JsArray, JsNull, JsObject, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -19,7 +19,7 @@ class WorkflowGuardrail extends Guardrail {
 
   override def manyMessages: Boolean = true
 
-  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
+  override def pass(messages: Seq[ChatMessage], config: JsObject, provider: Option[AiProvider], chatClient: Option[ChatClient], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[GuardrailResult] = {
     val workflowId: Option[String] = config.select("workflow_id").asOpt[String].orElse(config.select("workflow_ref").asOpt[String]).filter(_.trim.nonEmpty)
     workflowId match {
       case None => GuardrailResult.GuardrailError("error, no workflow ref").vfuture

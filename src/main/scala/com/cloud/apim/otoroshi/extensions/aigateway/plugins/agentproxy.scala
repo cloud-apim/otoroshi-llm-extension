@@ -1,17 +1,16 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.agents.{AgentConfig, AgentInput, AgentRunConfig}
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiPluginsKeys
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, InputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.InputChatMessage
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
-import otoroshi.security.IdGenerator
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -83,7 +82,7 @@ class AgentProxy extends NgBackendCall {
     ().vfuture
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     if (ctx.request.hasBody) {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         try {
@@ -101,7 +100,7 @@ class AgentProxy extends NgBackendCall {
     }
   }
 
-  private def call(jsonBody: JsValue, config: AgentProxyConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  private def call(jsonBody: JsValue, config: AgentProxyConfig, ctx: NgbBackendCallContext)(using ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     println(config.agent.prettify)
     val agent = AgentConfig.from(config.agent)
     val rcfg = AgentRunConfig.from(config.runConfig)
@@ -130,7 +129,7 @@ class AgentProxy extends NgBackendCall {
         val model = agent.model.getOrElse(rcfg.model.getOrElse("agent"))
         Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
           Results.Ok(output.response.openaiJson(model, env))
-            .withHeaders(output.metadata.cacheHeaders.toSeq: _*)
+            .withHeaders(output.metadata.cacheHeaders.toSeq*)
         ), None))
     }
   }

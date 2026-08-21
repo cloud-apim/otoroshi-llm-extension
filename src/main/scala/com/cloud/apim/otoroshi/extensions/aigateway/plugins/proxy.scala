@@ -1,18 +1,17 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import akka.stream.Materializer
-import akka.stream.scaladsl.Source
-import akka.util.ByteString
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefConfig, AiPluginRefsConfig, AiPluginsKeys, PromptValidatorConfig}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
 import otoroshi.env.Env
-import otoroshi.next.plugins.api._
+import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.utils.ReplaceAllWith
-import otoroshi.utils.syntax.implicits._
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json._
+import play.api.libs.json.*
 import play.api.mvc.{Result, Results}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -33,7 +32,6 @@ object AiLlmProxy {
         case JsObject(str) => str.toString()
         case JsArray(str) => str.toString()
         case JsNull => "null"
-        case _ => "undefined"
       }
     }
     result.parseJson.asOpt[Seq[JsObject]].getOrElse(Seq.empty)
@@ -63,7 +61,7 @@ class AiLlmProxy extends NgBackendCall {
     ().vfuture
   }
 
-  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(implicit ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config)
     val provider: Option[AiProvider] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
@@ -109,7 +107,7 @@ class AiLlmProxy extends NgBackendCall {
           } else {
             client.call(ChatPrompt(messages), ctx.attrs, jsonBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
-              case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.json(env)).withHeaders(response.metadata.cacheHeaders.toSeq: _*)), None))
+              case Right(response) => Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.json(env)).withHeaders(response.metadata.cacheHeaders.toSeq*)), None))
             }
           }
         } else {
@@ -129,7 +127,7 @@ class AiLlmProxy extends NgBackendCall {
     }
   }
 
-  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     if (ctx.request.hasBody) {
       ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         try {
@@ -183,7 +181,7 @@ class AiPromptValidator extends NgAccessValidator {
     ().vfuture
   }
 
-  override def access(ctx: NgAccessContext)(implicit env: Env, ec: ExecutionContext): Future[NgAccess] = {
+  override def access(ctx: NgAccessContext)(using env: Env, ec: ExecutionContext): Future[NgAccess] = {
     val config = ctx.cachedConfig(internalName)(PromptValidatorConfig.format).getOrElse(PromptValidatorConfig.default)
     ctx.attrs.get(AiPluginsKeys.PromptValidatorsKey) match {
       case None => ctx.attrs.put(AiPluginsKeys.PromptValidatorsKey -> Seq(config))
@@ -214,7 +212,7 @@ class AiPromptTemplate extends NgRequestTransformer {
     ().vfuture
   }
 
-  override def transformRequest(ctx: NgTransformerRequestContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
+  override def transformRequest(ctx: NgTransformerRequestContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     val config = ctx.cachedConfig(internalName)(AiPluginRefConfig.format).getOrElse(AiPluginRefConfig.default)
     env.adminExtensions.extension[AiExtension].flatMap(_.states.template(config.ref)) match {
       case None => Left(Results.InternalServerError(Json.obj("error" -> "template not found"))).vfuture // TODO: rewrite error
@@ -261,7 +259,7 @@ class AiPromptContext extends NgRequestTransformer {
     ().vfuture
   }
 
-  override def transformRequest(ctx: NgTransformerRequestContext)(implicit env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
+  override def transformRequest(ctx: NgTransformerRequestContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     val config = ctx.cachedConfig(internalName)(AiPluginRefConfig.format).getOrElse(AiPluginRefConfig.default)
     env.adminExtensions.extension[AiExtension].flatMap(_.states.context(config.ref)) match {
       case None => Left(Results.InternalServerError(Json.obj("error" -> "context not found"))).vfuture // TODO: rewrite error

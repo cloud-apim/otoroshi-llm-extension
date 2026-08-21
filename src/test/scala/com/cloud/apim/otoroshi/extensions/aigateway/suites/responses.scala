@@ -5,8 +5,8 @@ import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailItem, G
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ContextSettings, ModelSettings, PersistentMemory, PromptContext, SearchEngine}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.{AzureOpenAiApi, AzureOpenAiChatClient, AzureOpenAiChatClientOptions}
 import otoroshi.models.EntityLocation
-import otoroshi.next.models._
-import otoroshi.utils.syntax.implicits._
+import otoroshi.next.models.*
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{OpenAiResponsesProxy, OpenResponseCompatProxy}
 import play.api.libs.json.{JsArray, JsObject, JsValue, Json}
 import org.reactivestreams.Publisher
@@ -14,7 +14,7 @@ import reactor.core.publisher.{Flux, Mono}
 import reactor.netty.http.server.{HttpServerRequest, HttpServerResponse}
 
 import java.util.UUID
-import scala.collection.JavaConverters._
+import scala.jdk.CollectionConverters.*
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.DurationInt
 

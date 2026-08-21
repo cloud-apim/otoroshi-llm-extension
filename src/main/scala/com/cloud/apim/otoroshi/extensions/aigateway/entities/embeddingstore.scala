@@ -1,19 +1,17 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import com.cloud.apim.otoroshi.extensions.aigateway.EmbeddingStoreClient
-import com.cloud.apim.otoroshi.extensions.aigateway.providers._
-import otoroshi.api._
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
+import otoroshi.api.*
 import otoroshi.env.Env
-import otoroshi.models._
+import otoroshi.models.*
 import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
-import otoroshi.storage._
-import otoroshi.utils.syntax.implicits._
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway._
-import play.api.libs.json._
+import otoroshi.storage.*
+import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.*
+import play.api.libs.json.*
 
-import java.util.concurrent.TimeUnit
-import scala.concurrent.duration.FiniteDuration
 import scala.util.{Failure, Success, Try}
 
 case class EmbeddingStore(
@@ -32,7 +30,7 @@ case class EmbeddingStore(
   override def theDescription: String           = description
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
-  def getEmbeddingStoreClient()(implicit env: Env): Option[EmbeddingStoreClient] = {
+  def getEmbeddingStoreClient()(using env: Env): Option[EmbeddingStoreClient] = {
     provider.toLowerCase() match {
       case "local" => new LocalEmbeddingStoreClient(config, id).some
       case "chromadb" | "chroma" => new ChromaDbEmbeddingStoreClient(config, id).some
@@ -89,7 +87,7 @@ object EmbeddingStore {
         extractIdf = c => datastores.embeddingStoresDataStore.extractId(c),
         extractIdJsonf = json => json.select("id").asString,
         idFieldNamef = () => "id",
-        tmpl = (v, p, ctx) => {
+        tmpl = (_, p, _) => {
           p.get("kind").map(_.toLowerCase()) match {
             case _ => EmbeddingStore(
               id = IdGenerator.namedId("embedding-store", env),
@@ -131,7 +129,7 @@ class KvEmbeddingStoresDataStore(extensionId: AdminExtensionId, redisCli: RedisL
   extends EmbeddingStoresDataStore
     with RedisLikeStore[EmbeddingStore] {
   override def fmt: Format[EmbeddingStore]                  = EmbeddingStore.format
-  override def redisLike(implicit env: Env): RedisLike = redisCli
+  override def redisLike(using env: Env): RedisLike = redisCli
   override def key(id: String): String                 = s"${_env.storageRoot}:extensions:${extensionId.cleanup}:embstores:$id"
   override def extractId(value: EmbeddingStore): String    = value.id
 }

@@ -1,8 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
-import akka.stream.scaladsl.{Sink, Source}
-import akka.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway._
+import org.apache.pekko.stream.scaladsl.{Sink, Source}
+import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.*
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel, ModerationModel, VideoModel}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -16,12 +16,12 @@ import scala.concurrent.{ExecutionContext, Future}
 
 class ChatClientWithMetrics(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  private def markChatTokensAndCost(attrs: TypedMap)(implicit env: Env): Unit = {
+  private def markChatTokensAndCost(attrs: TypedMap)(using env: Env): Unit = {
     attrs.get(ChatClient.ApiUsageKey).foreach(m => AiMetrics.markTokens(m.usage.promptTokens.toInt, m.usage.generationTokens.toInt, m.usage.reasoningTokens.toInt))
     attrs.get(ChatClientWithCostsTracking.key).foreach(c => AiMetrics.markCost(c.totalCost.toDouble))
   }
 
-  private def meterBlocking(op: String, attrs: TypedMap, f: Future[Either[JsValue, ChatResponse]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+  private def meterBlocking(op: String, attrs: TypedMap, f: Future[Either[JsValue, ChatResponse]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val start = System.currentTimeMillis()
     AiMetrics.around(op, originalProvider.provider.toLowerCase, start, f) { resp =>
       markChatTokensAndCost(attrs)
@@ -30,7 +30,7 @@ class ChatClientWithMetrics(originalProvider: AiProvider, val chatClient: ChatCl
     }
   }
 
-  private def meterStreaming(op: String, attrs: TypedMap, f: Future[Either[JsValue, Source[ChatResponseChunk, _]]])(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] = {
+  private def meterStreaming(op: String, attrs: TypedMap, f: Future[Either[JsValue, Source[ChatResponseChunk, ?]]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val start = System.currentTimeMillis()
     // token/cost are only known once the stream completes; duration recorded by around is time-to-stream-start
     val wrapped = f.map {
@@ -40,10 +40,10 @@ class ChatClientWithMetrics(originalProvider: AiProvider, val chatClient: ChatCl
     AiMetrics.around(op, originalProvider.provider.toLowerCase, start, wrapped) { _ => () }
   }
 
-  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] =
+  override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] =
     meterBlocking(kind.metricsOp(streaming = false), attrs, chatClient.invoke(kind, prompt, attrs, originalBody))
 
-  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, _]]] =
+  override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] =
     meterStreaming(kind.metricsOp(streaming = true), attrs, chatClient.invokeStream(kind, prompt, attrs, originalBody))
 }
 
@@ -52,7 +52,7 @@ object ChatClientWithMetrics {
 }
 
 class EmbeddingModelClientWithMetrics(originalModel: EmbeddingModel, val embeddingModelClient: EmbeddingModelClient) extends DecoratorEmbeddingModelClient {
-  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
     val start = System.currentTimeMillis()
     AiMetrics.around("embedding_model.embedding", originalModel.provider.toLowerCase, start, embeddingModelClient.embed(opts, rawBody, attrs)) { _ =>
       attrs.get(EmbeddingModelClient.ApiUsageKey).foreach(m => AiMetrics.markTokens(m.tokenUsage.toInt, 0, 0))
@@ -66,15 +66,15 @@ object EmbeddingModelClientWithMetrics {
 
 class AudioModelClientWithMetrics(originalModel: AudioModel, val audioModelClient: AudioModelClient) extends DecoratorAudioModelClient {
   private val kind = originalModel.provider.toLowerCase
-  override def translate(options: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def translate(options: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val start = System.currentTimeMillis()
     AiMetrics.around("audio_model.translate", kind, start, audioModelClient.translate(options, rawBody, attrs)) { _ => () }
   }
-  override def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+  override def speechToText(options: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
     val start = System.currentTimeMillis()
     AiMetrics.around("audio_model.stt", kind, start, audioModelClient.speechToText(options, rawBody, attrs)) { _ => () }
   }
-  override def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, _], String)]] = {
+  override def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
     val start = System.currentTimeMillis()
     AiMetrics.around("audio_model.tts", kind, start, audioModelClient.textToSpeech(options, rawBody, attrs)) { _ => () }
   }
@@ -86,11 +86,11 @@ object AudioModelClientWithMetrics {
 
 class ImageModelClientWithMetrics(originalModel: ImageModel, val imageModelClient: ImageModelClient) extends DecoratorImageModelClient {
   private val kind = originalModel.provider.toLowerCase
-  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val start = System.currentTimeMillis()
     AiMetrics.around("image_model.generate", kind, start, imageModelClient.generate(opts, rawBody, attrs)) { _ => () }
   }
-  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val start = System.currentTimeMillis()
     AiMetrics.around("image_model.edit", kind, start, imageModelClient.edit(opts, rawBody, attrs)) { _ => () }
   }
@@ -101,7 +101,7 @@ object ImageModelClientWithMetrics {
 }
 
 class ModerationModelClientWithMetrics(originalModel: ModerationModel, val moderationModelClient: ModerationModelClient) extends DecoratorModerationModelClient {
-  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
+  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
     val start = System.currentTimeMillis()
     AiMetrics.around("moderation_model.moderate", originalModel.provider.toLowerCase, start, moderationModelClient.moderate(opts, rawBody, attrs)) { _ => () }
   }
@@ -112,7 +112,7 @@ object ModerationModelClientWithMetrics {
 }
 
 class VideoModelClientWithMetrics(originalModel: VideoModel, val videoModelClient: VideoModelClient) extends DecoratorVideoModelClient {
-  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(implicit ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
+  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
     val start = System.currentTimeMillis()
     AiMetrics.around("video_model.generate", originalModel.provider.toLowerCase, start, videoModelClient.generate(opts, rawBody, attrs)) { _ => () }
   }

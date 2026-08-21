@@ -1,10 +1,10 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatMessageContent
-import com.cloud.apim.otoroshi.extensions.aigateway.a2a._
+import com.cloud.apim.otoroshi.extensions.aigateway.a2a.*
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{A2AConnector, A2AConnectorAuth, A2AServer, A2AServerBackend, A2AServerCard, A2ASkillConfig, AnthropicApiResponseChoiceMessageToolCall, GenericApiResponseChoiceMessageToolCall}
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.A2ASupportServer
-import play.api.libs.json._
+import play.api.libs.json.*
 
 // Pure unit tests for the A2A v1.0 wire models (no running server required).
 class A2ASuite extends munit.FunSuite {
