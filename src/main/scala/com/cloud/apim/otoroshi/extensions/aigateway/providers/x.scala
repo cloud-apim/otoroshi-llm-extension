@@ -39,7 +39,7 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("X.ai", url)(using ec, env)
       .map { resp =>
         resp
       }
@@ -61,7 +61,7 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream()
+      .stream().observeStreamQuotas("X.ai", url)(using ec, env)
   }
 
   override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
@@ -120,7 +120,7 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream()
+      .stream().observeStreamQuotas("X.ai", url)(using ec, env)
       .map(r => ProviderHelpers.wrapStreamResponse("X.ai", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))

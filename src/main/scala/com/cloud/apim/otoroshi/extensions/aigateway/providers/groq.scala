@@ -54,7 +54,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("Groq", url)(using ec, env)
   }
 
   def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
@@ -71,7 +71,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("Groq", url)(using ec, env)
   }
 
   /** raw streamed POST, used by the native /responses path */
@@ -90,7 +90,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream()
+      .stream().observeStreamQuotas("Groq", url)(using ec, env)
   }
 
   def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {

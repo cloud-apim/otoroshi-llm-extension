@@ -40,7 +40,7 @@ class ElevenLabsApi(baseUrl: String = ElevenLabsApi.baseUrl, token: String, time
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("ElevenLabs", url)(using ec, env)
   }
   def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
@@ -56,7 +56,7 @@ class ElevenLabsApi(baseUrl: String = ElevenLabsApi.baseUrl, token: String, time
       .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("ElevenLabs", url)(using ec, env)
   }
 }
 

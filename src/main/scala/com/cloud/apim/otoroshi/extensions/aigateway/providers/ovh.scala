@@ -207,7 +207,7 @@ class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token
           }
           .withMethod(method)
           .withRequestTimeout(timeout)
-          .execute()
+          .execute().observeQuotas("OVH", furl)(using ec, env)
           .map(_.right)
       }
     }

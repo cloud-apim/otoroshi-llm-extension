@@ -242,6 +242,8 @@ class AiExtension(val env: Env) extends AdminExtension {
     .build[String, Seq[String]]()
 
   lazy val assistant = new OtoroshiAssistant(env, this)
+  // one alert when a provider endpoint starts refusing calls on quota grounds, one when it serves again
+  lazy val quotaAlertsEnabled = configuration.getOptional[Boolean]("quota-alerts.enabled").getOrElse(true)
   lazy val budgetsEnabled = configuration.getOptional[Boolean]("budgets.enabled").getOrElse(true)
   lazy val embedBudgetsInResponses = budgetsEnabled && configuration.getOptional[Boolean]("budgets.embed-budgets-in-responses").getOrElse(true)
 

@@ -110,7 +110,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("Cohere", url)(using ec, env)
   }
 
   def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {

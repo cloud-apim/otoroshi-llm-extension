@@ -188,7 +188,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("AzureOpenai", url)(using ec, env)
   }
 
   def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
@@ -210,7 +210,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
       .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("AzureOpenai", url)(using ec, env)
   }
 
   /** raw streamed POST, used by the native /responses path */
@@ -235,7 +235,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream()
+      .stream().observeStreamQuotas("AzureOpenai", url)(using ec, env)
   }
 
   def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {

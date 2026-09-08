@@ -45,7 +45,7 @@ class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.s
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("Gemini", url)(using ec, env)
   }
 
   def call(method: String, patkh: String, body: Option[JsValue])(using ec: ExecutionContext): Future[Either[JsValue, GeminiApiResponse]] = {

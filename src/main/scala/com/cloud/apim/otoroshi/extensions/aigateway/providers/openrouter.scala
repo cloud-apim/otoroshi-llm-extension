@@ -45,7 +45,7 @@ class OpenRouterApi(baseUrl: String = OpenRouterApi.baseUrl, token: String, time
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("OpenRouter", url)(using ec, env)
   }
 
   def rawCallStream(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
@@ -62,7 +62,7 @@ class OpenRouterApi(baseUrl: String = OpenRouterApi.baseUrl, token: String, time
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream()
+      .stream().observeStreamQuotas("OpenRouter", url)(using ec, env)
   }
 }
 

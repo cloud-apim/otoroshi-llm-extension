@@ -117,7 +117,7 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("Ollama", url)(using ec, env)
   }
 
   /** raw streamed POST, used by the native /responses path */
@@ -139,7 +139,7 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream()
+      .stream().observeStreamQuotas("Ollama", url)(using ec, env)
   }
 
   def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {

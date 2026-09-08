@@ -33,7 +33,7 @@ class LeonardoAIApi(baseUrl: String = LeonardoAIApi.baseUrl, token: String, time
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("LeonardoAI", url)(using ec, env)
       .map { resp =>
         resp
       }

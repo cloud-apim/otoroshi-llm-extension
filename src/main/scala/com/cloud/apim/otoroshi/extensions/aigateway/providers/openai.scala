@@ -208,7 +208,7 @@ class OpenAiApi(
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas(providerName, url)(using ec, env)
       // .map { resp =>
       //   println(s"resp: ${resp.status} - ${resp.body}")
       //   println("\n\n================================\n")
@@ -232,7 +232,7 @@ class OpenAiApi(
       .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas(providerName, url)(using ec, env)
       // .map { resp =>
       //   println(s"form resp: ${resp.status} - ${resp.body}")
       //   println("\n\n================================\n")
@@ -300,7 +300,7 @@ class OpenAiApi(
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream()
+      .stream().observeStreamQuotas(providerName, url)(using ec, env)
       .map(r => ProviderHelpers.wrapStreamResponse(providerName, r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
@@ -337,7 +337,7 @@ class OpenAiApi(
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream()
+      .stream().observeStreamQuotas(providerName, url)(using ec, env)
   }
 
   override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {

@@ -42,7 +42,7 @@ class StaanApi(baseUrl: String = StaanApi.baseUrl, token: String, timeout: Finit
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("Staan", url)(using ec, env)
   }
 }
 
@@ -112,7 +112,7 @@ class TavilyApi(baseUrl: String = TavilyApi.baseUrl, token: String, timeout: Fin
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("Tavily", url)(using ec, env)
   }
 }
 
@@ -515,7 +515,7 @@ class ExaApi(baseUrl: String = ExaApi.baseUrl, token: String, timeout: FiniteDur
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("Exa", url)(using ec, env)
   }
 }
 

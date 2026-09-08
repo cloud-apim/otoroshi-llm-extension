@@ -139,7 +139,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("Anthropic", url)(using ec, env)
   }
 
   override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {

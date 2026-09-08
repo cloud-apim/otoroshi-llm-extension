@@ -33,7 +33,7 @@ class HiveApi(baseUrl: String = HiveApi.baseUrl, token: String, timeout: FiniteD
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("Hive", url)(using ec, env)
       .map { resp =>
         resp
       }

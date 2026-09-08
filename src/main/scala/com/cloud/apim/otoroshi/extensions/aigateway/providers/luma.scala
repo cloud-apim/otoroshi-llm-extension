@@ -33,7 +33,7 @@ class LumaApi(baseUrl: String = LumaApi.baseUrl, token: String, timeout: FiniteD
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("Luma", url)(using ec, env)
       .map { resp =>
         resp
       }

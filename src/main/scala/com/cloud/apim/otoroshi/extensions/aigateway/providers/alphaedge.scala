@@ -41,7 +41,7 @@ class AlphaEdgeApi(baseUrl: String = AlphaEdgeApi.baseUrl, token: String, timeou
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("AlphaEdge", url)(using ec, env)
   }
 
   def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
@@ -58,7 +58,7 @@ class AlphaEdgeApi(baseUrl: String = AlphaEdgeApi.baseUrl, token: String, timeou
       .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute()
+      .execute().observeQuotas("AlphaEdge", url)(using ec, env)
   }
 }
 
