@@ -2,6 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatResponseMetadataUsage
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.CostsOutput
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
@@ -9,7 +10,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsValue, Json}
 import play.api.libs.ws.WSResponse
 
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -125,6 +126,15 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
   private val promptTokensCounter: AtomicLong = new AtomicLong(initialPromptTokens)
   private val generationTokensCounter: AtomicLong = new AtomicLong(initialGenerationTokens)
   private val reasoningTokensCounter: AtomicLong = new AtomicLong(initialReasoningTokens)
+  // cost the provider reported for the call, when it reports one at all (OpenRouter does). Accumulated like the
+  // token counters: a single logical call can span several round-trips when tool calls are involved.
+  private val providerCostsRef: AtomicReference[Option[CostsOutput]] = new AtomicReference[Option[CostsOutput]](None)
+
+  def updateProviderReportedCosts(usageOpt: Option[JsValue]): Unit = {
+    usageOpt.flatMap(CostsOutput.fromOpenAiLikeUsage).foreach { costs =>
+      providerCostsRef.updateAndGet(previous => previous.map(_.plus(costs)).orElse(costs.some))
+    }
+  }
 
   def update(promptTokens: Long, generationTokens: Long, reasoningTokens: Long): Unit = {
     promptTokensCounter.addAndGet(promptTokens)
@@ -138,6 +148,7 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
       generationTokensCounter.addAndGet(usage.select("completion_tokens").asOpt[Long].getOrElse(0L))
       reasoningTokensCounter.addAndGet(usage.at("completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(0L))
     }
+    updateProviderReportedCosts(usageOpt)
   }
 
   def updateOllama(usageOpt: Option[JsValue]): Unit = {
@@ -170,6 +181,7 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
       generationTokensCounter.addAndGet(usage.completion_tokens.getOrElse(0L))
       reasoningTokensCounter.addAndGet(usage.reasoningTokens.getOrElse(0L))
     }
+    updateProviderReportedCosts(usageOpt.map(_.raw))
   }
 
   def updateAzureOpenaiChunk(usageOpt: Option[AzureOpenAiChatResponseChunkUsage]): Unit = {
@@ -210,6 +222,7 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
       promptTokens = promptTokensCounter.get(),
       generationTokens = generationTokensCounter.get(),
       reasoningTokens = reasoningTokensCounter.get(),
+      providerCosts = providerCostsRef.get(),
     )
   }
 }

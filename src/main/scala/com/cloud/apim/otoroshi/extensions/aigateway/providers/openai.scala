@@ -552,6 +552,9 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     val mergedOptions = if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions
     val hasToolsInRequest = body.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
     val acc = new UsageAccumulator()
+    // tracks whether this stream already pushed its analytics slug, so that seeing the final state twice
+    // updates the entry instead of duplicating it
+    val streamSlugWritten = new java.util.concurrent.atomic.AtomicBoolean(false)
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty || options.a2aConnectors.nonEmpty || options.searchEngines.nonEmpty)) {
       attrs.put(com.cloud.apim.otoroshi.extensions.aigateway.entities.A2ASupport.A2AConnectorsKey -> options.a2aConnectors)
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
@@ -566,7 +569,12 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
         (source: Source[OpenAiChatResponseChunk, Any])
           .applyOnIf(accumulateStreamConsumptions)(
             _.map { chunk =>
-              if (chunk.choices.exists(_.finish_reason.contains("stop"))) {
+              // a stream ends on any finish reason, not just "stop": truncation ("length"), tool calls or a
+              // content filter end it too, and skipping those left the call with no usage, no cost and no
+              // budget consumption at all. With `stream_options.include_usage` the usage lands in a chunk
+              // after the one carrying the finish reason, so the final state is seen twice - the second pass
+              // replaces the first slug rather than adding a second one.
+              if (chunk.usage.nonEmpty || chunk.choices.exists(_.finish_reason.isDefined)) {
                 val tokensUsage = acc.usage()
                 val usage = ChatResponseMetadata(
                   ChatResponseMetadataRateLimit(
@@ -593,10 +601,13 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
                 attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
                   case Some(obj@JsObject(_)) => {
                     val arr = obj.select("ai").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-                    val newArr = arr ++ Seq(slug)
+                    val newArr = if (streamSlugWritten.getAndSet(true) && arr.nonEmpty) arr.init :+ slug else arr :+ slug
                     obj ++ Json.obj("ai" -> newArr)
                   }
-                  case None => Json.obj("ai" -> Seq(slug))
+                  case _ => {
+                    streamSlugWritten.set(true)
+                    Json.obj("ai" -> Seq(slug))
+                  }
                 }
               }
               chunk

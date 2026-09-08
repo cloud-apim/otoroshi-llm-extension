@@ -11,17 +11,26 @@ import play.api.Configuration
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, JsValue, Json}
+import play.api.libs.ws.WSResponse
+import play.api.libs.ws.WSBodyReadables.readableAsString
 import play.api.libs.typedmap.TypedKey
 
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.{ExecutionContext, Future, Promise}
-import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.{DurationInt, FiniteDuration}
+import scala.util.{Failure, Success}
+import org.apache.pekko.actor.Cancellable
 import org.apache.pekko.stream.Materializer
 
 case class CostsTrackingSettings(configuration: Configuration) {
   val embedDescriptionInJson = configuration.getOptional[Boolean]("embed-description-in-json").getOrElse(true)
   val embedCostsTrackingInResponses = configuration.getOptional[Boolean]("embed-costs-tracking-in-responses").getOrElse(false)
   val enabled = configuration.getOptional[Boolean]("enabled").getOrElse(true)
+  // the static price table only knows a subset of what OpenRouter exposes, so its catalog is synced
+  // periodically to price the rest. Set to false to avoid the outbound call.
+  val openRouterCatalogEnabled = configuration.getOptional[Boolean]("openrouter-catalog.enabled").getOrElse(true)
+  val openRouterCatalogUrl = configuration.getOptional[String]("openrouter-catalog.url").getOrElse(OpenRouterCatalog.defaultUrl)
+  val openRouterCatalogRefreshEvery = configuration.getOptional[FiniteDuration]("openrouter-catalog.refresh-every").getOrElse(6.hours)
 }
 
 case class SearchContextCostPerQuery(raw: JsValue) {
@@ -81,15 +90,105 @@ case class CostModel(name: String, raw: JsValue) {
     if (output_cost_per_reasoning_token > 0) output_cost_per_reasoning_token else output_cost_per_token
 }
 
-case class CostsOutput(inputCost: BigDecimal, outputCost: BigDecimal, reasoningCost: BigDecimal) {
-  def totalCost: BigDecimal = inputCost + outputCost + reasoningCost
+object CostsOutput {
+
+  // where the numbers come from, exposed in the json so that a missing/odd cost can be diagnosed
+  val sourcePriceTable = "price-table"
+  val sourceProvider = "provider"
+
+  def fromJson(raw: JsValue): Option[CostsOutput] = raw.asOpt[JsObject].flatMap { obj =>
+    obj.select("total_cost").asOpt[BigDecimal].map { total =>
+      CostsOutput(
+        inputCost = obj.select("input_cost").asOpt[BigDecimal].getOrElse(BigDecimal(0)),
+        outputCost = obj.select("output_cost").asOpt[BigDecimal].getOrElse(BigDecimal(0)),
+        reasoningCost = obj.select("reasoning_cost").asOpt[BigDecimal].getOrElse(BigDecimal(0)),
+        reportedTotalCost = total.some,
+        source = obj.select("source").asOptString.getOrElse(sourceProvider),
+      )
+    }
+  }
+
+  // OpenAI-shaped `usage` object as returned by OpenRouter when `usage.include` is true:
+  // `cost` is the authoritative total (in dollars), `cost_details` splits it prompt/completion.
+  // Providers that do not report costs simply have no `cost` field and yield None.
+  def fromOpenAiLikeUsage(usage: JsValue): Option[CostsOutput] = {
+    usage.select("cost").asOpt[BigDecimal].map { total =>
+      CostsOutput(
+        inputCost = usage.at("cost_details.upstream_inference_prompt_cost").asOpt[BigDecimal].getOrElse(BigDecimal(0)),
+        outputCost = usage.at("cost_details.upstream_inference_completions_cost").asOpt[BigDecimal].getOrElse(BigDecimal(0)),
+        reasoningCost = BigDecimal(0),
+        reportedTotalCost = total.some,
+        source = sourceProvider,
+      )
+    }
+  }
+}
+
+case class CostsOutput(
+  inputCost: BigDecimal,
+  outputCost: BigDecimal,
+  reasoningCost: BigDecimal,
+  // when the provider reports the total itself, it wins over the sum of the parts: the parts can be
+  // partial (no reasoning split) or absent while the total is still exact
+  reportedTotalCost: Option[BigDecimal] = None,
+  source: String = CostsOutput.sourcePriceTable,
+) {
+  def totalCost: BigDecimal = reportedTotalCost.getOrElse(inputCost + outputCost + reasoningCost)
+  def plus(other: CostsOutput): CostsOutput = CostsOutput(
+    inputCost = inputCost + other.inputCost,
+    outputCost = outputCost + other.outputCost,
+    reasoningCost = reasoningCost + other.reasoningCost,
+    reportedTotalCost = (reportedTotalCost, other.reportedTotalCost) match {
+      case (Some(a), Some(b)) => (a + b).some
+      case (a, b) => a.orElse(b)
+    },
+    source = source,
+  )
   def json: JsValue = Json.obj(
     "input_cost" -> inputCost,
     "output_cost" -> outputCost,
     "reasoning_cost" -> reasoningCost,
-    "total_cost" -> (inputCost + outputCost + reasoningCost),
-    "currency" -> "dollar"
+    "total_cost" -> totalCost,
+    "currency" -> "dollar",
+    "source" -> source,
   )
+}
+
+object OpenRouterCatalog {
+
+  val defaultUrl = "https://openrouter.ai/api/v1/models"
+
+  // prices in the catalog are already per-token dollar amounts, expressed as strings
+  private def price(pricing: JsValue, field: String): BigDecimal =
+    pricing.select(field).asOpt[BigDecimal]
+      .orElse(pricing.select(field).asOptString.flatMap(str => scala.util.Try(BigDecimal(str)).toOption))
+      .getOrElse(BigDecimal(0))
+
+  def toCostModel(model: JsValue): Option[CostModel] = {
+    for {
+      id <- model.select("id").asOptString
+      pricing <- model.select("pricing").asOpt[JsObject]
+    } yield {
+      val reasoning = price(pricing, "internal_reasoning")
+      CostModel(id, Json.obj(
+        "litellm_provider" -> "openrouter",
+        "mode" -> "chat",
+        "max_tokens" -> model.at("top_provider.max_completion_tokens").asOpt[Long].getOrElse(0L),
+        "max_input_tokens" -> model.select("context_length").asOpt[Long].getOrElse(0L),
+        "max_output_tokens" -> model.at("top_provider.max_completion_tokens").asOpt[Long].getOrElse(0L),
+        "input_cost_per_token" -> price(pricing, "prompt"),
+        "output_cost_per_token" -> price(pricing, "completion"),
+        "output_cost_per_reasoning_token" -> reasoning,
+        "cache_read_input_token_cost" -> price(pricing, "input_cache_read"),
+        "cache_creation_input_token_cost" -> price(pricing, "input_cache_write"),
+        "input_cost_per_audio_token" -> price(pricing, "audio"),
+        "output_cost_per_audio_token" -> price(pricing, "audio_output"),
+        "input_cost_per_image" -> price(pricing, "image"),
+        "output_cost_per_image" -> price(pricing, "image_output"),
+        "supports_reasoning" -> (reasoning > 0),
+      ))
+    }
+  }
 }
 
 class CostsTracking(settings: CostsTrackingSettings, env: Env) {
@@ -120,7 +219,23 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
     }.map(c => (s"${c.litellm_provider}-${c.nameWithoutProvider}", c)).toMap
   }
 
-  val models: Map[String, CostModel] = litllmModels ++ customModels ++ userProvidedModels
+  val staticModels: Map[String, CostModel] = litllmModels ++ customModels ++ userProvidedModels
+
+  // models discovered at runtime from a provider catalog (see refreshOpenRouterCatalog). Kept apart from
+  // the static ones so that a refresh never drops what the resource files provide, and pre-merged so that
+  // reads stay O(1) - `models` is hit on every single call.
+  private val dynamicModelsRef = new AtomicReference[Map[String, CostModel]](Map.empty)
+  private val allModelsRef = new AtomicReference[Map[String, CostModel]](staticModels)
+  private val openRouterSchedulerRef = new AtomicReference[Cancellable]()
+
+  def dynamicModels: Map[String, CostModel] = dynamicModelsRef.get()
+  def models: Map[String, CostModel] = allModelsRef.get()
+
+  private def setDynamicModels(newModels: Map[String, CostModel]): Unit = {
+    dynamicModelsRef.set(newModels)
+    // static entries win: they are curated, and a user provided price must not be overridden by a sync
+    allModelsRef.set(newModels ++ staticModels)
+  }
 
   def getResourceCode(path: String): String = {
     given ec: ExecutionContext = env.otoroshiExecutionContext
@@ -130,11 +245,29 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
       .getOrElse(s"'resource ${path} not found !'")
   }
 
-  def canHandle(provider: String, modelName: String): Boolean = {
-    models.contains(s"${provider}-${modelName}")
+  // OpenRouter exposes variants of a model (`:free`, `:batch`, `:nitro`, ...) and floating aliases
+  // (`~vendor/model-latest`) that are absent from the price table under that exact name while their base
+  // model is present. Restricted to openrouter on purpose: Bedrock model names legitimately end with `:0`.
+  private def fallbackModelNames(provider: String, modelName: String): Seq[String] = {
+    if (provider != "openrouter") Seq.empty else {
+      val withoutAlias = modelName.stripPrefix("~")
+      val withoutVariant = withoutAlias.takeWhile(_ != ':')
+      Seq(withoutAlias, withoutVariant).filter(name => name.nonEmpty && name != modelName).distinct
+    }
   }
 
-  def getModel(provider: String, modelName: String): Option[CostModel] = models.get(s"${provider}-${modelName}")
+  def lookupModel(provider: String, modelName: String): Option[CostModel] = {
+    val all = models
+    all.get(s"${provider}-${modelName}").orElse {
+      fallbackModelNames(provider, modelName).iterator.flatMap(name => all.get(s"${provider}-${name}")).nextOption()
+    }
+  }
+
+  def canHandle(provider: String, modelName: String): Boolean = {
+    lookupModel(provider, modelName).isDefined
+  }
+
+  def getModel(provider: String, modelName: String): Option[CostModel] = lookupModel(provider, modelName)
   def findModel(provider: String, name: String): Option[CostModel] = models.values.find(m => m.litellm_provider == provider && m.name == name)
   def searchModel(m: CostModel => Boolean): Option[CostModel] = models.values.find(m)
 
@@ -145,7 +278,7 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
     outputTokens: Long,
     reasoningTokens: Long,
   ): Either[String, CostsOutput] = {
-    models.get(s"${provider}-${modelName}") match {
+    lookupModel(provider, modelName) match {
       case None =>
         if (extension.logger.isWarnEnabled) extension.logger.warn(s"unable to find costs for model: '${provider}-${modelName}'")
         Left("model not found")
@@ -157,6 +290,52 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
         ))
       }
     }
+  }
+
+  // OpenRouter is the one provider we know reports the exact cost of a call back to us (usage.cost, enabled
+  // through `usage.include` in OpenAiLikeProviders). Used to decide, before a stream even starts, whether a
+  // cost may still show up for a model the price table does not know.
+  def providerReportsCosts(provider: String): Boolean = provider == "openrouter"
+
+  def startOpenRouterCatalogSync(): Unit = {
+    if (settings.openRouterCatalogEnabled) {
+      given ec: ExecutionContext = env.otoroshiExecutionContext
+      openRouterSchedulerRef.set(env.otoroshiScheduler.scheduleAtFixedRate(5.seconds, settings.openRouterCatalogRefreshEvery) { () =>
+        refreshOpenRouterCatalog().andThen {
+          case Success(count) if extension.logger.isDebugEnabled => extension.logger.debug(s"openrouter catalog synced: ${count} models priced")
+          case Failure(err) => extension.logger.error("unable to sync the openrouter models catalog", err)
+        }
+      })
+    }
+  }
+
+  def stopOpenRouterCatalogSync(): Unit = {
+    Option(openRouterSchedulerRef.get()).foreach(_.cancel())
+  }
+
+  // OpenRouter publishes the price of every model it serves on a public endpoint. Syncing it gives a price to
+  // the models missing from the static table, which would otherwise be billed at zero and leave budgets untouched.
+  def refreshOpenRouterCatalog()(using ec: ExecutionContext): Future[Int] = {
+    env.Ws.url(settings.openRouterCatalogUrl)
+      .withRequestTimeout(30.seconds)
+      .get()
+      .map { (resp: WSResponse) =>
+        if (resp.status != 200) {
+          extension.logger.error(s"unable to fetch the openrouter models catalog: ${resp.status} - ${resp.body[String].take(256)}")
+          dynamicModels.size
+        } else {
+          val models = resp.json.select("data").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+            .flatMap(model => OpenRouterCatalog.toCostModel(model).map(cost => (s"openrouter-${cost.name}", cost)))
+            .toMap
+          if (models.isEmpty) {
+            extension.logger.warn("the openrouter models catalog came back empty, keeping the previous one")
+            dynamicModels.size
+          } else {
+            setDynamicModels(models)
+            models.size
+          }
+        }
+      }
   }
 
   def getProvider(provider: String): Option[String] = {
@@ -211,6 +390,28 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     env.adminExtensions.extension[AiExtension].flatMap(ext => ext.costsTracking.getProvider(originalProvider.provider))
   }
 
+  // A cost the provider itself reported for the call always wins over what we would derive from the price
+  // table: it is exact, and it is the only thing available for the many models the table does not know.
+  private def resolveCosts(
+    ext: AiExtension,
+    providerCosts: Option[CostsOutput],
+    provider: String,
+    model: String,
+    inputTokens: Long,
+    outputTokens: Long,
+    reasoningTokens: Long,
+  ): Option[CostsOutput] = {
+    providerCosts.orElse {
+      ext.costsTracking.computeCosts(
+        provider = provider,
+        modelName = model,
+        inputTokens = inputTokens,
+        outputTokens = outputTokens,
+        reasoningTokens = reasoningTokens,
+      ).toOption
+    }
+  }
+
   private def handleStream(attrs: TypedMap, originalBody: JsValue)(f: => Future[Either[JsValue, Source[ChatResponseChunk, ?]]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     getProvider() match {
       case None => f // unsupported provider
@@ -225,39 +426,42 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
             val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_costs")).contains("true")
             val budgetInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_budget")).contains("true")
             val addCostsInResp = ext.costsTrackingSettings.embedCostsTrackingInResponses || enableInRequest
-            if (ext.costsTracking.canHandle(finalProvider, model)) {
+            // the real finish reason is stripped from the chunks below and restored on the terminal chunk:
+            // reporting "stop" for a stream that was actually truncated would mislead the caller
+            val lastFinishReason = new AtomicReference[Option[String]](None)
+            // the model may be missing from the price table and still get a cost, when the provider reports one
+            // at the end of the stream - which we cannot know before the stream has run
+            if (ext.costsTracking.canHandle(finalProvider, model) || ext.costsTracking.providerReportsCosts(finalProvider)) {
               (resp: Source[ChatResponseChunk, Any]).applyOnIf(addCostsInResp) { src =>
-                src.map(r => r.copy(choices = r.choices.map(c => c.copy(finishReason = None))))
+                src.map { r =>
+                  r.choices.flatMap(_.finishReason).lastOption.foreach(reason => lastFinishReason.set(reason.some))
+                  r.copy(choices = r.choices.map(c => c.copy(finishReason = None)))
+                }
               }.alsoTo(Sink.onComplete { _ =>
                 val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
                 val inputTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L)
                 val outputTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L)
                 val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
-                ext.costsTracking.computeCosts(
-                  provider = finalProvider,
-                  modelName = model,
-                  inputTokens = inputTokens,
-                  outputTokens = outputTokens,
-                  reasoningTokens = reasoningTokens
-                ) match {
-                  case Left(_) => promise.trySuccess(None)
-                  case Right(costs) if !addCostsInResp =>
-                    attrs.put(ChatClientWithCostsTracking.key -> costs)
-                    promise.trySuccess(None)
-                  case Right(costs) =>
-                    attrs.put(ChatClientWithCostsTracking.key -> costs)
-                    promise.trySuccess(ChatResponseChunk(
-                      id = s"chatcmpl-${ULID.random().toLowerCase()}",
-                      created = (System.currentTimeMillis() / 1000L),
-                      model = model,
-                      choices = Seq(ChatResponseChunkChoice(
-                        index = 0L,
-                        delta = ChatResponseChunkChoiceDelta(None),
-                        finishReason = "stop".some,
-                      )),
-                      costs = costs.some,
-                      budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest),
-                    ).some)
+                val providerCosts = CostsOutput.fromJson(usageSlug.select("usage").select("provider_costs").asOpt[JsObject].getOrElse(JsObject.empty))
+                val costsOpt = resolveCosts(ext, providerCosts, finalProvider, model, inputTokens, outputTokens, reasoningTokens)
+                costsOpt.foreach(costs => attrs.put(ChatClientWithCostsTracking.key -> costs))
+                if (!addCostsInResp) {
+                  promise.trySuccess(None)
+                } else {
+                  // finish reasons were stripped above, so a terminal chunk must be emitted even when no cost
+                  // could be determined, otherwise the caller never sees the stream end
+                  promise.trySuccess(ChatResponseChunk(
+                    id = s"chatcmpl-${ULID.random().toLowerCase()}",
+                    created = (System.currentTimeMillis() / 1000L),
+                    model = model,
+                    choices = Seq(ChatResponseChunkChoice(
+                      index = 0L,
+                      delta = ChatResponseChunkChoiceDelta(None),
+                      finishReason = lastFinishReason.get().orElse("stop".some),
+                    )),
+                    costs = costsOpt,
+                    budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest),
+                  ).some)
                 }
               }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right
             } else {
@@ -279,22 +483,25 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
           case Right(resp) => {
             val usage = resp.metadata.usage
             val ext = env.adminExtensions.extension[AiExtension].get
-            ext.costsTracking.computeCosts(
+            val budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest)
+            resolveCosts(
+              ext = ext,
+              providerCosts = usage.providerCosts,
               provider = originalProvider.metadata.getOrElse("costs-tracking-provider", provider),
-              modelName = originalProvider.metadata.getOrElse("costs-tracking-model", getModel(originalBody)),
+              model = originalProvider.metadata.getOrElse("costs-tracking-model", getModel(originalBody)),
               inputTokens = usage.promptTokens,
               outputTokens = usage.generationTokens,
-              reasoningTokens = usage.reasoningTokens
+              reasoningTokens = usage.reasoningTokens,
             ) match {
-              case Left(_) =>
-                Right(resp.copy(metadata = resp.metadata.copy(budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest))))
-              case Right(costs) => {
+              case None =>
+                Right(resp.copy(metadata = resp.metadata.copy(budget = budget)))
+              case Some(costs) => {
                 attrs.put(ChatClientWithCostsTracking.key -> costs)
                 val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_costs")).contains("true")
                 if (ext.costsTrackingSettings.embedCostsTrackingInResponses || enableInRequest) {
-                  Right(resp.copy(metadata = resp.metadata.copy(costs = costs.some, budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest))))
+                  Right(resp.copy(metadata = resp.metadata.copy(costs = costs.some, budget = budget)))
                 } else {
-                  Right(resp.copy(metadata = resp.metadata.copy(budget = attrs.get(ChatClientWithAuding.BudgetConsumptionKey).filter(_ => ext.embedBudgetsInResponses || budgetInRequest))))
+                  Right(resp.copy(metadata = resp.metadata.copy(budget = budget)))
                 }
               }
             }

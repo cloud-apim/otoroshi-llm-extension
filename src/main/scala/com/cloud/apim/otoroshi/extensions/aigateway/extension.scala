@@ -261,6 +261,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     given ec: ExecutionContext = env.otoroshiExecutionContext
     WorkflowFunctionsInitializer.initDefaults()
     AiBudgetClusterAgent.start(env, this)
+    costsTracking.startOpenRouterCatalogSync()
     env.datastores.wasmPluginsDataStore.findById(LlmToolFunction.wasmPluginId).flatMap {
       case Some(_) => ().vfuture
       case None => {
@@ -275,6 +276,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   }
 
   override def stop(): Unit = {
+    costsTracking.stopOpenRouterCatalogSync()
     AiBudgetClusterAgent.stop()
     LettuceRedisClientManager.shutdownAll()
   }

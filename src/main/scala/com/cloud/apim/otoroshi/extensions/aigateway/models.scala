@@ -911,13 +911,18 @@ object ChatResponseMetadataUsage {
   val empty: ChatResponseMetadataUsage = ChatResponseMetadataUsage(0L, 0L, 0L)
 }
 
-case class ChatResponseMetadataUsage(promptTokens: Long, generationTokens: Long, reasoningTokens: Long) {
+// `providerCosts` holds the cost the provider itself reported for the call (OpenRouter sends it in
+// `usage.cost` when `usage.include` is set). It is authoritative: it beats anything we could derive
+// from the static price table, and it is the only source available for models missing from it.
+case class ChatResponseMetadataUsage(promptTokens: Long, generationTokens: Long, reasoningTokens: Long, providerCosts: Option[CostsOutput] = None) {
   def totalTokens: Long = promptTokens + generationTokens + reasoningTokens
   def json: JsValue = Json.obj(
     "prompt_tokens" -> promptTokens,
     "generation_tokens" -> generationTokens,
     "reasoning_tokens" -> reasoningTokens,
-  )
+  ).applyOnWithOpt(providerCosts) {
+    case (obj, costs) => obj ++ Json.obj("provider_costs" -> costs.json)
+  }
   def openaiJson: JsValue = Json.obj(
     "prompt_tokens" -> promptTokens,
     "completion_tokens" -> generationTokens,

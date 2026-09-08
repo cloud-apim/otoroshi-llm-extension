@@ -174,9 +174,12 @@ class ChatClientWithStreamUsage(originalProvider: AiProvider, val chatClient: Ch
       case Right(resp) => {
         val promise = Promise.apply[Option[ChatResponseChunk]]()
         val ref = new AtomicReference[String](null)
-        // The final synthetic chunk carries the finish_reason. We strip it from upstream chunks, so we track
-        // whether any tool_calls were streamed to report "tool_calls" instead of the default "stop".
+        // The final synthetic chunk carries the finish_reason. We strip it from upstream chunks, so we keep the
+        // last real one to report it as is: a stream truncated on "length" or stopped by a content filter must
+        // not be reported as a clean "stop". Only when the provider sent none do we fall back to the tool_calls
+        // heuristic, then to "stop".
         val hadToolCalls = new java.util.concurrent.atomic.AtomicBoolean(false)
+        val lastFinishReason = new AtomicReference[String](null)
         resp
           .map { chunk =>
             if (ref.get() == null) {
@@ -185,6 +188,7 @@ class ChatClientWithStreamUsage(originalProvider: AiProvider, val chatClient: Ch
             if (chunk.choices.exists(_.delta.tool_calls.nonEmpty)) {
               hadToolCalls.set(true)
             }
+            chunk.choices.flatMap(_.finishReason).lastOption.foreach(reason => lastFinishReason.set(reason))
             chunk
           }
           .map(r => r.copy(choices = r.choices.map(c => c.copy(finishReason = None))))
@@ -197,7 +201,7 @@ class ChatClientWithStreamUsage(originalProvider: AiProvider, val chatClient: Ch
               choices = Seq(ChatResponseChunkChoice(
                 index = 0L,
                 delta = ChatResponseChunkChoiceDelta(None),
-                finishReason = (if (hadToolCalls.get()) "tool_calls" else "stop").some,
+                finishReason = Option(lastFinishReason.get()).getOrElse(if (hadToolCalls.get()) "tool_calls" else "stop").some,
               )),
             ).some)
           }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right

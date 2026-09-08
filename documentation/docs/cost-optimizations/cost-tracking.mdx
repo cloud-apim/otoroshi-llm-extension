@@ -24,6 +24,12 @@ costs-tracking {
   embed-costs-tracking-in-responses = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_EMBED_COSTS_TRACKING_IN_RESPONSES}
   custom-prices = "{}"
   custom-prices = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_CUSTOM_PRICES}
+  openrouter-catalog {
+    enabled = true
+    enabled = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_OPENROUTER_CATALOG_ENABLED}
+    refresh-every = 6 hours
+    refresh-every = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_OPENROUTER_CATALOG_REFRESH_EVERY}
+  }
 }
 ```
 
@@ -32,6 +38,8 @@ costs-tracking {
 | `enabled` | boolean | `true` | Enable or disable cost tracking |
 | `embed-costs-tracking-in-responses` | boolean | `false` | Always embed costs in LLM responses |
 | `custom-prices` | string (JSON) | `"{}"` | Custom model prices in LiteLLM format (see below) |
+| `openrouter-catalog.enabled` | boolean | `true` | Keep OpenRouter model prices in sync with its public catalog |
+| `openrouter-catalog.refresh-every` | duration | `6 hours` | How often the OpenRouter catalog is refreshed |
 
 Once it's enabled, audit events of kind `LLMUsageAudit` will have a `costs` object.
 
@@ -39,11 +47,16 @@ You can also embed the `costs` value in your LLM responses using the `costs-trac
 
 ### Price computation
 
-The cost tracking uses a **three-layer pricing strategy**:
+Costs are always billed from the most accurate source available for the call:
 
-1. **Built-in LiteLLM prices**: the full [LitLLM](https://docs.litellm.ai/) model price dictionary, bundled with the extension
-2. **Built-in custom prices**: additional prices defined by the extension for models not in LiteLLM
-3. **User-defined prices**: your own prices via the `custom-prices` config (highest priority, overrides the others)
+1. **The price reported by the provider**: when a provider bills the call back to us, that exact amount is used, whatever the model. OpenRouter does, which means every one of its models is priced correctly, including the ones no price table knows about, and including its per-provider routing and BYOK pricing. Costs sourced this way are marked `"source": "provider"`.
+2. **The model price table**, used whenever the provider reports nothing, resolved in this order:
+   - **User-defined prices**: your own prices via the `custom-prices` config, which always win
+   - **Built-in custom prices**: additional prices shipped by the extension for models absent from LiteLLM
+   - **Built-in LiteLLM prices**: the full [LiteLLM](https://docs.litellm.ai/) model price dictionary, bundled with the extension
+   - **The OpenRouter catalog**, kept in sync with the prices OpenRouter publishes, so new models are priced the day they ship
+
+OpenRouter model variants and aliases — `anthropic/claude-opus-5:batch`, `~vendor/model-latest` — are billed at the price of the model they point to.
 
 ### Supported providers
 
@@ -60,6 +73,7 @@ Cost tracking natively supports the following providers:
 - cohere
 - anthropic
 - groq
+- openrouter (billed on the exact amount OpenRouter reports for each call)
 
 For unsupported providers, you can set metadata on the provider entity to map it to a supported provider/model:
 
@@ -100,9 +114,12 @@ Each response with cost tracking includes:
   "output_cost": 0.0000108,
   "reasoning_cost": 0,
   "total_cost": 0.00001245,
-  "currency": "dollar"
+  "currency": "dollar",
+  "source": "price-table"
 }
 ```
+
+`source` tells you where the amount comes from: `provider` when the provider billed the call back to us, `price-table` when it was computed from token counts and a model price.
 
 ## Example of costs tracking embed in responses
 
