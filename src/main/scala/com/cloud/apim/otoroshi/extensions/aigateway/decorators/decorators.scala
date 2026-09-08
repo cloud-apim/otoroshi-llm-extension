@@ -61,6 +61,7 @@ object EmbeddingModelClientDecorators {
   val possibleDecorators: Seq[Function[(EmbeddingModel, EmbeddingModelClient, Env), EmbeddingModelClient]] = Seq(
     EmbeddingModelClientWithModels.applyIfPossible,
     EmbeddingModelClientWithRequiredCosts.applyIfPossible,
+    EmbeddingModelClientWithCostsTracking.applyIfPossible,
     EmbeddingModelClientWithAuditing.applyIfPossible,
     EmbeddingModelClientWithMetrics.applyIfPossible,
   )
@@ -138,6 +139,7 @@ object ModerationModelClientDecorators {
   val possibleDecorators: Seq[Function[(ModerationModel, ModerationModelClient, Env), ModerationModelClient]] = Seq(
     ModerationModelClientWithModels.applyIfPossible,
     ModerationModelClientWithRequiredCosts.applyIfPossible,
+    ModerationModelClientWithCostsTracking.applyIfPossible,
     ModerationModelClientWithAuditing.applyIfPossible,
     ModerationModelClientWithMetrics.applyIfPossible,
   )

@@ -56,6 +56,7 @@ class EmbeddingModelClientWithMetrics(originalModel: EmbeddingModel, val embeddi
     val start = System.currentTimeMillis()
     AiMetrics.around("embedding_model.embedding", originalModel.provider.toLowerCase, start, embeddingModelClient.embed(opts, rawBody, attrs)) { _ =>
       attrs.get(EmbeddingModelClient.ApiUsageKey).foreach(m => AiMetrics.markTokens(m.tokenUsage.toInt, 0, 0))
+      attrs.get(ChatClientWithCostsTracking.key).foreach(c => AiMetrics.markCost(c.totalCost.toDouble))
     }
   }
 }
@@ -103,7 +104,9 @@ object ImageModelClientWithMetrics {
 class ModerationModelClientWithMetrics(originalModel: ModerationModel, val moderationModelClient: ModerationModelClient) extends DecoratorModerationModelClient {
   override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
     val start = System.currentTimeMillis()
-    AiMetrics.around("moderation_model.moderate", originalModel.provider.toLowerCase, start, moderationModelClient.moderate(opts, rawBody, attrs)) { _ => () }
+    AiMetrics.around("moderation_model.moderate", originalModel.provider.toLowerCase, start, moderationModelClient.moderate(opts, rawBody, attrs)) { _ =>
+      attrs.get(ChatClientWithCostsTracking.key).foreach(c => AiMetrics.markCost(c.totalCost.toDouble))
+    }
   }
 }
 

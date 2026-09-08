@@ -267,7 +267,9 @@ class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embedd
           val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
           val totalCost = costs.map(_.totalCost)
-          val totalTokens = attrs.get(EmbeddingModelClient.ApiUsageKey).map(_.tokenUsage)
+          // read from the response, not from the attrs: the attr below is only set further down, so reading
+          // it here always yielded None and the tokens never reached the budget
+          val totalTokens: Option[Long] = Some(resp.metadata.tokenUsage).filter(_ > 0L)
           ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Embedding, attrs).map { budgetIds =>
             val _output = resp.toOpenAiJson("vector").asObject
             val slug = Json.obj(
@@ -752,7 +754,8 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
           val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
           val totalCost = costs.map(_.totalCost)
-          val totalTokens = attrs.get(ModerationModelClient.ApiUsageKey).map(_.usage.total)
+          // same as embeddings: the attr is only set below, so the tokens never reached the budget
+          val totalTokens: Option[Long] = Some(resp.metadata.usage.total).filter(_ > 0L)
           ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Moderation, attrs).map { budgetIds =>
             val _output = resp.toOpenAiJson(env).asObject
             val slug = Json.obj(

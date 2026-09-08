@@ -526,6 +526,86 @@ class OcrModelClientWithRequiredCosts(originalModel: OcrModel, val ocrModelClien
   }
 }
 
+// Embedding and moderation are billed per token, exactly like text, so the price grid applies as is.
+// The other modalities are not: the grid bills them per image, pixel, second, character or page, units
+// `computeCosts` does not know about, and a token based computation would silently return zero for them.
+object TokenBasedCosts {
+
+  def settings(using env: Env): CostsTrackingSettings =
+    env.adminExtensions.extension[AiExtension].get.costsTrackingSettings
+
+  def embedInResponse(attrs: TypedMap)(using env: Env): Boolean = {
+    settings.embedCostsTrackingInResponses ||
+      attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_costs")).contains("true")
+  }
+
+  // stores the cost where auditing reads it, so budgets, audit events and metrics all pick it up
+  def track(providerKind: String, model: Option[String], inputTokens: Long, outputTokens: Long, attrs: TypedMap)(using env: Env): Option[CostsOutput] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    for {
+      provider <- RequiredCosts.pricingProvider(providerKind)
+      name <- model.filter(_.nonEmpty)
+      costs <- ext.costsTracking.computeCosts(provider, name, inputTokens, outputTokens, 0L).toOption
+    } yield {
+      attrs.put(ChatClientWithCostsTracking.key -> costs)
+      costs
+    }
+  }
+}
+
+object EmbeddingModelClientWithCostsTracking {
+  def applyIfPossible(tuple: (EmbeddingModel, EmbeddingModelClient, Env)): EmbeddingModelClient = {
+    if (TokenBasedCosts.settings(using tuple._3).enabled) new EmbeddingModelClientWithCostsTracking(tuple._1, tuple._2) else tuple._2
+  }
+}
+
+class EmbeddingModelClientWithCostsTracking(originalModel: EmbeddingModel, val embeddingModelClient: EmbeddingModelClient) extends DecoratorEmbeddingModelClient {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    embeddingModelClient.embed(opts, rawBody, attrs).map {
+      case Left(err) => Left(err)
+      case Right(resp) => {
+        // the model the provider actually answered with is the most accurate one to price
+        val model = Some(resp.model).filter(_.nonEmpty).orElse(opts.model).orElse(originalModel.config.at("options.model").asOptString)
+        // embeddings are input only, and a provider that reports no usage yields -1: nothing to bill
+        val tokens = math.max(0L, resp.metadata.tokenUsage)
+        val costs = TokenBasedCosts.track(originalModel.provider, model, tokens, 0L, attrs)
+        if (TokenBasedCosts.embedInResponse(attrs)) {
+          Right(resp.copy(metadata = resp.metadata.copy(costs = costs)))
+        } else {
+          Right(resp)
+        }
+      }
+    }
+  }
+}
+
+object ModerationModelClientWithCostsTracking {
+  def applyIfPossible(tuple: (ModerationModel, ModerationModelClient, Env)): ModerationModelClient = {
+    if (TokenBasedCosts.settings(using tuple._3).enabled) new ModerationModelClientWithCostsTracking(tuple._1, tuple._2) else tuple._2
+  }
+}
+
+class ModerationModelClientWithCostsTracking(originalModel: ModerationModel, val moderationModelClient: ModerationModelClient) extends DecoratorModerationModelClient {
+  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
+    moderationModelClient.moderate(opts, rawBody, attrs).map {
+      case Left(err) => Left(err)
+      case Right(resp) => {
+        val model = Some(resp.model).filter(_.nonEmpty).orElse(opts.model).orElse(originalModel.config.at("options.model").asOptString)
+        val usage = resp.metadata.usage
+        // providers that only report a total put everything on the input side, which is how moderation bills
+        val inputTokens = if (usage.input > 0 || usage.output > 0) math.max(0L, usage.input) else math.max(0L, usage.total)
+        val outputTokens = math.max(0L, usage.output)
+        val costs = TokenBasedCosts.track(originalModel.provider, model, inputTokens, outputTokens, attrs)
+        if (TokenBasedCosts.embedInResponse(attrs)) {
+          Right(resp.copy(metadata = resp.metadata.copy(costs = costs)))
+        } else {
+          Right(resp)
+        }
+      }
+    }
+  }
+}
+
 object ChatClientWithCostsTracking {
   val key = TypedKey[CostsOutput]("cloud-apim.ai-gateway.CostsOutputKey")
   val enabledRef = new AtomicReference[Option[Boolean]](None)

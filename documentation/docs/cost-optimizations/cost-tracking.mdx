@@ -58,6 +58,20 @@ Costs are always billed from the most accurate source available for the call:
 
 OpenRouter model variants and aliases — `anthropic/claude-opus-5:batch`, `~vendor/model-latest` — are billed at the price of the model they point to.
 
+### Supported modalities
+
+Costs are computed for the modalities the price grid bills per token:
+
+| Modality | Cost tracking |
+|---|---|
+| Text (chat, completion, responses) | ✅ |
+| Embeddings | ✅ |
+| Moderation | ✅ (free on most providers, so the cost is a legitimate zero) |
+| Image, audio, video, OCR | ❌ not yet — these are billed per image, pixel, second, character or page |
+
+Calls on the modalities without cost tracking still count their tokens and pages against your budgets; only
+the dollar amount is missing.
+
 ### Supported providers
 
 Cost tracking natively supports the following providers:

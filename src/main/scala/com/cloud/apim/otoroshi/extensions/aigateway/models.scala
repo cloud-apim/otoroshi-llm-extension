@@ -1146,7 +1146,7 @@ case class Embedding(vector: Array[Float]) {
     )
   }
 }
-case class EmbeddingResponseMetadata(tokenUsage: Long) {
+case class EmbeddingResponseMetadata(tokenUsage: Long, costs: Option[CostsOutput] = None) {
   def toOpenAiJson: JsValue = {
     Json.obj(
       "prompt_tokens" -> tokenUsage,
@@ -1165,7 +1165,10 @@ case class EmbeddingResponse(
       "data" -> JsArray(embeddings.zipWithIndex.map(t => t._1.toOpenAiJson(format, t._2))),
       "model" -> model,
       "usage" -> metadata.toOpenAiJson
-    )
+    ).applyOnWithOpt(metadata.costs) {
+      // costs sit next to usage, not inside it, to stay consistent with the chat responses
+      case (obj, costs) => obj ++ Json.obj("costs" -> costs.json)
+    }
   }
 }
 
