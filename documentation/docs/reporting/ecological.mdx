@@ -22,7 +22,7 @@ impacts {
   embed-impacts-in-responses = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_IMPACTS_EMBED_IMPACTS_IN_RESPONSES}
   custom-models = "{\"aliases\": [],\"models\": []}"
   custom-models = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_IMPACTS_CUSTOM_MODELS}
-  custom-electricity-mix = "name,adpe,pe,gwp\n"
+  custom-electricity-mix = "{\"electricity_mixes\": []}"
   custom-electricity-mix = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_IMPACTS_CUSTOM_ELECTRICITY_MIX}
 }
 ```
@@ -34,7 +34,7 @@ impacts {
 | `electricity-mix` | string | `"WOR"` | Default electricity mix zone code (see available zones below) |
 | `embed-impacts-in-responses` | boolean | `false` | Always embed impacts in LLM responses |
 | `custom-models` | string (JSON) | `"{}"` | Custom model architectures for impact computation (see below) |
-| `custom-electricity-mix` | string (CSV) | `""` | Custom electricity mix definitions (see below) |
+| `custom-electricity-mix` | string (JSON) | `"{}"` | Custom electricity mix definitions (see below) |
 
 Once it's enabled, audit events of kind `LLMUsageAudit` will have an `impacts` field.
 You can also embed the `impacts` value in your LLM responses using the `impacts.embed-impacts-in-responses` config or by adding `?embed_impacts=true` to your query.
@@ -49,6 +49,7 @@ The ecological impact output contains the following metrics:
 | `energy` | kWh | Energy: related to the final electricity consumption |
 | `gwp` | kgCO2eq | Global Warming Potential (GWP): related to climate change, commonly known as GHG emissions |
 | `adpe` | kgSbeq | Abiotic Depletion Potential for Elements (ADPe): related to the depletion of minerals and metals |
+| `wcf` | L | Water Consumption Footprint (WCF): water used to cool the hardware and to produce the electricity it drew. Reported under `usage` and at the top level — unlike the others it has no embodied counterpart |
 | `pe` | MJ | Primary Energy (PE): related to the energy consumed from primary sources like oil, gas or coal |
 
 Each metric contains a `value` with `min`, `max`, and `avg` estimates. The output is split into:
@@ -76,76 +77,54 @@ For unsupported providers, you can set metadata on your provider entities to map
 
 ### Available electricity mix zones
 
-The following ISO country codes are available as electricity mix zones:
+Zones are ISO 3166-1 alpha-3 country codes, plus `WOR` for the world average — which is the default and the
+right choice when you do not know where the provider actually runs.
 
-| Code | Country | Code | Country | Code | Country |
-|------|---------|------|---------|------|---------|
-| `ARG` | Argentina | `GBR` | United Kingdom | `NLD` | Netherlands |
-| `AUS` | Australia | `GRC` | Greece | `NOR` | Norway |
-| `AUT` | Austria | `HUN` | Hungary | `NZL` | New Zealand |
-| `BEL` | Belgium | `IDN` | Indonesia | `POL` | Poland |
-| `BGR` | Bulgaria | `IND` | India | `PRT` | Portugal |
-| `BRA` | Brazil | `IRL` | Ireland | `ROU` | Romania |
-| `CAN` | Canada | `ISL` | Iceland | `RUS` | Russia |
-| `CHE` | Switzerland | `ITA` | Italy | `SVK` | Slovakia |
-| `CHL` | Chile | `JPN` | Japan | `SVN` | Slovenia |
-| `CHN` | China | `KOR` | South Korea | `SWE` | Sweden |
-| `CYP` | Cyprus | `LTU` | Lithuania | `THA` | Thailand |
-| `CZE` | Czech Republic | `LUX` | Luxembourg | `TUR` | Turkey |
-| `DEU` | Germany | `LVA` | Latvia | `TWN` | Taiwan |
-| `DNK` | Denmark | `MEX` | Mexico | `UKR` | Ukraine |
-| `ESP` | Spain | `MLT` | Malta | `USA` | United States |
-| `EST` | Estonia | `MYS` | Malaysia | `WOR` | World (default) |
-| `FIN` | Finland | | | | |
-| `FRA` | France | | | | |
+The full list is the one shipped by ecologits and lives in `data/eg-elec.json`, currently **215 zones**. Listing
+them here would only go stale at the next refresh; a few common ones:
 
-### Custom models
+| Code | Zone | Code | Zone |
+|------|------|------|------|
+| `WOR` | World average (default) | `USA` | United States |
+| `FRA` | France | `DEU` | Germany |
+| `GBR` | United Kingdom | `SWE` | Sweden |
+| `IRL` | Ireland | `NLD` | Netherlands |
+| `CAN` | Canada | `IND` | India |
 
-You can define custom model architectures for impact computation using the `custom-models` config. The format is:
+Each zone carries four factors: `adpe`, `pe`, `gwp` and `wue`. When one of them could not be measured for a
+zone, upstream falls back to the world value and says so — **165 of the 215 zones** have an estimated water
+factor this way. Those warnings are attached to the impacts of every request using the zone, so an estimate is
+never published as a measurement.
+
+### Custom electricity mix
+
+You can define custom electricity mix zones using the `custom-electricity-mix` config. The format is the one
+ecologits ships, so a zone can be copied straight from upstream:
 
 ```json
 {
-  "aliases": [],
-  "models": [
+  "electricity_mixes": [
     {
-      "type": "model",
-      "provider": "openai",
-      "name": "my-custom-model",
-      "architecture": {
-        "type": "dense",
-        "parameters": 1760000000000
-      },
-      "warnings": [],
-      "sources": []
+      "name": "MYZONE",
+      "adpe": 4.858e-08,
+      "pe": 9.3135,
+      "gwp": 0.04144,
+      "wue": 3.6737,
+      "warnings": []
     }
   ]
 }
 ```
 
-The `architecture.type` can be `"dense"` or `"moe"` (Mixture of Experts). For MoE models, use:
-
-```json
-{
-  "architecture": {
-    "type": "moe",
-    "total": 1760000000000,
-    "active": 440000000000
-  }
-}
-```
-
-### Custom electricity mix
-
-You can define custom electricity mix zones using the `custom-electricity-mix` config. The format is CSV with columns: `name,adpe,pe,gwp`:
-
-```csv
-name,adpe,pe,gwp
-MYZONE,0.00000004858,9.3135,0.04418
-```
-
 - `adpe`: Abiotic Depletion Potential for Elements (kgSbeq/kWh)
 - `pe`: Primary Energy (MJ/kWh)
 - `gwp`: Global Warming Potential (kgCO2eq/kWh)
+- `wue`: Water Usage Effectiveness of the grid (L/kWh)
+- `warnings`: which factors are estimated rather than measured, surfaced in the impacts of every request using
+  the zone
+
+The previous CSV shape (`name,adpe,pe,gwp[,wue]`) is still accepted, so an existing configuration keeps
+working.
 
 ## Example of ecological impact embed in responses
 
@@ -406,3 +385,19 @@ $ curl --request POST \
 ## Dashboard example
 
 ![](/img/energy-costs-consumption.png)
+
+## Kept in sync with ecologits
+
+The impact model and its data are a port of [ecologits](https://github.com/mlco2/ecologits): the formulas, the
+constants, the model characteristics and the electricity mixes all come from upstream and are meant to move
+with it, not to be tuned locally.
+
+Two things worth knowing about the latest refresh:
+
+- **The numbers changed, substantially.** Upstream moved the model quantization from 4 to 16 bits — which
+  multiplies the memory a model needs, hence the number of GPUs — and shortened the hardware lifespan from 5 to
+  3 years, which raises the embodied share. Every hardware constant moved too. Impacts reported before the
+  refresh were not comparable to the ones reported now.
+- **Models now carry measured deployment characteristics.** When upstream ships a `tps` (tokens per second) and
+  `ttft` (time to first token) for a model, they are used directly instead of the fitted latency formula, which
+  only ever stood in for a measurement. Models without them still use the formula.

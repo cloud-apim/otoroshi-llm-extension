@@ -64,6 +64,14 @@ case class PE(value: ValueOrRange) {
   }
 }
 // Energy: related to the final electricity consumption in kWh.
+// WCF: water consumed to run the request, both to cool the hardware and to produce the electricity it drew.
+case class WCF(value: ValueOrRange) {
+  def json(desc: Boolean): JsValue = {
+    Json.obj("value" -> Types.valueOrRangeJson(value), "unit" -> "L")
+      .applyOnIf(desc)(o => o ++ Json.obj("description" -> "Water Consumption Footprint"))
+  }
+}
+
 case class Energy(value: ValueOrRange) {
   def json(desc: Boolean): JsValue = {
     Json.obj("value" -> Types.valueOrRangeJson(value), "unit" -> "kWh")
@@ -76,13 +84,15 @@ case class Usage(
                   energy: Energy,
                   gwp: GWP,
                   adpe: ADPe,
-                  pe: PE
+                  pe: PE,
+                  wcf: WCF
                 ) {
   def json(desc: Boolean): JsValue = Json.obj(
     "energy" -> energy.json(desc),
     "gwp" -> gwp.json(desc),
     "adpe" -> adpe.json(desc),
     "pe" -> pe.json(desc),
+    "wcf" -> wcf.json(desc),
   ).applyOnIf(desc)(o => o ++ Json.obj("description" -> "related to the impacts of the energy consumption during model execution"))
 }
 
@@ -104,6 +114,7 @@ case class Impacts(
                     gwp: GWP,
                     adpe: ADPe,
                     pe: PE,
+                    wcf: WCF,
                     usage: Usage,
                     embodied: Embodied
                   ) {
@@ -112,6 +123,8 @@ case class Impacts(
     "gwp" -> gwp.json(desc),
     "adpe" -> adpe.json(desc),
     "pe" -> pe.json(desc),
+    // water has no embodied counterpart upstream, so the total is the usage one
+    "wcf" -> wcf.json(desc),
     "usage" -> usage.json(desc),
     "embodied" -> embodied.json(desc)
   )
@@ -152,6 +165,13 @@ object ValueOrRange {
     case (Right(x), Left(y))    => Right(x * y)
   }
 
+  def plus(a: ValueOrRange, b: ValueOrRange): ValueOrRange = (a, b) match {
+    case (Left(x), Left(y)) => Left(x + y)
+    case (Left(x), Right(r)) => Right(RangeValue(x + r.min, x + r.max))
+    case (Right(r), Left(y)) => Right(RangeValue(r.min + y, r.max + y))
+    case (Right(r1), Right(r2)) => Right(RangeValue(r1.min + r2.min, r1.max + r2.max))
+  }
+
   def /(a: ValueOrRange, b: Double): ValueOrRange = a match {
     case Left(x)   => Left(x / b)
     case Right(x)  => Right(x / b)
@@ -159,60 +179,102 @@ object ValueOrRange {
 }
 
 object Constants {
-  val ModelQuantizationBits = 4
 
-  val GpuEnergyAlpha = 8.91e-8
-  val GpuEnergyBeta = 1.43e-6
-  val GpuEnergyStdev = 5.19e-7
-  val GpuLatencyAlpha = 8.02e-4
-  val GpuLatencyBeta = 2.23e-2
-  val GpuLatencyStdev = 7.00e-6
+  // Values below mirror ecologits upstream (ecologits/impacts/llm.py). They are not tuning knobs: changing one
+  // without changing the matching data makes the published impacts wrong in a way nobody will notice.
+  val ModelQuantizationBits = 16
+
+  // per-token GPU energy fit: alpha * exp(beta * batch) * active_params + gamma
+  val GpuEnergyAlpha = 1.1665273170451914e-06
+  val GpuEnergyBeta = -0.011205921025579175
+  val GpuEnergyGamma = 4.052928146734005e-05
+
+  // per-token latency fit, used only for models that ship no measured tps
+  val GpuLatencyAlpha = 0.0006785088094353663
+  val GpuLatencyBeta = 0.0003119310311688259
+  val GpuLatencyGamma = 0.019473717579473387
 
   val GpuMemory = 80.0 // GB
-  val GpuEmbodiedGWP = 143.0
-  val GpuEmbodiedADPe = 5.1e-3
-  val GpuEmbodiedPE = 1828.0
+  val GpuEmbodiedGWP = 273.0
+  val GpuEmbodiedADPe = 0.00895
+  val GpuEmbodiedPE = 3721.0
 
   val ServerGPUs = 8
-  val ServerPower = 1.0 // kW
-  val ServerEmbodiedGWP = 3000.0
-  val ServerEmbodiedADPe = 0.24
-  val ServerEmbodiedPE = 38000.0
+  val ServerPower = 1.2 // kW
+  val ServerEmbodiedGWP = 5700.0
+  val ServerEmbodiedADPe = 0.37
+  val ServerEmbodiedPE = 70000.0
 
-  val HardwareLifespan = 5 * 365 * 24 * 60 * 60 // en secondes
+  val HardwareLifespan = 3 * 365 * 24 * 60 * 60 // seconds
 
-  val DatacenterPUE = 1.2
+  // requests handled concurrently by a server: the energy and the embodied share of one request are divided
+  // by it, so it moves every number
+  val BatchSize = 64.0
+
+  // fallback datacenter characteristics, used for providers we have no measurement for
+  val DatacenterPUE: ValueOrRange = Left(1.2)
+  val DatacenterWUE: ValueOrRange = Left(0.569)
+}
+
+/**
+ * Datacenter characteristics per provider, mirroring PROVIDER_CONFIG_MAP upstream. PUE weighs the whole energy
+ * bill, WUE the water one, and both differ enough between providers to matter.
+ */
+object DatacenterConfig {
+
+  case class Config(location: String, pue: ValueOrRange, wue: ValueOrRange)
+
+  private def range(min: Double, max: Double): ValueOrRange = Right(RangeValue(min, max))
+
+  val byProvider: Map[String, Config] = Map(
+    "anthropic" -> Config("USA", range(1.09, 1.14), range(0.13, 0.999)),
+    "cohere" -> Config("USA", Left(1.09), Left(0.999)),
+    "google" -> Config("USA", Left(1.09), Left(0.999)),
+    "gemini" -> Config("USA", Left(1.09), Left(0.999)),
+    "huggingface" -> Config("USA", range(1.09, 1.14), range(0.13, 0.99)),
+    "mistral" -> Config("SWE", Left(1.16), Left(0.09)),
+    "openai" -> Config("USA", Left(1.20), Left(0.569)),
+  )
+
+  def forProvider(provider: String): Config = {
+    byProvider.getOrElse(provider.toLowerCase, Config("WOR", Constants.DatacenterPUE, Constants.DatacenterWUE))
+  }
 }
 
 object LLMImpactModel {
 
+  /** energy of a single GPU for the whole generation, in kWh. The batch size damps the per-token cost. */
   def gpuEnergy(
                  modelActiveParams: Double,
                  outputTokens: Double,
+                 batchSize: Double,
                  alpha: Double,
                  beta: Double,
-                 stdev: Double
-               ): RangeValue = {
-    val mean = alpha * modelActiveParams + beta
-    val minEnergy = outputTokens * (mean - 1.96 * stdev)
-    val maxEnergy = outputTokens * (mean + 1.96 * stdev)
-    RangeValue(min = max(0, minEnergy), max = maxEnergy)
+                 gamma: Double
+               ): Double = {
+    val perTokenWh = alpha * math.exp(beta * batchSize) * modelActiveParams + gamma
+    outputTokens * (perTokenWh / 1000.0)
   }
 
+  /**
+   * Generation latency in seconds. When the model ships measured deployment characteristics they are used as
+   * is - a measurement beats a fit - and the fitted formula only serves the models that have none. Capped by
+   * the latency actually observed, since the model cannot have taken longer than the request itself.
+   */
   def generationLatency(
                          modelActiveParams: Double,
                          outputTokens: Double,
+                         batchSize: Double,
                          alpha: Double,
                          beta: Double,
-                         stdev: Double,
-                         requestLatency: Double
-                       ): ValueOrRange = {
-    val mean = alpha * modelActiveParams + beta
-    val minLat = outputTokens * (mean - 1.96 * stdev)
-    val maxLat = outputTokens * (mean + 1.96 * stdev)
-    val interval = RangeValue(max(0, minLat), maxLat)
-    if (interval < requestLatency) Right(interval)
-    else Left(requestLatency)
+                         gamma: Double,
+                         requestLatency: Double,
+                         tps: Option[Double],
+                         ttft: Option[Double]
+                       ): Double = {
+    val latencyPerToken = tps.filter(_ > 0.0).map(1.0 / _).getOrElse(alpha * modelActiveParams + beta * batchSize + gamma)
+    val gpuLatency = outputTokens * latencyPerToken + ttft.getOrElse(0.0)
+    if (requestLatency < gpuLatency) requestLatency else gpuLatency
   }
 
   def modelRequiredMemory(
@@ -222,48 +284,60 @@ object LLMImpactModel {
     1.2 * modelTotalParams * quantBits / 8.0
   }
 
+  /** rounded up to the next power of two, as a server is not filled one gpu at a time */
   def gpuRequiredCount(
                         modelRequiredMemory: Double,
                         gpuMemory: Double
-                      ): Int = ceil(modelRequiredMemory / gpuMemory).toInt
+                      ): Int = {
+    val needed = ceil(modelRequiredMemory / gpuMemory).toInt
+    if (needed <= 1) 1 else math.pow(2, ceil(log(needed.toDouble) / log(2.0))).toInt
+  }
 
+  /** energy of the server itself, for this request's share of the batch */
   def serverEnergy(
                     generationLatency: Double,
                     serverPower: Double,
                     serverGPUCount: Int,
-                    gpuRequiredCount: Int
+                    gpuRequiredCount: Int,
+                    batchSize: Double
                   ): Double = {
-    (generationLatency / 3600.0) * serverPower * (gpuRequiredCount.toDouble / serverGPUCount.toDouble)
+    (generationLatency / 3600.0) * serverPower * (gpuRequiredCount.toDouble / serverGPUCount.toDouble) * (1.0 / batchSize)
   }
 
-  def requestEnergy(
-                     pue: Double,
-                     serverEnergy: Double,
-                     gpuRequiredCount: Int,
-                     gpuEnergy: ValueOrRange
-                   ): ValueOrRange = {
-    val gpuTotalEnergy = ValueOrRange * (gpuEnergy, gpuRequiredCount.toDouble)
-    ValueOrRange * (gpuTotalEnergy, pue) match {
-      case total => ValueOrRange * (Left(serverEnergy), pue) match {
-        case Right(serverPart) => Right(RangeValue(serverPart.min + total.toOption.get.min, serverPart.max + total.toOption.get.max))
-        case Left(serverPart) =>
-          total match {
-            case Left(gpuPart)   => Left(serverPart + gpuPart)
-            case Right(gpuRange) => Right(RangeValue(serverPart + gpuRange.min, serverPart + gpuRange.max))
-          }
-      }
-    }
+  /** energy drawn by the IT equipment alone, before the datacenter overhead */
+  def requestItEnergy(
+                       serverEnergy: Double,
+                       gpuRequiredCount: Int,
+                       gpuEnergy: Double
+                     ): Double = serverEnergy + gpuRequiredCount * gpuEnergy
+
+  def requestEnergy(pue: ValueOrRange, requestItEnergy: Double): ValueOrRange =
+    ValueOrRange * (pue, requestItEnergy)
+
+  /**
+   * Water consumption: the datacenter cools the IT equipment directly, and the electricity it draws was itself
+   * produced with water. Hence the datacenter wue plus the grid wue weighted by the pue.
+   */
+  def requestUsageWcf(
+                       requestItEnergy: Double,
+                       ifElectricityMixWue: Double,
+                       datacenterWue: ValueOrRange,
+                       pue: ValueOrRange
+                     ): ValueOrRange = {
+    val gridPart = ValueOrRange * (pue, ifElectricityMixWue)
+    ValueOrRange * (ValueOrRange.plus(datacenterWue, gridPart), requestItEnergy)
   }
 
   def usageImpact(value: ValueOrRange, impactFactor: Double): ValueOrRange =
     ValueOrRange * (value, impactFactor)
 
+  /** the request only bears its share of the hardware, for the time it actually held it */
   def embodiedImpact(
                       embodied: Double,
                       lifetime: Double,
-                      latency: ValueOrRange
-                    ): ValueOrRange =
-    ValueOrRange / (ValueOrRange * (latency, embodied), lifetime)
+                      latency: Double,
+                      batchSize: Double
+                    ): Double = latency * embodied / (lifetime * batchSize)
 
   def combinedEmbodiedImpact(
                               serverEmbodied: Double,
@@ -277,6 +351,7 @@ object LLMImpactModel {
 
 object LLMImpactExecutor {
 
+  /** one run of the impact graph, for a single point of every input that could be a range */
   def computeLLMImpactsDag(
                             modelActiveParams: Double,
                             modelTotalParams: Double,
@@ -285,13 +360,19 @@ object LLMImpactExecutor {
                             ifElectricityMixAdpe: Double,
                             ifElectricityMixPe: Double,
                             ifElectricityMixGwp: Double,
+                            ifElectricityMixWue: Double,
+                            datacenterPue: ValueOrRange,
+                            datacenterWue: ValueOrRange,
+                            tps: Option[Double] = None,
+                            ttft: Option[Double] = None,
                             modelQuantBits: Int = Constants.ModelQuantizationBits,
+                            batchSize: Double = Constants.BatchSize,
                             gpuEnergyAlpha: Double = Constants.GpuEnergyAlpha,
                             gpuEnergyBeta: Double = Constants.GpuEnergyBeta,
-                            gpuEnergyStdev: Double = Constants.GpuEnergyStdev,
+                            gpuEnergyGamma: Double = Constants.GpuEnergyGamma,
                             gpuLatencyAlpha: Double = Constants.GpuLatencyAlpha,
                             gpuLatencyBeta: Double = Constants.GpuLatencyBeta,
-                            gpuLatencyStdev: Double = Constants.GpuLatencyStdev,
+                            gpuLatencyGamma: Double = Constants.GpuLatencyGamma,
                             gpuMemory: Double = Constants.GpuMemory,
                             gpuEmbodiedGwp: Double = Constants.GpuEmbodiedGWP,
                             gpuEmbodiedAdpe: Double = Constants.GpuEmbodiedADPe,
@@ -301,47 +382,58 @@ object LLMImpactExecutor {
                             serverEmbodiedGwp: Double = Constants.ServerEmbodiedGWP,
                             serverEmbodiedAdpe: Double = Constants.ServerEmbodiedADPe,
                             serverEmbodiedPe: Double = Constants.ServerEmbodiedPE,
-                            serverLifetime: Double = Constants.HardwareLifespan,
-                            datacenterPue: Double = Constants.DatacenterPUE
+                            serverLifetime: Double = Constants.HardwareLifespan
                           ): Map[String, ValueOrRange] = {
 
-    val gpuEnergy = LLMImpactModel.gpuEnergy(modelActiveParams, outputTokens, gpuEnergyAlpha, gpuEnergyBeta, gpuEnergyStdev)
-    val latency = LLMImpactModel.generationLatency(modelActiveParams, outputTokens, gpuLatencyAlpha, gpuLatencyBeta, gpuLatencyStdev, requestLatency)
+    val gpuEnergy = LLMImpactModel.gpuEnergy(modelActiveParams, outputTokens, batchSize, gpuEnergyAlpha, gpuEnergyBeta, gpuEnergyGamma)
+    val latency = LLMImpactModel.generationLatency(modelActiveParams, outputTokens, batchSize, gpuLatencyAlpha, gpuLatencyBeta, gpuLatencyGamma, requestLatency, tps, ttft)
     val memoryRequired = LLMImpactModel.modelRequiredMemory(modelTotalParams, modelQuantBits)
     val gpuRequired = LLMImpactModel.gpuRequiredCount(memoryRequired, gpuMemory)
-    val latencyAsDouble = latency match {
-      case Left(v) => v
-      case Right(r) => r.max
-    }
-    val serverEnergy = LLMImpactModel.serverEnergy(latencyAsDouble, serverPower, serverGpuCount, gpuRequired)
-    val requestEnergy = LLMImpactModel.requestEnergy(datacenterPue, serverEnergy, gpuRequired, Right(gpuEnergy))
+    val serverEnergy = LLMImpactModel.serverEnergy(latency, serverPower, serverGpuCount, gpuRequired, batchSize)
+    val itEnergy = LLMImpactModel.requestItEnergy(serverEnergy, gpuRequired, gpuEnergy)
+    val requestEnergy = LLMImpactModel.requestEnergy(datacenterPue, itEnergy)
 
     val usageGWP = LLMImpactModel.usageImpact(requestEnergy, ifElectricityMixGwp)
     val usageADPe = LLMImpactModel.usageImpact(requestEnergy, ifElectricityMixAdpe)
     val usagePE = LLMImpactModel.usageImpact(requestEnergy, ifElectricityMixPe)
+    val usageWCF = LLMImpactModel.requestUsageWcf(itEnergy, ifElectricityMixWue, datacenterWue, datacenterPue)
 
     val embodiedGWPValue = LLMImpactModel.combinedEmbodiedImpact(serverEmbodiedGwp, serverGpuCount, gpuEmbodiedGwp, gpuRequired)
     val embodiedADPeValue = LLMImpactModel.combinedEmbodiedImpact(serverEmbodiedAdpe, serverGpuCount, gpuEmbodiedAdpe, gpuRequired)
     val embodiedPEValue = LLMImpactModel.combinedEmbodiedImpact(serverEmbodiedPe, serverGpuCount, gpuEmbodiedPe, gpuRequired)
-
-    val embodiedGWP = LLMImpactModel.embodiedImpact(embodiedGWPValue, serverLifetime, latency)
-    val embodiedADPe = LLMImpactModel.embodiedImpact(embodiedADPeValue, serverLifetime, latency)
-    val embodiedPE = LLMImpactModel.embodiedImpact(embodiedPEValue, serverLifetime, latency)
 
     Map(
       "request_energy" -> requestEnergy,
       "request_usage_gwp" -> usageGWP,
       "request_usage_adpe" -> usageADPe,
       "request_usage_pe" -> usagePE,
-      "request_embodied_gwp" -> embodiedGWP,
-      "request_embodied_adpe" -> embodiedADPe,
-      "request_embodied_pe" -> embodiedPE
+      "request_usage_wcf" -> usageWCF,
+      "request_embodied_gwp" -> Left(LLMImpactModel.embodiedImpact(embodiedGWPValue, serverLifetime, latency, batchSize)),
+      "request_embodied_adpe" -> Left(LLMImpactModel.embodiedImpact(embodiedADPeValue, serverLifetime, latency, batchSize)),
+      "request_embodied_pe" -> Left(LLMImpactModel.embodiedImpact(embodiedPEValue, serverLifetime, latency, batchSize))
     )
   }
 }
 
 object LLMImpactCalculator {
 
+  private val rangedFields = Seq(
+    "request_energy", "request_usage_gwp", "request_usage_adpe", "request_usage_pe", "request_usage_wcf",
+    "request_embodied_gwp", "request_embodied_adpe", "request_embodied_pe"
+  )
+
+  private def merge(prev: ValueOrRange, current: ValueOrRange): ValueOrRange = {
+    def lo(v: ValueOrRange): Double = v match { case Left(x) => x; case Right(r) => r.min }
+    def hi(v: ValueOrRange): Double = v match { case Left(x) => x; case Right(r) => r.max }
+    Right(RangeValue(min(lo(prev), lo(current)), max(hi(prev), hi(current))))
+  }
+
+  private def sum(a: ValueOrRange, b: ValueOrRange): ValueOrRange = ValueOrRange.plus(a, b)
+
+  /**
+   * Impacts of one generation. A model whose parameter count is a range is run at both ends and the results
+   * combined, which is where the reported ranges come from - not from an assumed measurement error.
+   */
   def computeLLMImpacts(
                          modelActiveParams: ValueOrRange,
                          modelTotalParams: ValueOrRange,
@@ -349,29 +441,24 @@ object LLMImpactCalculator {
                          ifElectricityMixAdpe: Double,
                          ifElectricityMixPe: Double,
                          ifElectricityMixGwp: Double,
+                         ifElectricityMixWue: Double,
+                         datacenterPue: ValueOrRange = Constants.DatacenterPUE,
+                         datacenterWue: ValueOrRange = Constants.DatacenterWUE,
                          requestLatency: Option[Double] = None,
-                         extraParams: Map[String, Any] = Map.empty
+                         tps: Option[Double] = None,
+                         ttft: Option[Double] = None,
                        ): Impacts = {
 
     val latency = requestLatency.getOrElse(Double.PositiveInfinity)
 
-    val activeValues = modelActiveParams match {
-      case Left(d)  => Seq(d)
-      case Right(r) => Seq(r.min, r.max)
+    val (activeValues, totalValues) = (modelActiveParams, modelTotalParams) match {
+      case (Left(a), Left(t)) => (Seq(a), Seq(t))
+      case (Right(a), Right(t)) => (Seq(a.min, a.max), Seq(t.min, t.max))
+      case (Right(a), Left(t)) => (Seq(a.min, a.max), Seq(t, t))
+      case (Left(a), Right(t)) => (Seq(a, a), Seq(t.min, t.max))
     }
-
-    val totalValues = modelTotalParams match {
-      case Left(d)  => Seq(d)
-      case Right(r) => Seq(r.min, r.max)
-    }
-
-    val fields = Seq(
-      "request_energy", "request_usage_gwp", "request_usage_adpe", "request_usage_pe",
-      "request_embodied_gwp", "request_embodied_adpe", "request_embodied_pe"
-    )
 
     val results = mutable.Map[String, ValueOrRange]()
-
     for ((act, tot) <- activeValues zip totalValues) {
       val res = LLMImpactExecutor.computeLLMImpactsDag(
         modelActiveParams = act,
@@ -380,71 +467,45 @@ object LLMImpactCalculator {
         requestLatency = latency,
         ifElectricityMixAdpe = ifElectricityMixAdpe,
         ifElectricityMixPe = ifElectricityMixPe,
-        ifElectricityMixGwp = ifElectricityMixGwp
-        // Pas de propagation de `extraParams` ici pour l'instant
+        ifElectricityMixGwp = ifElectricityMixGwp,
+        ifElectricityMixWue = ifElectricityMixWue,
+        datacenterPue = datacenterPue,
+        datacenterWue = datacenterWue,
+        tps = tps,
+        ttft = ttft,
       )
-
-      fields.foreach { field =>
-        results.get(field) match {
-          case None =>
-            results(field) = res(field)
-          case Some(prev) =>
-            val current = res(field)
-            val merged = (prev, current) match {
-              case (Left(x), Left(y)) => Right(RangeValue(min(x, y), max(x, y)))
-              case (Right(r1), Right(r2)) =>
-                Right(RangeValue(min(r1.min, r2.min), max(r1.max, r2.max)))
-              case (Left(x), Right(r)) =>
-                Right(RangeValue(min(x, r.min), max(x, r.max)))
-              case (Right(r), Left(x)) =>
-                Right(RangeValue(min(r.min, x), max(r.max, x)))
-            }
-            results(field) = merged
-        }
+      rangedFields.foreach { field =>
+        results(field) = results.get(field).map(prev => merge(prev, res(field))).getOrElse(res(field))
       }
     }
 
     val energy = Energy(results("request_energy"))
-    val gwpUsage = GWP(results("request_usage_gwp"))
-    val adpeUsage = ADPe(results("request_usage_adpe"))
-    val peUsage = PE(results("request_usage_pe"))
-    val gwpEmbodied = GWP(results("request_embodied_gwp"))
-    val adpeEmbodied = ADPe(results("request_embodied_adpe"))
-    val peEmbodied = PE(results("request_embodied_pe"))
+    val gwpUsage = results("request_usage_gwp")
+    val adpeUsage = results("request_usage_adpe")
+    val peUsage = results("request_usage_pe")
+    val wcfUsage = results("request_usage_wcf")
+    val gwpEmbodied = results("request_embodied_gwp")
+    val adpeEmbodied = results("request_embodied_adpe")
+    val peEmbodied = results("request_embodied_pe")
 
     Impacts(
       energy = energy,
-      gwp = GWP(ValueOrRange * (gwpUsage.value, 1.0) match {
-        case Left(v) => Left(v + gwpEmbodied.value.left.getOrElse(0.0))
-        case Right(r1) => (gwpEmbodied.value match {
-          case Left(v) => Right(RangeValue(r1.min + v, r1.max + v))
-          case Right(r2) => Right(RangeValue(r1.min + r2.min, r1.max + r2.max))
-        })
-      }),
-      adpe = ADPe(ValueOrRange * (adpeUsage.value, 1.0) match {
-        case Left(v) => Left(v + adpeEmbodied.value.left.getOrElse(0.0))
-        case Right(r1) => (adpeEmbodied.value match {
-          case Left(v) => Right(RangeValue(r1.min + v, r1.max + v))
-          case Right(r2) => Right(RangeValue(r1.min + r2.min, r1.max + r2.max))
-        })
-      }),
-      pe = PE(ValueOrRange * (peUsage.value, 1.0) match {
-        case Left(v) => Left(v + peEmbodied.value.left.getOrElse(0.0))
-        case Right(r1) => (peEmbodied.value match {
-          case Left(v) => Right(RangeValue(r1.min + v, r1.max + v))
-          case Right(r2) => Right(RangeValue(r1.min + r2.min, r1.max + r2.max))
-        })
-      }),
+      gwp = GWP(sum(gwpUsage, gwpEmbodied)),
+      adpe = ADPe(sum(adpeUsage, adpeEmbodied)),
+      pe = PE(sum(peUsage, peEmbodied)),
+      // no embodied water upstream, so the total is the usage one
+      wcf = WCF(wcfUsage),
       usage = Usage(
         energy = energy,
-        gwp = gwpUsage,
-        adpe = adpeUsage,
-        pe = peUsage
+        gwp = GWP(gwpUsage),
+        adpe = ADPe(adpeUsage),
+        pe = PE(peUsage),
+        wcf = WCF(wcfUsage),
       ),
       embodied = Embodied(
-        gwp = gwpEmbodied,
-        adpe = adpeEmbodied,
-        pe = peEmbodied
+        gwp = GWP(gwpEmbodied),
+        adpe = ADPe(adpeEmbodied),
+        pe = PE(peEmbodied),
       )
     )
   }
@@ -455,6 +516,7 @@ case class ImpactsOutput(
                           gwp: Option[GWP] = None,
                           adpe: Option[ADPe] = None,
                           pe: Option[PE] = None,
+                          wcf: Option[WCF] = None,
                           usage: Option[Usage] = None,
                           embodied: Option[Embodied] = None,
                           warnings: Option[List[String]] = None,
@@ -471,10 +533,23 @@ case class ImpactsOutput(
     "gwp" -> gwp.map(_.json(desc)).getOrElse(JsNull).asValue,
     "adpe" -> adpe.map(_.json(desc)).getOrElse(JsNull).asValue,
     "pe" -> pe.map(_.json(desc)).getOrElse(JsNull).asValue,
+    "wcf" -> wcf.map(_.json(desc)).getOrElse(JsNull).asValue,
     "warnings" -> warnings.map(v => JsArray(v.map(_.json))).getOrElse(JsNull).asValue,
   )
 }
 
+
+// `deployment` holds the tokens per second and time to first token measured upstream for this model. When it
+// is there it replaces the fitted latency formula, which only ever was a stand-in for a measurement.
+case class Deployment(tps: Option[Double], ttft: Option[Double])
+
+object Deployment {
+  val empty: Deployment = Deployment(None, None)
+  def from(json: JsValue): Deployment = Deployment(
+    tps = json.select("tps").asOpt[Double].filter(_ > 0.0),
+    ttft = json.select("ttft").asOpt[Double].filter(_ >= 0.0),
+  )
+}
 
 case class Model(
   provider: String,
@@ -482,11 +557,46 @@ case class Model(
   architecture: Architecture,
   warnings: List[String],
   sources: List[String],
+  deployment: Deployment = Deployment.empty,
 ) {
   def hasWarnings: Boolean = warnings.nonEmpty
 }
 case class ParametersMoE(total: ValueOrRange, active: ValueOrRange)
-case class ElectricityMix(name: String, adpe: Double, pe: Double, gwp: Double)
+// `warnings` says which of the four factors are not measured for this zone but taken from the world average.
+// 165 of the 215 zones have at least one, so dropping them would publish estimates as if they were measured.
+case class ElectricityMix(name: String, adpe: Double, pe: Double, gwp: Double, wue: Double, warnings: List[String] = List.empty)
+
+object ElectricityMix {
+  def fromJson(json: JsValue): Option[(String, ElectricityMix)] = json.select("name").asOptString.map { name =>
+    (name, ElectricityMix(
+      name = name,
+      adpe = json.select("adpe").asOpt[Double].getOrElse(0.0),
+      pe = json.select("pe").asOpt[Double].getOrElse(0.0),
+      gwp = json.select("gwp").asOpt[Double].getOrElse(0.0),
+      wue = json.select("wue").asOpt[Double].getOrElse(0.0),
+      warnings = json.select("warnings").asOpt[List[String]].getOrElse(List.empty),
+    ))
+  }
+
+  def fromDocument(raw: String): Map[String, ElectricityMix] = {
+    raw.trim.parseJson.select("electricity_mixes").asOpt[Seq[JsObject]].getOrElse(Seq.empty).flatMap(fromJson).toMap
+  }
+
+  /** the pre-json override format, still accepted so an existing `custom-electricity-mix` keeps working */
+  def fromLegacyCsv(raw: String): Map[String, ElectricityMix] = {
+    raw.split("\n").toSeq.drop(1).map(_.trim).filter(_.nonEmpty).flatMap { line =>
+      val parts = line.split(",")
+      if (parts.length < 4) None else Some((parts(0), ElectricityMix(
+        name = parts(0), adpe = parts(1).toDouble, pe = parts(2).toDouble, gwp = parts(3).toDouble,
+        wue = parts.lift(4).map(_.trim).filter(_.nonEmpty).map(_.toDouble).getOrElse(0.0),
+      )))
+    }.toMap
+  }
+
+  def parse(raw: String): Map[String, ElectricityMix] = {
+    if (raw.trim.startsWith("{")) fromDocument(raw) else fromLegacyCsv(raw)
+  }
+}
 case class Architecture(typ: String, denseParameters: Option[ValueOrRange], moeParameters: Option[ParametersMoE])
 object Architecture {
   val default = Architecture("dense", Some(Right(RangeValue(0, 0))), None)
@@ -563,7 +673,8 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
         name = name,
         warnings = obj.select("warnings").asOpt[List[String]].getOrElse(List.empty),
         sources = obj.select("sources").asOpt[List[String]].getOrElse(List.empty),
-        architecture = Architecture.from(obj.select("architecture").asObject)
+        architecture = Architecture.from(obj.select("architecture").asObject),
+        deployment = Deployment.from(obj.select("deployment").asOpt[JsObject].getOrElse(Json.obj()))
       ))
     }
     rawModels.toMap
@@ -579,7 +690,8 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
         name = name,
         warnings = obj.select("warnings").asOpt[List[String]].getOrElse(List.empty),
         sources = obj.select("sources").asOpt[List[String]].getOrElse(List.empty),
-        architecture = Architecture.from(obj.select("architecture").asObject)
+        architecture = Architecture.from(obj.select("architecture").asObject),
+        deployment = Deployment.from(obj.select("deployment").asOpt[JsObject].getOrElse(Json.obj()))
       ))
     }
     rawModels.toMap
@@ -595,7 +707,8 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
         name = name,
         warnings = obj.select("warnings").asOpt[List[String]].getOrElse(List.empty),
         sources = obj.select("sources").asOpt[List[String]].getOrElse(List.empty),
-        architecture = Architecture.from(obj.select("architecture").asObject)
+        architecture = Architecture.from(obj.select("architecture").asObject),
+        deployment = Deployment.from(obj.select("deployment").asOpt[JsObject].getOrElse(Json.obj()))
       ))
     }
     rawModels.toMap
@@ -603,41 +716,13 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
 
   val models_by_provider_name: Map[String, Model] = default_models_by_provider_name ++ custom_models_by_provider_name ++ user_models_by_provider_name
 
-  val default_electricityMixes = {
-    val csv = getResourceCode("data/eg-elec.csv")
-    csv.split("\n")
-      .toSeq
-      .tail
-      .map { line =>
-        val parts = line.split(",")
-        (parts(0), ElectricityMix(name = parts(0), adpe = parts(1).toDouble, pe = parts(2).toDouble, gwp = parts(3).toDouble))
-      }
-      .toMap
-  }
+  val default_electricityMixes: Map[String, ElectricityMix] = ElectricityMix.fromDocument(getResourceCode("data/eg-elec.json"))
 
-  val custom_electricityMixes = {
-    val csv = getResourceCode("data/custom-eg-elec.csv")
-    csv.split("\n")
-      .toSeq
-      .tail
-      .map { line =>
-        val parts = line.split(",")
-        (parts(0), ElectricityMix(name = parts(0), adpe = parts(1).toDouble, pe = parts(2).toDouble, gwp = parts(3).toDouble))
-      }
-      .toMap
-  }
+  val custom_electricityMixes: Map[String, ElectricityMix] = ElectricityMix.fromDocument(getResourceCode("data/custom-eg-elec.json"))
 
-  val user_electricityMixes = {
-    val csv = settings.configuration.getOptional[String]("custom-electricity-mix").getOrElse("name,adpe,pe,gwp\n")
-    csv.split("\n")
-      .toSeq
-      .tail
-      .map { line =>
-        val parts = line.split(",")
-        (parts(0), ElectricityMix(name = parts(0), adpe = parts(1).toDouble, pe = parts(2).toDouble, gwp = parts(3).toDouble))
-      }
-      .toMap
-  }
+  // accepts the upstream json shape, and still the old csv one so an existing configuration keeps working
+  val user_electricityMixes: Map[String, ElectricityMix] =
+    ElectricityMix.parse(settings.configuration.getOptional[String]("custom-electricity-mix").getOrElse("{\"electricity_mixes\": []}"))
 
   val electricityMixes = default_electricityMixes ++ custom_electricityMixes ++ user_electricityMixes
 
@@ -666,6 +751,9 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
       case Some(model) => {
         def run(totalParams: ValueOrRange, activeParams: ValueOrRange): Either[String, ImpactsOutput] = {
           val mix = electricityMixes.getOrElse(electricityMixZoneOpt.getOrElse(settings.electricityMixZone), electricityMixes.head._2)
+          // the datacenter the model actually runs in, when we know it: pue and wue differ enough between
+          // providers to move the result more than most of the model characteristics do
+          val datacenter = DatacenterConfig.forProvider(model.provider)
           val result = LLMImpactCalculator.computeLLMImpacts(
             modelActiveParams = activeParams,
             modelTotalParams = totalParams,
@@ -673,17 +761,25 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
             requestLatency = Some(requestLatency),
             ifElectricityMixAdpe = mix.adpe,
             ifElectricityMixPe = mix.pe,
-            ifElectricityMixGwp = mix.gwp
+            ifElectricityMixGwp = mix.gwp,
+            ifElectricityMixWue = mix.wue,
+            datacenterPue = datacenter.pue,
+            datacenterWue = datacenter.wue,
+            tps = model.deployment.tps,
+            ttft = model.deployment.ttft,
           )
           val output = ImpactsOutput(
             energy = Some(result.energy),
             gwp = Some(result.gwp),
             adpe = Some(result.adpe),
             pe = Some(result.pe),
+            wcf = Some(result.wcf),
             usage = Some(result.usage),
             embodied = Some(result.embodied)
           )
-          output.right
+          // what the model and the zone could not tell us: an estimated water factor is worth saying out loud
+          val warned = (model.warnings ++ mix.warnings).foldLeft(output)((acc, warning) => acc.addWarning(warning))
+          warned.right
         }
         model.architecture.moeParameters match {
           case Some(moe) => run(moe.total, moe.active)
