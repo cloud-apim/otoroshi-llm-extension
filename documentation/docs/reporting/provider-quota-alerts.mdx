@@ -1,0 +1,81 @@
+---
+sidebar_position: 3
+---
+
+# 🚨 Provider quota alerts
+
+When a provider starts refusing your calls because you hit a rate limit or ran out of credits, you want to know
+right away — and you want to know when it is over.
+
+The gateway watches every call it makes to every provider, on every modality, and raises **two Otoroshi alerts
+per incident**: one when a provider endpoint starts refusing calls, one when it serves again.
+
+## Why only two alerts
+
+A throttled provider answers with an error to *every* call until its rate limit window resets. Alerting per call
+would bury the useful signal under hundreds of identical copies of it.
+
+Instead, the gateway keeps an **episode** in memory per provider endpoint:
+
+1. the first refused call opens the episode and raises `LLMProviderQuotaExceededAlert`
+2. every subsequent refusal is silently counted into that episode
+3. the first successful call closes it and raises `LLMProviderQuotaRecoveredAlert`, telling you how long the
+   incident lasted and how many calls were refused
+
+Errors that say nothing about quotas — a `500`, a timeout, a bad API key — never open or close an episode, so a
+provider that is throttled and briefly errors out stays correctly marked as throttled.
+
+## What counts as a quota problem
+
+| Status | Treated as a quota problem |
+|---|---|
+| `429` | Always — the standard rate limit / quota exceeded answer |
+| `402` | Always — the account ran out of credits |
+| `403` | Only when the response body mentions a quota, a rate limit, billing or credits. A plain `403` is a credentials failure and raises nothing |
+| Anything else | No |
+
+## The alerts
+
+Both alerts carry the provider kind, the endpoint (`scheme://host:port`), the HTTP status, the reason and the
+number of refused calls. The recovery alert adds how long the incident lasted:
+
+```json
+{
+  "@type": "AlertEvent",
+  "alert": "LLMProviderQuotaRecoveredAlert",
+  "provider_kind": "OpenAI",
+  "endpoint": "https://api.openai.com",
+  "status": 429,
+  "reason": "rate limit or quota exceeded",
+  "started_at": 1788858331000,
+  "refused_calls": 143,
+  "duration_ms": 42000
+}
+```
+
+Route them wherever you already send Otoroshi alerts — Slack, a webhook, your mailer — with a data exporter
+filtering on `"@type": "AlertEvent"` and the alert name.
+
+## Configuration
+
+Alerts are on by default. To turn them off:
+
+```hocon
+quota-alerts {
+  enabled = false
+  enabled = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_QUOTA_ALERTS_ENABLED}
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `true` | Raise alerts when a provider starts and stops refusing calls on quota grounds |
+
+## Good to know
+
+Episodes are tracked per **provider endpoint** — the provider kind plus `scheme://host:port` — not per provider
+entity. Two providers of the same kind pointing at the same endpoint share an episode, which is usually what you
+want since they typically share the same upstream quota.
+
+The state lives in memory, per node. Each node alerts on what it observes, and a restart starts from a clean
+slate: the next refused call opens a fresh episode.
