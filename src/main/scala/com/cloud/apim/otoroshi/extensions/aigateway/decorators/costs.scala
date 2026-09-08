@@ -27,9 +27,10 @@ case class CostsTrackingSettings(configuration: Configuration) {
   val embedDescriptionInJson = configuration.getOptional[Boolean]("embed-description-in-json").getOrElse(true)
   val embedCostsTrackingInResponses = configuration.getOptional[Boolean]("embed-costs-tracking-in-responses").getOrElse(false)
   val enabled = configuration.getOptional[Boolean]("enabled").getOrElse(true)
-  // the static price table only knows a subset of what OpenRouter exposes, so its catalog is synced
-  // periodically to price the rest. Set to false to avoid the outbound call.
-  val openRouterCatalogEnabled = configuration.getOptional[Boolean]("openrouter-catalog.enabled").getOrElse(true)
+  // the static price table only knows a subset of what OpenRouter exposes, so its catalog can be synced to
+  // price the rest. Opt-in: it is the only outbound call the extension makes on its own, and an instance
+  // without egress should not have to discover it through periodic errors in its logs.
+  val openRouterCatalogEnabled = configuration.getOptional[Boolean]("openrouter-catalog.enabled").getOrElse(false)
   val openRouterCatalogUrl = configuration.getOptional[String]("openrouter-catalog.url").getOrElse(OpenRouterCatalog.defaultUrl)
   val openRouterCatalogRefreshEvery = configuration.getOptional[FiniteDuration]("openrouter-catalog.refresh-every").getOrElse(6.hours)
 }

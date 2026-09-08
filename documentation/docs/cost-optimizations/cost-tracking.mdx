@@ -25,7 +25,7 @@ costs-tracking {
   custom-prices = "{}"
   custom-prices = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_CUSTOM_PRICES}
   openrouter-catalog {
-    enabled = true
+    enabled = false
     enabled = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_OPENROUTER_CATALOG_ENABLED}
     refresh-every = 6 hours
     refresh-every = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_OPENROUTER_CATALOG_REFRESH_EVERY}
@@ -38,7 +38,7 @@ costs-tracking {
 | `enabled` | boolean | `true` | Enable or disable cost tracking |
 | `embed-costs-tracking-in-responses` | boolean | `false` | Always embed costs in LLM responses |
 | `custom-prices` | string (JSON) | `"{}"` | Custom model prices in LiteLLM format (see below) |
-| `openrouter-catalog.enabled` | boolean | `true` | Keep OpenRouter model prices in sync with its public catalog |
+| `openrouter-catalog.enabled` | boolean | `false` | Keep OpenRouter model prices in sync with its public catalog. Opt-in: it is the only outbound call the extension makes on its own |
 | `openrouter-catalog.refresh-every` | duration | `6 hours` | How often the OpenRouter catalog is refreshed |
 
 Once it's enabled, audit events of kind `LLMUsageAudit` will have a `costs` object.
@@ -54,7 +54,7 @@ Costs are always billed from the most accurate source available for the call:
    - **User-defined prices**: your own prices via the `custom-prices` config, which always win
    - **Built-in custom prices**: additional prices shipped by the extension for models absent from LiteLLM
    - **Built-in LiteLLM prices**: the full [LiteLLM](https://docs.litellm.ai/) model price dictionary, bundled with the extension
-   - **The OpenRouter catalog**, kept in sync with the prices OpenRouter publishes, so new models are priced the day they ship
+   - **The OpenRouter catalog**, when enabled, kept in sync with the prices OpenRouter publishes, so new models are priced the day they ship
 
 OpenRouter model variants and aliases — `anthropic/claude-opus-5:batch`, `~vendor/model-latest` — are billed at the price of the model they point to.
 
