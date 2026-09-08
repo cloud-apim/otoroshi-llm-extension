@@ -3,6 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 import org.apache.pekko.http.scaladsl.util.FastFuture
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.redactedJson
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions, AiBudgetUsageKind, AiBudgetsDataStore, AiProvider, AudioModel, EmbeddingModel, ImageModel, ModerationModel, OcrModel, VideoModel}
 import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import io.azam.ulidj.ULID
@@ -64,7 +65,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     "apikey" -> attrs.get(otoroshi.plugins.Keys.ApiKeyKey).map(_.json).getOrElse(JsNull).asValue,
     "route" -> attrs.get(otoroshi.next.plugins.Keys.RouteKey).map(_.json).getOrElse(JsNull).asValue,
     "input_prompt" -> prompt.json,
-    "provider_details" -> originalProvider.json,
+    "provider_details" -> originalProvider.redactedJson,
   )
 
   private def auditError(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, error: JsValue)(using env: Env): Unit = {
@@ -242,7 +243,7 @@ class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embedd
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -258,7 +259,7 @@ class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embedd
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -299,7 +300,7 @@ class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embedd
                 "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                 "input_body" -> rawBody,
                 "output" -> _output,
-                "provider_details" -> originalModel.json,
+                "provider_details" -> originalModel.redactedJson,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                 "budgets" -> budgetIds.json
@@ -344,7 +345,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -360,7 +361,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -399,7 +400,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
                 "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                 "input_body" -> rawBody,
                 "output" -> _output,
-                "provider_details" -> originalModel.json,
+                "provider_details" -> originalModel.redactedJson,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                 "budgets" -> budgetIds.json
@@ -435,7 +436,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -451,7 +452,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -490,7 +491,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
                 "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                 "input_body" -> rawBody,
                 "output" -> _output,
-                "provider_details" -> originalModel.json,
+                "provider_details" -> originalModel.redactedJson,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                 "budgets" -> budgetIds.json
@@ -538,7 +539,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -554,7 +555,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -593,7 +594,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
                 "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                 "input_body" -> rawBody,
                 "output" -> _output,
-                "provider_details" -> originalModel.json,
+                "provider_details" -> originalModel.redactedJson,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                 "budgets" -> budgetIds.json
@@ -629,7 +630,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -645,7 +646,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -684,7 +685,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
                 "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                 "input_body" -> rawBody,
                 "output" -> _output,
-                "provider_details" -> originalModel.json,
+                "provider_details" -> originalModel.redactedJson,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                 "budgets" -> budgetIds.json
@@ -729,7 +730,7 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -745,7 +746,7 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -785,7 +786,7 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
                 "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                 "input_body" -> rawBody,
                 "output" -> _output,
-                "provider_details" -> originalModel.json,
+                "provider_details" -> originalModel.redactedJson,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                 "budgets" -> budgetIds.json
@@ -830,7 +831,7 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -846,7 +847,7 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -885,7 +886,7 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
                 "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                 "input_body" -> rawBody,
                 "output" -> _output,
-                "provider_details" -> originalModel.json,
+                "provider_details" -> originalModel.redactedJson,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                 "budgets" -> budgetIds.json
@@ -930,7 +931,7 @@ class OcrModelClientWithAuditing(originalModel: OcrModel, val ocrModelClient: Oc
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -946,7 +947,7 @@ class OcrModelClientWithAuditing(originalModel: OcrModel, val ocrModelClient: Oc
               "route" -> route.map(_.json).getOrElse(JsNull).asValue,
               "input_body" -> rawBody,
               "output" -> JsNull,
-              "provider_details" -> originalModel.json
+              "provider_details" -> originalModel.redactedJson
             )
           }.toAnalytics()
         }
@@ -985,7 +986,7 @@ class OcrModelClientWithAuditing(originalModel: OcrModel, val ocrModelClient: Oc
                 "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                 "input_body" -> rawBody,
                 "output" -> _output,
-                "provider_details" -> originalModel.json,
+                "provider_details" -> originalModel.redactedJson,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
                 "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
                 "budgets" -> budgetIds.json

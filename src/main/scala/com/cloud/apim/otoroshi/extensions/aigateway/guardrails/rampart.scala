@@ -75,6 +75,14 @@ class RampartEngine(onnxModelBytes: Array[Byte], tokenizerJsonPath: java.nio.fil
     }
   }
 
+  /** only the deterministic recognizers (email, url, ip, ssn, credit card): no model inference, orders of
+    * magnitude cheaper. Meant for high volume paths like data exporters, where running the model on every
+    * event is not affordable. */
+  def detectDeterministic(text: String, enabled: Set[String]): Seq[PiiSpan] = {
+    if (text == null || text.isEmpty) Seq.empty
+    else resolveOverlaps(deterministicDetect(text).filter(s => enabled.contains(s.entity)).map(s => (s, 2)))
+  }
+
   private def deterministicDetect(text: String): Seq[PiiSpan] = {
     val out = mutable.ListBuffer.empty[PiiSpan]
     RampartEngine.simplePatterns.foreach { case (entity, rx) =>

@@ -67,7 +67,7 @@ lazy val root = (project in file("."))
       "io.netty" % "netty-transport" % nettyVersion,
     ),
     libraryDependencies ++= Seq(
-      "fr.maif" %% "otoroshi" % "18.0.0-preview2" % "provided" excludeAll (netty *),
+      "fr.maif" %% "otoroshi" % "18.0.0-preview6" % "provided" excludeAll (netty *),
       //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
       "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonAnnotationVersion,
       "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
