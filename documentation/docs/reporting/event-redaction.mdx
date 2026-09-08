@@ -1,0 +1,75 @@
+---
+sidebar_position: 4
+---
+
+# 🧽 Removing personal data from events
+
+Audit events carry what your users actually wrote and what the models answered. That is exactly what makes them
+useful — and exactly what you may not be allowed to ship to an external log collector.
+
+Two independent mechanisms cover this.
+
+## Credentials never enter an event
+
+Provider entities are serialized whole into the `provider_details` field of every audit event, and they hold the
+api keys used to reach the provider. Those credentials are now stripped **at the source**: they never make it
+into an event in the first place.
+
+Redacting them further down — in an exporter transform, say — would be too late and too fragile: the secret
+would already have travelled through the event pipeline, and any exporter configured without the transform
+would leak it.
+
+Any field named `token`, `api_key`, `secret`, `password`, `authorization` and friends is replaced by
+`**redacted**`, at any depth and whatever the entity kind. Everything else — base url, model, timeouts, name —
+is preserved, because an audit line that lost its context is worthless.
+
+## Personal data: the Rampart event redactor
+
+Personal data written by your users is a different problem: it sits in free text, and finding it needs a model.
+The **Cloud APIM - Rampart event redaction** plugin runs the bundled Rampart model over the sensitive parts of
+each event, from a data exporter's `customTransform`:
+
+```json
+{
+  "customTransform": {
+    "kind": "plugin",
+    "ref": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.RampartEventRedactor",
+    "config": {
+      "paths": ["input_prompt", "output", "input_body"],
+      "entities": ["EMAIL", "GIVEN_NAME", "SURNAME", "CREDIT_CARD"],
+      "min_score": 0.4,
+      "deterministic_only": false
+    }
+  }
+}
+```
+
+| Parameter | Default | Description |
+|---|---|---|
+| `paths` | `input_prompt`, `output`, `input_body` | The event paths to scrub, dotted. The whole subtree of each is scanned; everything outside them is left alone |
+| `entities` | the Rampart defaults | What to look for |
+| `min_score` | `0.4` | Model confidence threshold |
+| `deterministic_only` | `false` | Skip the model and keep only the deterministic recognizers |
+
+### Only the configured paths
+
+An otoroshi event is mostly technical fields. Scrubbing all of them would eat the urls, ips and identifiers the
+audit exists for — `URL` and `IP_ADDRESS` are among the entities Rampart detects. So the plugin only touches
+what you point it at, and a field you did not list goes out untouched.
+
+### One placeholder per value, across the event
+
+The same email in the question and in the answer gets the same placeholder, so the event stays readable and
+correlatable once scrubbed.
+
+### It fails safe, not open
+
+If a path cannot be scrubbed, it is replaced by `**redaction-failed**` rather than passed through. The event
+still leaves — losing an audit line helps nobody — but nothing unscrubbed leaves with it.
+
+### The cost
+
+The model runs on every event, in chunks of 800 characters, inside the exporter pipeline. On a busy exporter
+that is not free. `deterministic_only` is orders of magnitude cheaper and still catches emails, ip addresses,
+social security numbers and card numbers — but no names, addresses or organisations. Measure on your own volume
+before leaving the model on.
