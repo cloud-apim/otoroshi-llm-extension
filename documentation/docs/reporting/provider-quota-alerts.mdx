@@ -7,8 +7,9 @@ sidebar_position: 3
 When a provider starts refusing your calls because you hit a rate limit or ran out of credits, you want to know
 right away — and you want to know when it is over.
 
-The gateway watches every call it makes to every provider, on every modality, and raises **two Otoroshi alerts
-per incident**: one when a provider endpoint starts refusing calls, one when it serves again.
+The gateway watches every call it makes to every provider, on every modality, raises **two Otoroshi alerts per
+incident** — one when a provider endpoint starts refusing calls, one when it serves again — and stops walking
+into a provider it knows is refusing.
 
 ## Why only two alerts
 
@@ -17,22 +18,93 @@ would bury the useful signal under hundreds of identical copies of it.
 
 Instead, the gateway keeps an **episode** in memory per provider endpoint:
 
-1. the first refused call opens the episode and raises `LLMProviderQuotaExceededAlert`
+1. the first refused call opens the episode and raises one alert, which one depending on the problem (see below)
 2. every subsequent refusal is silently counted into that episode
 3. the first successful call closes it and raises `LLMProviderQuotaRecoveredAlert`, telling you how long the
    incident lasted and how many calls were refused
 
+An episode that starts as throttling and turns out to be an empty account is re-qualified on the spot, and the
+louder alert is raised then — you are not left with a "just throttling" diagnosis on a problem that needs you.
+
 Errors that say nothing about quotas — a `500`, a timeout, a bad API key — never open or close an episode, so a
 provider that is throttled and briefly errors out stays correctly marked as throttled.
 
-## What counts as a quota problem
+## Two very different problems
 
-| Status | Treated as a quota problem |
+Being throttled and running out of credit both look like "the provider refused my call", but they call for
+opposite reactions, so they are never conflated:
+
+| | Throttled | Credit exhausted |
+|---|---|---|
+| Lasts | seconds to minutes | until someone tops the account up |
+| Resolves on its own | yes | no |
+| Alert | `LLMProviderQuotaExceededAlert` | `LLMProviderCreditExhaustedAlert` |
+| Reaction | wait for the window, then retry | route elsewhere, a human is needed |
+
+| Status | Read as |
 |---|---|
-| `429` | Always — the standard rate limit / quota exceeded answer |
-| `402` | Always — the account ran out of credits |
-| `403` | Only when the response body mentions a quota, a rate limit, billing or credits. A plain `403` is a credentials failure and raises nothing |
-| Anything else | No |
+| `402` | Credit exhausted, always |
+| `429` | Throttled — **unless** the body mentions an exhausted quota, credits or billing. OpenAI notably answers `429` with an `insufficient_quota` code when the account is empty, which is not throttling at all |
+| `403` | Only a quota problem when the body says so, and then read as credit or throttling depending on the wording. A plain `403` is a credentials failure and raises nothing |
+| Anything else | Nothing — a `500` or a timeout says nothing about quotas and never opens or closes an episode |
+
+## Knowing when to come back
+
+Providers say when their window resets, and the gateway reads it: `Retry-After` — as a number of seconds or an
+HTTP date — then the OpenAI-style `x-ratelimit-reset-requests` and `x-ratelimit-reset-tokens` durations
+(`6m0s`, `1.5s`). It lands in the episode as `retry_at`, and drives how long the provider is skipped.
+
+## Not walking into it again
+
+A throttled provider will refuse the next call too, so there is nothing to gain from trying. On a quota
+refusal the provider's circuit opens **immediately**, without waiting for the usual streak of failures:
+
+- **throttled**: until the `retry_at` the provider gave, falling back to the circuit breaker cooldown
+- **credit exhausted**: for a bounded while, long enough not to waste calls, short enough to notice a top up
+
+While the circuit is open the provider is skipped entirely and the configured fallback answers directly. The
+backoff is always bounded, so a provider is never skipped forever: once it elapses, one call goes through and a
+success closes both the episode and the circuit.
+
+This is on by default and independent from the failure-streak circuit breaker. To turn it off on a provider:
+
+```json
+"circuit_breaker": { "open_on_quota": false }
+```
+
+## Seeing it coming: the credit healthcheck
+
+Finding out that an account is empty when the first user call fails is finding out too late. A provider can be
+probed on a slow schedule with a **one token inference call**, so the credit problem is detected — and alerted —
+before any user traffic hits it.
+
+It has to be a real inference call: listing models answers `200` on an account at zero, so it would report a
+healthy provider right up to the outage.
+
+| Parameter | Default | Description |
+|---|---|---|
+| `healthcheck.enabled` | `false` | Opt-in, per provider |
+| `healthcheck.every` | `300000` | Interval in millis, floored to one minute |
+| `healthcheck.max_tokens` | `1` | Keep it at 1 unless the provider refuses such a small value |
+| `healthcheck.prompt` | `"ping"` | What to send |
+
+The probe runs outside the decorators: no guardrail, no budget consumption, no audit noise — and above all no
+cache, since a cached answer would report a healthy provider while the account is empty.
+
+Two things to keep in mind: the probe costs a fraction of a cent per run but it is not free, and there is no
+cheap equivalent for image or video providers, where a single call costs cents to dollars. It is meant for
+text providers.
+
+## A provider with no credit stops advertising its models
+
+`/models` no longer lists the models of a provider whose account has run out of credit — serving a catalog you
+cannot honour only moves the failure one step later. The models come back on their own once the incident closes.
+
+Throttling does **not** hide models: it lasts seconds and resolves on its own, so hiding the catalog would make
+it flap for every consumer reading it.
+
+Note that a models listing is free, so its success proves nothing about the account: it never closes an
+incident and never announces a recovery. Only a call that actually bills can do that.
 
 ## The alerts
 
@@ -45,10 +117,14 @@ number of refused calls. The recovery alert adds how long the incident lasted:
   "alert": "LLMProviderQuotaRecoveredAlert",
   "provider_kind": "OpenAI",
   "endpoint": "https://api.openai.com",
+  "kind": "throttled",
+  "transient": true,
   "status": 429,
-  "reason": "rate limit or quota exceeded",
+  "reason": "rate limit exceeded",
   "started_at": 1788858331000,
   "refused_calls": 143,
+  "provider_ids": ["e5f1..."],
+  "retry_at": 1788858391000,
   "duration_ms": 42000
 }
 ```
@@ -71,11 +147,15 @@ quota-alerts {
 |-----------|------|---------|-------------|
 | `enabled` | boolean | `true` | Raise alerts when a provider starts and stops refusing calls on quota grounds |
 
+Alerting is separate from the backoff: turning alerts off does not make the gateway walk back into a provider
+it knows is refusing calls.
+
 ## Good to know
 
-Episodes are tracked per **provider endpoint** — the provider kind plus `scheme://host:port` — not per provider
-entity. Two providers of the same kind pointing at the same endpoint share an episode, which is usually what you
-want since they typically share the same upstream quota.
+Episodes are tracked per **provider endpoint** — the provider kind plus `scheme://host:port`. Two providers of
+the same kind pointing at the same endpoint share an episode, which is usually what you want since they
+typically share the same upstream quota. Each episode also records which provider entities were seen hitting
+that endpoint, which is what the backoff uses to decide whether *your* provider should be skipped.
 
 The state lives in memory, per node. Each node alerts on what it observes, and a restart starts from a clean
 slate: the next refused call opens a fresh episode.

@@ -16,7 +16,7 @@ object HiveApi {
   val baseUrl = "https://api.thehive.ai/api/v3"
 }
 
-class HiveApi(baseUrl: String = HiveApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
+class HiveApi(baseUrl: String = HiveApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) {
 
   def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
@@ -33,7 +33,7 @@ class HiveApi(baseUrl: String = HiveApi.baseUrl, token: String, timeout: FiniteD
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Hive", url)(using ec, env)
+      .execute().observeQuotas("Hive", url, providerId)(using ec, env)
       .map { resp =>
         resp
       }

@@ -264,6 +264,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     WorkflowFunctionsInitializer.initDefaults()
     AiBudgetClusterAgent.start(env, this)
     costsTracking.startOpenRouterCatalogSync()
+    ProviderHealthchecks.start(env, this)
     env.datastores.wasmPluginsDataStore.findById(LlmToolFunction.wasmPluginId).flatMap {
       case Some(_) => ().vfuture
       case None => {
@@ -278,6 +279,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   }
 
   override def stop(): Unit = {
+    ProviderHealthchecks.stop()
     costsTracking.stopOpenRouterCatalogSync()
     AiBudgetClusterAgent.stop()
     LettuceRedisClientManager.shutdownAll()

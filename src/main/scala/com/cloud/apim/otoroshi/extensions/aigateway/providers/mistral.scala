@@ -40,7 +40,7 @@ object MistralAiModels {
 object MistralAiApi {
   val baseUrl = "https://api.mistral.ai/v1"
 }
-class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[MistralAiApiResponse, OpenAiChatResponseChunk] {
+class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) extends ApiClient[MistralAiApiResponse, OpenAiChatResponseChunk] {
 
   val supportsTools: Boolean = true
   val supportsStreaming: Boolean = true
@@ -69,7 +69,7 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Mistral", url)(using ec, env)
+      .execute().observeQuotas("Mistral", url, providerId)(using ec, env)
   }
 
   def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
@@ -88,7 +88,7 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
       .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Mistral", url)(using ec, env)
+      .execute().observeQuotas("Mistral", url, providerId)(using ec, env)
   }
 
   def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, MistralAiApiResponse]] = {

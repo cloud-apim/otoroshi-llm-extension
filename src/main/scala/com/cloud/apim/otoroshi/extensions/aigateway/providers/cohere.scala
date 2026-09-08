@@ -88,7 +88,7 @@ object CohereAiApi {
   val baseUrl = "https://api.cohere.com"
 }
 
-class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[CohereAiApiResponse, CohereAiApiResponseChunk] {
+class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) extends ApiClient[CohereAiApiResponse, CohereAiApiResponseChunk] {
 
   val providerName = "cohere"
   override def supportsTools: Boolean = true
@@ -110,7 +110,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Cohere", url)(using ec, env)
+      .execute().observeQuotas("Cohere", url, providerId)(using ec, env)
   }
 
   def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, CohereAiApiResponse]] = {

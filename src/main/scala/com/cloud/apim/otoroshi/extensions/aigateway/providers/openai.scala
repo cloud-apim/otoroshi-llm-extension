@@ -160,7 +160,10 @@ class OpenAiApi(
   val supportsCompletion: Boolean = true,
   param_mappings: Map[String, String] = Map.empty,
   headers: Map[String, String] = Map("Authorization" -> "Bearer {api_key}"),
-  additional_body_params: JsObject = Json.obj()
+  additional_body_params: JsObject = Json.obj(),
+  // the provider entity this api serves, when known: lets the quota state be tied to an entity so the
+  // routing can ask about one provider rather than about a shared endpoint
+  providerId: Option[String] = None,
 ) extends ApiClient[OpenAiApiResponse, OpenAiChatResponseChunk] {
 
   lazy val baseUrl: String = {
@@ -208,7 +211,7 @@ class OpenAiApi(
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas(providerName, url)(using ec, env)
+      .execute().observeQuotas(providerName, url, providerId)(using ec, env)
       // .map { resp =>
       //   println(s"resp: ${resp.status} - ${resp.body}")
       //   println("\n\n================================\n")
@@ -232,7 +235,7 @@ class OpenAiApi(
       .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas(providerName, url)(using ec, env)
+      .execute().observeQuotas(providerName, url, providerId)(using ec, env)
       // .map { resp =>
       //   println(s"form resp: ${resp.status} - ${resp.body}")
       //   println("\n\n================================\n")
@@ -300,7 +303,7 @@ class OpenAiApi(
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream().observeStreamQuotas(providerName, url)(using ec, env)
+      .stream().observeStreamQuotas(providerName, url, providerId)(using ec, env)
       .map(r => ProviderHelpers.wrapStreamResponse(providerName, r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
@@ -337,7 +340,7 @@ class OpenAiApi(
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream().observeStreamQuotas(providerName, url)(using ec, env)
+      .stream().observeStreamQuotas(providerName, url, providerId)(using ec, env)
   }
 
   override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {

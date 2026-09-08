@@ -65,28 +65,28 @@ object ImageModel {
   val clientBuilders: Map[String, ImageModel.ClientContext => Option[ImageModelClient]] = Map(
     "openai" -> { (c: ClientContext) =>
       import c.*
-      val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
+      val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env, providerId = id.some)
       val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
       val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
       new OpenAiImageModelClient(api, opts, editOpts, id).some
     },
     "gemini" -> { (c: ClientContext) =>
       import c.*
-      val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Gemini", env = env)
+      val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Gemini", env = env, providerId = id.some)
       val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
       val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
       new OpenAiImageModelClient(api, opts, editOpts, id).some
     },
     "cloud-temple" -> { (c: ClientContext) =>
       import c.*
-      val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
+      val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env, providerId = id.some)
       val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
       val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
       new OpenAiImageModelClient(api, opts, editOpts, id).some
     },
     "x-ai" -> { (c: ClientContext) =>
       import c.*
-      val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
       val opts = XAiImageModelClientOptions.fromJson(genOptions)
       new XAiImageModelClient(api, opts, id).some
     },
@@ -97,31 +97,31 @@ object ImageModel {
       val version = connection.select("api_version").asOpt[String].getOrElse("2024-02-01")
       val apikey = connection.select("api_key").asOpt[String]
       val bearer = Some(token).filterNot(_ == "xxx")
-      val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env)
+      val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
       val opts = AzureOpenAiImageModelClientOptions.fromJson(genOptions)
       new AzureOpenAiImageModelClient(api, opts, id).some
     },
     "luma" -> { (c: ClientContext) =>
       import c.*
-      val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
       val opts = LumaImageModelClientOptions.fromJson(genOptions)
       new LumaImageModelClient(api, opts, id).some
     },
     "leonardo-ai" -> { (c: ClientContext) =>
       import c.*
-      val api = new LeonardoAIApi(baseUrl.getOrElse(LeonardoAIApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val api = new LeonardoAIApi(baseUrl.getOrElse(LeonardoAIApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
       val opts = LeonardoAIImagesGenModelClientOptions.fromJson(genOptions)
       new LeonardoAIImageModelClient(api, opts, id).some
     },
     "hive" -> { (c: ClientContext) =>
       import c.*
-      val api = new HiveApi(baseUrl.getOrElse(HiveApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val api = new HiveApi(baseUrl.getOrElse(HiveApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
       val opts = HiveImageModelClientOptions.fromJson(genOptions)
       new HiveImageModelClient(api, opts, id).some
     },
     "openrouter" -> { (c: ClientContext) =>
       import c.*
-      val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
       val opts = OpenRouterImageModelClientOptions.fromJson(genOptions)
       val editOpts = OpenRouterImageModelClientOptions.fromJson(editOptions)
       new OpenRouterImageModelClient(api, opts, editOpts, id).some
@@ -142,6 +142,7 @@ object ImageModel {
         timeout = timeout.getOrElse(3.minutes),
         providerName = providerName,
         env = env,
+        providerId = id.some,
         param_mappings = paramMappings,
         headers = customHeaders,
         additional_body_params = additionalBodyParams,
@@ -153,7 +154,7 @@ object ImageModel {
     "ovh-ai-endpoints" -> { (c: ClientContext) =>
       import c.*
       // OVH AI Endpoints images go through their unified OpenAI-compatible API
-      val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
+      val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env, providerId = id.some)
       val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
       val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
       new OpenAiImageModelClient(api, opts, editOpts, id).some

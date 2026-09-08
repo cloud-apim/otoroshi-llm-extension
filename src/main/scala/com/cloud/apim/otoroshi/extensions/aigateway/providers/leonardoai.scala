@@ -16,7 +16,7 @@ object LeonardoAIApi {
   val baseUrl = "https://cloud.leonardo.ai/api/rest/v1"
 }
 
-class LeonardoAIApi(baseUrl: String = LeonardoAIApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
+class LeonardoAIApi(baseUrl: String = LeonardoAIApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) {
 
   def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
@@ -33,7 +33,7 @@ class LeonardoAIApi(baseUrl: String = LeonardoAIApi.baseUrl, token: String, time
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("LeonardoAI", url)(using ec, env)
+      .execute().observeQuotas("LeonardoAI", url, providerId)(using ec, env)
       .map { resp =>
         resp
       }

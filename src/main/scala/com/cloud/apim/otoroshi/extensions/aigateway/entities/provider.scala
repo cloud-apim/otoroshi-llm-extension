@@ -111,6 +111,45 @@ object ContextSettings {
   }
 }
 
+/**
+ * An active probe against the provider, meant to answer one question: does this account still have credit?
+ * `/models` cannot answer it - it succeeds on an account at zero - so the probe has to be a real inference
+ * call, kept to a single token. It is opt-in per provider because it costs (a fraction of a cent) and makes
+ * no sense on a local provider that bills nothing.
+ */
+case class ProviderHealthcheck(
+  enabled: Boolean = false,
+  everyMs: Long = 300000L,
+  maxTokens: Int = 1,
+  prompt: String = "ping",
+) {
+  def json: JsValue = ProviderHealthcheck.format.writes(this)
+}
+
+object ProviderHealthcheck {
+  val disabled: ProviderHealthcheck = ProviderHealthcheck()
+  val format = new Format[ProviderHealthcheck] {
+    override def writes(o: ProviderHealthcheck): JsValue = Json.obj(
+      "enabled" -> o.enabled,
+      "every" -> o.everyMs,
+      "max_tokens" -> o.maxTokens,
+      "prompt" -> o.prompt,
+    )
+    override def reads(json: JsValue): JsResult[ProviderHealthcheck] = Try {
+      ProviderHealthcheck(
+        enabled = json.select("enabled").asOpt[Boolean].getOrElse(false),
+        // never let a misconfiguration hammer a provider: one probe per minute at most
+        everyMs = json.select("every").asOpt[Long].getOrElse(300000L).max(60000L),
+        maxTokens = json.select("max_tokens").asOpt[Int].getOrElse(1).max(1),
+        prompt = json.select("prompt").asOptString.getOrElse("ping"),
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+  }
+}
+
 case class ModelSettings(
   include: Seq[String] = Seq.empty,
   exclude: Seq[String] = Seq.empty,
@@ -179,6 +218,7 @@ case class AiProvider(
                        context: ContextSettings = ContextSettings.empty,
                        models: ModelSettings = ModelSettings.empty,
                        memory: Option[String] = None,
+                       healthcheck: ProviderHealthcheck = ProviderHealthcheck.disabled,
                      ) extends EntityLocationSupport {
   override def internalId: String               = id
   override def json: JsValue                    = AiProvider.format.writes(this)
@@ -205,6 +245,21 @@ case class AiProvider(
       .flatMap(_.apply(AiProvider.ChatClientContext(this, baseUrl, token, timeout, options, connection, id, env)))
     rawClient.map(c => ChatClientDecorators(this, c, env))
   }
+
+  /**
+   * The provider client without any decorator. Used by the healthcheck probe, which must not go through
+   * guardrails, budgets or auditing - and above all not through the caches, since a cached answer would
+   * report a healthy provider while the account is empty.
+   */
+  def getRawChatClient()(using env: Env): Option[ChatClient] = {
+    val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
+    val _token = connection.select("token").asOpt[String].getOrElse("xxx")
+    val token = if (_token.contains(",")) _token.split(",").map(_.trim).head else _token
+    val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
+    AiProvider.chatClientBuilders
+      .get(provider.toLowerCase())
+      .flatMap(_.apply(AiProvider.ChatClientContext(this, baseUrl, token, timeout, options, connection, id, env)))
+  }
 }
 
 object AiProvider {
@@ -219,7 +274,7 @@ object AiProvider {
     val explicit: Map[String, AiProvider.ChatClientContext => Option[ChatClient]] = Map(
       "openai" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env, providerId = id.some)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "openai").some
       },
@@ -235,6 +290,7 @@ object AiProvider {
           timeout = timeout.getOrElse(3.minutes),
           providerName = "OpenAI Compatible",
           env = env,
+          providerId = id.some,
           supportsTools = connection.select("supports_tools").asOptBoolean.getOrElse(true),
           supportsStreaming = connection.select("supports_streaming").asOptBoolean.getOrElse(true),
           supportsCompletion = supportsCompletion,
@@ -255,25 +311,25 @@ object AiProvider {
       },
       "cloud-temple" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env, providerId = id.some)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "cloud-temple", accumulateStreamConsumptions = false).some
       },
       "scaleway" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Scaleway", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Scaleway", env = env, providerId = id.some)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "scaleway", accumulateStreamConsumptions = false).some
       },
       "deepseek" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Deepseek", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Deepseek", env = env, providerId = id.some)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "deepseek", "/models").some
       },
       "x-ai" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val api = new XAiApi(baseUrl.getOrElse(XAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
         val opts = XAiChatClientOptions.fromJson(options)
         new XAiChatClient(api, opts, id).some
       },
@@ -281,18 +337,18 @@ object AiProvider {
         import c.*
         val unified = connection.select("unified").asOpt[Boolean].getOrElse(true)
         if (unified) {
-          val api = new OpenAiApi(OVHAiEndpointsApi.unifiedUrl, token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
+          val api = new OpenAiApi(OVHAiEndpointsApi.unifiedUrl, token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env, providerId = id.some)
           val opts = OpenAiChatClientOptions.fromJson(options)
           new OpenAiChatClient(api, opts, id, "OVH", "/models").some
         } else {
-          val api = new OVHAiEndpointsApi(baseUrl.getOrElse(OVHAiEndpointsApi.baseDomain), token, timeout.getOrElse(3.minutes), env = env)
+          val api = new OVHAiEndpointsApi(baseUrl.getOrElse(OVHAiEndpointsApi.baseDomain), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
           val opts = OVHAiEndpointsChatClientOptions.fromJson(options)
           new OVHAiEndpointsChatClient(api, opts, id).some
         }
       },
       "ovh-ai-endpoints-unified" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env, providerId = id.some)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "OVH", "/models").some
       },
@@ -303,13 +359,13 @@ object AiProvider {
         val version = connection.select("api_version").asOpt[String].getOrElse("2024-02-01")
         val apikey = connection.select("api_key").asOpt[String]
         val bearer = Some(token).filterNot(_ == "xxx")
-        val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env)
+        val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
         val opts = AzureOpenAiChatClientOptions.fromJson(options)
         new AzureOpenAiChatClient(api, opts, id).some
       },
       "azure-ai-foundry" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new OpenAiApi(baseUrl.getOrElse(AzureAiFoundry.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Azure AI Foundry", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(AzureAiFoundry.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Azure AI Foundry", env = env, providerId = id.some)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "azure-ai-foundry", "/models").some
       },
@@ -317,7 +373,7 @@ object AiProvider {
         import c.*
         val accountId = connection.select("account_id").as[String]
         val modelName = connection.select("model_name").as[String]
-        val api = new CloudflareApi(accountId, modelName, token, timeout.getOrElse(3.minutes), env = env)
+        val api = new CloudflareApi(accountId, modelName, token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
         val opts = CloudflareChatClientOptions.fromJson(options)
         new CloudflareChatClient(api, opts, id).some
       },
@@ -325,11 +381,11 @@ object AiProvider {
         import c.*
         //-------
         //val model = connection.select("model").asOpt[String].getOrElse("gemini-1.5-flash")
-        //val api = new GeminiApi(model, token, timeout.getOrElse(3.minutes), env = env)
+        //val api = new GeminiApi(model, token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
         //val opts = GeminiChatClientOptions.fromJson(options)
         //new GeminiChatClient(api, opts, id).some
         //-------
-        val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "gemini", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "gemini", env = env, providerId = id.some)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "gemini", "/models", completion = false, accumulateStreamConsumptions = false).some
       },
@@ -339,38 +395,38 @@ object AiProvider {
         // val api = new HuggingfaceApi(modelName, token, timeout.getOrElse(3.minutes), env)
         // val opts = HuggingfaceChatClientOptions.fromJson(options)
         // new HuggingfaceChatClient(api, opts, id).some
-        val api = new OpenAiApi(baseUrl.getOrElse(HuggingfaceApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "huggingface", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(HuggingfaceApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "huggingface", env = env, providerId = id.some)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "huggingface", "/models", completion = false).some
       },
       "mistral" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
         val opts = MistralAiChatClientOptions.fromJson(options)
         new MistralAiChatClient(api, opts, id).some
       },
       "alphaedge" -> { (c: ChatClientContext) =>
         import c.*
         // OCR-only provider: the chat call requires a file (image/pdf) content part and returns the extracted text
-        val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
         val opts = AlphaEdgeChatClientOptions.fromJson(options)
         new AlphaEdgeChatClient(api, opts, id).some
       },
       "ollama" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new OllamaAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(3.minutes), env = env)
+        val api = new OllamaAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(3.minutes), env = env, providerId = id.some)
         val opts = OllamaAiChatClientOptions.fromJson(options)
         new OllamaAiChatClient(api, opts, id).some
       },
       "ollama-openai" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new OpenAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrlOAI), token, timeout.getOrElse(3.minutes), providerName = "Ollama (OAI compat)", env = env)
+        val api = new OpenAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrlOAI), token, timeout.getOrElse(3.minutes), providerName = "Ollama (OAI compat)", env = env, providerId = id.some)
         val opts = OpenAiChatClientOptions.fromJson(options)
         new OpenAiChatClient(api, opts, id, "ollama").some
       },
       "cohere" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new CohereAiApi(baseUrl.getOrElse(CohereAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val api = new CohereAiApi(baseUrl.getOrElse(CohereAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
         val opts = CohereAiChatClientOptions.fromJson(options)
         new CohereAiChatClient(api, opts, id).some
       },
@@ -378,13 +434,13 @@ object AiProvider {
         import c.*
         val version = connection.select("version").asOpt[String].getOrElse("2023-06-01")
         val beta = connection.select("beta").asOpt[String]
-        val api = new AnthropicApi(baseUrl.getOrElse(AnthropicApi.baseUrl), token, version, beta, timeout.getOrElse(3.minutes), env = env)
+        val api = new AnthropicApi(baseUrl.getOrElse(AnthropicApi.baseUrl), token, version, beta, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
         val opts = AnthropicChatClientOptions.fromJson(options)
         new AnthropicChatClient(api, opts, id).some
       },
       "groq" -> { (c: ChatClientContext) =>
         import c.*
-        val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+        val api = new GroqApi(baseUrl.getOrElse(GroqApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
         val opts = GroqChatClientOptions.fromJson(options)
         new GroqChatClient(api, opts, id).some
       },
@@ -406,6 +462,7 @@ object AiProvider {
             timeout = timeout.getOrElse(3.minutes),
             providerName = provDef.name,
             env = env,
+            providerId = id.some,
             param_mappings = provDef.paramMappings,
             headers = provDef.headers,
             additional_body_params = provDef.additionalBodyParams,
@@ -435,6 +492,7 @@ object AiProvider {
       "models"            -> o.models.json,
       "guardrails"        -> o.guardrails.json,
       "guardrails_fail_on_deny" -> o.guardrailsFailOnDeny,
+      "healthcheck" -> o.healthcheck.json,
       "cache" -> Json.obj(
         "strategy"      -> o.cache.strategy,
         "ttl"           -> o.cache.ttl.toMillis,
@@ -458,6 +516,7 @@ object AiProvider {
         memory = (json \ "memory").asOpt[String],
         guardrails = json.select("guardrails").asOpt[JsArray].orElse(json.select("fences").asOpt[JsArray]).flatMap(seq => Guardrails.format.reads(seq).asOpt).getOrElse(Guardrails.empty),
         guardrailsFailOnDeny = json.select("guardrails_fail_on_deny").asOpt[Boolean].getOrElse(false),
+        healthcheck = json.select("healthcheck").asOpt(using ProviderHealthcheck.format).getOrElse(ProviderHealthcheck.disabled),
         context = json.select("context").asOpt[JsObject].flatMap(o => ContextSettings.format.reads(o).asOpt).getOrElse(ContextSettings.empty),
         models = json.select("models").asOpt[JsObject].flatMap(o => ModelSettings.format.reads(o).asOpt).getOrElse(ModelSettings.empty),
         cache = CacheSettings(

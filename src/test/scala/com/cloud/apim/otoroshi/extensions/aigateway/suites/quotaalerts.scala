@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.providers.ProviderQuotas
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.{ProviderQuotas, QuotaIncidentKind}
 import otoroshi.env.Env
 import otoroshi.models.{DataExporterConfig, DataExporterConfigFiltering, DataExporterConfigTypeWebhook, EntityLocation, Webhook}
 import otoroshi.next.models.*
@@ -98,7 +98,7 @@ class QuotaAlertsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       groupDuration = 500.millis,
       filtering = DataExporterConfigFiltering(
         include = Seq(
-          Json.obj("@type" -> "AlertEvent", "alert" -> ProviderQuotas.exceededAlert),
+          Json.obj("@type" -> "AlertEvent", "alert" -> ProviderQuotas.throttledAlert),
           Json.obj("@type" -> "AlertEvent", "alert" -> ProviderQuotas.recoveredAlert),
         )
       ),
@@ -116,15 +116,45 @@ class QuotaAlertsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     "messages" -> Json.arr(Json.obj("role" -> "user", "content" -> "hey")),
   ))).awaitf(30.seconds).status
 
-  test("only the statuses that really mean a quota problem open an episode") {
-    assertEquals(ProviderQuotas.quotaReason(429, None), "rate limit or quota exceeded".some)
-    assertEquals(ProviderQuotas.quotaReason(402, None), "out of credits".some)
+  def kindOf(status: Int, body: Option[String]): Option[QuotaIncidentKind] = ProviderQuotas.classify(status, body).map(_.kind)
+
+  test("throttling and credit exhaustion are told apart, credentials failures raise nothing") {
+    // a plain 429 is throttling: transient, it will resolve on its own
+    assertEquals(kindOf(429, None), QuotaIncidentKind.Throttled.some)
+    assertEquals(kindOf(429, Some("""{"error":"rate limit reached"}""")), QuotaIncidentKind.Throttled.some)
+    // but OpenAI answers 429 with insufficient_quota when the account is out of money, which is not throttling
+    assertEquals(kindOf(429, Some("""{"error":{"code":"insufficient_quota"}}""")), QuotaIncidentKind.CreditExhausted.some)
+    assertEquals(kindOf(429, Some("You exceeded your current quota, please check your plan and billing")), QuotaIncidentKind.CreditExhausted.some)
+    // 402 is always about credits
+    assertEquals(kindOf(402, None), QuotaIncidentKind.CreditExhausted.some)
     // a 403 is a quota problem only when the body says so, otherwise it is a credentials failure
-    assertEquals(ProviderQuotas.quotaReason(403, Some("""{"error":"quota exceeded for this org"}""")), "quota exceeded".some)
-    assertEquals(ProviderQuotas.quotaReason(403, Some("""{"error":"invalid api key"}""")), None)
-    assertEquals(ProviderQuotas.quotaReason(403, None), None)
-    assertEquals(ProviderQuotas.quotaReason(500, Some("quota")), None)
-    assertEquals(ProviderQuotas.quotaReason(200, None), None)
+    assertEquals(kindOf(403, Some("""{"error":"quota exceeded for this org"}""")), QuotaIncidentKind.Throttled.some)
+    assertEquals(kindOf(403, Some("""{"error":"no credit balance left"}""")), QuotaIncidentKind.CreditExhausted.some)
+    assertEquals(kindOf(403, Some("""{"error":"invalid api key"}""")), None)
+    assertEquals(kindOf(403, None), None)
+    assertEquals(kindOf(500, Some("quota")), None)
+    assertEquals(kindOf(200, None), None)
+    // only throttling is worth waiting out
+    assert(QuotaIncidentKind.Throttled.transient)
+    assert(!QuotaIncidentKind.CreditExhausted.transient)
+  }
+
+  test("the provider tells us when to come back, in whichever dialect") {
+    val now = 1_000_000L
+    def at(headers: (String, String)*): Option[Long] = ProviderQuotas.retryAtFrom(headers.toMap.get, now)
+    assertEquals(at("Retry-After" -> "30"), (now + 30000L).some)
+    assertEquals(at("Retry-After" -> "Thu, 01 Jan 1970 00:20:00 GMT"), 1200000L.some)
+    // openai style durations, on the header that is present
+    assertEquals(at("x-ratelimit-reset-requests" -> "6m0s"), (now + 360000L).some)
+    assertEquals(at("x-ratelimit-reset-tokens" -> "1.5s"), (now + 1500L).some)
+    // Retry-After wins over the reset headers
+    assertEquals(at("Retry-After" -> "10", "x-ratelimit-reset-requests" -> "6m0s"), (now + 10000L).some)
+    // a reset date already in the past tells us nothing
+    assertEquals(at("Retry-After" -> "Thu, 01 Jan 1970 00:00:01 GMT"), None)
+    assertEquals(at(), None)
+    assertEquals(ProviderQuotas.parseDuration("250ms"), 250L.some)
+    assertEquals(ProviderQuotas.parseDuration("1h30m"), 5400000L.some)
+    assertEquals(ProviderQuotas.parseDuration("nope"), None)
   }
 
   test("the endpoint key keeps the port, so two local providers are not conflated") {
@@ -169,7 +199,7 @@ class QuotaAlertsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(ProviderQuotas.episodeFor("Ollama", endpoint), None, "the episode should be closed")
 
     await(8.seconds)
-    assertEquals(alertsNamed(ProviderQuotas.exceededAlert).size, 1, s"exactly one alert for the whole episode, got ${alerts.map(_.select("alert").asOptString)}")
+    assertEquals(alertsNamed(ProviderQuotas.throttledAlert).size, 1, s"exactly one alert for the whole episode, got ${alerts.map(_.select("alert").asOptString)}")
     assertEquals(alertsNamed(ProviderQuotas.recoveredAlert).size, 1, s"exactly one recovery alert, got ${alerts.map(_.select("alert").asOptString)}")
 
     val recovered = alertsNamed(ProviderQuotas.recoveredAlert).head

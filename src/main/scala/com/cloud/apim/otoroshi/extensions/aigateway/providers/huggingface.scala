@@ -23,7 +23,7 @@ object HuggingfaceApi {
   }
 }
 /*
-class HuggingfaceApi(val modelName: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends NoStreamingApiClient[HuggingfaceApiResponse] {
+class HuggingfaceApi(val modelName: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env, providerId: Option[String] = None) extends NoStreamingApiClient[HuggingfaceApiResponse] {
 
   override def supportsTools: Boolean = false
 

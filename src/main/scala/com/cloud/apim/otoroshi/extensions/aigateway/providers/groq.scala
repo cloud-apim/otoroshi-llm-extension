@@ -33,7 +33,7 @@ object GroqModels {
 object GroqApi {
   val baseUrl = "https://api.groq.com"
 }
-class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[GroqApiResponse, OpenAiChatResponseChunk] {
+class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) extends ApiClient[GroqApiResponse, OpenAiChatResponseChunk] {
 
   val supportsTools: Boolean = true
   val supportsStreaming: Boolean = true
@@ -54,7 +54,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Groq", url)(using ec, env)
+      .execute().observeQuotas("Groq", url, providerId)(using ec, env)
   }
 
   def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
@@ -71,7 +71,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Groq", url)(using ec, env)
+      .execute().observeQuotas("Groq", url, providerId)(using ec, env)
   }
 
   /** raw streamed POST, used by the native /responses path */
@@ -90,7 +90,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream().observeStreamQuotas("Groq", url)(using ec, env)
+      .stream().observeStreamQuotas("Groq", url, providerId)(using ec, env)
   }
 
   def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, GroqApiResponse]] = {

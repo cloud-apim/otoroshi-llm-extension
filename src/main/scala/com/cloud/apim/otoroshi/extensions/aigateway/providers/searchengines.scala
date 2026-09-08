@@ -28,7 +28,7 @@ object StaanApi {
   val baseUrl = "https://api.staan.ai"
 }
 
-class StaanApi(baseUrl: String = StaanApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+class StaanApi(baseUrl: String = StaanApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env, providerId: Option[String] = None) {
   def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logCall("Staan", method, url, body)(using env)
@@ -42,7 +42,7 @@ class StaanApi(baseUrl: String = StaanApi.baseUrl, token: String, timeout: Finit
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Staan", url)(using ec, env)
+      .execute().observeQuotas("Staan", url, providerId)(using ec, env)
   }
 }
 
@@ -98,7 +98,7 @@ object TavilyApi {
   val baseUrl = "https://api.tavily.com"
 }
 
-class TavilyApi(baseUrl: String = TavilyApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+class TavilyApi(baseUrl: String = TavilyApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env, providerId: Option[String] = None) {
   def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logCall("Tavily", method, url, body)(using env)
@@ -112,7 +112,7 @@ class TavilyApi(baseUrl: String = TavilyApi.baseUrl, token: String, timeout: Fin
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Tavily", url)(using ec, env)
+      .execute().observeQuotas("Tavily", url, providerId)(using ec, env)
   }
 }
 
@@ -165,7 +165,7 @@ object BraveSearchApi {
   val baseUrl = "https://api.search.brave.com"
 }
 
-class BraveSearchApi(baseUrl: String = BraveSearchApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+class BraveSearchApi(baseUrl: String = BraveSearchApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env, providerId: Option[String] = None) {
   def rawGet(path: String)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logCall("Brave", "GET", url, None)(using env)
@@ -230,7 +230,7 @@ object SearXNGApi {
   val baseUrl = "http://localhost:8080"
 }
 
-class SearXNGApi(baseUrl: String = SearXNGApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+class SearXNGApi(baseUrl: String = SearXNGApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env, providerId: Option[String] = None) {
   def rawGet(path: String)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logCall("SearXNG", "GET", url, None)(using env)
@@ -296,7 +296,7 @@ object GoogleCseApi {
   val baseUrl = "https://www.googleapis.com"
 }
 
-class GoogleCseApi(baseUrl: String = GoogleCseApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+class GoogleCseApi(baseUrl: String = GoogleCseApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env, providerId: Option[String] = None) {
   val apiKey: String = token
   def rawGet(path: String)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
@@ -358,7 +358,7 @@ object SearchApiApi {
   val baseUrl = "https://www.searchapi.io"
 }
 
-class SearchApiApi(baseUrl: String = SearchApiApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+class SearchApiApi(baseUrl: String = SearchApiApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env, providerId: Option[String] = None) {
   def rawGet(path: String)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logCall("SearchApi", "GET", url, None)(using env)
@@ -424,7 +424,7 @@ object DuckDuckGoApi {
   val baseUrl = "https://api.duckduckgo.com"
 }
 
-class DuckDuckGoApi(baseUrl: String = DuckDuckGoApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+class DuckDuckGoApi(baseUrl: String = DuckDuckGoApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env, providerId: Option[String] = None) {
   def rawGet(path: String)(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logCall("DuckDuckGo", "GET", url, None)(using env)
@@ -501,7 +501,7 @@ object ExaApi {
   val baseUrl = "https://api.exa.ai"
 }
 
-class ExaApi(baseUrl: String = ExaApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env) {
+class ExaApi(baseUrl: String = ExaApi.baseUrl, token: String, timeout: FiniteDuration = 30.seconds, env: Env, providerId: Option[String] = None) {
   def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     ProviderHelpers.logCall("Exa", method, url, body)(using env)
@@ -515,7 +515,7 @@ class ExaApi(baseUrl: String = ExaApi.baseUrl, token: String, timeout: FiniteDur
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Exa", url)(using ec, env)
+      .execute().observeQuotas("Exa", url, providerId)(using ec, env)
   }
 }
 

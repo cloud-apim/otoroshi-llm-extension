@@ -72,13 +72,13 @@ object ModerationModel {
   val clientBuilders: Map[String, ModerationModel.ClientContext => Option[ModerationModelClient]] = Map(
     "openai" -> { (c: ClientContext) =>
       import c.*
-      val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env)
+      val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env, providerId = id.some)
       val opts = OpenAiModerationModelClientOptions.fromJson(options)
       new OpenAiModerationModelClient(api, opts, id).some
     },
     "mistral" -> { (c: ClientContext) =>
       import c.*
-      val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
       val opts = MistralAiModerationModelClientOptions.fromJson(options)
       new MistralAiModerationModelClient(api, opts, id).some
     },
@@ -98,6 +98,7 @@ object ModerationModel {
         timeout = timeout.getOrElse(3.minutes),
         providerName = providerName,
         env = env,
+        providerId = id.some,
         param_mappings = paramMappings,
         headers = customHeaders,
         additional_body_params = additionalBodyParams,
@@ -108,7 +109,7 @@ object ModerationModel {
     "ovh-ai-endpoints" -> { (c: ClientContext) =>
       import c.*
       // OVH AI Endpoints moderation through their unified OpenAI-compatible API
-      val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env)
+      val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env, providerId = id.some)
       val opts = OpenAiModerationModelClientOptions.fromJson(options)
       new OpenAiModerationModelClient(api, opts, id).some
     },

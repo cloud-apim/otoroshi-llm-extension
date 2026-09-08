@@ -90,7 +90,7 @@ object OllamaAiApi {
   val baseUrlOAI = s"$baseUrl/v1"
   val logger = Logger("ollama-logger")
 }
-class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[String], val timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[OllamaAiApiResponse, OllamaAiChatResponseChunk] {
+class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[String], val timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) extends ApiClient[OllamaAiApiResponse, OllamaAiChatResponseChunk] {
 
   override def supportsTools: Boolean = true
   override def supportsStreaming: Boolean = true
@@ -117,7 +117,7 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Ollama", url)(using ec, env)
+      .execute().observeQuotas("Ollama", url, providerId)(using ec, env)
   }
 
   /** raw streamed POST, used by the native /responses path */
@@ -139,7 +139,7 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream().observeStreamQuotas("Ollama", url)(using ec, env)
+      .stream().observeStreamQuotas("Ollama", url, providerId)(using ec, env)
   }
 
   def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, OllamaAiApiResponse]] = {

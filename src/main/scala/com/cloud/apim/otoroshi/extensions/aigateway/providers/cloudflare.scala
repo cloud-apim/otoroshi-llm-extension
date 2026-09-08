@@ -23,7 +23,7 @@ object CloudflareApi {
     s"https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/${modelName}"
   }
 }
-class CloudflareApi(val accountId: String, val modelName: String, token: String, timeout: FiniteDuration = 3.minutes, env: Env) extends NoStreamingApiClient[CloudflareApiResponse] {
+class CloudflareApi(val accountId: String, val modelName: String, token: String, timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) extends NoStreamingApiClient[CloudflareApiResponse] {
 
   override def supportsTools: Boolean = false
   override def supportsCompletion: Boolean = false

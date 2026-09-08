@@ -16,7 +16,7 @@ object LumaApi {
   val baseUrl = "https://api.lumalabs.ai"
 }
 
-class LumaApi(baseUrl: String = LumaApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
+class LumaApi(baseUrl: String = LumaApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) {
 
   def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
@@ -33,7 +33,7 @@ class LumaApi(baseUrl: String = LumaApi.baseUrl, token: String, timeout: FiniteD
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Luma", url)(using ec, env)
+      .execute().observeQuotas("Luma", url, providerId)(using ec, env)
       .map { resp =>
         resp
       }

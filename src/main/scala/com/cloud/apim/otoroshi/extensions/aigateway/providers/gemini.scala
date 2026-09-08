@@ -25,7 +25,7 @@ case class GeminiApiResponse(status: Int, headers: Map[String, String], body: Js
 }
 
 
-class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env) extends NoStreamingApiClient[GeminiApiResponse] {
+class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.seconds, env: Env, providerId: Option[String] = None) extends NoStreamingApiClient[GeminiApiResponse] {
 
   override def supportsCompletion: Boolean = false
 
@@ -45,7 +45,7 @@ class GeminiApi(val model: String, token: String, timeout: FiniteDuration = 10.s
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Gemini", url)(using ec, env)
+      .execute().observeQuotas("Gemini", url, providerId)(using ec, env)
   }
 
   def call(method: String, patkh: String, body: Option[JsValue])(using ec: ExecutionContext): Future[Either[JsValue, GeminiApiResponse]] = {

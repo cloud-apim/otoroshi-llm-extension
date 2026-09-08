@@ -20,6 +20,7 @@ object ChatClientDecorators {
     ChatClientWithSemanticCache.applyIfPossible,
     ChatClientWithSimpleCache.applyIfPossible,
     ChatClientWithGuardrailsValidation.applyIfPossible,
+    ChatClientWithQuotaAwareModels.applyIfPossible,
     ChatClientWithCostsTracking.applyIfPossible,
     ChatClientWithEcoImpact.applyIfPossible,
     ChatClientWithAuditing.applyIfPossible,

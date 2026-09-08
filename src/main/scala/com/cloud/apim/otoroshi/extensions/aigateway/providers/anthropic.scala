@@ -112,7 +112,7 @@ object AnthropicModels {
 object AnthropicApi {
   val baseUrl = "https://api.anthropic.com"
 }
-class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthropicVersion: String = "2023-06-01", anthropicBeta: Option[String], timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[AnthropicApiResponse, AnthropicApiResponseChunk] {
+class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthropicVersion: String = "2023-06-01", anthropicBeta: Option[String], timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) extends ApiClient[AnthropicApiResponse, AnthropicApiResponseChunk] {
 
   val providerName = "anthropic"
   override def supportsTools: Boolean = true
@@ -139,7 +139,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("Anthropic", url)(using ec, env)
+      .execute().observeQuotas("Anthropic", url, providerId)(using ec, env)
   }
 
   override def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, AnthropicApiResponse]] = {

@@ -24,7 +24,7 @@ object AlphaEdgeApi {
   val defaultOcrModel = "alpha-digit-max"
 }
 
-class AlphaEdgeApi(baseUrl: String = AlphaEdgeApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
+class AlphaEdgeApi(baseUrl: String = AlphaEdgeApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) {
 
   def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
@@ -41,7 +41,7 @@ class AlphaEdgeApi(baseUrl: String = AlphaEdgeApi.baseUrl, token: String, timeou
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("AlphaEdge", url)(using ec, env)
+      .execute().observeQuotas("AlphaEdge", url, providerId)(using ec, env)
   }
 
   def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
@@ -58,7 +58,7 @@ class AlphaEdgeApi(baseUrl: String = AlphaEdgeApi.baseUrl, token: String, timeou
       .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("AlphaEdge", url)(using ec, env)
+      .execute().observeQuotas("AlphaEdge", url, providerId)(using ec, env)
   }
 }
 

@@ -71,12 +71,12 @@ object OcrModel {
   val clientBuilders: Map[String, OcrModel.ClientContext => Option[OcrModelClient]] = Map(
     "alphaedge" -> { (c: ClientContext) =>
       import c.*
-      val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val api = new AlphaEdgeApi(baseUrl.getOrElse(AlphaEdgeApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
       new AlphaEdgeOcrModelClient(api, AlphaEdgeOcrModelClientOptions.fromJson(options), id).some
     },
     "mistral" -> { (c: ClientContext) =>
       import c.*
-      val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val api = new MistralAiApi(baseUrl.getOrElse(MistralAiApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
       new MistralOcrModelClient(api, MistralOcrModelClientOptions.fromJson(options), id).some
     },
   )

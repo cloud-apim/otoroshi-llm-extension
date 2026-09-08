@@ -28,7 +28,7 @@ object OpenRouterApi {
   val defaultVideoModel = "google/veo-3.1"
 }
 
-class OpenRouterApi(baseUrl: String = OpenRouterApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env) {
+class OpenRouterApi(baseUrl: String = OpenRouterApi.baseUrl, token: String, timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) {
 
   def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
@@ -45,7 +45,7 @@ class OpenRouterApi(baseUrl: String = OpenRouterApi.baseUrl, token: String, time
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("OpenRouter", url)(using ec, env)
+      .execute().observeQuotas("OpenRouter", url, providerId)(using ec, env)
   }
 
   def rawCallStream(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
@@ -62,7 +62,7 @@ class OpenRouterApi(baseUrl: String = OpenRouterApi.baseUrl, token: String, time
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream().observeStreamQuotas("OpenRouter", url)(using ec, env)
+      .stream().observeStreamQuotas("OpenRouter", url, providerId)(using ec, env)
   }
 }
 

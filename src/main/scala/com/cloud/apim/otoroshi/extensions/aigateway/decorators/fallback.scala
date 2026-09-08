@@ -2,6 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.{ProviderQuotas, QuotaEpisode}
 import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -23,6 +24,14 @@ object ChatClientWithProviderFallback {
 
 class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
+  // throttling ends when the provider said it would; running out of credit needs a human, so we only let a
+  // call through now and then to notice the top up. Never unbounded: the provider is always retried.
+  private def quotaBackoffUntil(episode: QuotaEpisode, settings: CircuitBreakerSettings, now: Long): Long = {
+    episode.retryAt.filter(_ > now).getOrElse {
+      if (episode.kind.transient) now + settings.cooldownMs else now + ProviderQuotas.creditExhaustedBackoffMs
+    }
+  }
+
   private def fallbackClient()(using env: Env): Option[ChatClient] = {
     env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(originalProvider.providerFallback.get)).flatMap(_.getChatClient())
   }
@@ -42,19 +51,30 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
       }
     }
 
-    if (settings.enabled && ProviderCircuitBreaker.isOpen(originalProvider.id, System.currentTimeMillis())) {
+    // a provider that just refused a call on quota grounds will refuse the next one too, so the circuit is
+    // opened at once instead of after a streak of failures - until the moment the provider itself named when
+    // it was throttling, or for a bounded while when the account simply has no credit left.
+    def recordFailure(): Unit = {
+      val now = System.currentTimeMillis()
+      ProviderQuotas.episodeForProvider(originalProvider.id).filter(_ => settings.openOnQuota) match {
+        case Some(episode) => ProviderCircuitBreaker.openUntil(originalProvider.id, quotaBackoffUntil(episode, settings, now))
+        case None => if (settings.enabled) ProviderCircuitBreaker.recordFailure(originalProvider.id, now, settings)
+      }
+    }
+
+    if (settings.active && ProviderCircuitBreaker.isOpen(originalProvider.id, System.currentTimeMillis())) {
       callFallback(Json.obj("error" -> "primary provider circuit is open"))
     } else {
       op(chatClient).flatMap {
         case Left(err) =>
-          if (settings.enabled) ProviderCircuitBreaker.recordFailure(originalProvider.id, System.currentTimeMillis(), settings)
+          recordFailure()
           callFallback(err)
         case Right(resp) =>
-          if (settings.enabled) ProviderCircuitBreaker.recordSuccess(originalProvider.id)
+          if (settings.active) ProviderCircuitBreaker.recordSuccess(originalProvider.id)
           resp.rightf
       }.recoverWith {
         case _: Throwable =>
-          if (settings.enabled) ProviderCircuitBreaker.recordFailure(originalProvider.id, System.currentTimeMillis(), settings)
+          recordFailure()
           callFallback(Json.obj("error" -> "fallback provider not found"))
       }
     }

@@ -182,7 +182,7 @@ object OVHAiEndpointsApi {
   }
 }
 
-class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token: String, timeout: FiniteDuration = 3.minutes, val env: Env) {
+class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token: String, timeout: FiniteDuration = 3.minutes, val env: Env, providerId: Option[String] = None) {
 
   val supportsTools: Boolean = false
   val supportsCompletion: Boolean = true
@@ -207,7 +207,7 @@ class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token
           }
           .withMethod(method)
           .withRequestTimeout(timeout)
-          .execute().observeQuotas("OVH", furl)(using ec, env)
+          .execute().observeQuotas("OVH", furl, providerId)(using ec, env)
           .map(_.right)
       }
     }

@@ -161,7 +161,7 @@ object AzureOpenAiApi {
   }
 }
 // https://learn.microsoft.com/en-us/azure/ai-services/openai/reference
-class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val version: String, apikey: Option[String], bearer: Option[String], timeout: FiniteDuration = 3.minutes, env: Env) extends ApiClient[AzureOpenAiApiResponse, AzureOpenAiChatResponseChunk] {
+class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val version: String, apikey: Option[String], bearer: Option[String], timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) extends ApiClient[AzureOpenAiApiResponse, AzureOpenAiChatResponseChunk] {
 
   override def supportsTools: Boolean = true
   override def supportsStreaming: Boolean = true
@@ -188,7 +188,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("AzureOpenai", url)(using ec, env)
+      .execute().observeQuotas("AzureOpenai", url, providerId)(using ec, env)
   }
 
   def rawCallForm(method: String, path: String, body: Multipart)(using ec: ExecutionContext): Future[WSResponse] = {
@@ -210,7 +210,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
       .withBody(entity.dataBytes)
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .execute().observeQuotas("AzureOpenai", url)(using ec, env)
+      .execute().observeQuotas("AzureOpenai", url, providerId)(using ec, env)
   }
 
   /** raw streamed POST, used by the native /responses path */
@@ -235,7 +235,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
       }
       .withMethod(method)
       .withRequestTimeout(timeout)
-      .stream().observeStreamQuotas("AzureOpenai", url)(using ec, env)
+      .stream().observeStreamQuotas("AzureOpenai", url, providerId)(using ec, env)
   }
 
   def call(method: String, path: String, body: Option[JsValue], acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, AzureOpenAiApiResponse]] = {

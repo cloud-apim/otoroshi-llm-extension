@@ -11,10 +11,16 @@ import otoroshi.utils.syntax.implicits.*
 //
 //   "circuit_breaker": { "enabled": true, "consecutive_failures": 5, "cooldown": 30000 }
 //
-case class CircuitBreakerSettings(enabled: Boolean, consecutiveFailures: Int, cooldownMs: Long)
+case class CircuitBreakerSettings(enabled: Boolean, consecutiveFailures: Int, cooldownMs: Long, openOnQuota: Boolean) {
+  // a quota refusal alone is enough to skip the provider, even when the failure-streak breaker is off
+  def active: Boolean = enabled || openOnQuota
+}
 
 object CircuitBreakerSettings {
-  val disabled: CircuitBreakerSettings = CircuitBreakerSettings(enabled = false, consecutiveFailures = 5, cooldownMs = 30000L)
+  // `open_on_quota` defaults to true: unlike a failure streak, a quota refusal is a certainty that the next
+  // call will be refused too, so there is nothing to gain from trying. It stays bounded in time, so a
+  // provider is never skipped forever.
+  val disabled: CircuitBreakerSettings = CircuitBreakerSettings(enabled = false, consecutiveFailures = 5, cooldownMs = 30000L, openOnQuota = true)
   def fromProvider(provider: AiProvider): CircuitBreakerSettings = {
     provider.options.select("circuit_breaker").asOpt[play.api.libs.json.JsObject] match {
       case None => disabled
@@ -22,6 +28,7 @@ object CircuitBreakerSettings {
         enabled = cb.select("enabled").asOpt[Boolean].getOrElse(false),
         consecutiveFailures = cb.select("consecutive_failures").asOpt[Int].getOrElse(5).max(1),
         cooldownMs = cb.select("cooldown").asOpt[Long].getOrElse(30000L).max(1L),
+        openOnQuota = cb.select("open_on_quota").asOpt[Boolean].getOrElse(true),
       )
     }
   }
@@ -47,6 +54,14 @@ object ProviderCircuitBreaker {
     val wasOpen = states.get(providerId).exists(_.openUntil > 0L)
     states.remove(providerId)
     if (wasOpen) AiMetrics.markCircuit("close")
+  }
+
+  /** opens the circuit right away until `until`, whatever the failure streak: used when the provider told us
+    * it will refuse the next calls anyway. Never unbounded, so the provider is always retried eventually. */
+  def openUntil(providerId: String, until: Long)(using env: Env): Unit = states.synchronized {
+    val wasOpen = states.get(providerId).exists(_.openUntil > System.currentTimeMillis())
+    states.update(providerId, State(states.get(providerId).map(_.failures).getOrElse(0) + 1, until))
+    if (!wasOpen) AiMetrics.markCircuit("open")
   }
 
   def recordFailure(providerId: String, now: Long, settings: CircuitBreakerSettings)(using env: Env): Unit = states.synchronized {

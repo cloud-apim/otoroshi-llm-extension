@@ -64,13 +64,13 @@ object VideoModel {
   val clientBuilders: Map[String, VideoModel.ClientContext => Option[VideoModelClient]] = Map(
     "luma" -> { (c: ClientContext) =>
       import c.*
-      val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val api = new LumaApi(baseUrl.getOrElse(LumaApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
       val opts = LumaVideoModelClientOptions.fromJson(options)
       new LumaVideoModelClient(api, opts, id).some
     },
     "openrouter" -> { (c: ClientContext) =>
       import c.*
-      val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env)
+      val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)
       val opts = OpenRouterVideoModelClientOptions.fromJson(options)
       new OpenRouterVideoModelClient(api, opts, id).some
     },
