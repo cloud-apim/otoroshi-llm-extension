@@ -30,6 +30,13 @@ class ModerationModelsPage extends Component {
             type: 'array',
             props: { label: 'Exclude models', placeholder: 'model name', suffix: 'regex' },
         },
+        'models.require_known_costs': {
+          type: 'bool',
+          props: {
+            label: 'Require known costs',
+            help: 'if enabled, a model with no known price is not listed and any call using it is rejected before reaching the provider',
+          },
+        },
         provider: {
             'type': 'select',
             props: {
@@ -66,7 +73,8 @@ class ModerationModelsPage extends Component {
     formFlow = [
         '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config', '>>>Models restriction settings',
         'models.include',
-        'models.exclude',];
+        'models.exclude',
+        'models.require_known_costs',];
 
     componentDidMount() {
         this.props.setTitle(`Moderation model`);

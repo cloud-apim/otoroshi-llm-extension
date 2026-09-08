@@ -31,6 +31,13 @@ class EmbeddingModelsPage extends Component {
       type: 'array',
       props: { label: 'Exclude models', placeholder: 'model name', suffix: 'regex' },
     },
+    'models.require_known_costs': {
+      type: 'bool',
+      props: {
+        label: 'Require known costs',
+        help: 'if enabled, a model with no known price is not listed and any call using it is rejected before reaching the provider',
+      },
+    },
     provider: {
       'type': 'select',
       props: { label: 'Provider', possibleValues: _.sortBy([
@@ -78,6 +85,7 @@ class EmbeddingModelsPage extends Component {
     '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config', '>>>Models restriction settings',
         'models.include',
         'models.exclude',
+        'models.require_known_costs',
     ];
 
   componentDidMount() {

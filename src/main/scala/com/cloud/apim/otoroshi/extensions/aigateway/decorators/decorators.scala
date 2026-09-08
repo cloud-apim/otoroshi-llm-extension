@@ -60,6 +60,7 @@ object EmbeddingModelClientDecorators {
 
   val possibleDecorators: Seq[Function[(EmbeddingModel, EmbeddingModelClient, Env), EmbeddingModelClient]] = Seq(
     EmbeddingModelClientWithModels.applyIfPossible,
+    EmbeddingModelClientWithRequiredCosts.applyIfPossible,
     EmbeddingModelClientWithAuditing.applyIfPossible,
     EmbeddingModelClientWithMetrics.applyIfPossible,
   )
@@ -81,6 +82,7 @@ trait DecoratorEmbeddingModelClient extends EmbeddingModelClient {
 object AudioModelClientDecorators {
   val possibleDecorators: Seq[Function[(AudioModel, AudioModelClient, Env), AudioModelClient]] = Seq(
     AudioModelClientWithModels.applyIfPossible,
+    AudioModelClientWithRequiredCosts.applyIfPossible,
     AudioModelClientWithAuditing.applyIfPossible,
     AudioModelClientWithMetrics.applyIfPossible,
   )
@@ -107,6 +109,7 @@ trait DecoratorAudioModelClient extends AudioModelClient {
 object ImageModelClientDecorators {
   val possibleDecorators: Seq[Function[(ImageModel, ImageModelClient, Env), ImageModelClient]] = Seq(
     ImageModelClientWithModels.applyIfPossible,
+    ImageModelClientWithRequiredCosts.applyIfPossible,
     ImageModelClientWithAuditing.applyIfPossible,
     ImageModelClientWithMetrics.applyIfPossible,
   )
@@ -134,6 +137,7 @@ trait DecoratorModerationModelClient extends ModerationModelClient {
 object ModerationModelClientDecorators {
   val possibleDecorators: Seq[Function[(ModerationModel, ModerationModelClient, Env), ModerationModelClient]] = Seq(
     ModerationModelClientWithModels.applyIfPossible,
+    ModerationModelClientWithRequiredCosts.applyIfPossible,
     ModerationModelClientWithAuditing.applyIfPossible,
     ModerationModelClientWithMetrics.applyIfPossible,
   )
@@ -154,6 +158,7 @@ trait DecoratorVideoModelClient extends VideoModelClient {
 object VideosGenModelClientDecorators {
   val possibleDecorators: Seq[Function[(VideoModel, VideoModelClient, Env), VideoModelClient]] = Seq(
     VideoModelClientWithModels.applyIfPossible,
+    VideoModelClientWithRequiredCosts.applyIfPossible,
     VideoModelClientWithAuditing.applyIfPossible,
     VideoModelClientWithMetrics.applyIfPossible,
   )
@@ -174,6 +179,7 @@ trait DecoratorOcrModelClient extends OcrModelClient {
 
 object OcrModelClientDecorators {
   val possibleDecorators: Seq[Function[(OcrModel, OcrModelClient, Env), OcrModelClient]] = Seq(
+    OcrModelClientWithRequiredCosts.applyIfPossible,
     OcrModelClientWithAuditing.applyIfPossible,
   )
 

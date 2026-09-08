@@ -2,8 +2,9 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import org.apache.pekko.stream.scaladsl.{Sink, Source, StreamConverters}
 import org.apache.pekko.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.AiMetrics
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel, ModelSettings, ModerationModel, OcrModel, VideoModel}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -364,6 +365,167 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
 }
 
 
+// A provider can demand that every model it serves has a known price (`models.require_known_costs`).
+// The point is to never run a call that could not be billed, so the check happens before the provider is
+// reached at all, and the models whose price is unknown disappear from the listings.
+object RequiredCosts {
+
+  val errorMessage = "no known cost for this model"
+
+  def error(model: Option[String]): JsValue = Json.obj(
+    "error" -> errorMessage,
+    "model" -> model.getOrElse("--").json,
+  )
+
+  // maps an entity provider ("x-ai", "ovh-ai-endpoints", ...) to the name the price grid is keyed on.
+  // None when the provider cannot be priced at all, in which case nothing it serves has a known cost.
+  def pricingProvider(providerKind: String)(using env: Env): Option[String] = {
+    env.adminExtensions.extension[AiExtension].flatMap(_.costsTracking.getProvider(providerKind))
+  }
+
+  // the price grid is the in-memory one: resource files, user provided prices and the synced catalogs
+  def hasKnownCosts(provider: Option[String], model: String)(using env: Env): Boolean = {
+    env.adminExtensions.extension[AiExtension].exists { ext =>
+      provider.exists(name => ext.costsTracking.canHandle(name, model))
+    }
+  }
+
+  def check(provider: Option[String], settings: ModelSettings, model: Option[String])(using env: Env): Either[JsValue, Unit] = {
+    if (!settings.requireKnownCosts) {
+      Right(())
+    } else model match {
+      case Some(name) if hasKnownCosts(provider, name) => Right(())
+      // an unresolved model is refused too: without knowing which model runs, no price can be guaranteed
+      case _ => AiMetrics.markModelConstraintDenied(); Left(error(model))
+    }
+  }
+
+  // same rule applied to a listing: what cannot be billed is not offered
+  def filterModels(provider: Option[String], settings: ModelSettings, models: List[String])(using env: Env): List[String] = {
+    if (!settings.requireKnownCosts) models else models.filter(model => hasKnownCosts(provider, model))
+  }
+}
+
+// The same gate for the non-text modalities. They have no cost decorator of their own, so these only
+// enforce `models.require_known_costs`: a model with no price is refused before the provider is called.
+// Listing is not covered here on purpose - only the text `/models` endpoint lists models.
+private def requiredCostsOf(provider: String, settings: ModelSettings, model: Option[String], configured: => Option[String])(using env: Env): Either[JsValue, Unit] = {
+  RequiredCosts.check(RequiredCosts.pricingProvider(provider), settings, model.orElse(configured))
+}
+
+object EmbeddingModelClientWithRequiredCosts {
+  def applyIfPossible(tuple: (EmbeddingModel, EmbeddingModelClient, Env)): EmbeddingModelClient =
+    if (tuple._1.models.requireKnownCosts) new EmbeddingModelClientWithRequiredCosts(tuple._1, tuple._2) else tuple._2
+}
+
+class EmbeddingModelClientWithRequiredCosts(originalModel: EmbeddingModel, val embeddingModelClient: EmbeddingModelClient) extends DecoratorEmbeddingModelClient {
+  override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
+    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString) match {
+      case Left(err) => err.leftf
+      case Right(_) => embeddingModelClient.embed(opts, rawBody, attrs)
+    }
+  }
+}
+
+object AudioModelClientWithRequiredCosts {
+  def applyIfPossible(tuple: (AudioModel, AudioModelClient, Env)): AudioModelClient =
+    if (tuple._1.models.requireKnownCosts) new AudioModelClientWithRequiredCosts(tuple._1, tuple._2) else tuple._2
+}
+
+class AudioModelClientWithRequiredCosts(originalModel: AudioModel, val audioModelClient: AudioModelClient) extends DecoratorAudioModelClient {
+
+  private def check(model: Option[String], slot: String)(using env: Env): Either[JsValue, Unit] =
+    requiredCostsOf(originalModel.provider, originalModel.models, model, originalModel.config.at(slot).asOptString)
+
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    check(opts.model, "stt.model") match {
+      case Left(err) => err.leftf
+      case Right(_) => audioModelClient.speechToText(opts, rawBody, attrs)
+    }
+  }
+
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
+    check(opts.model, "tts.model") match {
+      case Left(err) => err.leftf
+      case Right(_) => audioModelClient.textToSpeech(opts, rawBody, attrs)
+    }
+  }
+
+  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    check(opts.model, "translate.model") match {
+      case Left(err) => err.leftf
+      case Right(_) => audioModelClient.translate(opts, rawBody, attrs)
+    }
+  }
+}
+
+object ImageModelClientWithRequiredCosts {
+  def applyIfPossible(tuple: (ImageModel, ImageModelClient, Env)): ImageModelClient =
+    if (tuple._1.models.requireKnownCosts) new ImageModelClientWithRequiredCosts(tuple._1, tuple._2) else tuple._2
+}
+
+class ImageModelClientWithRequiredCosts(originalModel: ImageModel, val imageModelClient: ImageModelClient) extends DecoratorImageModelClient {
+
+  private def check(model: Option[String], slot: String)(using env: Env): Either[JsValue, Unit] =
+    requiredCostsOf(originalModel.provider, originalModel.models, model, originalModel.config.at(slot).asOptString)
+
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    check(opts.model, "options.generation.model") match {
+      case Left(err) => err.leftf
+      case Right(_) => imageModelClient.generate(opts, rawBody, attrs)
+    }
+  }
+
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    check(opts.model, "options.edition.model") match {
+      case Left(err) => err.leftf
+      case Right(_) => imageModelClient.edit(opts, rawBody, attrs)
+    }
+  }
+}
+
+object VideoModelClientWithRequiredCosts {
+  def applyIfPossible(tuple: (VideoModel, VideoModelClient, Env)): VideoModelClient =
+    if (tuple._1.models.requireKnownCosts) new VideoModelClientWithRequiredCosts(tuple._1, tuple._2) else tuple._2
+}
+
+class VideoModelClientWithRequiredCosts(originalModel: VideoModel, val videoModelClient: VideoModelClient) extends DecoratorVideoModelClient {
+  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
+    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString) match {
+      case Left(err) => err.leftf
+      case Right(_) => videoModelClient.generate(opts, rawBody, attrs)
+    }
+  }
+}
+
+object ModerationModelClientWithRequiredCosts {
+  def applyIfPossible(tuple: (ModerationModel, ModerationModelClient, Env)): ModerationModelClient =
+    if (tuple._1.models.requireKnownCosts) new ModerationModelClientWithRequiredCosts(tuple._1, tuple._2) else tuple._2
+}
+
+class ModerationModelClientWithRequiredCosts(originalModel: ModerationModel, val moderationModelClient: ModerationModelClient) extends DecoratorModerationModelClient {
+  override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
+    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString) match {
+      case Left(err) => err.leftf
+      case Right(_) => moderationModelClient.moderate(opts, rawBody, attrs)
+    }
+  }
+}
+
+object OcrModelClientWithRequiredCosts {
+  def applyIfPossible(tuple: (OcrModel, OcrModelClient, Env)): OcrModelClient =
+    if (tuple._1.models.requireKnownCosts) new OcrModelClientWithRequiredCosts(tuple._1, tuple._2) else tuple._2
+}
+
+class OcrModelClientWithRequiredCosts(originalModel: OcrModel, val ocrModelClient: OcrModelClient) extends DecoratorOcrModelClient {
+  override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
+    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString) match {
+      case Left(err) => err.leftf
+      case Right(_) => ocrModelClient.ocr(opts, rawBody, attrs)
+    }
+  }
+}
+
 object ChatClientWithCostsTracking {
   val key = TypedKey[CostsOutput]("cloud-apim.ai-gateway.CostsOutputKey")
   val enabledRef = new AtomicReference[Option[Boolean]](None)
@@ -371,15 +533,33 @@ object ChatClientWithCostsTracking {
     if (enabledRef.get().isEmpty) {
       enabledRef.set(Some(tuple._3.adminExtensions.extension[AiExtension].get.costsTrackingSettings.enabled))
     }
-    if (enabledRef.get().get) {
-      new ChatClientWithCostsTracking(tuple._1, tuple._2)
+    // a provider demanding known costs still needs this decorator when tracking is globally off: the
+    // whole point of the flag is to refuse calls it cannot price
+    if (enabledRef.get().get || tuple._1.models.requireKnownCosts) {
+      new ChatClientWithCostsTracking(tuple._1, tuple._2, tuple._3)
     } else {
       tuple._2
     }
   }
 }
 
-class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
+class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: ChatClient, decoratorEnv: Env) extends DecoratorChatClient {
+
+  // the provider name the price grid is keyed on, honouring the same metadata override as the cost computation
+  private def pricingProvider()(using env: Env): Option[String] = {
+    RequiredCosts.pricingProvider(originalProvider.provider)
+      .map(provider => originalProvider.metadata.getOrElse("costs-tracking-provider", provider))
+      .orElse(originalProvider.metadata.get("costs-tracking-provider"))
+  }
+
+  private def pricedModel(originalBody: JsValue): Option[String] = {
+    Some(originalProvider.metadata.getOrElse("costs-tracking-model", getModel(originalBody))).filterNot(_ == "--")
+  }
+
+  // refuses the call before the provider is reached when the provider demands a price we do not have
+  private def checkRequiredCosts(originalBody: JsValue)(using env: Env): Either[JsValue, Unit] = {
+    RequiredCosts.check(pricingProvider(), originalProvider.models, pricedModel(originalBody))
+  }
 
   def getModel(originalBody: JsValue): String = {
     val allowConfigOverride = originalProvider.options.select("allow_config_override").asOptBoolean.getOrElse(true)
@@ -474,6 +654,13 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
   }
 
   override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    checkRequiredCosts(originalBody) match {
+      case Left(err) => err.leftf
+      case Right(_) => doInvoke(kind, prompt, attrs, originalBody)
+    }
+  }
+
+  private def doInvoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val budgetInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_budget")).contains("true")
     getProvider() match {
       case None => chatClient.invoke(kind, prompt, attrs, originalBody) // unsupported provider
@@ -512,8 +699,20 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
   }
 
   override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
-    handleStream(attrs, originalBody) {
-      chatClient.invokeStream(kind, prompt, attrs, originalBody)
+    checkRequiredCosts(originalBody) match {
+      case Left(err) => err.leftf
+      case Right(_) => handleStream(attrs, originalBody) {
+        chatClient.invokeStream(kind, prompt, attrs, originalBody)
+      }
+    }
+  }
+
+  // /models must not advertise what the provider would then refuse to serve
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+    given env: Env = decoratorEnv
+    chatClient.listModels(raw, attrs).map {
+      case Left(err) => Left(err)
+      case Right(models) => Right(RequiredCosts.filterModels(pricingProvider(), originalProvider.models, models))
     }
   }
 }

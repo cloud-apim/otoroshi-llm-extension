@@ -80,6 +80,29 @@ For unsupported providers, you can set metadata on the provider entity to map it
 - `costs-tracking-provider`: the provider name used for price lookup
 - `costs-tracking-model`: the model name used for price lookup
 
+### Refusing what cannot be priced
+
+Any provider — text, image, embedding, audio, video, moderation or OCR — can require that every model it
+serves has a known price, with the **Require known costs** switch (`models.require_known_costs` on the entity).
+
+When it is on:
+
+- a call using a model with no known price is **rejected before the provider is ever contacted**, so nothing is
+  spent and nothing escapes your budgets
+- `/models` stops advertising the models it would refuse, so callers only ever see what you can bill
+
+Leave it off — the default — to keep serving models whose price you do not track.
+
+```json
+{
+  "models": {
+    "include": [],
+    "exclude": [],
+    "require_known_costs": true
+  }
+}
+```
+
 ### Custom prices
 
 You can define custom per-model prices using the `custom-prices` config parameter. The format follows the LiteLLM price dictionary structure:

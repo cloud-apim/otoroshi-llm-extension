@@ -98,6 +98,13 @@ class OcrModelsPage extends Component {
       type: 'array',
       props: { label: 'Exclude models', placeholder: 'model name', suffix: 'regex' },
     },
+    'models.require_known_costs': {
+      type: 'bool',
+      props: {
+        label: 'Require known costs',
+        help: 'if enabled, a model with no known price is not listed and any call using it is rejected before reaching the provider',
+      },
+    },
   });
 
   formFlow = (state) => {
@@ -118,6 +125,7 @@ class OcrModelsPage extends Component {
       '>>>Models restriction settings',
       'models.include',
       'models.exclude',
+      'models.require_known_costs',
     ];
   };
 

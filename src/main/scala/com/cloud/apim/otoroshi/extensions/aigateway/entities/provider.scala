@@ -111,7 +111,14 @@ object ContextSettings {
   }
 }
 
-case class ModelSettings(include: Seq[String] = Seq.empty, exclude: Seq[String] = Seq.empty) {
+case class ModelSettings(
+  include: Seq[String] = Seq.empty,
+  exclude: Seq[String] = Seq.empty,
+  // when true, a model the price grid does not know is neither listed nor callable: the request is
+  // refused before it ever reaches the provider, since it could not be billed nor charged to a budget.
+  // Kept out of isDefined/isEmpty on purpose: those describe the include/exclude name matching only.
+  requireKnownCosts: Boolean = false,
+) {
   def json: JsValue = ModelSettings.format.writes(this)
   def isDefined: Boolean = include.nonEmpty || exclude.nonEmpty
   def isEmpty: Boolean = !isDefined
@@ -134,6 +141,7 @@ object ModelSettings {
       ModelSettings(
         exclude = json.select("exclude").asOpt[Seq[String]].getOrElse(Seq.empty),
         include = json.select("include").asOpt[Seq[String]].getOrElse(Seq.empty),
+        requireKnownCosts = json.select("require_known_costs").asOpt[Boolean].getOrElse(false),
       )
     } match {
       case Failure(e) => JsError(e.getMessage)
@@ -142,6 +150,7 @@ object ModelSettings {
     override def writes(o: ModelSettings): JsValue = Json.obj(
       "include" -> o.include,
       "exclude" -> o.exclude,
+      "require_known_costs" -> o.requireKnownCosts,
     )
   }
   def fromEntity(ent: Option[Entity]): Option[ModelSettings] = {
