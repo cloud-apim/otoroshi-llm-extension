@@ -332,7 +332,10 @@ class AiStudio(env: Env, ext: AiExtension) {
                   "modality" -> "text",
                   "default_model" -> provider.options.select("model").asOptString.map(JsString.apply).getOrElse(JsNull).as[JsValue],
                 )
-                def toModels(models: Seq[String]): Seq[JsObject] = models.map { model =>
+                // a router only lists the routing models that have candidates
+                def usable(model: String): Boolean = provider.provider != "otoroshi" ||
+                  provider.options.select(s"${model.replace("-", "_")}_refs").asOpt[JsArray].exists(_.value.nonEmpty)
+                def toModels(models: Seq[String]): Seq[JsObject] = models.filter(usable).map { model =>
                   val id = if (textRefs.size == 1) model else if (model.contains("/")) s"${provider.slugName}###$model" else s"${provider.slugName}/$model"
                   Json.obj("id" -> id, "model" -> model, "provider" -> provider.slugName, "provider_id" -> provider.id, "provider_kind" -> provider.provider, "modality" -> "text", "created" -> now)
                 }

@@ -14,13 +14,15 @@ export const PERIODS = [
 
 export class NoExporterError extends Error {}
 
-export async function runQuery(wsId, query, { period = '7d', apikey, err, params = {}, compare = false, nocache = false, bucket } = {}) {
+// `apikey` is a platform filter, `user` (a studio user email) a param every llm query of the extension understands
+export async function runQuery(wsId, query, { period = '7d', apikey, user, err, params = {}, compare = false, nocache = false, bucket } = {}) {
   const p = PERIODS.find((x) => x.value === period) || PERIODS[2];
   const filters = { from: p.from, to: 'now', route_id: routeIdOf(wsId) };
   if (apikey) filters.apikey_id = apikey;
   if (err !== undefined) filters.err = err;
+  const allParams = user ? { ...params, user } : params;
   try {
-    return await api.post('/bo/api/proxy/api/analytics/_query', { query, params, filters, compare, nocache, ...(bucket ? { bucket } : {}) });
+    return await api.post('/bo/api/proxy/api/analytics/_query', { query, params: allParams, filters, compare, nocache, ...(bucket ? { bucket } : {}) });
   } catch (e) {
     if (e.status === 412) throw new NoExporterError('no active user analytics exporter');
     throw e;

@@ -120,6 +120,11 @@ export function ensureStudioPlugins(route) {
   return route;
 }
 
+export function missingStudioPlugins(route) {
+  const plugins = (route && route.plugins) || [];
+  return [IP_ALLOW_PLUGIN, IP_BLOCK_PLUGIN, STUDIO_CONSUMER_PLUGIN].some((p) => !plugins.some((x) => x.plugin === p));
+}
+
 export function ipAddressesOf(route, plugin) {
   const p = findPlugin(route, plugin);
   return (p && p.config && p.config.addresses) || [];

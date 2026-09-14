@@ -22,7 +22,7 @@ extension at `/extensions/cloud-apim/ai-studio` (backoffice session required) an
 | api key | an apikey authorized on the route, tagged `ai_studio_ws_<id>` |
 | provider (BYOK) | one entity per enabled capability (`providers`, `embedding-models`, `image-models`, `audio-models`, `moderation-models`, `ocr-models`, `video-models`) sharing `metadata.ai_studio_connection` |
 | guardrails, model access | `guardrails` / `models` of every provider of the workspace |
-| routing | `provider_fallback`, `loadbalancer` providers, order of the route `language_model_refs` |
+| routing | `provider_fallback`, `loadbalancer` and `otoroshi` (router) providers, order of the route `language_model_refs` |
 | presets | `prompt-contexts` attached to providers `context.contexts` |
 | tools | `tool-functions`, `mcp-connectors`, `search-engines` attached to providers options |
 | credits | `ai-budgets` always scoped with the rule `$.provider.metadata.ai_studio_workspace`, then optionally narrowed to api keys, studio users, models and extra json path conditions |

@@ -8,6 +8,7 @@ import { bootstrap } from '../lib/bootstrap';
 import { keyBudgetOf, listBudgets, periodLabel, PERIODS, periodOf, saveBudget } from '../lib/budgets';
 import { Resources } from '../lib/entities';
 import { fmtCost, fmtInt } from '../lib/format';
+import { Link } from '../lib/router';
 
 function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
   const toast = useToast();
@@ -248,6 +249,10 @@ export function KeysPage() {
                         <Toggle value={k.enabled} onChange={() => toggle(k)} title={k.enabled ? 'Enabled' : 'Disabled'} />
                       </td>
                       <td className="actions">
+                        <Link className="btn sm" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.clientId)}`} title="Usage of this key">
+                          <Icon name="chart" />
+                          Activity
+                        </Link>
                         <button className="btn sm" onClick={() => setRevealing(k)}>
                           <Icon name="key" />
                           Key

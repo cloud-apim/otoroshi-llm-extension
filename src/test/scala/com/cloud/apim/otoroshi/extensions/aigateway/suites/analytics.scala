@@ -529,7 +529,7 @@ class AnalyticsQueriesSuite extends munit.FunSuite {
     for {
       q <- sqlQueries
       f <- variants
-      p <- Seq(Json.obj("top_n" -> 5), Json.obj("modality" -> "chat"))
+      p <- Seq(Json.obj("top_n" -> 5), Json.obj("modality" -> "chat"), Json.obj("user" -> "jane@acme.io"))
     } {
       val result = scala.util.Try(await(q.execute(f, p, Bucket.OneMinute, settings, pool)))
       assert(result.isSuccess, s"${q.id} failed with $f / $p: ${result.failed.map(_.getMessage).getOrElse("")}")
@@ -542,6 +542,13 @@ class AnalyticsQueriesSuite extends munit.FunSuite {
     assertEquals(value(run("cloudapim_llm_tokens_total", params = Json.obj("modality" -> "image"))), 40.0)
     // anything but a bare identifier is ignored rather than inlined
     assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("modality" -> "chat' OR '1'='1"))), 8.0)
+  }
+
+  test("llm queries can be narrowed to one user, and a user that is not an email matches nothing") {
+    assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("user" -> "jane@acme.io"))), 8.0)
+    assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("user" -> "john@acme.io"))), 0.0)
+    assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("user" -> "jane@acme.io' OR '1'='1"))), 0.0)
+    assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("user" -> "  "))), 8.0)
   }
 
   test("burn curves, histograms, heatmaps and latest rows") {

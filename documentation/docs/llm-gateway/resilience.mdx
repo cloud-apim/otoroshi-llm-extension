@@ -11,6 +11,7 @@ Resilience ensures that LLM interactions remain highly available and fault-toler
 ## Key Features
 
 - **Load Balancing**: Distribute requests across multiple providers to optimize performance and availability. See [Load Balancing](/docs/llm-gateway/loadbalancing).
+- **Smart Routing**: Let the gateway pick the model for each request, and cascade to the next best one on failure. See [Otoroshi Router](/docs/llm-gateway/otoroshi-router).
 - **Fallback Mechanism**: Automatically switch to alternative LLM providers in case of failures. See [Fallback](/docs/llm-gateway/fallback).
 - **Rate Limiting & Quotas**: Prevent overloading a single provider by distributing usage effectively. See [Quotas](/docs/cost-optimizations/quotas).
 
@@ -19,6 +20,12 @@ Resilience ensures that LLM interactions remain highly available and fault-toler
 The load balancer is a virtual provider that distributes requests across multiple providers using configurable strategies (round robin, random, best response time).
 
 [Read the full Load Balancing documentation](/docs/llm-gateway/loadbalancing)
+
+## Smart routing
+
+The Otoroshi Router is a virtual provider that picks the model for each request: the cheapest model that codes well enough (`code-router`), the best model for each prompt (`auto-router`), or a panel of models answering together (`fusion-router`). When the selected model fails, the next best candidate answers.
+
+[Read the full Otoroshi Router documentation](/docs/llm-gateway/otoroshi-router)
 
 ## Fallback
 

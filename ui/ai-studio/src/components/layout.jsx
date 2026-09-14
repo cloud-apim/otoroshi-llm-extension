@@ -160,7 +160,7 @@ export function Topbar({ theme, workspaces, currentWorkspace }) {
             {n.label}
           </Link>
         ))}
-        <a href="https://cloud-apim.github.io/otoroshi-llm-extension/" target="_blank" rel="noreferrer">
+        <a href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio" target="_blank" rel="noreferrer">
           Docs
         </a>
       </nav>

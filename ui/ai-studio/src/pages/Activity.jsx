@@ -7,6 +7,7 @@ import { compareOf, itemsOf, NoExporterError, PERIODS, runQuery, scalarOf, serie
 import { listApikeys } from '../lib/apikeys';
 import { budgetConsumption, listBudgets, periodLabel } from '../lib/budgets';
 import { fmtCost, fmtInt, fmtMs, fmtNumber, fmtPercent } from '../lib/format';
+import { useRouter } from '../lib/router';
 
 function Delta({ value, previous, inverse }) {
   if (previous === null || previous === undefined) return null;
@@ -39,28 +40,57 @@ function Kpi({ label, value, previous, format, points, inverse }) {
   );
 }
 
-function RankCard({ title, items, valueLabel }) {
-  const max = Math.max(1, ...items.map((i) => i.value));
+// Usage per API key or per user over the period, one row per consumer. Clicking a row narrows the whole
+// page to that consumer.
+function ConsumersCard({ title, description, items, active, onPick, empty }) {
+  const max = Math.max(1, ...items.map((i) => Number(i.tokens) || 0));
   return (
-    <div className="card">
-      <h2 style={{ marginBottom: 10 }}>{title}</h2>
-      {items.length === 0 && <p className="muted small">No usage for this period.</p>}
-      <div className="rank">
-        {items.map((it, idx) => (
-          <div key={it.key} className="item">
-            <span className="pos">{idx + 1}</span>
-            <div className="grow">
-              <div className="row between">
-                <span className="truncate">{it.label}</span>
-                <span className="small">{valueLabel(it)}</span>
-              </div>
-              <div className="bar">
-                <i style={{ width: `${(it.value / max) * 100}%` }} />
-              </div>
-            </div>
-          </div>
-        ))}
+    <div className="card flush">
+      <div style={{ padding: '18px 22px 6px' }}>
+        <h2>{title}</h2>
+        {description && (
+          <p className="muted small" style={{ marginTop: 4 }}>
+            {description}
+          </p>
+        )}
       </div>
+      {items.length === 0 ? (
+        <Empty>{empty}</Empty>
+      ) : (
+        <div className="table-wrap">
+          <table className="table consumers">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th className="num">Requests</th>
+                <th className="num">Tokens</th>
+                <th className="num">Spend</th>
+                <th className="num">Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it) => (
+                <tr key={it.key} className={`clickable ${active === it.value ? 'selected' : ''}`} onClick={() => onPick(it.value)} title={active === it.value ? 'Clear this filter' : `Only show the usage of ${it.label}`}>
+                  <td>
+                    <div className="truncate" style={{ maxWidth: 260 }}>
+                      {it.label}
+                    </div>
+                    <div className="rank">
+                      <div className="bar">
+                        <i style={{ width: `${((Number(it.tokens) || 0) / max) * 100}%` }} />
+                      </div>
+                    </div>
+                  </td>
+                  <td className="num">{fmtInt(it.calls)}</td>
+                  <td className="num">{fmtNumber(it.tokens)}</td>
+                  <td className="num">{fmtCost(it.spend_usd)}</td>
+                  <td className="num">{Number(it.errors) ? fmtInt(it.errors) : <span className="faint">0</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -131,15 +161,37 @@ function UsageCard({ title, description, dimension, run, deps, bucket, empty }) 
   );
 }
 
+const DEFAULT_PERIOD = '7d';
+
 export function ActivityPage() {
   const { workspace } = useWorkspace();
-  const [period, setPeriod] = useState('7d');
-  const [apikey, setApikey] = useState('');
+  // the filters live in the url (`?apikey=<client id>&user=<email>&period=24h`) so any page can link to
+  // the activity of one key or one user
+  const { query, navigate } = useRouter();
+  const period = PERIODS.some((p) => p.value === query.period) ? query.period : DEFAULT_PERIOD;
+  const apikey = query.apikey || '';
+  const user = query.user || '';
+  const setFilters = (patch) => {
+    const next = { apikey, user, period, ...patch };
+    const qs = new URLSearchParams(Object.entries(next).filter(([k, v]) => v && !(k === 'period' && v === DEFAULT_PERIOD))).toString();
+    navigate(`/workspaces/${workspace.id}/activity${qs ? `?${qs}` : ''}`, { replace: true, keepScroll: true });
+  };
   const [refresh, setRefresh] = useState(0);
   const keys = useAsync(() => listApikeys(workspace.id), [workspace.id]);
+  // the users that called the workspace in the period, whatever the user filter, to fill the picker
+  const users = useAsync(
+    () =>
+      runQuery(workspace.id, 'cloudapim_llm_users_table', { period, apikey: apikey || undefined, params: { top_n: 100 } })
+        .then(itemsOf)
+        .catch(() => []),
+    [workspace.id, period, apikey, refresh]
+  );
 
-  const opts = { period, apikey: apikey || undefined, nocache: refresh > 0 };
-  const q = (query, extra = {}) => runQuery(workspace.id, query, { ...opts, ...extra });
+  const opts = { period, apikey: apikey || undefined, user: user || undefined, nocache: refresh > 0 };
+  const q = (id, extra = {}) => runQuery(workspace.id, id, { ...opts, ...extra });
+  const clientIdOf = (name) => ((keys.data || []).find((k) => k.clientName === name) || (keys.data || []).find((k) => k.clientId === name) || {}).clientId;
+  const keyName = (clientId) => ((keys.data || []).find((k) => k.clientId === clientId) || { clientName: clientId }).clientName;
+  const userOptions = [...new Set([...(users.data || []).map((u) => u.user), ...(user ? [user] : [])])].map((u) => ({ value: u, label: u }));
 
   const kpis = useAsync(async () => {
     const [spend, spendTs, requests, requestsTs, tokens, tokensTs, cache, cacheTs, per1k, latency] = await Promise.all([
@@ -155,7 +207,7 @@ export function ActivityPage() {
       q('cloudapim_llm_latency_p95', { compare: true }),
     ]);
     return { spend, spendTs, requests, requestsTs, tokens, tokensTs, cache, cacheTs, per1k, latency };
-  }, [workspace.id, period, apikey, refresh]);
+  }, [workspace.id, period, apikey, user, refresh]);
 
   const charts = useAsync(async () => {
     const [calls, tokensTs, cacheTs, latencyTs, models, apikeysTable, usersTable] = await Promise.all([
@@ -164,12 +216,12 @@ export function ActivityPage() {
       q('cloudapim_llm_cache_over_time'),
       q('cloudapim_llm_latency_percentiles_over_time'),
       q('cloudapim_llm_models_table', { params: { top_n: 20 } }),
-      q('cloudapim_llm_apikeys_table', { params: { top_n: 5 } }),
-      q('cloudapim_llm_users_table', { params: { top_n: 5 } }),
+      q('cloudapim_llm_apikeys_table', { params: { top_n: 20 } }),
+      q('cloudapim_llm_users_table', { params: { top_n: 20 } }),
     ]);
     return { calls, tokensTs, cacheTs, latencyTs, models, apikeysTable, usersTable };
-  }, [workspace.id, period, apikey, refresh]);
-  const deps = [workspace.id, period, apikey, refresh];
+  }, [workspace.id, period, apikey, user, refresh]);
+  const deps = [workspace.id, period, apikey, user, refresh];
 
   const noExporter = [kpis.error, charts.error].some((e) => e instanceof NoExporterError);
   const k = kpis.data;
@@ -178,19 +230,45 @@ export function ActivityPage() {
 
   return (
     <div className="content wide" style={{ maxWidth: 1400 }}>
-      <PageHeader title="Activity" description="Usage of this workspace across models and API keys.">
+      <PageHeader title="Activity" description="Usage of this workspace across models, API keys and users.">
         <Select
           className="sm"
           value={apikey}
-          onChange={setApikey}
+          onChange={(v) => setFilters({ apikey: v })}
           placeholder="All API keys"
-          options={(keys.data || []).map((key) => ({ value: key.clientId, label: key.clientName }))}
+          options={[
+            ...(keys.data || []).map((key) => ({ value: key.clientId, label: key.clientName })),
+            ...(apikey && keys.data && !keys.data.some((k) => k.clientId === apikey) ? [{ value: apikey, label: apikey }] : []),
+          ]}
         />
-        <Select className="sm" value={period} onChange={setPeriod} options={PERIODS.map((p) => ({ value: p.value, label: p.label }))} />
+        <Select className="sm" value={user} onChange={(v) => setFilters({ user: v })} placeholder="All users" options={userOptions} />
+        <Select className="sm" value={period} onChange={(v) => setFilters({ period: v })} options={PERIODS.map((p) => ({ value: p.value, label: p.label }))} />
         <button className="btn sm" onClick={() => setRefresh((r) => r + 1)} title="Refresh">
           <Icon name="refresh" />
         </button>
       </PageHeader>
+
+      {(apikey || user) && (
+        <div className="filter-chips">
+          <span className="muted small">Showing the usage of</span>
+          {apikey && (
+            <button className="chip" onClick={() => setFilters({ apikey: '' })} title="Remove this filter">
+              <Icon name="key" />
+              {keyName(apikey)}
+              <Icon name="x" />
+            </button>
+          )}
+          {user && (
+            <button className="chip" onClick={() => setFilters({ user: '' })} title="Remove this filter">
+              {user}
+              <Icon name="x" />
+            </button>
+          )}
+          <button className="btn sm ghost" onClick={() => setFilters({ apikey: '', user: '' })}>
+            Clear filters
+          </button>
+        </div>
+      )}
 
       {noExporter ? (
         <div className="stack">
@@ -225,38 +303,30 @@ export function ActivityPage() {
 
           {c && (
             <>
-              <div className="grid cols-3">
-                <RankCard
-                  title="Top API keys"
-                  items={itemsOf(c.apikeysTable).map((i) => ({ key: i.key, label: i.apikey || i.key, value: Number(i.tokens) || 0, spend: i.spend_usd, calls: i.calls }))}
-                  valueLabel={(i) => `${fmtNumber(i.value)} tok · ${fmtCost(i.spend)}`}
+              <div className="grid cols-2">
+                <ConsumersCard
+                  title="Usage by API key"
+                  description="Click a key to only show its usage."
+                  // the table is keyed by key name, the filter needs the client id
+                  items={itemsOf(c.apikeysTable).map((i) => ({ ...i, label: i.apikey || i.key, value: clientIdOf(i.apikey || i.key) }))}
+                  active={apikey}
+                  onPick={(v) => v && setFilters({ apikey: v === apikey ? '' : v })}
+                  empty="No call made with an API key in this period."
                 />
-                <RankCard
-                  title="Top users"
-                  items={itemsOf(c.usersTable).map((i) => ({ key: i.key, label: i.user || i.key, value: Number(i.tokens) || 0, spend: i.spend_usd }))}
-                  valueLabel={(i) => `${fmtNumber(i.value)} tok · ${fmtCost(i.spend)}`}
-                />
-                <RankCard
-                  title="Top models"
-                  items={itemsOf(c.models)
-                    .slice(0, 5)
-                    .map((i) => ({ key: i.key, label: i.model || i.key, value: Number(i.tokens) || 0, spend: i.spend_usd }))}
-                  valueLabel={(i) => `${fmtNumber(i.value)} tok · ${fmtCost(i.spend)}`}
+                <ConsumersCard
+                  title="Usage by user"
+                  description="People chatting with this workspace from AI Studio. Click a user to only show their usage."
+                  items={itemsOf(c.usersTable).map((i) => ({ ...i, label: i.user || i.key, value: i.user || i.key }))}
+                  active={user}
+                  onPick={(v) => setFilters({ user: v === user ? '' : v })}
+                  empty="No call attributed to a user in this period. Calls from the AI Studio chat are counted for the person chatting; calls made by your apps only count for their API key."
                 />
               </div>
 
               <UsageCard title="Usage by model" dimension="model" run={q} deps={deps} bucket={bucket} />
               <div className="grid cols-2">
-                <UsageCard title="Usage by API key" dimension="apikey" run={q} deps={deps} bucket={bucket} />
-                <UsageCard
-                  title="Usage by user"
-                  description="Studio users chatting with this workspace."
-                  dimension="user"
-                  run={q}
-                  deps={deps}
-                  bucket={bucket}
-                  empty="No call attributed to a studio user in this period"
-                />
+                <UsageCard title="Usage by API key over time" dimension="apikey" run={q} deps={deps} bucket={bucket} />
+                <UsageCard title="Usage by user over time" dimension="user" run={q} deps={deps} bucket={bucket} empty="No call attributed to a user in this period" />
               </div>
 
               <div className="grid cols-2">

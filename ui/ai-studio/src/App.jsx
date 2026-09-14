@@ -3,7 +3,7 @@ import { Topbar, WorkspaceSidebar } from './components/layout';
 import { ConfirmProvider, ErrorAlert, Loading, ToastProvider, useAsync } from './components/ui';
 import { matchPath, RouterProvider, useRouter } from './lib/router';
 import { useTheme } from './lib/theme';
-import { getWorkspace, listWorkspaces } from './lib/workspaces';
+import { getWorkspace, listWorkspaces, missingStudioPlugins, updateWorkspaceRoute } from './lib/workspaces';
 import { WorkspacesPage } from './pages/Workspaces';
 import { OverviewPage } from './pages/Overview';
 import { KeysPage } from './pages/Keys';
@@ -49,6 +49,12 @@ function WorkspaceShell({ wsId, page }) {
   useEffect(() => {
     if (ws.error && ws.error.status === 404) navigate('/', { replace: true });
   }, [ws.error, navigate]);
+
+  // routes created by an older studio miss some plugins (the user of the studio chat is only recorded
+  // with `AiStudioConsumer`): add them once, silently, when the user is allowed to
+  useEffect(() => {
+    if (ws.data && missingStudioPlugins(ws.data.route)) updateWorkspaceRoute(wsId, (route) => route).catch(() => {});
+  }, [ws.data, wsId]);
 
   const value = useMemo(
     () => ({

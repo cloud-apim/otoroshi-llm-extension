@@ -359,6 +359,7 @@ p { margin: 0; }
   line-height: 1.2;
 }
 .btn:hover { background: var(--hover); }
+a.btn { text-decoration: none; }
 /* keep text-only and icon buttons on the same line when they sit side by side inline */
 .btn { vertical-align: middle; }
 .btn svg { flex-shrink: 0; }
@@ -696,6 +697,24 @@ dialog.modal::backdrop { background: rgba(3, 8, 10, 0.35); }
 .rank .pos { color: var(--faint); width: 16px; text-align: right; font-variant-numeric: tabular-nums; }
 .rank .bar { height: 4px; border-radius: 2px; background: var(--accent-subtle); margin-top: 5px; }
 .rank .bar > i { display: block; height: 100%; border-radius: 2px; background: var(--grape); }
+.table.consumers .rank .bar { max-width: 260px; }
+.table tr.selected td { background: var(--accent-subtle); }
+.filter-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -8px 0 18px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--accent-subtle);
+  color: var(--accent-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.chip svg { width: 14px; height: 14px; }
 
 /* logs */
 .logs-table td { font-size: 13px; }

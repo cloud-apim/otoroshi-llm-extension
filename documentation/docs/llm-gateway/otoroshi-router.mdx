@@ -1,0 +1,201 @@
+---
+sidebar_position: 8.5
+title: Otoroshi Router
+description: Let the gateway pick the model for each request - the cheapest model that codes well enough, the best model for each prompt, or a panel of models answering together.
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Otoroshi Router
+
+The **Otoroshi Router** lets the gateway choose the model for you. Your applications call a single
+model name, and the router decides, request after request, which of your providers answers:
+
+- **`code-router`** picks the **cheapest model that still codes well enough**. Quality comes from a
+  coding benchmark index, price from the gateway's cost catalog.
+- **`auto-router`** reads each prompt and sends it to the **best suited model** (coding, reasoning, writing,
+  long context…), following the cost / quality tradeoff you choose.
+- **`fusion-router`** asks **a panel of models in parallel**. A judge compares their answers, and a
+  synthesizer writes one final answer from the best of each.
+
+Each routing model works with any provider already configured in Otoroshi: OpenAI, Anthropic, Mistral,
+Ollama, or one of the many other supported providers. If a candidate fails, the router moves on to the
+next best one, so a routed request keeps answering even when a provider is down.
+
+## How it works
+
+The router is a **virtual provider** of type `otoroshi`. Like the [load balancer](/docs/llm-gateway/loadbalancing),
+it has no connection of its own. It references existing providers, called **candidates**, and each
+candidate is called with **its own default model** (`options.model`). This means you control exactly
+which models can be picked, and with which settings, guardrails and credentials.
+
+A single router exposes the three routing models. Configure candidates only for the ones you want to
+use: a routing model without candidates answers with an explicit error.
+
+Everything the gateway does for a provider still applies to the models picked by the router: costs,
+guardrails, caches, audit and analytics. Usage is recorded **once**, on the model that actually
+answered, so dashboards show the real usage of each model.
+
+## Creating a router
+
+Create an LLM provider entity with `provider` set to `otoroshi`. The `connection` object is not used,
+and all the configuration goes in `options`:
+
+```js
+{
+  "id": "provider_router",
+  "name": "router",
+  "provider": "otoroshi",
+  "connection": {},
+  "options": {
+    "code_router_refs": ["provider_claude_sonnet", "provider_gpt_mini", "provider_qwen_coder"],
+    "min_coding_score": 0.6,
+
+    "auto_router_refs": ["provider_claude_sonnet", "provider_gpt_mini", "provider_mistral_small"],
+    "auto_router_classifier_ref": "provider_gpt_nano",
+    "cost_quality_tradeoff": 7,
+    "allowed_models": [],
+
+    "fusion_router_refs": ["provider_claude_sonnet", "provider_gpt", "provider_gemini"],
+    "fusion_router_judge_ref": "provider_gpt_mini",
+    "fusion_router_synthesizer_ref": "provider_claude_sonnet"
+  }
+}
+```
+
+In the Otoroshi backoffice, pick **Otoroshi (router)** as the provider type: the form groups the
+options of each routing model. In [AI Studio](/docs/ai-studio), open **Routing** and create a router in
+the **Smart routing** section.
+
+## Calling the router
+
+Put the routing model in the `model` field of the request. When the router is exposed through the
+[OpenAI Compatible API](/docs/llm-gateway/openai-compat-api) with other providers, prefix it with the
+router name:
+
+<Terminal
+  command={`curl https://ai.oto.tools/v1/chat/completions \\
+  -H "Authorization: Bearer $OTOROSHI_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "router/auto-router",
+    "messages": [{ "role": "user", "content": "Write a SQL query listing the top 10 customers by revenue" }]
+  }'`}
+  result={`{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "model": "claude-sonnet-5",
+  "choices": [...]
+}`}
+/>
+
+The `model` of the response tells which model answered. Calls without a model use `code-router`.
+Streaming, tool calling and every other chat completion parameter are passed to the selected model.
+
+## code-router
+
+`code-router` is built for coding agents and IDE assistants. It gives you a strong coder without
+paying for the most expensive model on every request.
+
+1. Each candidate model gets a **coding quality score** from a curated snapshot of the
+   [Artificial Analysis](https://artificialanalysis.ai/) Coding Index, and a **price** from the gateway's cost
+   catalog. The price is weighted towards output (1 × input + 3 × output per token), since code
+   generation writes much more than it reads.
+2. The **minimum coding score** (`min_coding_score`, from `0` to `1`) sets the quality floor, **relative to your
+   best candidate**: with `0.6`, any model scoring at least 60% of your best candidate's score qualifies.
+3. The router calls the **cheapest qualifying candidate** first. If it fails, it tries the next cheapest
+   qualifying candidate, then the other candidates from best to worst quality, and finally the
+   candidates without a known score.
+
+Raise the floor for harder tasks, lower it to save more. A caller can also set it on a single request:
+
+```js
+{
+  "model": "router/code-router",
+  "min_coding_score": 0.9,
+  "messages": [...]
+}
+```
+
+## auto-router
+
+`auto-router` routes **each prompt** to the model that suits it best, like OpenRouter's auto model.
+
+1. A **judge** model (`auto_router_classifier_ref`) reads the prompt and the list of candidates, with
+   their quality and price, and picks one. A small, fast model is enough for this job. When no judge is
+   set, the cheapest candidate is used as the judge.
+2. The **cost / quality tradeoff** (`cost_quality_tradeoff`, from `0` to `10`) guides the judge: `0` means the
+   best answer whatever the price, `10` means the cheapest acceptable answer, and the default `7` balances both.
+3. The chosen model answers. If it fails, the other candidates are tried in order of the same tradeoff.
+   If the judge itself fails, the router still answers, following that order.
+
+Narrow the candidates with **allowed models**: wildcard patterns matched against
+`<provider type>/<model>` or the bare model name, such as `anthropic/*`, `openai/gpt-5*` or `*mini*`.
+
+Callers can override all three settings on a request:
+
+```js
+{
+  "model": "router/auto-router",
+  "cost_quality_tradeoff": 2,
+  "allowed_models": ["anthropic/*", "openai/gpt-5*"],
+  "messages": [...]
+}
+```
+
+## fusion-router
+
+`fusion-router` trades latency and tokens for the most reliable answer. It is useful for high-stakes
+questions, research or reviews, where a single model's blind spots matter.
+
+1. **Panel**: up to 8 candidates (`fusion_router_refs`) answer the request in parallel. Members that fail
+   are left out, and the request only fails if every member fails.
+2. **Judge**: `fusion_router_judge_ref` compares the answers without rewriting them. It lists what the models
+   agree on, where they disagree, the insights only one of them found, and what none of them covered.
+3. **Synthesizer**: `fusion_router_synthesizer_ref` writes the final answer to the original request from that
+   analysis. This is the answer returned to the caller, and it can be streamed.
+
+When the judge or the synthesizer is not set, the best panel member (by quality score) takes the role.
+
+:::tip
+A fusion request costs the sum of its calls: every panel member, the judge and the synthesizer. Put a
+[budget](/docs/cost-optimizations/budgets) on the route or on the API keys allowed to use it.
+:::
+
+## Configuration reference
+
+| Option | Routing model | Default | Description |
+|--------|---------------|---------|-------------|
+| `code_router_refs` | code-router | `[]` | Candidate provider ids |
+| `min_coding_score` | code-router | `0.5` | Quality floor from `0` to `1`, relative to the best candidate |
+| `auto_router_refs` | auto-router | `[]` | Candidate provider ids |
+| `auto_router_classifier_ref` | auto-router | cheapest candidate | Provider id of the judge that picks the model |
+| `cost_quality_tradeoff` | auto-router | `7` | `0` = best quality, `10` = cheapest |
+| `allowed_models` | auto-router | `[]` (all) | Wildcard patterns restricting the candidates |
+| `fusion_router_refs` | fusion-router | `[]` | Panel provider ids (up to 8) |
+| `fusion_router_judge_ref` | fusion-router | best panel member | Provider id of the judge comparing the answers |
+| `fusion_router_synthesizer_ref` | fusion-router | best panel member | Provider id of the model writing the final answer |
+
+Candidate lists accept provider ids (`["provider_1"]`) or objects (`[{ "ref": "provider_1" }]`). A
+router never routes to itself.
+
+### Per-request parameters
+
+| Body field | Routing model | Description |
+|------------|---------------|-------------|
+| `min_coding_score` | code-router | Overrides the quality floor for this request |
+| `cost_quality_tradeoff` | auto-router | Overrides the tradeoff for this request |
+| `allowed_models` | auto-router | Overrides the allowed models for this request |
+
+These fields are only read by the router. They are never sent to the selected models.
+
+## Works with the rest of the gateway
+
+- **Fallback**: candidates already cascade inside the router. You can also set a [fallback](/docs/llm-gateway/fallback)
+  on the router itself, which takes over when no candidate answers.
+- **Guardrails, caches, model constraints**: set them on the router to apply them to every routed request,
+  or on the candidates to apply them to one model.
+- **Budgets**: scope a [budget](/docs/cost-optimizations/budgets) on the route or on the API keys calling the
+  router to cap the spend of routed traffic.
+- **Dashboards**: routed calls show up under the model that answered in the
+  [built-in dashboards](/docs/reporting/dashboards), and are never counted twice.

@@ -50,12 +50,18 @@ object AiGatewayQueries {
      */
     private def real(ctx: QueryContext, extra: String = ""): String = {
       val modality = (ctx.params \ "modality").asOpt[String].map(_.trim.toLowerCase).filter(m => ModalityPattern.matches(m))
-      // the pattern rules out anything but a bare identifier, so the value can be inlined
-      (Seq("delegated = false") ++ modality.map(m => s"modality = '$m'") ++ Option(extra).filter(_.nonEmpty).map(e => s"($e)"))
+      // the patterns rule out quotes and anything a literal could escape with, so the values can be inlined.
+      // A user that does not look like an email matches nothing rather than everything
+      val user     = (ctx.params \ "user").asOpt[String].map(_.trim).filter(_.nonEmpty).map {
+        case u if UserPattern.matches(u) => s"user_email = '$u'"
+        case _                           => "1 = 0"
+      }
+      (Seq("delegated = false") ++ modality.map(m => s"modality = '$m'") ++ user ++ Option(extra).filter(_.nonEmpty).map(e => s"($e)"))
         .mkString(" AND ")
     }
 
     private val ModalityPattern = "^[a-z_]{1,32}$".r
+    private val UserPattern     = "^[A-Za-z0-9._%+@-]{1,254}$".r
 
     private val ModalityParam = QueryParam(
       "modality",
@@ -64,7 +70,10 @@ object AiGatewayQueries {
       "Only count calls of one modality: chat, responses, completion, embedding, image, audio, video, moderation or ocr"
     )
 
-    // every llm query can be narrowed to one modality — "the image generation spend", "embedding latency"
+    private val UserParam = QueryParam("user", "string", JsNull, "Only count calls of one user (email)")
+
+    // every llm query can be narrowed to one modality — "the image generation spend", "embedding latency" —
+    // and to one user
     private def lq(
         id: String,
         name: String,
@@ -74,7 +83,7 @@ object AiGatewayQueries {
         compare: Boolean = false,
         params: Seq[QueryParam] = Seq.empty
     )(run: QueryContext => Future[QueryResult]): CatalogQuery =
-      q(id, name, description, shape, widget, compare, params :+ ModalityParam)(run)
+      q(id, name, description, shape, widget, compare, params :+ ModalityParam :+ UserParam)(run)
 
     private def metric(id: String, name: String, description: String, expr: String, extra: String = "", asDouble: Boolean = false) =
       lq(s"cloudapim_llm_$id", name, description, AnalyticsShape.Scalar, "metric", compare = true) { ctx =>
