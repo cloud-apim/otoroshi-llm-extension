@@ -62,7 +62,7 @@ object ImageModel {
 
   // Single source of truth for the image modality: provider id -> client builder.
   // `supportedProviders` (and the providers catalog) is derived from these keys.
-  val clientBuilders: Map[String, ImageModel.ClientContext => Option[ImageModelClient]] = Map(
+  private val explicitBuilders: Map[String, ImageModel.ClientContext => Option[ImageModelClient]] = Map(
     "openai" -> { (c: ClientContext) =>
       import c.*
       val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env, providerId = id.some)
@@ -160,6 +160,20 @@ object ImageModel {
       new OpenAiImageModelClient(api, opts, editOpts, id).some
     },
   )
+
+  // OpenAI-like providers documenting an OpenAI-shaped `/images/generations` endpoint
+  private val likeBuilders: Map[String, ImageModel.ClientContext => Option[ImageModelClient]] =
+    OpenAiLikeProviders.all.filter(_.supportsImages).map { provDef =>
+      provDef.id -> { (c: ClientContext) =>
+        import c.*
+        val api = new OpenAiApi(baseUrl.getOrElse(provDef.baseUrl), token, timeout.getOrElse(3.minutes), providerName = provDef.name, env = env, providerId = id.some, headers = provDef.headers)
+        val opts = OpenAiImageModelClientOptions.fromJson(genOptions)
+        val editOpts = OpenAiImageEditionModelClientOptions.fromJson(editOptions)
+        new OpenAiImageModelClient(api, opts, editOpts, id).some
+      }
+    }.toMap
+
+  val clientBuilders: Map[String, ImageModel.ClientContext => Option[ImageModelClient]] = likeBuilders ++ explicitBuilders
 
   val supportedProviders: Set[String] = clientBuilders.keySet
 

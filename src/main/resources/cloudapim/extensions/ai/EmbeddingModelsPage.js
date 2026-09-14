@@ -48,7 +48,6 @@ class EmbeddingModelsPage extends Component {
           { label: 'Mistral', value: "mistral" },
           { label: 'Scaleway', value: "scaleway" },
           { label: 'Cloud Temple', value: "cloud-temple" },
-          { label: 'Deepseek', value: "deepseek" },
           { label: 'X.AI', value: "x-ai" },
           { label: 'Gemini', value: "gemini" },
           { label: 'Cohere', value: "cohere" },
@@ -311,25 +310,6 @@ class EmbeddingModelsPage extends Component {
                   },
                   options: {
                     model: 'gemini-embedding-001'
-                  },
-                }
-              });
-            } else if (state.provider === 'deepseek') {
-              update({
-                id: state.id,
-                name: state.name,
-                description: state.description,
-                tags: state.tags,
-                metadata: state.metadata,
-                provider: 'deepseek',
-                config: {
-                  connection: {
-                    base_url: BaseUrls.deepseek,
-                    token: 'xxx',
-                    timeout: 180000,
-                  },
-                  options: {
-                    model: 'deepseek-r1'
                   },
                 }
               });

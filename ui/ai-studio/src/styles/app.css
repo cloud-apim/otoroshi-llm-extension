@@ -359,6 +359,9 @@ p { margin: 0; }
   line-height: 1.2;
 }
 .btn:hover { background: var(--hover); }
+/* keep text-only and icon buttons on the same line when they sit side by side inline */
+.btn { vertical-align: middle; }
+.btn svg { flex-shrink: 0; }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn.primary { background: var(--grape); border-color: var(--grape); color: #fff; }
 .btn.primary:hover:not(:disabled) { background: var(--grape-hover); border-color: var(--grape-hover); }
@@ -492,6 +495,7 @@ input[type='range'] { width: 100%; accent-color: var(--grape); }
 .table td.num, .table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .table td.actions { text-align: right; white-space: nowrap; }
 .table td.actions .btn + .btn { margin-left: 6px; }
+.table td.actions .btn.sm { height: 28px; }
 .table.compact td { padding: 8px 12px; }
 
 /* badges, alerts, misc */

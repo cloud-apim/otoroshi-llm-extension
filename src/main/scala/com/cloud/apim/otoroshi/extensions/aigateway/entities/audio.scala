@@ -70,7 +70,7 @@ object AudioModel {
 
   // Single source of truth for the audio modality: provider id -> client builder.
   // `supportedProviders` (and the providers catalog) is derived from these keys.
-  val clientBuilders: Map[String, AudioModel.ClientContext => Option[AudioModelClient]] = Map(
+  private val explicitBuilders: Map[String, AudioModel.ClientContext => Option[AudioModelClient]] = Map(
     "openai" -> { (c: ClientContext) =>
       import c.*
       val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env, providerId = id.some)
@@ -99,7 +99,7 @@ object AudioModel {
     },
     "cloud-temple" -> { (c: ClientContext) =>
       import c.*
-      val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env, providerId = id.some)
+      val api = new OpenAiApi(baseUrl.getOrElse(CloudTemple.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Cloud Temple", env = env, providerId = id.some)
       val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(ttsOptions)
       val sttopts = OpenAIAudioModelClientSttOptions.fromJson(sttOptions)
       val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
@@ -166,6 +166,16 @@ object AudioModel {
       val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(translateOptions)
       new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
     },
+    "scaleway" -> { (c: ClientContext) =>
+      import c.*
+      // Scaleway Generative APIs: transcription (speech-to-text) only, OpenAI-shaped
+      transcriptionOnly(new OpenAiApi(baseUrl.getOrElse(ScalewayApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Scaleway", env = env, providerId = id.some), c)
+    },
+    "cohere" -> { (c: ClientContext) =>
+      import c.*
+      // Cohere compatibility API: transcription (speech-to-text) only, the `language` option is required
+      transcriptionOnly(new OpenAiApi(baseUrl.getOrElse("https://api.cohere.ai/compatibility/v1"), token, timeout.getOrElse(3.minutes), providerName = "Cohere", env = env, providerId = id.some), c)
+    },
     "ovh-ai-endpoints" -> { (c: ClientContext) =>
       import c.*
       // OVH AI Endpoints audio: transcription (speech-to-text) only, through their unified
@@ -177,6 +187,27 @@ object AudioModel {
       new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, id).some
     },
   )
+
+  private def withModes(api: OpenAiApi, c: ClientContext, tts: Boolean, stt: Boolean): Option[AudioModelClient] = {
+    val ttsopts = OpenAIAudioModelClientTtsOptions.fromJson(if (tts) c.ttsOptions else c.ttsOptions ++ Json.obj("enabled" -> false))
+    val sttopts = OpenAIAudioModelClientSttOptions.fromJson(if (stt) c.sttOptions else c.sttOptions ++ Json.obj("enabled" -> false))
+    val transopts = OpenAIAudioModelClientTranslationOptions.fromJson(c.translateOptions ++ Json.obj("enabled" -> false))
+    new OpenAIAudioModelClient(api, ttsopts, sttopts, transopts, c.id).some
+  }
+
+  private def transcriptionOnly(api: OpenAiApi, c: ClientContext): Option[AudioModelClient] = withModes(api, c, tts = false, stt = true)
+
+  // OpenAI-like providers documenting OpenAI-shaped `/audio/transcriptions` and/or `/audio/speech` endpoints
+  private val likeBuilders: Map[String, AudioModel.ClientContext => Option[AudioModelClient]] =
+    OpenAiLikeProviders.all.filter(d => d.supportsSpeechToText || d.supportsTextToSpeech).map { provDef =>
+      provDef.id -> { (c: ClientContext) =>
+        import c.*
+        val api = new OpenAiApi(baseUrl.getOrElse(provDef.baseUrl), token, timeout.getOrElse(3.minutes), providerName = provDef.name, env = env, providerId = id.some, headers = provDef.headers)
+        withModes(api, c, tts = provDef.supportsTextToSpeech, stt = provDef.supportsSpeechToText)
+      }
+    }.toMap
+
+  val clientBuilders: Map[String, AudioModel.ClientContext => Option[AudioModelClient]] = likeBuilders ++ explicitBuilders
 
   val supportedProviders: Set[String] = clientBuilders.keySet
 

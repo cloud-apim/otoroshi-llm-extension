@@ -69,7 +69,7 @@ object ModerationModel {
   // Single source of truth for the moderation modality: provider id -> client builder.
   // `supportedProviders` (and the providers catalog) is derived from these keys, so adding a
   // provider here is the only change required.
-  val clientBuilders: Map[String, ModerationModel.ClientContext => Option[ModerationModelClient]] = Map(
+  private val explicitBuilders: Map[String, ModerationModel.ClientContext => Option[ModerationModelClient]] = Map(
     "openai" -> { (c: ClientContext) =>
       import c.*
       val api = new OpenAiApi(baseUrl.getOrElse(OpenAiApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "OpenAI", env = env, providerId = id.some)
@@ -106,14 +106,20 @@ object ModerationModel {
       val opts = OpenAiModerationModelClientOptions.fromJson(options)
       new OpenAiModerationModelClient(api, opts, id).some
     },
-    "ovh-ai-endpoints" -> { (c: ClientContext) =>
-      import c.*
-      // OVH AI Endpoints moderation through their unified OpenAI-compatible API
-      val api = new OpenAiApi(baseUrl.getOrElse(OVHAiEndpointsApi.unifiedUrl), token, timeout.getOrElse(3.minutes), providerName = "OVH", env = env, providerId = id.some)
-      val opts = OpenAiModerationModelClientOptions.fromJson(options)
-      new OpenAiModerationModelClient(api, opts, id).some
-    },
   )
+
+  // OpenAI-like providers documenting an OpenAI-shaped `/moderations` endpoint
+  private val likeBuilders: Map[String, ModerationModel.ClientContext => Option[ModerationModelClient]] =
+    OpenAiLikeProviders.all.filter(_.supportsModeration).map { provDef =>
+      provDef.id -> { (c: ClientContext) =>
+        import c.*
+        val api = new OpenAiApi(baseUrl.getOrElse(provDef.baseUrl), token, timeout.getOrElse(3.minutes), providerName = provDef.name, env = env, providerId = id.some, headers = provDef.headers)
+        val opts = OpenAiModerationModelClientOptions.fromJson(options)
+        new OpenAiModerationModelClient(api, opts, id).some
+      }
+    }.toMap
+
+  val clientBuilders: Map[String, ModerationModel.ClientContext => Option[ModerationModelClient]] = likeBuilders ++ explicitBuilders
 
   val supportedProviders: Set[String] = clientBuilders.keySet
 

@@ -183,12 +183,16 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
                       <td>
                         {cap === 'audio' ? (
                           <div className="grid cols-2">
-                            <Field hint="Text to speech">
-                              <ModelInput value={mod.model} onChange={(v) => setModality(cap, { model: v })} placeholder={entry.models.audio_tts || 'tts model'} listId={`${cap}-tts`} />
-                            </Field>
-                            <Field hint="Speech to text">
-                              <ModelInput value={mod.stt_model} onChange={(v) => setModality(cap, { stt_model: v })} placeholder={entry.models.audio_stt || 'stt model'} listId={`${cap}-stt`} />
-                            </Field>
+                            {(entry.audio_modes || ['tts', 'stt']).includes('tts') && (
+                              <Field hint="Text to speech">
+                                <ModelInput value={mod.model} onChange={(v) => setModality(cap, { model: v })} placeholder={entry.models.audio_tts || 'tts model'} listId={`${cap}-tts`} />
+                              </Field>
+                            )}
+                            {(entry.audio_modes || ['tts', 'stt']).includes('stt') && (
+                              <Field hint="Speech to text">
+                                <ModelInput value={mod.stt_model} onChange={(v) => setModality(cap, { stt_model: v })} placeholder={entry.models.audio_stt || 'stt model'} listId={`${cap}-stt`} />
+                              </Field>
+                            )}
                           </div>
                         ) : (
                           <ModelInput

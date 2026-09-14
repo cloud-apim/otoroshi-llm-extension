@@ -105,12 +105,6 @@ object EmbeddingModel {
         val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
         new OpenAiEmbeddingModelClient(api, opts, id).some
       },
-      "deepseek" -> { (c: ClientContext) =>
-        import c.*
-        val api = new OpenAiApi(baseUrl.getOrElse(DeepSeekApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "Deepseek", env = env, providerId = id.some)
-        val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
-        new OpenAiEmbeddingModelClient(api, opts, id).some
-      },
       "gemini" -> { (c: ClientContext) =>
         import c.*
         val api = new OpenAiApi(baseUrl.getOrElse(GeminiApi.baseUrl), token, timeout.getOrElse(10.seconds), providerName = "gemini", env = env, providerId = id.some)
@@ -134,6 +128,13 @@ object EmbeddingModel {
         val api = new OllamaAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrl), token.some.filterNot(_ == "xxx"), timeout.getOrElse(10.seconds), env = env, providerId = id.some)
         val opts = OllamaEmbeddingModelClientOptions.fromJson(options)
         new OllamaEmbeddingModelClient(api, opts, id).some
+      },
+      "ollama-openai" -> { (c: ClientContext) =>
+        import c.*
+        // the OpenAI compatibility layer of Ollama serves `/v1/embeddings` for any pulled embedding model
+        val api = new OpenAiApi(baseUrl.getOrElse(OllamaAiApi.baseUrlOAI), token, timeout.getOrElse(30.seconds), providerName = "Ollama", env = env, providerId = id.some)
+        val opts = OpenAiEmbeddingModelClientOptions.fromJson(options)
+        new OpenAiEmbeddingModelClient(api, opts, id).some
       },
       "x-ai" -> { (c: ClientContext) =>
         import c.*
