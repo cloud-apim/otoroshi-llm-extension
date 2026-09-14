@@ -1246,8 +1246,9 @@ object AiBudgetsDataStore {
                 "budgets" -> budgetIds,
                 "apikey" -> apikey.map(_.lightJson).getOrElse(JsNull).as[JsValue],
                 "user" -> user.map(_.lightJson).getOrElse(JsNull).as[JsValue],
-                "model" -> user.map(_.json).getOrElse(JsNull).as[JsValue],
-                "provider" -> user.map(_.json).getOrElse(JsNull).as[JsValue],
+                "model" -> model.map(JsString.apply).getOrElse(JsNull).as[JsValue],
+                // id and name only: the provider entity carries its connection credentials
+                "provider" -> provider.map(p => Json.obj("id" -> p.internalId, "name" -> p.theName)).getOrElse(JsNull).as[JsValue],
                 "route" -> route.map(_.json).getOrElse(JsNull).as[JsValue],
               )).toAnalytics()
             }

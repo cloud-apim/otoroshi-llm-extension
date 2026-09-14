@@ -2092,9 +2092,23 @@ class AiExtension(val env: Env) extends AdminExtension {
         McpSupport.restartConnectorsIfNeeded()
         McpSupport.stopConnectorsIfNeeded()
       }
+      com.cloud.apim.otoroshi.extensions.aigateway.analytics.DashboardSeeding.seedIfMissing(
+        com.cloud.apim.otoroshi.extensions.aigateway.analytics.AiGatewayDashboards.all
+      )
       ()
     }
   }
+
+  override def analyticsQueries(): Seq[otoroshi.next.analytics.queries.AnalyticsQuery] =
+    com.cloud.apim.otoroshi.extensions.aigateway.analytics.AiGatewayQueries.all
+
+  // without these, the usage, mcp and alert events reach whatever exporters the operator wired, but
+  // never a table the queries above can read
+  override def analyticsProjections(): Seq[otoroshi.next.analytics.exporter.AnalyticsProjection] = Seq(
+    com.cloud.apim.otoroshi.extensions.aigateway.analytics.LlmUsageProjection,
+    com.cloud.apim.otoroshi.extensions.aigateway.analytics.McpCallsProjection,
+    com.cloud.apim.otoroshi.extensions.aigateway.analytics.AiAlertsProjection
+  )
 
   override def entities(): Seq[AdminExtensionEntity[EntityLocationSupport]] = {
     Seq(

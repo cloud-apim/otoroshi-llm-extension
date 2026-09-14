@@ -106,7 +106,9 @@ lazy val root = (project in file("."))
       // otoroshi ships java-jq as an unmanaged jar in its lib/ directory, so it is absent from the
       // published pom: the test suites that boot a real otoroshi need it on the test classpath
       "com.arakelian" % "java-jq" % "1.3.0" % Test excludeAll(all *),
-      munit % Test
+      munit % Test,
+      // runs the analytics queries against a real postgres
+      testcontainers % Test
     ),
     fork := true,
     Test / parallelExecution := false,
