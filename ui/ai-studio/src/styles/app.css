@@ -187,6 +187,7 @@ p { margin: 0; }
   font-weight: 800;
 }
 .topbar .search { flex: 0 1 320px; }
+.topbar .experimental { margin-left: -8px; cursor: help; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10.5px; font-weight: 600; }
 .topbar nav { display: flex; gap: 4px; margin-left: auto; }
 .topbar nav a { border-radius: var(--radius-sm); color: var(--muted); padding: 8px 12px; font-weight: 500; cursor: pointer; }
 .topbar nav a:hover { background: var(--hover); color: var(--ink); }

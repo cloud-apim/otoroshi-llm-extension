@@ -153,6 +153,9 @@ export function Topbar({ theme, workspaces, currentWorkspace }) {
         <span className="brand-mark">AS</span>
         AI Studio
       </Link>
+      <span className="badge warning experimental" title="AI Studio is experimental: it does not cover everything the LLM extension can do yet, and may change in future releases">
+        Experimental
+      </span>
       <SearchBox workspaces={workspaces} currentWorkspace={currentWorkspace} />
       <nav>
         {nav.map((n) => (
