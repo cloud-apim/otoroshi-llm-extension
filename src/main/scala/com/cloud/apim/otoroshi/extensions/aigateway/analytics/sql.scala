@@ -290,8 +290,9 @@ object AnalyticsSql {
   /**
    * Activity by day of week × hour of day (UTC), over the whole period: when the gateway is used.
    *
-   * The heatmap widget labels its columns as times of day, so the 24 hour columns are sent as the
-   * matching instants of the epoch day; rows are the days of the week, Monday first.
+   * Columns are named through `xLabels`; they are also sent as the matching instants of the epoch
+   * day in `xBuckets`, which a heatmap widget that only knows time columns renders as the same hours.
+   * Rows are the days of the week, Monday first.
    */
   def weekHourHeatmap(table: String, extra: String = "")(ctx: QueryContext): Future[QueryResult] = {
     given ExecutionContext = ctx.ec
@@ -308,6 +309,7 @@ object AnalyticsSql {
         Json.obj(
           "bucket"   -> "1h",
           "xBuckets" -> JsArray((0 until 24).map(h => JsNumber(h * 3600000L))),
+          "xLabels"  -> JsArray((0 until 24).map(h => JsString(f"$h%02d:00"))),
           "yBuckets" -> JsArray(days.map(JsString.apply)),
           "values"   -> JsArray(days.indices.map(d => JsArray((0 until 24).map(h => JsNumber(cells.getOrElse((d + 1, h), 0L))))))
         ),

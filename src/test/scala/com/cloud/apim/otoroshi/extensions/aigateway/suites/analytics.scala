@@ -359,6 +359,15 @@ class AnalyticsProjectionsSuite extends munit.FunSuite {
     assertEquals((p("err"), p("error_kind"), p("error_message")), (true, "status_429", "Rate limit reached"))
     val g = row(LlmUsageProjection, guardrailDenied)
     assertEquals((g("err"), g("error_kind"), g("error_message")), (true, "guardrail_denied", "pif detected"))
+    // what openai and anthropic actually send back: the provider's own classification wins
+    val openai = providerError ++ Json.obj("error" -> Json.obj("error" -> Json.obj(
+      "message" -> "Unsupported parameter: 'max_tokens' is not supported with this model.", "type" -> "invalid_request_error", "code" -> "unsupported_parameter")))
+    val o = row(LlmUsageProjection, openai)
+    assertEquals((o("error_kind"), o("error_message")), ("unsupported_parameter", "Unsupported parameter: 'max_tokens' is not supported with this model."))
+    val anthropic = providerError ++ Json.obj("error" -> Json.obj("status" -> 400, "body" -> Json.obj("type" -> "error",
+      "error" -> Json.obj("type" -> "invalid_request_error", "message" -> "Your credit balance is too low"))))
+    val a = row(LlmUsageProjection, anthropic)
+    assertEquals((a("error_kind"), a("error_message")), ("invalid_request_error", "Your credit balance is too low"))
   }
 
   test("mcp rows tell the tool, the side and the failure apart") {
@@ -385,6 +394,22 @@ class AnalyticsProjectionsSuite extends munit.FunSuite {
     val ids = AiGatewayQueries.all.map(_.id)
     assertEquals(ids.distinct.size, ids.size, ids.diff(ids.distinct).mkString(", "))
     ids.foreach(id => assert(id.startsWith("cloudapim_llm_") || id.startsWith("cloudapim_mcp_"), id))
+  }
+
+  test("an installed default follows newer versions only while nobody edited it") {
+    import otoroshi.models.EntityLocation
+    import otoroshi.next.analytics.models.UserDashboard
+    val v1        = AiGatewayDashboards.Overview.copy(widgets = AiGatewayDashboards.Overview.widgets.take(3))
+    val v2        = AiGatewayDashboards.Overview
+    def installed(spec: DashboardSpec, metadata: Map[String, String]) =
+      UserDashboard(EntityLocation.default, "dashboard_1", spec.name, spec.description, Seq.empty, metadata, true, spec.widgets, Json.obj())
+    val marker    = Map(DashboardSeeding.DefaultIdKey -> v1.defaultId, DashboardSeeding.DefaultHashKey -> DashboardSeeding.hash(v1))
+    assert(DashboardSeeding.upgradable(installed(v1, marker), v2), "an untouched v1 moves to v2")
+    assert(!DashboardSeeding.upgradable(installed(v1, marker), v1), "nothing to do when already current")
+    val edited    = installed(v1, marker).copy(widgets = v1.widgets.drop(1))
+    assert(!DashboardSeeding.upgradable(edited, v2), "an edited dashboard is the user's")
+    assert(!DashboardSeeding.upgradable(installed(v1, marker).copy(name = "Mine"), v2), "a renamed dashboard is the user's")
+    assert(!DashboardSeeding.upgradable(installed(v1, marker - DashboardSeeding.DefaultHashKey), v2), "without a hash, nothing is known")
   }
 
   test("every dashboard widget reads a query that exists, and fits the grid") {
@@ -528,6 +553,7 @@ class AnalyticsQueriesSuite extends munit.FunSuite {
     assertEquals(bands.map(b => (b \ "value").as[Long]).sum, 5L)
     val heat = run("cloudapim_llm_activity_heatmap").data
     assertEquals((heat \ "yBuckets").as[Seq[String]].size, 7)
+    assertEquals((heat \ "xLabels").as[Seq[String]].take(2), Seq("00:00", "01:00"))
     assertEquals((heat \ "values").as[Seq[Seq[Long]]].map(_.size).distinct, Seq(24))
     assertEquals((heat \ "values").as[Seq[Seq[Long]]].flatten.sum, 8L)
     val recent = (run("cloudapim_llm_recent_errors").data \ "items").as[Seq[JsObject]]

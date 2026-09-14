@@ -11,6 +11,11 @@ your AI gateway comes with a full console: what it costs, who spends it, how fas
 models answer, what your traffic emits, and what your agents call through MCP — no Kibana, no
 Grafana, no pipeline to maintain.
 
+![The AI Gateway overview dashboard: calls, error rate, spend, tokens, vendors and models](/img/ai-gateway-dashboard-overview.png)
+
+*The overview answers the first questions in one screen: how much traffic, how much of it fails, what it
+costs, and which vendors and models carry it.*
+
 Every number is also a **query** you can drop into your own dashboards, filter by route, API, API
 key, group or tenant, and **alert on**: a daily spend threshold, an error rate on a provider, a tool
 that starts failing.
@@ -32,8 +37,9 @@ connector. Turn them on for the servers you want to see in the MCP dashboards.
 :::
 
 The installed dashboards are ordinary user dashboards: rearrange them, change a widget, add your own
-queries, rename or delete them. Your changes are never overwritten; a dashboard you delete comes back
-fresh on the next restart.
+queries, rename or delete them. A dashboard you have not touched stays up to date as the extension
+improves it; one you have customised is yours and is never overwritten. Delete it to get the latest
+version back on the next restart.
 
 ## The dashboards
 
@@ -49,6 +55,16 @@ fresh on the next restart.
 | **AI Gateway - Consumers** | The chargeback view: calls, tokens, spend, errors and emissions per API key, user and route |
 | **MCP - Overview** | MCP traffic served and consumed, methods, transports, protocol versions, top and failing tools, servers and connectors |
 | **MCP - Tools & security** | A per-tool table, tool latency, failing connectors and resource fetches, and every zero-trust event (rug-pulls, guardrails, redactions) |
+
+![The AI Gateway costs dashboard: spend, projected monthly spend, spend by token type, burn curve and spend by model](/img/ai-gateway-dashboard-costs.png)
+
+*The costs dashboard: what was spent, what the month will cost at this pace, how the bill splits
+between input, output and reasoning tokens, and which models drive it.*
+
+![The AI Gateway tokens dashboard: input, output and reasoning tokens over time, by model and by provider](/img/ai-gateway-dashboard-tokens.png)
+
+*Tokens & cache: where the tokens go — input versus output versus reasoning, model by model, provider
+by provider.*
 
 ## Numbers you can trust
 
@@ -140,6 +156,11 @@ they are exact for the whole cycle, whatever period the dashboard shows.
 
 ### Ecological impact
 
+![The AI Gateway ecological impact dashboard: energy, emissions, water, usage and embodied emissions, cumulative emissions and emissions by model](/img/ai-gateway-dashboard-ecology.png)
+
+*The ecological impact dashboard: energy, emissions and water behind the calls, split between usage
+and hardware manufacturing, and the models that weigh the most.*
+
 | Query | Widget | |
 |---|---|---|
 | `cloudapim_llm_energy_total` | metric | Energy, Wh |
@@ -157,6 +178,16 @@ they are exact for the whole cycle, whatever period the dashboard shows.
 See [Ecological impact](./ecological.mdx) for how impacts are estimated.
 
 ### Performance and reliability
+
+![The AI Gateway performance dashboard: average, median, p95 and p99 latency, generation speed, latency percentiles, distribution and heatmap](/img/ai-gateway-dashboard-performance.png)
+
+*Performance: how long callers wait — median and tail — how fast tokens come out, and when latency
+spikes.*
+
+![The AI Gateway reliability dashboard: errors, error rate over time, top error messages, errors and error rate by provider and model](/img/ai-gateway-dashboard-reliability.png)
+
+*Reliability: the error rate over time, and straight to the cause — the actual provider messages, and
+the providers and models they come from.*
 
 | Query | Widget | |
 |---|---|---|

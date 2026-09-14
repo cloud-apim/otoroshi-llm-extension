@@ -227,12 +227,22 @@ object LlmUsageProjection extends AnalyticsProjection {
     case JsNull                                                   => None
     case JsString(_)                                              => Some("error")
     case obj: JsObject if (obj \ "exception").isDefined           => Some("exception")
+    // providers classify their own errors (`invalid_request_error`, `rate_limit_error`,
+    // `insufficient_quota`…), directly or wrapped with the status they came with
+    case obj: JsObject if providerErrorCode(obj).isDefined        => providerErrorCode(obj)
     case obj: JsObject if (obj \ "error").asOpt[String].isDefined =>
       val e = (obj \ "error").as[String]
       Some(if (e.startsWith("bad response code")) "bad_response_code" else if (e.length > 64) "error" else e.replace(' ', '_'))
     case obj: JsObject if (obj \ "status").asOpt[Int].isDefined   => Some(s"status_${(obj \ "status").as[Int]}")
     case _                                                        => Some("error")
   }
+
+  private val ErrorCode = "^[A-Za-z0-9_.-]{1,64}$".r
+
+  private def providerErrorCode(obj: JsObject): Option[String] =
+    str(obj, "error.code", "error.type", "body.error.code", "body.error.type", "body.code", "body.type")
+      .filter(c => ErrorCode.matches(c) && c != "error")
+      .map(_.toLowerCase)
 
   def errorMessage(error: JsValue): Option[String] = error match {
     case JsNull        => None

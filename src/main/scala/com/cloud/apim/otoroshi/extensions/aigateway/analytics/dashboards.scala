@@ -273,6 +273,21 @@ object AiGatewayDashboards {
     )
   )
 
+  /**
+   * Widgets whose title carries a unit and that were given no format get the matching one: dollars
+   * as a currency (a call costs a fraction of a cent, which a plain count rounds to 0), physical
+   * quantities as numbers whose precision follows their magnitude. A viewer that does not know a
+   * format falls back to plain numbers.
+   */
+  private def withUnitFormats(spec: DashboardSpec): DashboardSpec = spec.copy(widgets = spec.widgets.map { w =>
+    val hasFormat = (w.options \ "format").isDefined
+    val physical  = Seq("(Wh)", "(gCO2eq)", "(MJ)", "(L)", "(mgSbeq)", "(tokens/s)", "ratio")
+    if (hasFormat) w
+    else if (w.title.contains("($)")) w.copy(options = w.options ++ Json.obj("format" -> "currency"))
+    else if (physical.exists(w.title.contains)) w.copy(options = w.options ++ Json.obj("format" -> "number"))
+    else w
+  })
+
   val all: Seq[DashboardSpec] =
-    Seq(Overview, Costs, Tokens, Budgets, Ecology, Performance, Reliability, Consumers, McpOverview, McpTools)
+    Seq(Overview, Costs, Tokens, Budgets, Ecology, Performance, Reliability, Consumers, McpOverview, McpTools).map(withUnitFormats)
 }

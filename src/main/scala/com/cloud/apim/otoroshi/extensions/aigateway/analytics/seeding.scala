@@ -18,7 +18,8 @@ final case class DashboardSpec(defaultId: String, name: String, description: Str
  *
  * Seeded like the platform's own defaults: only the missing ones, matched on a metadata marker rather
  * than on the name, so a renamed dashboard is not brought back and an edited one is never overwritten.
- * Deleting one is the only way to get a fresh copy on the next sync.
+ * A default nobody edited follows the extension's newer versions of it; deleting an edited one is the
+ * way to get the current version back.
  */
 object DashboardSeeding {
 
@@ -27,6 +28,7 @@ object DashboardSeeding {
   val DefaultIdKey: String      = "otoroshi-default-id"
   val DefaultVersionKey: String = "otoroshi-default-version"
   val DefaultVersion: String    = "1"
+  val DefaultHashKey: String    = "otoroshi-default-hash"
 
   private val seeded = new AtomicBoolean(false)
 
@@ -57,11 +59,28 @@ object DashboardSeeding {
     name = spec.name,
     description = spec.description,
     tags = Seq("cloud-apim", "llm-extension"),
-    metadata = Map(DefaultIdKey -> spec.defaultId, DefaultVersionKey -> DefaultVersion),
+    metadata = Map(DefaultIdKey -> spec.defaultId, DefaultVersionKey -> DefaultVersion, DefaultHashKey -> hash(spec)),
     enabled = true,
     widgets = spec.widgets,
     defaults = Json.obj()
   )
+
+  /** What was installed: the parts a user edits. Anything else on the dashboard is theirs anyway. */
+  def hash(name: String, description: String, widgets: Seq[Widget]): String = {
+    val content = Json.stringify(Json.obj("name" -> name, "description" -> description, "widgets" -> JsArray(widgets.map(_.json))))
+    java.security.MessageDigest.getInstance("SHA-256").digest(content.getBytes("UTF-8")).map("%02x".format(_)).mkString
+  }
+
+  def hash(spec: DashboardSpec): String = hash(spec.name, spec.description, spec.widgets)
+
+  /**
+   * A newer version of a default replaces the installed one only if nobody touched it: the installed
+   * content still hashes to what was installed. An edited dashboard is the user's, and stays as is.
+   */
+  def upgradable(installed: UserDashboard, spec: DashboardSpec): Boolean =
+    installed.metadata.get(DefaultHashKey).exists { installedHash =>
+      installedHash == hash(installed.name, installed.description, installed.widgets) && installedHash != hash(spec)
+    }
 
   /**
    * Leader-only (or standalone), and a no-op once done in this process.
@@ -82,14 +101,24 @@ object DashboardSeeding {
           case None    => Future.successful(())
           case Some(_) =>
             env.datastores.userDashboardDataStore.findAll().flatMap { existing =>
-              val present = existing.flatMap(_.metadata.get(DefaultIdKey)).toSet
-              val missing = specs.filterNot(s => present.contains(s.defaultId))
+              val present  = existing.flatMap(_.metadata.get(DefaultIdKey)).toSet
+              val missing  = specs.filterNot(s => present.contains(s.defaultId))
+              val upgrades = for {
+                spec      <- specs
+                installed <- existing.filter(_.metadata.get(DefaultIdKey).contains(spec.defaultId))
+                if upgradable(installed, spec)
+              } yield {
+                // same id, so links and alerts pointing at it keep working
+                build(spec).copy(id = installed.id, location = installed.location, enabled = installed.enabled)
+              }
               Future
-                .sequence(missing.map(s => env.datastores.userDashboardDataStore.set(build(s))))
+                .sequence((missing.map(build) ++ upgrades).map(d => env.datastores.userDashboardDataStore.set(d)))
                 .map { _ =>
                   seeded.set(true)
                   if (missing.nonEmpty)
                     logger.info(s"seeded ${missing.size} default dashboard(s): ${missing.map(_.name).mkString(", ")}")
+                  if (upgrades.nonEmpty)
+                    logger.info(s"updated ${upgrades.size} unmodified default dashboard(s): ${upgrades.map(_.name).mkString(", ")}")
                   ()
                 }
             }
