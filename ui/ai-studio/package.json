@@ -1,0 +1,20 @@
+{
+  "name": "ai-studio",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "AI Studio: simplified OpenRouter-like view on top of the Otoroshi LLM extension",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@fontsource-variable/plus-jakarta-sans": "5.3.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.1.1",
+    "vite": "8.3.0"
+  }
+}

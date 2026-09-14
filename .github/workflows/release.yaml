@@ -18,6 +18,17 @@ jobs:
           java-version: 17
       - uses: sbt/setup-sbt@v1.1.5
       - uses: coursier/cache-action@v6
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/ai-studio/package-lock.json
+      - name: build ai-studio front
+        working-directory: ui/ai-studio
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
       - name: change version
         run: |
           echo 'ThisBuild / version := "${{ inputs.version }}"' > version.sbt

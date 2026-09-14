@@ -141,6 +141,13 @@ object AiGatewayQueries {
     val TopUsers        = top("top_users", "Top users", "Users by number of calls.", "user_email")
     val TopRoutes       = top("top_routes", "Top routes", "Routes by number of calls.", "route_id", Some("route_name"))
     val CallsByModelTs  = tsByKey("requests_by_model_over_time", "Calls by model over time", "One series per model, for the most used models of the period.", "model")
+    private val ApikeyKey = "COALESCE(apikey_name, apikey_id)"
+    val CallsByApikeyTs  = tsByKey("requests_by_apikey_over_time", "Calls by API key over time", "One series per API key, for the most active keys of the period.", ApikeyKey)
+    val TokensByApikeyTs = tsByKey("tokens_by_apikey_over_time", "Tokens by API key over time", "One series per API key, for the keys consuming the most tokens.", ApikeyKey, "SUM(total_tokens)")
+    val CostByApikeyTs   = tsByKey("cost_by_apikey_over_time", "Spend by API key over time ($)", "One series per API key, for the most expensive keys of the period.", ApikeyKey, "SUM(total_cost)", "total_cost IS NOT NULL", asDouble = true)
+    val CallsByUserTs    = tsByKey("requests_by_user_over_time", "Calls by user over time", "One series per user, for the most active users of the period.", "user_email")
+    val TokensByUserTs   = tsByKey("tokens_by_user_over_time", "Tokens by user over time", "One series per user, for the users consuming the most tokens.", "user_email", "SUM(total_tokens)")
+    val CostByUserTs     = tsByKey("cost_by_user_over_time", "Spend by user over time ($)", "One series per user, for the most expensive users of the period.", "user_email", "SUM(total_cost)", "total_cost IS NOT NULL", asDouble = true)
     val CallsByModalityTs = tsByKey("requests_by_modality_over_time", "Calls by modality over time", "One series per modality: chat, embeddings, images, audio…", "modality")
     val ActivityHeatmap = lq("cloudapim_llm_activity_heatmap", "LLM activity by weekday and hour", "Calls by day of week and hour of day (UTC) over the period: when the gateway is actually used.", AnalyticsShape.Heatmap, "heatmap") { ctx =>
       weekHourHeatmap(t(ctx.settings), real(ctx))(ctx)
@@ -368,7 +375,98 @@ object AiGatewayQueries {
       ), real(ctx, "provider_id IS NOT NULL"))(ctx)
     }
 
+    // ---- calls log --------------------------------------------------------------------------------
+
+    private val LogColumns = Seq(
+      "id", "ts", "request_id", "route_id", "route_name", "apikey_id", "apikey_name", "user_email", "from_ip",
+      "consumed_using", "modality", "streaming", "provider_kind", "provider_id", "provider_name", "model", "err",
+      "error_kind", "error_message", "duration_ms", "input_tokens", "output_tokens", "reasoning_tokens", "total_tokens",
+      "cache_status", "input_cost", "output_cost", "reasoning_cost", "total_cost", "cost_source", "energy_kwh",
+      "gwp_kgco2eq", "budget_ids"
+    )
+
+    // every column as json, typed: numbers stay numbers, timestamps become epoch millis
+    private def rowJson(row: io.vertx.sqlclient.Row): JsObject = JsObject((0 until row.size()).map { i =>
+      val value: JsValue = row.getValue(i) match {
+        case null                              => JsNull
+        case v: java.time.OffsetDateTime       => QueryHelpers.jsTs(v)
+        case v: java.lang.Boolean              => JsBoolean(v)
+        case v: java.lang.Number               => JsNumber(BigDecimal(v.toString))
+        case v: io.vertx.core.json.JsonObject  => Json.parse(v.encode())
+        case v: Array[?]                       => JsArray(v.toSeq.map(x => JsString(String.valueOf(x))))
+        case v                                 => JsString(v.toString)
+      }
+      // jsonb columns may come back as their text form
+      val parsed = value match {
+        case JsString(str) if row.getColumnName(i) == "raw" => scala.util.Try(Json.parse(str)).getOrElse(value)
+        case other                                          => other
+      }
+      row.getColumnName(i) -> parsed
+    })
+
+    private class Binder(start: Int) {
+      val clauses = scala.collection.mutable.ListBuffer[String]()
+      val values  = scala.collection.mutable.ListBuffer[AnyRef]()
+      private var idx = start
+      // every `?` of the clause is bound to the same value
+      def bind(clause: String, value: AnyRef): Unit = {
+        clauses += clause.replace("?", s"$$$idx")
+        values += value
+        idx += 1
+      }
+      def sql: String = clauses.mkString(" AND ")
+    }
+
+    private def param(ctx: QueryContext, name: String): Option[String] =
+      (ctx.params \ name).asOpt[String].map(_.trim).filter(_.nonEmpty)
+
+    val CallsLog = lq("cloudapim_llm_calls_log", "LLM calls log", "The calls of the period one by one, newest first, filterable by model, provider, consumer and status. Page with `before` (epoch millis of the last row).", AnalyticsShape.Table, "table", params = Seq(
+      QueryParam("limit", "int", JsNumber(50), "Number of calls (max 200)"),
+      QueryParam("before", "int", JsNull, "Only calls older than this instant (epoch millis), to fetch the next page"),
+      QueryParam("model", "string", JsNull, "Only calls to this model"),
+      QueryParam("provider_id", "string", JsNull, "Only calls served by this provider entity"),
+      QueryParam("status", "string", JsNull, "ok, error or cached"),
+      QueryParam("search", "string", JsNull, "Text searched in the model, the consumer and the error message")
+    )) { ctx =>
+      given ExecutionContext = ctx.ec
+      val (where, vals) = FilterSql.whereClause(ctx.filters)
+      val b             = new Binder(vals.size + 1)
+      (ctx.params \ "before").asOpt[Long].foreach(v => b.bind("ts < ?", java.time.OffsetDateTime.ofInstant(java.time.Instant.ofEpochMilli(v), java.time.ZoneOffset.UTC)))
+      param(ctx, "model").foreach(v => b.bind("model = ?", v))
+      param(ctx, "provider_id").foreach(v => b.bind("provider_id = ?", v))
+      param(ctx, "search").foreach(v => b.bind("(model ILIKE ? OR apikey_name ILIKE ? OR user_email ILIKE ? OR error_message ILIKE ?)", s"%$v%"))
+      param(ctx, "status").collect {
+        case "ok"     => b.clauses += "err = false AND cache_status IS DISTINCT FROM 'hit'"
+        case "error"  => b.clauses += "err = true"
+        case "cached" => b.clauses += "cache_status = 'hit'"
+      }
+      val limit = (ctx.params \ "limit").asOpt[Int].getOrElse(50).max(1).min(200)
+      val sql   = s"SELECT ${LogColumns.mkString(", ")} FROM ${t(ctx.settings)}${and(where, real(ctx, b.sql))} ORDER BY ts DESC LIMIT $limit"
+      QueryHelpers.runSelect(ctx.pool, sql, vals ++ b.values).map { rows =>
+        val items = rows.map(rowJson)
+        val next  = if (rows.size < limit) JsNull else items.lastOption.flatMap(i => (i \ "ts").asOpt[JsValue]).getOrElse(JsNull)
+        QueryResult(AnalyticsShape.Table, Json.obj("items" -> JsArray(items), "next_before" -> next), JsArray(items))
+      }
+    }
+
+    val CallDetail = lq("cloudapim_llm_call_detail", "LLM call detail", "Every recorded field of one call, prompts and outputs excluded.", AnalyticsShape.Table, "table", params = Seq(
+      QueryParam("id", "string", JsNull, "Id of the call (the `id` column of the calls log)")
+    )) { ctx =>
+      given ExecutionContext = ctx.ec
+      val (where, vals) = FilterSql.whereClause(ctx.filters)
+      param(ctx, "id") match {
+        case None => Future.successful(QueryResult(AnalyticsShape.Table, Json.obj("items" -> JsArray())))
+        case Some(id) =>
+          val sql = s"SELECT * FROM ${t(ctx.settings)}${and(where, s"id = $$${vals.size + 1}")} LIMIT 1"
+          QueryHelpers.runSelect(ctx.pool, sql, vals :+ id).map { rows =>
+            val items = rows.map(rowJson)
+            QueryResult(AnalyticsShape.Table, Json.obj("items" -> JsArray(items)), JsArray(items))
+          }
+      }
+    }
+
     lazy val all: Seq[AnalyticsQuery] = Seq(
+      CallsLog, CallDetail, CallsByApikeyTs, TokensByApikeyTs, CostByApikeyTs, CallsByUserTs, TokensByUserTs, CostByUserTs,
       RequestsTotal, ErrorsTotal, ErrorRate_, CallsOverTime, CallsPerSecond, ByProviderKind, ByProvider, ByModality,
       ByOperation, StreamingRatio, TopModels, TopProviders, TopApikeys, TopUsers, TopRoutes, CallsByModelTs,
       CallsByModalityTs, ActivityHeatmap, DistinctUsers, DistinctApikeys, DistinctModels, DistinctProviders, RecentCalls,

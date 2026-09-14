@@ -1,1 +1,1 @@
-sbt assembly && date > /Users/mathieuancelin/projects/otoroshi/otoroshi/app/reload.diff
+(cd ui/ai-studio && npm install --no-audit --no-fund && npm run build) && sbt assembly && date > /Users/mathieuancelin/projects/otoroshi/otoroshi/app/reload.diff

@@ -3,6 +3,7 @@ package otoroshi_plugins.com.cloud.apim.extensions.aigateway
 import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.OtoroshiAssistant
+import com.cloud.apim.otoroshi.extensions.aigateway.studio.AiStudio
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsTracking, CostsTrackingSettings, LLMImpacts, LLMImpactsSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.*
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHardcodedItems
@@ -242,6 +243,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     .build[String, Seq[String]]()
 
   lazy val assistant = new OtoroshiAssistant(env, this)
+  lazy val studio = new AiStudio(env, this)
   // one alert when a provider endpoint starts refusing calls on quota grounds, one when it serves again
   lazy val quotaAlertsEnabled = configuration.getOptional[Boolean]("quota-alerts.enabled").getOrElse(true)
   lazy val budgetsEnabled = configuration.getOptional[Boolean]("budgets.enabled").getOrElse(true)
@@ -950,9 +952,9 @@ class AiExtension(val env: Env) extends AdminExtension {
       wantsBody = false,
       handle = handleRemainingBudgetReset
     )
-  )
+  ) ++ studio.backofficeRoutes
 
-  override def assets(): Seq[AdminExtensionAssetRoute] = Seq(
+  override def assets(): Seq[AdminExtensionAssetRoute] = studio.assetRoutes ++ Seq(
     AdminExtensionAssetRoute(
       path = "/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg",
       handle = (_: AdminExtensionRouterContext[AdminExtensionAssetRoute], _: RequestHeader) => {
@@ -1061,6 +1063,84 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      workflowNodes: workflowNodes,
             |      dangerZoneParts: [
             |        {
+            |          title: 'AI Studio',
+            |          flow: [
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.enabled`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.domain`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.exposure`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.route_path`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.public_scheme`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.public_port`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.default_throttling_quota`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.default_daily_quota`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.default_monthly_quota`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.conversations_store`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.conversations_postgresql_uri`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.conversations_postgresql_schema`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.conversations_postgresql_pool_size`,
+            |          ],
+            |          schema: {
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.enabled`]: {
+            |              type: 'bool',
+            |              props: { label: 'AI Studio enabled', help: 'Expose the AI Studio console at /extensions/cloud-apim/ai-studio' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.domain`]: {
+            |              type: 'string',
+            |              props: { label: 'Workspaces domain', placeholder: '${env.domain}', help: 'Domain used to expose the OpenAI compatible endpoint of each workspace' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.exposure`]: {
+            |              type: 'select',
+            |              props: {
+            |                label: 'Workspaces exposure',
+            |                possibleValues: [
+            |                  { label: 'Subdomain (<workspace>.<domain>)', value: 'subdomain' },
+            |                  { label: 'Path (<domain>/<workspace>)', value: 'path' },
+            |                ],
+            |              },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.route_path`]: {
+            |              type: 'string',
+            |              props: { label: 'API path', placeholder: '/v1' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.public_scheme`]: {
+            |              type: 'select',
+            |              props: { label: 'Public scheme', possibleValues: [{ label: 'https', value: 'https' }, { label: 'http', value: 'http' }] },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.public_port`]: {
+            |              type: 'number',
+            |              props: { label: 'Public port', help: 'Port displayed in the workspaces base url. Leave empty to use the otoroshi exposed port' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.default_throttling_quota`]: {
+            |              type: 'number',
+            |              props: { label: 'Default api key throttling quota', placeholder: '10000000' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.default_daily_quota`]: {
+            |              type: 'number',
+            |              props: { label: 'Default api key daily quota', placeholder: '10000000' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.default_monthly_quota`]: {
+            |              type: 'number',
+            |              props: { label: 'Default api key monthly quota', placeholder: '10000000' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.conversations_store`]: {
+            |              type: 'select',
+            |              props: { label: 'Chat conversations storage', possibleValues: [{ label: 'Otoroshi datastore', value: 'redis' }, { label: 'PostgreSQL', value: 'postgresql' }] },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.conversations_postgresql_uri`]: {
+            |              type: 'string',
+            |              props: { label: 'Conversations PostgreSQL uri', placeholder: 'postgresql://user:password@host:5432/database', help: 'Used when the storage is PostgreSQL. Vault references are supported' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.conversations_postgresql_schema`]: {
+            |              type: 'string',
+            |              props: { label: 'Conversations PostgreSQL schema', placeholder: 'public' },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.aistudio.conversations_postgresql_pool_size`]: {
+            |              type: 'number',
+            |              props: { label: 'Conversations PostgreSQL pool size', placeholder: '5' },
+            |            },
+            |          }
+            |        },
+            |        {
             |          title: 'Otoroshi Assistant (LLM)',
             |          flow: [
             |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.enabled`,
@@ -1115,6 +1195,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |        title: 'AI - LLM',
             |        description: 'All the features provided the Cloud APIM AI - LLM extension',
             |        features: [
+            |          {
+            |            title: 'AI Studio',
+            |            description: 'A simplified console to manage AI workspaces, keys, providers and usage',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-studio',
+            |            display: () => true,
+            |            icon: () => 'fa-wand-magic-sparkles',
+            |          },
             |          {
             |            title: 'LLM Providers',
             |            description: 'All your LLM Providers',
@@ -1270,6 +1358,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |        ]
             |      }],
             |      features: [
+            |        {
+            |          title: 'AI Studio',
+            |          description: 'A simplified console to manage AI workspaces, keys, providers and usage',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-studio',
+            |          display: () => true,
+            |          icon: () => 'fa-wand-magic-sparkles',
+            |        },
             |        {
             |          title: 'LLM Providers',
             |          description: 'All your LLM Providers',
@@ -1542,6 +1638,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      searchItems: [
             |        {
             |          action: () => {
+            |            window.location.href = `/extensions/cloud-apim/ai-studio`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-wand-magic-sparkles" }, null),
+            |          label: 'AI Studio',
+            |          value: 'aistudio',
+            |        },
+            |        {
+            |          action: () => {
             |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/providers`
             |          },
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
@@ -1694,6 +1798,13 @@ class AiExtension(val env: Env) extends AdminExtension {
             |        }
             |      ],
             |      routes: [
+            |        {
+            |          path: '/extensions/cloud-apim/ai-studio',
+            |          component: (props) => {
+            |            window.location.href = '/extensions/cloud-apim/ai-studio';
+            |            return null;
+            |          },
+            |        },
             |        {
             |          path: '/extensions/cloud-apim/ai-gateway/providers/:taction/:titem',
             |          component: (props) => {
