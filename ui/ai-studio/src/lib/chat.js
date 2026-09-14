@@ -1,9 +1,8 @@
 import { currentTenant } from './bootstrap';
 import { proxyUrl } from './models';
 
-// Calls the workspace endpoint through the studio proxy (authenticated with the selected api key) and
-// streams the answer. `onDelta(content, reasoning)` receives the text as it arrives.
-export async function chatCompletion({ workspace, apikey, body, stream, signal, onDelta }) {
+// Calls the workspace endpoint as the signed-in backoffice user (no api key) and streams the answer. `onDelta(content, reasoning)` receives the text as it arrives.
+export async function chatCompletion({ workspace, body, stream, signal, onDelta }) {
   const started = Date.now();
   const res = await fetch(proxyUrl(workspace, '/chat/completions'), {
     method: 'POST',
@@ -13,7 +12,6 @@ export async function chatCompletion({ workspace, apikey, body, stream, signal, 
       'Content-Type': 'application/json',
       Accept: stream ? 'text/event-stream' : 'application/json',
       'Otoroshi-Tenant': currentTenant(),
-      'X-Ai-Studio-Apikey': apikey,
     },
     body: JSON.stringify({ ...body, stream: !!stream, ...(stream ? { stream_options: { include_usage: true } } : {}) }),
   });

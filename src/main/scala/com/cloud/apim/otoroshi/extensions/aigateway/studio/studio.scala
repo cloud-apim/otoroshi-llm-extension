@@ -4,14 +4,16 @@ import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
 import org.apache.pekko.util.ByteString
 import otoroshi.env.Env
-import otoroshi.models.{BackOfficeUser, EntityLocation}
+import otoroshi.models.{BackOfficeUser, EntityLocation, PrivateAppsUser}
+import otoroshi.next.models.NgTarget
+import otoroshi.next.plugins.api.{NgBackendCall, NgPluginHttpRequest, NgbBackendCallContext}
+import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.next.extensions.*
 import otoroshi.utils.cache.types.UnboundedTrieMap
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.http.HttpEntity
 import play.api.libs.json.*
-import play.api.libs.ws.WSBodyWritables.given
 import play.api.mvc.{RequestHeader, Result, Results}
 
 import scala.concurrent.duration.DurationInt
@@ -235,63 +237,104 @@ class AiStudio(env: Env, ext: AiExtension) {
     }
   }
 
-  // Forwards a call to the OpenAI compatible route of the workspace, authenticated with one of the
-  // workspace api keys, so quotas, budgets, guardrails and audit events apply for real.
-  def handleWorkspaceProxy(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+  // Serves a call of the studio chat with the OpenAI compatible plugin of the workspace route, invoked
+  // in process for the backoffice user: no api key, no http hop. The engine is bypassed, so only what
+  // the plugin and the providers do applies (guardrails, budgets, fallbacks, costs, audit), and the
+  // backoffice user becomes the request user so usage and budgets can be tracked per user.
+  def handleWorkspaceCall(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
     user match {
       case None => unauthorized
       case Some(u) =>
         val wsId = ctx.named("id").getOrElse("--")
         withWorkspaceRoute(wsId, u, write = false) { route =>
-          req.headers.get("X-Ai-Studio-Apikey") match {
-            case None => Results.BadRequest(Json.obj("error" -> "bad_request", "error_description" -> "no api key selected")).vfuture
-            case Some(clientId) =>
-              env.datastores.apiKeyDataStore.findById(clientId).flatMap {
-                case Some(apikey) if apikey.metadata.get("ai_studio_workspace").contains(wsId) && canRead(u, apikey.location) =>
-                  val domain = route.frontend.domains.head
-                  val path = req.path.split(s"/workspaces/$wsId/proxy", 2).lastOption.getOrElse("/")
-                  val basePath = domain.path.stripSuffix("/")
-                  val query = req.rawQueryString match {
-                    case "" => ""
-                    case q  => s"?$q"
-                  }
-                  val url = s"http://127.0.0.1:${env.httpPort}$basePath$path$query"
-                  val headers = Seq(
-                    "Host" -> domain.domain,
-                    "Authorization" -> s"Bearer ${apikey.toBearer()}",
-                    // lets the workspace route report this call as made by the studio user
-                    otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiStudioUserHeader.name ->
-                      otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiStudioUserHeader.sign(u.email, u.name, env),
-                    "Accept" -> req.headers.get("Accept").getOrElse("application/json"),
-                  ) ++ req.headers.get("Content-Type").map(ct => "Content-Type" -> ct).toSeq
-                  val builder = env.Ws
-                    .url(url)
-                    .withHttpHeaders(headers*)
-                    .withMethod(req.method)
-                    .withFollowRedirects(false)
-                    .withRequestTimeout(10.minutes)
-                  body.filter(_ => req.method != "GET" && req.method != "HEAD")
-                    .map(b => builder.withBody(b))
-                    .getOrElse(builder)
-                    .stream()
-                    .map { resp =>
-                      val contentType = resp.headers.get("Content-Type").flatMap(_.headOption).getOrElse("application/json")
-                      val forwarded = resp.headers.collect {
-                        case (k, v) if k.toLowerCase.startsWith("x-otoroshi-llm") || k.toLowerCase.startsWith("x-ratelimit") => k -> v.mkString(",")
-                      }.toSeq
-                      Results.Status(resp.status)
-                        .sendEntity(HttpEntity.Streamed(resp.bodyAsSource, None, Some(contentType)))
-                        .withHeaders(forwarded*)
-                    }
-                    .recover { case e: Throwable =>
-                      Results.BadGateway(Json.obj("error" -> "bad_gateway", "error_description" -> e.getMessage))
-                    }
-                case _ => Results.Forbidden(Json.obj("error" -> "forbidden", "error_description" -> "api key not usable in this workspace")).vfuture
+          val slot = route.plugins.slots.find(s => s.plugin == openAiCompatPlugin && s.enabled)
+          (slot, env.scriptManager.getAnyScript[NgBackendCall](openAiCompatPlugin)) match {
+            case _ if !route.enabled =>
+              Results.Forbidden(Json.obj("error" -> "forbidden", "error_description" -> "this workspace is disabled")).vfuture
+            case (None, _) =>
+              Results.NotFound(Json.obj("error" -> "not_found", "error_description" -> "the workspace route has no enabled OpenAI compatible plugin")).vfuture
+            case (_, Left(err)) =>
+              Results.InternalServerError(Json.obj("error" -> "internal_error", "error_description" -> s"OpenAI compatible plugin not available: $err")).vfuture
+            case (Some(instance), Right(plugin)) =>
+              body.map(_.runFold(ByteString.empty)(_ ++ _)).getOrElse(ByteString.empty.vfuture).flatMap { bytes =>
+                val domain = route.frontend.domains.head
+                val path = req.path.split(s"/workspaces/$wsId/proxy", 2).lastOption.filter(_.nonEmpty).getOrElse("/")
+                val query = req.rawQueryString match {
+                  case "" => ""
+                  case q  => s"?$q"
+                }
+                val snowflake = env.snowflakeGenerator.nextIdStr()
+                val requestUser = studioUser(u)
+                val headers = Map(
+                  "Host" -> domain.domain,
+                  "Accept" -> req.headers.get("Accept").getOrElse("application/json"),
+                ) ++ req.headers.get("Content-Type").map(ct => "Content-Type" -> ct) ++
+                  (if (bytes.nonEmpty) Map("Content-Length" -> bytes.size.toString) else Map.empty)
+                val request = NgPluginHttpRequest(
+                  url = s"${AiStudioConfig.current(env).publicScheme(env)}://${domain.domain}${domain.path.stripSuffix("/")}$path$query",
+                  method = req.method,
+                  headers = headers,
+                  cookies = Seq.empty,
+                  version = req.version,
+                  clientCertificateChain = () => None,
+                  body = if (bytes.isEmpty) Source.empty else Source.single(bytes),
+                  backend = None
+                )
+                // what the proxy engine puts in the attributes and the plugins of the extension read
+                val attrs = otoroshi.utils.TypedMap.empty.put(
+                  otoroshi.plugins.Keys.RequestKey -> req,
+                  otoroshi.plugins.Keys.SnowFlakeKey -> snowflake,
+                  otoroshi.plugins.Keys.RequestTimestampKey -> org.joda.time.DateTime.now(),
+                  otoroshi.plugins.Keys.RequestStartKey -> System.currentTimeMillis(),
+                  otoroshi.plugins.Keys.ElCtxKey -> Map("requestId" -> snowflake, "requestSnowflake" -> snowflake),
+                  otoroshi.plugins.Keys.UserKey -> requestUser,
+                  otoroshi.next.plugins.Keys.RouteKey -> route,
+                )
+                val callCtx = NgbBackendCallContext(
+                  snowflake = snowflake,
+                  rawRequest = req,
+                  request = request,
+                  route = route,
+                  backend = route.backend.targets.headOption.getOrElse(NgTarget.default),
+                  user = Some(requestUser),
+                  apikey = None,
+                  config = instance.config.raw,
+                  globalConfig = env.datastores.globalConfigDataStore.latest().plugins.config,
+                  attrs = attrs,
+                  idx = route.plugins.slots.indexOf(instance),
+                )
+                val noDelegates = () => Left(NgProxyEngineError.NgResultProxyEngineError(Results.NotFound(Json.obj("error" -> "not_found")))).vfuture
+                plugin.callBackend(callCtx, noDelegates).flatMap {
+                  case Left(err) => err.asResult()
+                  case Right(resp) =>
+                    val r = resp.response
+                    val skipped = Set("content-type", "content-length", "transfer-encoding")
+                    Results.Status(r.status)
+                      .sendEntity(HttpEntity.Streamed(r.body, r.header("Content-Length").flatMap(_.toLongOption), r.header("Content-Type")))
+                      .withHeaders(r.headers.toSeq.filterNot { case (k, _) => skipped.contains(k.toLowerCase) }*)
+                      .vfuture
+                }.recover { case e: Throwable =>
+                  Results.InternalServerError(Json.obj("error" -> "internal_error", "error_description" -> e.getMessage))
+                }
               }
           }
         }
     }
   }
+
+  // the backoffice user, as the request user the plugins see (audit events, budgets scoped on users)
+  private def studioUser(u: BackOfficeUser): PrivateAppsUser = PrivateAppsUser(
+    randomId = s"ai-studio-${u.email.sha256.take(16)}",
+    name = u.name,
+    email = u.email,
+    profile = Json.obj("email" -> u.email, "name" -> u.name),
+    realm = "ai-studio",
+    authConfigId = "ai-studio",
+    otoroshiData = None,
+    tags = Seq("ai-studio"),
+    metadata = Map("ai_studio_user" -> "true"),
+    location = EntityLocation.default,
+  )
 
   private val openAiCompatPlugin = "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatApi"
 
@@ -449,8 +492,8 @@ class AiStudio(env: Env, ext: AiExtension) {
     AdminExtensionBackofficeAuthRoute("GET", s"$apiPath/bootstrap", wantsBody = false, handle = handleBootstrap),
     AdminExtensionBackofficeAuthRoute("GET", s"$apiPath/catalog", wantsBody = false, handle = handleCatalog),
     AdminExtensionBackofficeAuthRoute("GET", s"$apiPath/workspaces/:id/models", wantsBody = false, handle = handleWorkspaceModels),
-    AdminExtensionBackofficeAuthRoute("GET", s"$apiPath/workspaces/:id/proxy/*", wantsBody = false, handle = handleWorkspaceProxy),
-    AdminExtensionBackofficeAuthRoute("POST", s"$apiPath/workspaces/:id/proxy/*", wantsBody = true, handle = handleWorkspaceProxy),
+    AdminExtensionBackofficeAuthRoute("GET", s"$apiPath/workspaces/:id/proxy/*", wantsBody = false, handle = handleWorkspaceCall),
+    AdminExtensionBackofficeAuthRoute("POST", s"$apiPath/workspaces/:id/proxy/*", wantsBody = true, handle = handleWorkspaceCall),
     AdminExtensionBackofficeAuthRoute("GET", s"$apiPath/workspaces/:id/conversations", wantsBody = false, handle = handleConversations),
     AdminExtensionBackofficeAuthRoute("GET", s"$apiPath/workspaces/:id/conversations/:cid", wantsBody = false, handle = handleConversations),
     AdminExtensionBackofficeAuthRoute("PUT", s"$apiPath/workspaces/:id/conversations/:cid", wantsBody = true, handle = handleConversations),

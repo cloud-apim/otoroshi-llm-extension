@@ -171,8 +171,9 @@ export function ActivityPage() {
   const period = PERIODS.some((p) => p.value === query.period) ? query.period : DEFAULT_PERIOD;
   const apikey = query.apikey || '';
   const user = query.user || '';
+  // a key and a user are never filtered together: picking one clears the other
   const setFilters = (patch) => {
-    const next = { apikey, user, period, ...patch };
+    const next = { apikey, user, period, ...patch, ...(patch.apikey ? { user: '' } : {}), ...(patch.user ? { apikey: '' } : {}) };
     const qs = new URLSearchParams(Object.entries(next).filter(([k, v]) => v && !(k === 'period' && v === DEFAULT_PERIOD))).toString();
     navigate(`/workspaces/${workspace.id}/activity${qs ? `?${qs}` : ''}`, { replace: true, keepScroll: true });
   };
@@ -231,17 +232,19 @@ export function ActivityPage() {
   return (
     <div className="content wide" style={{ maxWidth: 1400 }}>
       <PageHeader title="Activity" description="Usage of this workspace across models, API keys and users.">
-        <Select
-          className="sm"
-          value={apikey}
-          onChange={(v) => setFilters({ apikey: v })}
-          placeholder="All API keys"
-          options={[
-            ...(keys.data || []).map((key) => ({ value: key.clientId, label: key.clientName })),
-            ...(apikey && keys.data && !keys.data.some((k) => k.clientId === apikey) ? [{ value: apikey, label: apikey }] : []),
-          ]}
-        />
-        <Select className="sm" value={user} onChange={(v) => setFilters({ user: v })} placeholder="All users" options={userOptions} />
+        {!user && (
+          <Select
+            className="sm"
+            value={apikey}
+            onChange={(v) => setFilters({ apikey: v })}
+            placeholder="All API keys"
+            options={[
+              ...(keys.data || []).map((key) => ({ value: key.clientId, label: key.clientName })),
+              ...(apikey && keys.data && !keys.data.some((k) => k.clientId === apikey) ? [{ value: apikey, label: apikey }] : []),
+            ]}
+          />
+        )}
+        {!apikey && <Select className="sm" value={user} onChange={(v) => setFilters({ user: v })} placeholder="All users" options={userOptions} />}
         <Select className="sm" value={period} onChange={(v) => setFilters({ period: v })} options={PERIODS.map((p) => ({ value: p.value, label: p.label }))} />
         <button className="btn sm" onClick={() => setRefresh((r) => r + 1)} title="Refresh">
           <Icon name="refresh" />
@@ -303,30 +306,34 @@ export function ActivityPage() {
 
           {c && (
             <>
-              <div className="grid cols-2">
-                <ConsumersCard
-                  title="Usage by API key"
-                  description="Click a key to only show its usage."
-                  // the table is keyed by key name, the filter needs the client id
-                  items={itemsOf(c.apikeysTable).map((i) => ({ ...i, label: i.apikey || i.key, value: clientIdOf(i.apikey || i.key) }))}
-                  active={apikey}
-                  onPick={(v) => v && setFilters({ apikey: v === apikey ? '' : v })}
-                  empty="No call made with an API key in this period."
-                />
-                <ConsumersCard
-                  title="Usage by user"
-                  description="People chatting with this workspace from AI Studio. Click a user to only show their usage."
-                  items={itemsOf(c.usersTable).map((i) => ({ ...i, label: i.user || i.key, value: i.user || i.key }))}
-                  active={user}
-                  onPick={(v) => setFilters({ user: v === user ? '' : v })}
-                  empty="No call attributed to a user in this period. Calls from the AI Studio chat are counted for the person chatting; calls made by your apps only count for their API key."
-                />
+              <div className={`grid ${!user && !apikey ? 'cols-2' : ''}`}>
+                {!user && (
+                  <ConsumersCard
+                    title="Usage by API key"
+                    description="Click a key to only show its usage."
+                    // the table is keyed by key name, the filter needs the client id
+                    items={itemsOf(c.apikeysTable).map((i) => ({ ...i, label: i.apikey || i.key, value: clientIdOf(i.apikey || i.key) }))}
+                    active={apikey}
+                    onPick={(v) => v && setFilters({ apikey: v === apikey ? '' : v })}
+                    empty="No call made with an API key in this period."
+                  />
+                )}
+                {!apikey && (
+                  <ConsumersCard
+                    title="Usage by user"
+                    description="People chatting with this workspace from AI Studio. Click a user to only show their usage."
+                    items={itemsOf(c.usersTable).map((i) => ({ ...i, label: i.user || i.key, value: i.user || i.key }))}
+                    active={user}
+                    onPick={(v) => setFilters({ user: v === user ? '' : v })}
+                    empty="No call attributed to a user in this period. Calls from the AI Studio chat are counted for the person chatting; calls made by your apps only count for their API key."
+                  />
+                )}
               </div>
 
               <UsageCard title="Usage by model" dimension="model" run={q} deps={deps} bucket={bucket} />
-              <div className="grid cols-2">
-                <UsageCard title="Usage by API key over time" dimension="apikey" run={q} deps={deps} bucket={bucket} />
-                <UsageCard title="Usage by user over time" dimension="user" run={q} deps={deps} bucket={bucket} empty="No call attributed to a user in this period" />
+              <div className={`grid ${!user && !apikey ? 'cols-2' : ''}`}>
+                {!user && <UsageCard title="Usage by API key over time" dimension="apikey" run={q} deps={deps} bucket={bucket} />}
+                {!apikey && <UsageCard title="Usage by user over time" dimension="user" run={q} deps={deps} bucket={bucket} empty="No call attributed to a user in this period" />}
               </div>
 
               <div className="grid cols-2">

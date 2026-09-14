@@ -9,7 +9,8 @@ export const OPENAI_COMPAT_PLUGIN = 'cp:otoroshi_plugins.com.cloud.apim.otoroshi
 export const CONSUMER_PRESET_PLUGIN = 'cp:otoroshi.next.plugins.MandatoryConsumerPreset';
 export const IP_ALLOW_PLUGIN = 'cp:otoroshi.next.plugins.IpAddressAllowedList';
 export const IP_BLOCK_PLUGIN = 'cp:otoroshi.next.plugins.IpAddressBlockList';
-export const STUDIO_CONSUMER_PLUGIN = 'cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiStudioConsumer';
+// added by earlier versions of the studio, removed from the routes on their next update
+const LEGACY_STUDIO_CONSUMER_PLUGIN = 'cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiStudioConsumer';
 
 // modality -> resource + plugin ref field
 export const MODALITIES = [
@@ -108,21 +109,21 @@ function pluginInstance(plugin, config, index = {}, enabled = true) {
 
 // The plugins every workspace route carries. The ip lists stay on the route but are only enabled
 // with at least one address (an empty allowed list would reject every call). Older routes get the
-// missing plugins added on their next update.
+// missing plugins added, and the legacy ones removed, on their next update.
 export function ensureStudioPlugins(route) {
-  const plugins = route.plugins || [];
+  const plugins = (route.plugins || []).filter((x) => x.plugin !== LEGACY_STUDIO_CONSUMER_PLUGIN);
   const has = (p) => plugins.some((x) => x.plugin === p);
   const head = [];
   if (!has(IP_ALLOW_PLUGIN)) head.push(pluginInstance(IP_ALLOW_PLUGIN, { addresses: [] }, { validate_access: 0 }, false));
   if (!has(IP_BLOCK_PLUGIN)) head.push(pluginInstance(IP_BLOCK_PLUGIN, { addresses: [] }, { validate_access: 1 }, false));
-  const tail = has(STUDIO_CONSUMER_PLUGIN) ? [] : [pluginInstance(STUDIO_CONSUMER_PLUGIN, {}, { validate_access: 2 })];
-  route.plugins = [...head, ...plugins, ...tail];
+  route.plugins = [...head, ...plugins];
   return route;
 }
 
-export function missingStudioPlugins(route) {
+export function routeNeedsRepair(route) {
   const plugins = (route && route.plugins) || [];
-  return [IP_ALLOW_PLUGIN, IP_BLOCK_PLUGIN, STUDIO_CONSUMER_PLUGIN].some((p) => !plugins.some((x) => x.plugin === p));
+  const has = (p) => plugins.some((x) => x.plugin === p);
+  return !has(IP_ALLOW_PLUGIN) || !has(IP_BLOCK_PLUGIN) || has(LEGACY_STUDIO_CONSUMER_PLUGIN);
 }
 
 export function ipAddressesOf(route, plugin) {
@@ -208,7 +209,6 @@ export async function createWorkspace({ name, description, slug }) {
       pluginInstance(IP_ALLOW_PLUGIN, { addresses: [] }, { validate_access: 0 }, false),
       pluginInstance(IP_BLOCK_PLUGIN, { addresses: [] }, { validate_access: 1 }, false),
       pluginInstance(CONSUMER_PRESET_PLUGIN, { ref: null, tags: [consumerTagOf(wsId)] }),
-      pluginInstance(STUDIO_CONSUMER_PLUGIN, {}, { validate_access: 2 }),
       pluginInstance(OPENAI_COMPAT_PLUGIN, {
         language_model_refs: [],
         audio_model_refs: [],

@@ -2,12 +2,12 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useWorkspace } from '../App';
 import { Field, NumberInput, Select, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
-import { listApikeys } from '../lib/apikeys';
 import { chatCompletion } from '../lib/chat';
 import { Resources, randomId, workspaceFilter } from '../lib/entities';
 import { fmtInt, fmtMs } from '../lib/format';
 import { deleteConversation, getConversation, listConversations, listWorkspaceModels, saveConversation } from '../lib/models';
-import { Link, useRouter } from '../lib/router';
+import { bootstrap } from '../lib/bootstrap';
+import { useRouter } from '../lib/router';
 
 const SUGGESTIONS = [
   { title: 'Strawberry Test', prompt: "How many r's are in the word strawberry?" },
@@ -125,14 +125,12 @@ export function ChatPage() {
   const prefKey = `ai-studio-chat-${workspace.id}`;
 
   const models = useAsync(() => listWorkspaceModels(workspace), [workspace.id]);
-  const keys = useAsync(() => listApikeys(workspace.id), [workspace.id]);
   const presets = useAsync(() => Resources.contexts.list(workspaceFilter(workspace.id)), [workspace.id]);
   const rooms = useAsync(() => listConversations(workspace), [workspace.id]);
 
   const textModels = ((models.data && models.data.models) || []).filter((m) => m.modality === 'text');
-  const enabledKeys = (keys.data || []).filter((k) => k.enabled);
 
-  const [prefs, setPrefs] = useState(() => storageGet(prefKey, { model: '', apikey: '', settings: DEFAULT_SETTINGS, showSettings: true }));
+  const [prefs, setPrefs] = useState(() => storageGet(prefKey, { model: '', settings: DEFAULT_SETTINGS, showSettings: true }));
   const settings = { ...DEFAULT_SETTINGS, ...(prefs.settings || {}) };
   const updatePrefs = (patch) =>
     setPrefs((p) => {
@@ -149,7 +147,6 @@ export function ChatPage() {
   const endRef = useRef(null);
 
   const model = query.model || prefs.model || (textModels[0] && textModels[0].id) || '';
-  const apikey = enabledKeys.find((k) => k.clientId === prefs.apikey) ? prefs.apikey : (enabledKeys[0] && enabledKeys[0].clientId) || '';
 
   useEffect(() => {
     if (query.model && query.model !== prefs.model) updatePrefs({ model: query.model });
@@ -188,10 +185,6 @@ export function ChatPage() {
   const send = async (text) => {
     const content = (text ?? input).trim();
     if (!content || busy) return;
-    if (!apikey) {
-      toast.error('Create an API key in this workspace to use the chat');
-      return;
-    }
     if (!model) {
       toast.error('Select a model');
       return;
@@ -222,7 +215,6 @@ export function ChatPage() {
     try {
       const res = await chatCompletion({
         workspace,
-        apikey,
         body,
         stream: settings.stream,
         signal: controller.signal,
@@ -303,13 +295,8 @@ export function ChatPage() {
                     <div className="chat-welcome">
                       <h3>What can I help with?</h3>
                       <p className="muted">
-                        Requests go through <code>{workspace.baseUrl.replace(/^https?:\/\//, '')}</code> with your API key.
+                        Chat with the models of <code>{workspace.baseUrl.replace(/^https?:\/\//, '')}</code> as {bootstrap.user.email}.
                       </p>
-                      {keys.data && enabledKeys.length === 0 && (
-                        <p className="alert warning mt">
-                          No enabled API key in this workspace. <Link className="link" to={`/workspaces/${workspace.id}/keys`}>Create one</Link> to start chatting.
-                        </p>
-                      )}
                     </div>
                   </>
                 )}
@@ -383,9 +370,6 @@ export function ChatPage() {
           {prefs.showSettings && (
             <div className="chat-settings">
               <h3>Request settings</h3>
-              <Field label="API key" hint="Key used to call the workspace.">
-                <Select value={apikey} onChange={(v) => updatePrefs({ apikey: v })} options={enabledKeys.map((k) => ({ value: k.clientId, label: k.clientName }))} placeholder={enabledKeys.length ? undefined : 'No key'} />
-              </Field>
               <Field label="Preset" hint="Adds the preset's messages around the conversation.">
                 <Select value={settings.preset} onChange={(v) => setSettings({ preset: v })} placeholder="None" options={(presets.data || []).map((p) => ({ value: p.name, label: p.name }))} />
               </Field>

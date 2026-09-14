@@ -75,8 +75,11 @@ models from the provider. Local Ollama models work without any key.
 `model` field of your requests. **Chat** is a playground to try any of them, with streaming, reasoning
 display, presets and generation settings. Conversations are saved per user and per workspace.
 
-Chat requests go through the real route of the workspace, with one of its API keys: guardrails, budgets,
-fallbacks and analytics apply exactly as they do for your applications.
+The chat needs no API key: it runs as the signed-in backoffice user, with the same configuration as the
+workspace endpoint. Guardrails, fallbacks, routers, costs and analytics apply as they do for your
+applications, and so do the budgets of the workspace and the budgets of that user. What is checked at the
+door of the route for applications (API key, IP addresses, key quotas and key budgets) does not apply to
+the chat.
 
 ### Manage API keys
 

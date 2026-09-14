@@ -173,7 +173,7 @@ export function SettingsPage() {
           <p className="muted" style={{ marginBottom: 14 }}>
             One address, regex or CIDR per line, enforced by the IpAddressAllowedList and IpAddressBlockList plugins of the route. Leave empty to allow all.
           </p>
-          <Row title="Allowed addresses" top help="The studio chat calls the route from the gateway itself: add 127.0.0.1 to keep using it.">
+          <Row title="Allowed addresses" top help="Only applies to applications: the studio chat is served for the signed-in user, whatever their address.">
             <LinesInput value={form.allowed} onChange={(v) => set({ allowed: v })} rows={3} />
           </Row>
           <Row title="Blocked addresses" top>
