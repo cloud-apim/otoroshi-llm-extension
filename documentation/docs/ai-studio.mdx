@@ -11,6 +11,10 @@ clicks, a team gets its own **workspace**: an OpenAI-compatible endpoint, API ke
 its choice with its own provider keys, a playground to chat with every model, and dashboards showing
 where tokens and dollars go.
 
+![The overview of an AI Studio workspace: base URL, quickstart snippets and featured models](/img/ai-studio-overview.png)
+
+*The home page of a workspace: its OpenAI-compatible base URL, a quickstart in curl, Python and TypeScript, and the models ready to use.*
+
 AI Studio does not store anything of its own. Every workspace is made of **regular Otoroshi entities**
 (a team, a route, API keys, LLM providers, budgets…) that the studio creates and updates live through
 the admin API. What you do in the studio is visible in the Otoroshi backoffice, and what you change in
@@ -21,6 +25,19 @@ AI Studio is **experimental**. It covers the most common needs of a workspace, b
 LLM extension can do: some settings of the entities it creates are only available from the Otoroshi
 backoffice. Its screens and behavior may change in future releases.
 :::
+
+## Prerequisites
+
+- **The LLM extension** installed in Otoroshi (see [installation](/docs/install)).
+- **An active User Analytics (PostgreSQL) data exporter**, required for the whole studio to work. It feeds
+  the **Activity** dashboards, the **Logs**, and the usage by model, by API key and by user. Without it,
+  those pages stay empty: only providers, API keys, routing and live budget consumption keep working.
+  To set it up, go to **Data exporters** in the backoffice, create a **User Analytics (PostgreSQL)**
+  exporter and mark it as the active user analytics exporter (see [built-in dashboards](/docs/reporting/dashboards)).
+- **A PostgreSQL database for chat conversations** (recommended). By default, conversations are kept in
+  the Otoroshi datastore. For many users or a long history, store them in PostgreSQL instead, from the
+  [setup](#setup) section. The PostgreSQL server of the user analytics exporter works fine: the studio
+  uses its own `ai_studio_conversations` table.
 
 ## Opening AI Studio
 
@@ -35,6 +52,10 @@ you back to the backoffice.
 
 The studio comes with a light and a dark theme, and can follow your system setting. The choice is saved
 in your backoffice user preferences.
+
+![The list of AI Studio workspaces](/img/ai-studio-workspaces.png)
+
+*Every workspace you can access, with its base URL.*
 
 ## Workspaces
 
@@ -69,11 +90,23 @@ Pick a provider from the catalog, paste your provider key, and choose the capabi
 studio only shows the capabilities each provider really supports, and fetches the list of available
 models from the provider. Local Ollama models work without any key.
 
+![The providers page: connected providers and the catalog of available providers with their capabilities](/img/ai-studio-providers.png)
+
+*Connected providers on top, and the catalog below with the capabilities of each provider.*
+
 ### Browse models and chat
 
 **Models** lists every model reachable through the workspace endpoint, with the exact id to put in the
 `model` field of your requests. **Chat** is a playground to try any of them, with streaming, reasoning
 display, presets and generation settings. Conversations are saved per user and per workspace.
+
+![The models page listing every model reachable through the workspace](/img/ai-studio-models.png)
+
+*Every model of the workspace, with the id to use in your requests, filterable by modality and provider.*
+
+![The AI Studio chat with its conversations, model picker and request settings](/img/ai-studio-chat.png)
+
+*The chat: conversations on the left, the model picker on top, presets, system prompt and generation settings on the right.*
 
 The chat needs no API key: it runs as the signed-in backoffice user, with the same configuration as the
 workspace endpoint. Guardrails, fallbacks, routers, costs and analytics apply as they do for your
@@ -86,6 +119,10 @@ the chat.
 Create keys for your applications, reveal and copy them, set per-key quotas and a credit limit, and jump
 to the activity of a single key.
 
+![The API keys page of a workspace](/img/ai-studio-api-keys.png)
+
+*Each key with its credit limit, its budgets and its quotas, and shortcuts to its activity and its budget.*
+
 ### Route and protect
 
 - **Guardrails** block or check prompts and answers (regex, moderation, prompt injection, secrets
@@ -95,12 +132,28 @@ to the activity of a single key.
 - **Presets** are reusable system prompts, selectable in the chat or with the `context` field of a request.
 - **Tools** give models server-side functions, MCP servers and web search.
 
+![The guardrails page: model access and content policies](/img/ai-studio-guardrails.png)
+
+*Model access rules and content policies, applied to every provider of the workspace.*
+
+![The routing page: provider fallbacks, load balancers, smart routing and default provider](/img/ai-studio-routing.png)
+
+*Fallback chains, load balancers, Otoroshi routers and the default provider of the workspace.*
+
 ### Control the spend
 
 **Credits** creates [budgets](/docs/cost-optimizations/budgets) in dollars or tokens, per period, that
 block or alert when exceeded. A budget always applies to the calls of its workspace only, and can be
 narrowed to some API keys, some users, some models or extra conditions. The **Budget** button of an API
 key creates a budget for that key in one step.
+
+![The credits page listing the budgets of a workspace](/img/ai-studio-credits.png)
+
+*The budgets of the workspace with their live consumption.*
+
+![Editing a budget: limits, period, action when exceeded and scope](/img/ai-studio-budget-edit.png)
+
+*A budget is always limited to its workspace, then to the whole workspace, one API key, or a custom scope.*
 
 ### Follow the activity
 
@@ -109,17 +162,38 @@ period, with the usage broken down by model, by API key and by user. Filter the 
 key or one user from the selectors, or by clicking a row of the usage tables. The filters are part of
 the page URL, so a filtered view can be bookmarked and shared.
 
+![The activity dashboard of a workspace: KPIs, usage by API key, user and model, requests, tokens, caching and latency](/img/ai-studio-activity.png)
+
+*Spend, requests and tokens compared to the previous period, the usage by API key, by user and by model, and the live consumption of the budgets.*
+
 Calls made from the studio chat are attributed to the person chatting, calls made by your applications
 to their API key.
 
 **Logs** lists every call, newest first, with its model, consumer, tokens, cost, latency and status.
 Only metadata is recorded: prompts and answers are never stored.
 
+![The logs of a workspace: every call with its model, consumer, tokens, cost, latency and status](/img/ai-studio-logs.png)
+
+*Every call, filterable by model, API key, status and text. Click a call to see all its details.*
+
 :::info
-Activity and logs read the Otoroshi user analytics database. Create a **User Analytics (PostgreSQL)**
-data exporter and mark it as active to enable them (see [built-in dashboards](/docs/reporting/dashboards)).
-Budgets consumption is live and works without it.
+Activity and logs read the Otoroshi user analytics database: they need an active **User Analytics
+(PostgreSQL)** data exporter (see [prerequisites](#prerequisites)). Budgets consumption is live and works
+without it.
 :::
+
+### Workspace settings
+
+**Settings** changes the name and the description of the workspace, enables or disables it, and sets its
+subdomain. It also holds the gateway settings of the workspace endpoint (timeouts, maximum upload size,
+image decoding), the IP addresses allowed or blocked for applications, and the deletion of the workspace.
+**Technical details** shows the ids of the route and the team of the workspace, with a link to open the
+route in the backoffice.
+
+
+![The settings of a workspace: identity, domain, gateway and IP access control](/img/ai-studio-settings.png)
+
+*The settings of a workspace.*
 
 ## Setup
 
@@ -134,7 +208,7 @@ section.
 | **API path** | Path of the OpenAI compatible API on the workspace endpoint. Defaults to `/v1`. |
 | **Public scheme** / **Public port** | Scheme and port shown in the base URL of the workspaces, when Otoroshi is behind a load balancer or a proxy. |
 | **Default api key quotas** | Throttling, daily and monthly quotas of new API keys. |
-| **Chat conversations storage** | Store chat conversations in the Otoroshi datastore, or in PostgreSQL. |
+| **Chat conversations storage** | Store chat conversations in the Otoroshi datastore, or in PostgreSQL (recommended). |
 | **Conversations PostgreSQL uri / schema / pool size** | Connection to the PostgreSQL database used for conversations. Vault references are supported in the uri. |
 
 With the subdomain exposure, make sure the workspaces domain resolves to Otoroshi (a wildcard DNS entry
