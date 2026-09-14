@@ -18,7 +18,7 @@ The **recommended transport is Streamable HTTP**; the other transports still exi
 
 | Transport | Plugin | Status |
 |-----------|--------|--------|
-| **Streamable HTTP** | `McpRespEndpoint` | ✅ **Recommended** — the current MCP HTTP transport (POST + SSE). What MCP clients and MCP apps use. |
+| **Streamable HTTP** | `McpRespEndpoint` | ✅ **Recommended** — the current MCP HTTP transport. Speaks MCP `2025-11-25` and the stateless `2026-07-28` revision. What MCP clients and MCP apps use. |
 | SSE | `McpSseEndpoint` | ⚠️ **Deprecated** — the legacy HTTP+SSE transport, kept for backward compatibility. |
 | WebSocket | `McpWebsocketEndpoint` | 🧪 **Experimental** — not part of the MCP standard; use only if you specifically need it. |
 
@@ -30,7 +30,9 @@ All exposition plugins implement the full MCP protocol:
 
 | Method | Description |
 |--------|-------------|
-| `initialize` | Initialize the MCP session |
+| `initialize` | Initialize the MCP session (MCP `2025-11-25` clients) |
+| `server/discover` | Advertise the supported protocol versions, capabilities and server identity (MCP `2026-07-28`, Streamable HTTP) |
+| `subscriptions/listen` | Open a long-lived notification stream (MCP `2026-07-28`, Streamable HTTP) |
 | `tools/list` | List all available tools (from tool functions and MCP connectors) |
 | `tools/call` | Call a tool by name with arguments |
 | `resources/list` | List all available resources from connected MCP servers |
@@ -54,7 +56,7 @@ Tools coming from a **tool function** entity can also carry extra MCP metadata w
 These fields are only emitted when set on the tool function; they are omitted (not `null`) otherwise.
 
 For tools coming from an **MCP connector**, the fidelity depends on the connector transport:
-- connectors using the **Streamable HTTP** transport (`transport.kind: "http"`) are proxied with a **raw, full-fidelity passthrough**: the upstream tool definitions are forwarded as-is, preserving `outputSchema`, `annotations`, `_meta`, `title` and rich `tools/call` results (`structuredContent`, resource links, images, ...). This is what MCP apps need.
+- connectors using a **Streamable HTTP** transport (`transport.kind: "http"` or `"http_2026_07_28"`) are proxied with a **raw, full-fidelity passthrough**: the upstream tool definitions are forwarded as-is, preserving `outputSchema`, `annotations`, `_meta`, `title` and rich `tools/call` results (`structuredContent`, resource links, images, ...). This is what MCP apps need.
 - for every other connector transport, tool definitions go through the langchain4j abstraction: `_meta`, `annotations` and `title` are recovered and re-emitted, but `outputSchema` is not available on that path.
 
 ### Resources
@@ -88,7 +90,7 @@ When getting a prompt, the response includes:
 
 ## Streamable HTTP plugin (recommended)
 
-The **`McpRespEndpoint`** plugin exposes your tools and connectors over the standard MCP **Streamable HTTP** transport (a single endpoint handling POST requests and SSE streams). This is the transport MCP clients and MCP apps expect — use it by default.
+The **`McpRespEndpoint`** plugin exposes your tools and connectors over the standard MCP **Streamable HTTP** transport (a single endpoint handling POST requests and SSE streams). This is the transport MCP clients and MCP apps expect — use it by default. It serves both the `2025-11-25` revision of MCP and the stateless `2026-07-28` revision, see [Protocol versions](#protocol-versions).
 
 Point it at an [MCP Virtual Server](/docs/mcp/mcp-virtual-servers) with `server_ref` (the recommended way — the virtual server carries all the config and access control), or set the same configuration inline.
 
@@ -195,6 +197,55 @@ Point it at an [MCP Virtual Server](/docs/mcp/mcp-virtual-servers) with `server_
 }
 ```
 
+### Protocol versions
+
+The `protocol_version` setting (on the virtual server, or inline on the plugin) selects the MCP revision served by the endpoint:
+
+| Value | Behavior |
+|-------|----------|
+| `2025-11-25` (default) | Classic MCP: clients open with the `initialize` handshake. The endpoint negotiates the version requested by the client (`2025-11-25`, `2025-06-18`, `2025-03-26` or `2024-11-05`). |
+| `2026-07-28` | **Stateless MCP**: no handshake and no session, every request carries its own protocol version and client capabilities. Clients that still open with `initialize` are served on **the same endpoint** with `2025-11-25` semantics, so you can switch without breaking anyone. |
+
+```js
+{
+  "server_ref": "mcp-virtual-server_xxxxx",
+  "protocol_version": "2026-07-28",
+  "cache_ttl_ms": 300000
+}
+```
+
+With `2026-07-28`, your MCP server becomes a perfect citizen of your HTTP infrastructure:
+
+- **Scale out freely**: every request is self-contained, so any Otoroshi instance can answer any call. No sticky sessions, no shared session store.
+- **Route and inspect without parsing bodies**: the method, the tool name and the parameters annotated with `x-mcp-header` travel in the `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` and `Mcp-Param-*` headers. The endpoint checks that they match the JSON-RPC body (`-32020` header mismatch error otherwise), so a load balancer, a WAF or an Otoroshi plugin can safely route, rate limit or authorize on them.
+- **Client-side caching**: `server/discover`, `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list` and `resources/read` results carry `ttlMs` (from `cache_ttl_ms`, `0` by default) and `cacheScope`. The scope is `private` as soon as the endpoint authenticates callers or filters per consumer (OAuth, scopes, rules, rate limits), `public` otherwise.
+- **Precise errors**: unsupported versions get a `-32022` error listing the supported ones, malformed requests a `-32602`, unknown methods a `404` with `-32601`.
+
+A `2026-07-28` request looks like this:
+
+```sh
+curl -X POST 'http://mcp.oto.tools:8080/mcp' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'MCP-Protocol-Version: 2026-07-28' \
+  -H 'Mcp-Method: tools/call' \
+  -H 'Mcp-Name: get_weather' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "get_weather",
+      "arguments": { "city": "Paris" },
+      "_meta": {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientInfo": { "name": "my-client", "version": "1.0.0" },
+        "io.modelcontextprotocol/clientCapabilities": {}
+      }
+    }
+  }'
+```
+
 ## Protected MCP Streamable HTTP preset
 
 `ProtectedMcpStreamableHttpPreset` is an Otoroshi **preset plugin**: from a single [MCP Virtual Server](/docs/mcp/mcp-virtual-servers) reference, it wires onto one route both halves of a production-ready protected MCP server:
@@ -270,10 +321,11 @@ Each MCP method call will produce an `AuditEvent` with the audit type `McpAudit`
 |-------|------|-------------|
 | `request_id` | string \| null | The Otoroshi request id (snowflake) of the current request, for correlation with `LLMUsageAudit` and [`McpClientAudit`](/docs/mcp/mcp-connectors#audit-events) events |
 | `mcp_method` | string | The MCP JSON-RPC method called (e.g. `tools/call`, `resources/list`, `initialize`) |
-| `mcp_id` | number | The JSON-RPC request id |
+| `mcp_id` | number \| string | The JSON-RPC request id |
 | `mcp_request_payload` | object | The full JSON-RPC request payload |
 | `mcp_response` | object | The JSON-RPC response envelope (`jsonrpc`, `id`, `result`). Captured for all transports. `null` only on failures that produce no response. |
 | `transport` | string | The transport protocol used: `http`, `sse`, or `websocket` |
+| `mcp_protocol_version` | string \| null | The MCP protocol version of the request (Streamable HTTP endpoint only), e.g. `2025-11-25` or `2026-07-28` |
 | `duration` | number | The request duration in milliseconds |
 | `status` | string | `success` or `error` |
 | `error` | string | Error message if the request failed, `null` otherwise |

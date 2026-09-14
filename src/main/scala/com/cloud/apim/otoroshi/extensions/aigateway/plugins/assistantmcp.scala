@@ -1,17 +1,18 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import org.apache.pekko.stream.Materializer
-import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.AssistantConfiguration
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.tools.{ToolCallContext, ToolRegistry}
+import com.cloud.apim.otoroshi.extensions.aigateway.mcp.McpProtocol
+import com.cloud.apim.otoroshi.extensions.aigateway.mcp.McpProtocol.ErrorCodes
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
+import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.Logger
 import play.api.libs.json.*
-import play.api.mvc.Results
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
@@ -25,8 +26,14 @@ case class AssistantMcpEndpointConfig(
   allowApiUsage: Boolean,
   allowApiWrite: Boolean,
   allowApiDelete: Boolean,
+  // MCP protocol revision served: "2025-11-25" (initialize handshake, default) or "2026-07-28" (stateless, also
+  // serves 2025-11-25 clients on the same endpoint)
+  protocolVersion: Option[String] = None,
+  // 2026-07-28 only: `ttlMs` caching hint returned on cacheable results (discover, tools/list)
+  cacheTtlMs: Option[Long] = None,
 ) extends NgPluginConfig {
   def json: JsValue = AssistantMcpEndpointConfig.format.writes(this)
+  def exposedProtocolVersion: String = protocolVersion.filter(McpProtocol.ExposableVersions.contains).getOrElse(McpProtocol.DefaultExposedVersion)
   def toAssistantConfiguration: AssistantConfiguration = AssistantConfiguration(
     provider = provider,
     apikey = apikey,
@@ -60,6 +67,8 @@ object AssistantMcpEndpointConfig {
       "allow_api_usage" -> o.allowApiUsage,
       "allow_api_write" -> o.allowApiWrite,
       "allow_api_delete" -> o.allowApiDelete,
+      "protocol_version" -> o.protocolVersion,
+      "cache_ttl_ms" -> o.cacheTtlMs,
     )
     override def reads(json: JsValue): JsResult[AssistantMcpEndpointConfig] = Try {
       AssistantMcpEndpointConfig(
@@ -71,6 +80,8 @@ object AssistantMcpEndpointConfig {
         allowApiUsage = (json \ "allow_api_usage").asOpt[Boolean].getOrElse(false),
         allowApiWrite = (json \ "allow_api_write").asOpt[Boolean].getOrElse(false),
         allowApiDelete = (json \ "allow_api_delete").asOpt[Boolean].getOrElse(false),
+        protocolVersion = (json \ "protocol_version").asOpt[String].map(_.trim).filter(McpProtocol.ExposableVersions.contains),
+        cacheTtlMs = (json \ "cache_ttl_ms").asOpt[Long].filter(_ >= 0L),
       )
     } match {
       case Success(c) => JsSuccess(c)
@@ -80,6 +91,7 @@ object AssistantMcpEndpointConfig {
 
   val configFlow: Seq[String] = Seq(
     "name", "version",
+    "protocol_version", "cache_ttl_ms",
     "provider", "apikey",
     "max_tool_calls",
     "allow_api_usage", "allow_api_write", "allow_api_delete",
@@ -88,6 +100,17 @@ object AssistantMcpEndpointConfig {
   val configSchema: Option[JsObject] = Some(Json.obj(
     "name" -> Json.obj("type" -> "string", "label" -> "MCP server name"),
     "version" -> Json.obj("type" -> "string", "label" -> "MCP server version"),
+    "protocol_version" -> Json.obj(
+      "type" -> "select",
+      "label" -> "MCP protocol version",
+      "props" -> Json.obj(
+        "options" -> Json.arr(
+          Json.obj("label" -> "2025-11-25 (initialize handshake)", "value" -> McpProtocol.V2025_11_25),
+          Json.obj("label" -> "2026-07-28 (stateless, also serves 2025-11-25 clients)", "value" -> McpProtocol.V2026_07_28),
+        )
+      )
+    ),
+    "cache_ttl_ms" -> Json.obj("type" -> "number", "label" -> "Cacheable results TTL in ms (2026-07-28)"),
     "provider" -> Json.obj("type" -> "string", "label" -> "LLM provider ref (unused by tools but kept for parity with the assistant config)"),
     "apikey" -> Json.obj("type" -> "string", "label" -> "Admin API key id (used by the 'execute' tool to call Otoroshi admin API)"),
     "max_tool_calls" -> Json.obj("type" -> "number", "label" -> "Max tool calls"),
@@ -101,12 +124,77 @@ object AssistantMcpEndpoint {
   val logger: Logger = Logger("cloud-apim-llm-extension-assistant-mcp")
 }
 
-class AssistantMcpEndpoint extends NgBackendCall {
+// the Otoroshi Assistant tools surface served over Streamable HTTP
+case class AssistantMcpBackend(config: AssistantMcpEndpointConfig) extends McpStreamableHttpBackend {
 
   private val logger = AssistantMcpEndpoint.logger
 
+  override def serverInfo: JsObject = Json.obj(
+    "name" -> config.name.getOrElse("otoroshi-assistant-mcp").json,
+    "version" -> config.version.getOrElse("1.0.0").json,
+  )
+  override def exposedProtocolVersion: String = config.exposedProtocolVersion
+  override def cacheTtlMs: Long = config.cacheTtlMs.getOrElse(0L)
+  override def surfaceKey: String = "otoroshi-assistant-mcp"
+
+  override def capabilities(attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[JsObject] = Json.obj("tools" -> Json.obj()).vfuture
+
+  override def toolsList(attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Seq[JsValue]] = {
+    ToolRegistry.default.all.map { t =>
+      Json.obj(
+        "name" -> t.definition.name,
+        "description" -> t.definition.description,
+        "inputSchema" -> t.definition.parameters,
+      )
+    }.vfuture
+  }
+
+  override def completed(method: String, id: JsValue, message: JsObject, durationMs: Long, protocolVersion: String, error: Option[String], response: JsValue, attrs: TypedMap)(using env: Env): Unit = {
+    if (logger.isDebugEnabled) logger.debug(s"assistant-mcp out: method=$method version=$protocolVersion took=${durationMs}ms error=${error.getOrElse("-")}")
+  }
+
+  override def operation(method: String, params: JsObject, modern: Boolean, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Option[Future[Either[McpRpcError, JsObject]]] = method match {
+    case "tools/list" => Some(toolsList(attrs).map(tools => Right(Json.obj("tools" -> JsArray(tools)))))
+    case "tools/call" => Some(toolsCall(params))
+    case _ => None
+  }
+
+  private def toolsCall(params: JsObject)(using env: Env, ec: ExecutionContext): Future[Either[McpRpcError, JsObject]] = {
+    val toolName = params.select("name").asOpt[String].getOrElse("")
+    val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
+    if (toolName.isEmpty) {
+      Left(McpRpcError(ErrorCodes.InvalidParams, "Missing required parameter: name")).vfuture
+    } else {
+      ToolRegistry.default.find(toolName) match {
+        case None =>
+          if (logger.isDebugEnabled) logger.debug(s"assistant-mcp tools/call: unknown tool '$toolName'")
+          Left(McpRpcError(ErrorCodes.InvalidParams, s"Unknown tool: $toolName")).vfuture
+        case Some(tool) =>
+          val ext = env.adminExtensions.extension[AiExtension].get
+          val toolCtx = ToolCallContext(env, ext, user = None, config = config.toAssistantConfiguration)
+          val started = System.currentTimeMillis()
+          tool.call(arguments, toolCtx).map { text =>
+            if (logger.isDebugEnabled) logger.debug(s"assistant-mcp tools/call ok: tool=$toolName took=${System.currentTimeMillis() - started}ms outputLen=${text.length}")
+            Right(Json.obj(
+              "content" -> Json.arr(Json.obj("type" -> "text", "text" -> text)),
+              "isError" -> false,
+            ))
+          }.recover { case t: Throwable =>
+            logger.warn(s"assistant-mcp tools/call '$toolName' threw an exception", t)
+            Right(Json.obj(
+              "content" -> Json.arr(Json.obj("type" -> "text", "text" -> s"Error: ${t.getMessage}")),
+              "isError" -> true,
+            ))
+          }
+      }
+    }
+  }
+}
+
+class AssistantMcpEndpoint extends NgBackendCall {
+
   override def name: String = "Cloud APIM - Otoroshi Assistant MCP Endpoint"
-  override def description: Option[String] = "Exposes the Otoroshi Assistant tools (search, execute, doc, doc_search) as an MCP server over Streamable HTTP (JSON responses only, no SSE).".some
+  override def description: Option[String] = "Exposes the Otoroshi Assistant tools (search, execute, doc, doc_search) as an MCP server over Streamable HTTP (MCP 2025-11-25 or stateless 2026-07-28, JSON responses).".some
 
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -126,130 +214,8 @@ class AssistantMcpEndpoint extends NgBackendCall {
     ().vfuture
   }
 
-  private def httpError(status: Int, msg: String): Future[Either[NgProxyEngineError, BackendCallResponse]] =
-    NgProxyEngineError.NgResultProxyEngineError(Results.Status(status)(Json.obj("error" -> msg))).leftf
-
-  private def jsonRpcOk(id: JsValue, payload: JsValue): Future[Either[NgProxyEngineError, BackendCallResponse]] =
-    BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(Json.obj(
-      "jsonrpc" -> "2.0",
-      "id" -> id,
-      "result" -> payload,
-    ))), None).rightf
-
-  private def jsonRpcErr(id: JsValue, code: Int, message: String): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(Json.obj(
-      "jsonrpc" -> "2.0",
-      "id" -> id,
-      "error" -> Json.obj("code" -> code, "message" -> message),
-    ))), None).rightf
-  }
-
-  // Notifications / responses without `id` → 202 Accepted with empty body, per JSON-RPC + MCP streamable spec.
-  private val accepted: Future[Either[NgProxyEngineError, BackendCallResponse]] =
-    BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Accepted), None).rightf
-
-  private def initialize(id: JsValue, config: AssistantMcpEndpointConfig): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    jsonRpcOk(id, Json.obj(
-      "protocolVersion" -> "2025-06-18",
-      "capabilities" -> Json.obj("tools" -> Json.obj(), "logging" -> Json.obj()),
-      "serverInfo" -> Json.obj(
-        "name" -> config.name.getOrElse("otoroshi-assistant-mcp").json,
-        "version" -> config.version.getOrElse("1.0.0").json,
-      ),
-    ))
-  }
-
-  private def toolsList(id: JsValue): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val tools = ToolRegistry.default.all.map { t =>
-      Json.obj(
-        "name" -> t.definition.name,
-        "description" -> t.definition.description,
-        "inputSchema" -> t.definition.parameters,
-      )
-    }
-    jsonRpcOk(id, Json.obj("tools" -> JsArray(tools)))
-  }
-
-  private def toolsCall(id: JsValue, request: JsValue, config: AssistantMcpEndpointConfig)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
-    val toolName = params.select("name").asOpt[String].getOrElse("")
-    val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
-    if (toolName.isEmpty) {
-      jsonRpcErr(id, -32602, "missing 'name' parameter in tools/call")
-    } else {
-      ToolRegistry.default.find(toolName) match {
-        case None =>
-          if (logger.isDebugEnabled) logger.debug(s"assistant-mcp tools/call: unknown tool '$toolName'")
-          jsonRpcErr(id, -32602, s"unknown tool: $toolName")
-        case Some(tool) =>
-          val ext = env.adminExtensions.extension[AiExtension].get
-          val toolCtx = ToolCallContext(env, ext, user = None, config = config.toAssistantConfiguration)
-          val started = System.currentTimeMillis()
-          tool.call(arguments, toolCtx).map { text =>
-            if (logger.isDebugEnabled) logger.debug(s"assistant-mcp tools/call ok: tool=$toolName took=${System.currentTimeMillis() - started}ms outputLen=${text.length}")
-            Right[NgProxyEngineError, BackendCallResponse](BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(Json.obj(
-              "jsonrpc" -> "2.0",
-              "id" -> id,
-              "result" -> Json.obj(
-                "content" -> Json.arr(Json.obj("type" -> "text", "text" -> text)),
-                "isError" -> false,
-              ),
-            ))), None))
-          }.recoverWith { case t: Throwable =>
-            logger.warn(s"assistant-mcp tools/call '$toolName' threw an exception", t)
-            BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(Json.obj(
-              "jsonrpc" -> "2.0",
-              "id" -> id,
-              "result" -> Json.obj(
-                "content" -> Json.arr(Json.obj("type" -> "text", "text" -> s"Error: ${t.getMessage}")),
-                "isError" -> true,
-              ),
-            ))), None).rightf
-          }
-      }
-    }
-  }
-
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(AssistantMcpEndpointConfig.format).getOrElse(AssistantMcpEndpointConfig.default)
-    val method = ctx.request.method.toLowerCase()
-    if (method != "post") {
-      httpError(405, s"method not allowed: ${ctx.request.method} (this endpoint only accepts POST)")
-    } else if (!ctx.request.hasBody) {
-      httpError(400, "empty body")
-    } else {
-      ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
-        Try(bodyRaw.utf8String.parseJson) match {
-          case Failure(_) => httpError(400, "invalid json-rpc payload")
-          case Success(json) if json.isInstanceOf[JsArray] =>
-            // JSON-RPC batching not supported in v1.
-            httpError(400, "json-rpc batches are not supported")
-          case Success(json) =>
-            val rpcMethod = json.select("method").asOpt[String].getOrElse("--")
-            val rawId: JsValue = (json \ "id").toOption.getOrElse(JsNull)
-            val isNotification: Boolean = rawId match { case JsNull => true; case _ => false }
-            val id: JsValue = rawId
-            val started = System.currentTimeMillis()
-            if (logger.isDebugEnabled) logger.debug(s"assistant-mcp in: method=$rpcMethod id=${if (isNotification) "<notification>" else id.toString}")
-            val result: Future[Either[NgProxyEngineError, BackendCallResponse]] = if (isNotification) {
-              // Server must not respond to notifications (id absent or null per JSON-RPC 2.0).
-              accepted
-            } else {
-              rpcMethod match {
-                case "initialize" => initialize(id, config)
-                case "ping" => jsonRpcOk(id, Json.obj())
-                case "shutdown" => jsonRpcOk(id, Json.obj())
-                case "tools/list" => toolsList(id)
-                case "tools/call" => toolsCall(id, json, config)
-                case other => jsonRpcErr(id, -32601, s"method not found: $other")
-              }
-            }
-            if (logger.isDebugEnabled) result.onComplete { _ =>
-              logger.debug(s"assistant-mcp out: method=$rpcMethod took=${System.currentTimeMillis() - started}ms")
-            }
-            result
-        }
-      }
-    }
+    McpStreamableHttpServer.handle(ctx, AssistantMcpBackend(config))
   }
 }

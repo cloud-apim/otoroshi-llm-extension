@@ -113,11 +113,30 @@ class McpVirtualServersPage extends Component {
     // --- exposed MCP server config (mirrors the MCP exposition plugins config) ---
     'config.name': {
       type: 'string',
-      props: { label: 'MCP server name', help: 'Advertised at initialize as serverInfo.name.' },
+      props: { label: 'MCP server name', help: 'Advertised to MCP clients as serverInfo.name.' },
     },
     'config.version': {
       type: 'string',
-      props: { label: 'MCP server version', help: 'Advertised at initialize as serverInfo.version.' },
+      props: { label: 'MCP server version', help: 'Advertised to MCP clients as serverInfo.version.' },
+    },
+    'config.protocol_version': {
+      type: 'select',
+      props: {
+        label: 'MCP protocol version',
+        help: 'Protocol revision served by the Streamable HTTP exposition. 2026-07-28 is stateless (no initialize handshake, per-request metadata) and still serves 2025-11-25 clients on the same endpoint.',
+        possibleValues: [
+          { label: '2025-11-25 (initialize handshake)', value: '2025-11-25' },
+          { label: '2026-07-28 (stateless)', value: '2026-07-28' },
+        ],
+      },
+    },
+    'config.cache_ttl_ms': {
+      type: 'number',
+      props: {
+        label: 'Cacheable results TTL',
+        suffix: 'ms',
+        help: 'With 2026-07-28, freshness hint (ttlMs) returned with server/discover, tools, prompts and resources lists and resources/read so clients can avoid re-fetching them. Defaults to 0 (always re-fetch).',
+      },
     },
     'config.refs': {
       type: 'array',
@@ -424,6 +443,7 @@ class McpVirtualServersPage extends Component {
     '_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata',
     '---',
     'config.name', 'config.version',
+    'config.protocol_version', 'config.cache_ttl_ms',
     'config.expose_as_meta', 'config.meta_semantic_search', 'config.emit_audit_events',
     '<<< Tool sources',
     'config.refs', 'config.mcp_refs',

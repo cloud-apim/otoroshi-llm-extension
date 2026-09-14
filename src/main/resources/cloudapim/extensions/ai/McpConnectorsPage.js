@@ -40,7 +40,8 @@ class McpConnectorsPage extends Component {
       props: { label: 'Transport kind', possibleValues: [
           { label: 'SSE', value: "sse" },
           { label: 'Stdio', value: "stdio" },
-          { label: 'HTTP', value: "http" },
+          { label: 'HTTP (2025-11-25)', value: "http" },
+          { label: 'HTTP (2026-07-28, stateless)', value: "http_2026_07_28" },
           { label: 'HTTP (Langchain, deprecated)', value: "http_langchain" },
           { label: 'WebSocket (not standard, experimental)', value: "ws" },
           { label: 'Meta (aggregate other MCP Connectors)', value: "meta" },
@@ -275,6 +276,7 @@ class McpConnectorsPage extends Component {
         const kind = item?.transport?.kind ?? 'stdio';
         const cls = ({
           http: 'bg-primary',
+          http_2026_07_28: 'bg-primary',
           http_langchain: 'bg-danger',
           sse: 'bg-info',
           ws: 'bg-dark',
@@ -306,6 +308,7 @@ class McpConnectorsPage extends Component {
         return ['transport.options.command', 'transport.options.args', 'transport.options.env', 'transport.options.log'];
       case 'sse':
       case 'http':
+      case 'http_2026_07_28':
       case 'http_langchain':
       case 'ws':
         return ['transport.options.url', 'transport.options.headers', 'transport.options.timeout', 'transport.options.log'];

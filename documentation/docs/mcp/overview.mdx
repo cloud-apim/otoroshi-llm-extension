@@ -45,13 +45,13 @@ Otoroshi provides full support for the MCP specification, both as a client (conn
 - **Resource Templates** (`resources/templates/list`) - List parameterized resource templates
 - **Prompts** (`prompts/list`, `prompts/get`) - List and retrieve prompt templates with their arguments
 
-Connectors support several [transport kinds](/docs/mcp/mcp-connectors#transport-kinds) (stdio, SSE, Streamable HTTP, WebSocket, and a meta connector that aggregates others). In addition, the [**OpenAPI** connector](/docs/mcp/mcp-connectors#expose-an-openapi-spec-as-mcp-tools) needs no MCP server at all: it turns any OpenAPI / Swagger spec into MCP tools and calls the target REST API directly.
+Connectors support several [transport kinds](/docs/mcp/mcp-connectors#transport-kinds) (stdio, SSE, Streamable HTTP including the stateless `2026-07-28` revision of MCP, WebSocket, and a meta connector that aggregates others). In addition, the [**OpenAPI** connector](/docs/mcp/mcp-connectors#expose-an-openapi-spec-as-mcp-tools) needs no MCP server at all: it turns any OpenAPI / Swagger spec into MCP tools and calls the target REST API directly.
 
 All these features support [filtering](/docs/mcp/mcp-connectors#filtering-tools-resources-and-prompts) (include/exclude patterns) and [advanced rules](/docs/mcp/mcp-connectors#advanced-rules) (JsonPath-based access control).
 
 ### As an MCP server
 
-Otoroshi can [**expose**](/docs/mcp/mcp-plugins) your tool functions and MCP connectors as an MCP server. The recommended transport is **Streamable HTTP**; SSE (deprecated), WebSocket (experimental) and a local stdio proxy are also available.
+Otoroshi can [**expose**](/docs/mcp/mcp-plugins) your tool functions and MCP connectors as an MCP server. The recommended transport is **Streamable HTTP**, which serves both MCP `2025-11-25` clients and [stateless MCP `2026-07-28`](/docs/mcp/mcp-plugins#protocol-versions) clients on the same endpoint; SSE (deprecated), WebSocket (experimental) and a local stdio proxy are also available.
 
 All the exposition settings — filtering, OAuth, scopes, meta mode, rate limiting & caching, managed resources/prompts, overlays, [zero-trust controls](/docs/mcp/mcp-virtual-servers#zero-trust-controls) (anti-rug-pull pinning, prompt-injection scanning, PII/secrets redaction), and [registry publication](/docs/mcp/mcp-registry) — are bundled in a reusable [**MCP Virtual Server**](/docs/mcp/mcp-virtual-servers) that the plugins reference with `server_ref`.
 

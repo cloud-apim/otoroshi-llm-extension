@@ -8,6 +8,7 @@ import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatMessage
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailItem, GuardrailResult, Guardrails}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{McpConnector, McpConnectorRules, McpConnectorTransport, McpConnectorTransportKind, McpSupport, McpVirtualServer}
+import com.cloud.apim.otoroshi.extensions.aigateway.mcp.McpProtocol
 import dev.langchain4j.agent.tool.ToolSpecification
 import dev.langchain4j.mcp.client.McpResourceContents
 import otoroshi.auth.OAuth2ModuleConfig
@@ -733,8 +734,15 @@ case class McpProxyEndpointConfig(
   prompts: Seq[McpStaticPrompt] = Seq.empty,
   overlays: McpItemOverlays = McpItemOverlays.empty,
   zeroTrust: McpZeroTrustConfig = McpZeroTrustConfig.empty,
+  // MCP protocol revision exposed by the Streamable HTTP endpoint: "2025-11-25" (initialize handshake, default)
+  // or "2026-07-28" (stateless, per-request metadata - legacy clients are still served on the same endpoint).
+  protocolVersion: Option[String] = None,
+  // 2026-07-28 only: `ttlMs` caching hint returned on cacheable results (discover, lists, resources/read).
+  cacheTtlMs: Option[Long] = None,
 ) extends NgPluginConfig {
   def json: JsValue = McpProxyEndpointConfig.format.writes(this)
+  def exposedProtocolVersion: String = protocolVersion.filter(McpProtocol.ExposableVersions.contains).getOrElse(McpProtocol.DefaultExposedVersion)
+  def exposesModernProtocol: Boolean = McpProtocol.isModern(exposedProtocolVersion)
 
   // Merge this config (treated as the override/plugin side) on top of `base` (the McpVirtualServer entity).
   // Hybrid rule: a field overrides the base only when it carries a meaningful value — Option => Some wins,
@@ -778,6 +786,8 @@ case class McpProxyEndpointConfig(
     overlays = overlays.merge(o.overlays),
     // zero-trust controls are merged additively (bools OR'd, maps/seqs concatenated, epoch maxed)
     zeroTrust = zeroTrust.merge(o.zeroTrust),
+    protocolVersion = o.protocolVersion.orElse(protocolVersion),
+    cacheTtlMs = o.cacheTtlMs.orElse(cacheTtlMs),
   )
 
   // When `serverRef` points to an existing McpVirtualServer, start from its config and overlay these inline
@@ -866,6 +876,8 @@ object McpProxyEndpointConfig {
   val configFlow: Seq[String] = Seq(
     "server_ref",
     "name", "version",
+    "protocol_version",
+    "cache_ttl_ms",
     "refs", "mcp_refs",
     "expose_as_meta", "meta_semantic_search",
     "enforce_oauth",
@@ -908,6 +920,20 @@ object McpProxyEndpointConfig {
     "version" -> Json.obj(
       "type" -> "string",
       "label" -> "MCP server version"
+    ),
+    "protocol_version" -> Json.obj(
+      "type" -> "select",
+      "label" -> "MCP protocol version (Streamable HTTP)",
+      "props" -> Json.obj(
+        "options" -> Json.arr(
+          Json.obj("label" -> "2025-11-25 (initialize handshake)", "value" -> McpProtocol.V2025_11_25),
+          Json.obj("label" -> "2026-07-28 (stateless, also serves 2025-11-25 clients)", "value" -> McpProtocol.V2026_07_28),
+        )
+      )
+    ),
+    "cache_ttl_ms" -> Json.obj(
+      "type" -> "number",
+      "label" -> "Cacheable results TTL in ms (2026-07-28)"
     ),
     "enforce_oauth" -> Json.obj(
       "type" -> "bool",
@@ -1146,6 +1172,8 @@ object McpProxyEndpointConfig {
       "prompts" -> JsArray(o.prompts.map(_.json)),
       "overlays" -> o.overlays.json,
       "zero_trust" -> o.zeroTrust.json,
+      "protocol_version" -> o.protocolVersion.map(_.json).getOrElse(JsNull).asValue,
+      "cache_ttl_ms" -> o.cacheTtlMs.map(v => JsNumber(BigDecimal(v))).getOrElse(JsNull).asValue,
     )
     override def reads(json: JsValue): JsResult[McpProxyEndpointConfig] = Try {
       val singleRef = json.select("ref").asOpt[String].map(r => Seq(r)).getOrElse(Seq.empty)
@@ -1188,6 +1216,8 @@ object McpProxyEndpointConfig {
         prompts = json.select("prompts").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap(v => McpStaticPrompt.format.reads(v).asOpt),
         overlays = json.select("overlays").asOpt(using McpItemOverlays.format).getOrElse(McpItemOverlays.empty),
         zeroTrust = json.select("zero_trust").asOpt(using McpZeroTrustConfig.format).getOrElse(McpZeroTrustConfig.empty),
+        protocolVersion = json.select("protocol_version").asOptString.map(_.trim).filter(McpProtocol.ExposableVersions.contains),
+        cacheTtlMs = json.select("cache_ttl_ms").asOpt[Long].filter(_ >= 0L),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -1223,13 +1253,14 @@ object McpAuditHelper {
 
   def emit(
     method: String,
-    id: Long,
+    id: JsValue,
     requestPayload: JsValue,
     duration: Long,
     transport: String,
     error: Option[String],
     attrs: TypedMap,
-    response: JsValue = JsNull
+    response: JsValue = JsNull,
+    protocolVersion: Option[String] = None,
   )(using env: Env): Unit = {
     val user = attrs.get(otoroshi.plugins.Keys.UserKey)
     val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
@@ -1245,6 +1276,7 @@ object McpAuditHelper {
         "mcp_request_payload" -> requestPayload,
         "mcp_response" -> response,
         "transport" -> transport,
+        "mcp_protocol_version" -> protocolVersion.map(JsString.apply).getOrElse(JsNull).asValue,
         "duration" -> duration,
         "status" -> (if (error.isEmpty) "success" else "error"),
         "error" -> error.map(_.json).getOrElse(JsNull).asValue,
@@ -1800,11 +1832,11 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
     jsonRpcResponse(id, Json.obj())
   }
 
-  def initialize(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  def initialize(id: Long, request: JsValue, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     given _attrs: TypedMap = attrs
     config.computeCapabilities(attrs, includeLogging = false).flatMap { capabilities =>
       val response = Json.obj(
-        "protocolVersion" -> "2025-06-18", //"2024-11-05",
+        "protocolVersion" -> McpProtocol.negotiateLegacy(request.select("params").select("protocolVersion").asOpt[String]),
         "capabilities" -> capabilities,
         "serverInfo" -> Json.obj("name" ->
           config.name.getOrElse("otoroshi-sse-endpoint").json,
@@ -1861,7 +1893,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
   def getTemplatesList(id: Long, session: SseSession, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     given _attrs: TypedMap = attrs
     McpProxyLogic.templatesList(config, attrs).flatMap { templates =>
-      val payload = Json.obj("templates" -> JsArray(templates))
+      val payload = Json.obj("resourceTemplates" -> JsArray(templates))
       session.send(id, payload)
       jsonRpcResponse(id, payload)
     }
@@ -1944,7 +1976,7 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
                     val method = json.select("method").asOpt[String].getOrElse("--")
                     val start = System.currentTimeMillis()
                     val result: Future[Either[NgProxyEngineError, BackendCallResponse]] = method match {
-                      case "initialize" => initialize(id, session, config, ctx.attrs)
+                      case "initialize" => initialize(id, json, session, config, ctx.attrs)
                       case "shutdown" => {
                         session.finished.set(true)
                         session.send(id, Json.obj())
@@ -1988,11 +2020,11 @@ class McpSseEndpoint extends NgBackendCall with NgAccessValidator {
                       if (config.emitAuditEvents) {
                         r match {
                           case Success(Right(_)) =>
-                            McpAuditHelper.emit(method, id, json, dur, "sse", None, ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
+                            McpAuditHelper.emit(method, JsNumber(id), json, dur, "sse", None, ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
                           case Success(Left(_)) =>
-                            McpAuditHelper.emit(method, id, json, dur, "sse", Some("proxy_engine_error"), ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
+                            McpAuditHelper.emit(method, JsNumber(id), json, dur, "sse", Some("proxy_engine_error"), ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
                           case Failure(ex) =>
-                            McpAuditHelper.emit(method, id, json, dur, "sse", Some(ex.getMessage), ctx.attrs)
+                            McpAuditHelper.emit(method, JsNumber(id), json, dur, "sse", Some(ex.getMessage), ctx.attrs)
                         }
                       }
                     }
@@ -2085,12 +2117,12 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
     jsonRpcResponse(id, Json.obj())
   }
 
-  def initialize(id: Long): Future[JsValue] = {
+  def initialize(id: Long, request: JsValue): Future[JsValue] = {
     given e: Env = env
     given ec: ExecutionContext = env.otoroshiExecutionContext
     config.computeCapabilities(attrs, includeLogging = false).map { capabilities =>
       val response = Json.obj(
-        "protocolVersion" -> "2025-06-18",//"2024-11-05",
+        "protocolVersion" -> McpProtocol.negotiateLegacy(request.select("params").select("protocolVersion").asOpt[String]),
         "capabilities" -> capabilities,
         "serverInfo" -> Json.obj(
           "name" -> config.name.getOrElse("otoroshi-ws-endpoint").json,
@@ -2135,7 +2167,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
 
   def getTemplatesList(id: Long, attrs: TypedMap): Future[JsValue] = {
     McpProxyLogic.templatesList(config, attrs)(using env, ec).map { templates =>
-      jsonRpcResponse(id, Json.obj("templates" -> JsArray(templates)))
+      jsonRpcResponse(id, Json.obj("resourceTemplates" -> JsArray(templates)))
     }(using ec)
   }
 
@@ -2171,7 +2203,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
         val method = json.select("method").asOpt[String].getOrElse("--")
         val start = System.currentTimeMillis()
         val resp: Future[JsValue] = method match {
-          case "initialize" => initialize(id)
+          case "initialize" => initialize(id, json)
           case "shutdown" => {
             self ! PoisonPill
             emptyResp(id).vfuture
@@ -2210,9 +2242,9 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
           if (config.emitAuditEvents) {
             r match {
               case Success(response) =>
-                McpAuditHelper.emit(method, id, json, dur, "websocket", None, attrs, response)(using env)
+                McpAuditHelper.emit(method, JsNumber(id), json, dur, "websocket", None, attrs, response)(using env)
               case Failure(ex) =>
-                McpAuditHelper.emit(method, id, json, dur, "websocket", Some(ex.getMessage), attrs)(using env)
+                McpAuditHelper.emit(method, JsNumber(id), json, dur, "websocket", Some(ex.getMessage), attrs)(using env)
             }
           }
         }
@@ -2236,7 +2268,7 @@ class McpActor(out: ActorRef, config: McpProxyEndpointConfig, env: Env, attrs: T
 class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
 
   override def name: String = "Cloud APIM - MCP Streamable HTTP Endpoint"
-  override def description: Option[String] = "Exposes tool functions as an MCP server using the streamable HTTP Transport".some
+  override def description: Option[String] = "Exposes tool functions as an MCP server using the streamable HTTP Transport (MCP 2025-11-25 or stateless 2026-07-28)".some
 
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
@@ -2256,160 +2288,13 @@ class McpRespEndpoint extends NgBackendCall with NgAccessValidator {
     ().vfuture
   }
 
-  def error(status: Int, msg: String): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    // println(s"http error: ${status} - ${msg}")
-    NgProxyEngineError.NgResultProxyEngineError(Results.Status(status)(Json.obj("error" -> msg))).leftf
-  }
-
-  def jsonRpcResponse(id: Long, payload: JsValue)(using attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val envelope = Json.obj(
-      "jsonrpc" -> "2.0",
-      "id" -> id,
-      "result" -> payload
-    )
-    McpAuditHelper.record(attrs, envelope)
-    BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(envelope)), None).rightf
-  }
-
-  def emptyResp(id: Long)(using attrs: TypedMap): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    jsonRpcResponse(id, Json.obj())
-  }
-
-  def initialize(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    given _attrs: TypedMap = attrs
-    config.computeCapabilities(attrs, includeLogging = false).flatMap { capabilities =>
-      val response = Json.obj(
-        "protocolVersion" -> "2025-06-18", //"2024-11-05",
-        "capabilities" -> capabilities,
-        "serverInfo" -> Json.obj(
-          "name" -> config.name.getOrElse("otoroshi-http-endpoint").json,
-          "version" -> config.version.getOrElse("1.0.0").json,
-        ),
-      )
-      jsonRpcResponse(id, response)
-    }
-  }
-
-  def getToolList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    given _attrs: TypedMap = attrs
-    McpProxyLogic.toolsList(config, attrs).flatMap { tools =>
-      jsonRpcResponse(id, Json.obj("tools" -> JsArray(tools)))
-    }
-  }
-
-  def toolsCall(id: Long, request: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    given _attrs: TypedMap = attrs
-    val params = request.select("params").asOpt[JsObject].getOrElse(Json.obj())
-    val name = params.select("name").asString
-    val arguments = params.select("arguments").asOpt[JsObject].getOrElse(Json.obj())
-    McpProxyLogic.callTool(config, name, arguments, attrs).flatMap {
-      case Left(unknown) => error(400, s"unknown function ${unknown}")
-      case Right(payload) => jsonRpcResponse(id, payload)
-    }
-  }
-
-  def getResourcesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    given _attrs: TypedMap = attrs
-    McpProxyLogic.resourcesList(config, attrs).flatMap { resources =>
-      jsonRpcResponse(id, Json.obj("resources" -> JsArray(resources)))
-    }
-  }
-
-  def getPromptsList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    given _attrs: TypedMap = attrs
-    McpProxyLogic.promptsList(config, attrs).flatMap { prompts =>
-      jsonRpcResponse(id, Json.obj("prompts" -> JsArray(prompts)))
-    }
-  }
-
-  def getTemplatesList(id: Long, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    given _attrs: TypedMap = attrs
-    McpProxyLogic.templatesList(config, attrs).flatMap { templates =>
-      jsonRpcResponse(id, Json.obj("templates" -> JsArray(templates)))
-    }
-  }
-
-  def readResource(id: Long, json: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    given _attrs: TypedMap = attrs
-    json.select("params").select("uri").asOpt[String] match {
-      case None => jsonRpcResponse(id, Json.obj("error" -> "missing uri parameter"))
-      case Some(uri) =>
-        McpProxyLogic.readResource(config, uri, attrs).flatMap { contents =>
-          jsonRpcResponse(id, Json.obj("contents" -> JsArray(contents)))
-        }
-    }
-  }
-
-  def getPromptHandler(id: Long, json: JsValue, config: McpProxyEndpointConfig, attrs: TypedMap)(using env: Env, ec: ExecutionContext): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    given _attrs: TypedMap = attrs
-    json.select("params").select("name").asOpt[String] match {
-      case None => jsonRpcResponse(id, Json.obj("error" -> "missing name parameter"))
-      case Some(name) =>
-        val arguments: Map[String, Object] = json.select("params").select("arguments").asOpt[JsObject].map { obj =>
-          obj.value.view.mapValues(v => v.asOpt[String].getOrElse(v.stringify).asInstanceOf[Object]).toMap
-        }.getOrElse(Map.empty)
-        McpProxyLogic.getPrompt(config, name, arguments, attrs).flatMap { payload =>
-          jsonRpcResponse(id, payload)
-        }
-    }
-  }
-
   override def access(ctx: NgAccessContext)(using env: Env, ec: ExecutionContext): Future[NgAccess] = {
     McpOAuthFilterUtils.access(ctx, internalName)
   }
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(McpProxyEndpointConfig.format).getOrElse(McpProxyEndpointConfig.default).resolve()
-    if (ctx.request.hasBody && ctx.request.method.toLowerCase() == "post") {
-      ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
-        Try(bodyRaw.utf8String.parseJson) match {
-          case Failure(_) => error(400,"error while parsing json-rpc payload")
-          case Success(json) => {
-            given _attrs: TypedMap = ctx.attrs
-            // println(s"mcp in >>> ${json.prettify}")
-            val id = json.select("id").asOpt[Long].getOrElse(0L)
-            val method = json.select("method").asOpt[String].getOrElse("--")
-            val start = System.currentTimeMillis()
-            val result: Future[Either[NgProxyEngineError, BackendCallResponse]] = method match {
-              case "initialize" => initialize(id, config, ctx.attrs)
-              case "shutdown" => emptyResp(id)
-              case "exit" => emptyResp(id)
-              case "ping" => jsonRpcResponse(id, Json.obj())
-              case "cancelled" => emptyResp(id)
-              case "notifications/cancelled" => emptyResp(id)
-              case "notifications/initialized" => emptyResp(id)
-              case "tools/list" => getToolList(id, config, ctx.attrs)
-              case "resources/list" => getResourcesList(id, config, ctx.attrs)
-              case "resources/read" => readResource(id, json, config, ctx.attrs)
-              case "resources/templates/list" => getTemplatesList(id, config, ctx.attrs)
-              case "prompts/list" => getPromptsList(id, config, ctx.attrs)
-              case "prompts/get" => getPromptHandler(id, json, config, ctx.attrs)
-              case "tools/call" => toolsCall(id, json, config, ctx.attrs)
-              case _ => {
-                jsonRpcResponse(id, Json.obj("error" -> "method unsupported", "error_details" -> Json.obj("method" -> method)))
-              }
-            }
-            result.onComplete { r =>
-              val dur = System.currentTimeMillis() - start
-              McpAuditHelper.markMetrics(method, dur, isError = !r.toOption.exists(_.isRight))
-              if (config.emitAuditEvents) {
-                r match {
-                  case Success(Right(_)) =>
-                    McpAuditHelper.emit(method, id, json, dur, "http", None, ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
-                  case Success(Left(_)) =>
-                    McpAuditHelper.emit(method, id, json, dur, "http", Some("proxy_engine_error"), ctx.attrs, McpAuditHelper.recorded(ctx.attrs))
-                  case Failure(ex) =>
-                    McpAuditHelper.emit(method, id, json, dur, "http", Some(ex.getMessage), ctx.attrs)
-                }
-              }
-            }
-            result
-          }
-        }
-      }
-    } else {
-      NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj("error" -> "bad request"))).leftf
-    }
+    McpStreamableHttpServer.handle(ctx, McpProxyEndpointBackend(config))
   }
 }
 

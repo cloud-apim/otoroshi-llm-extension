@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.agents.InlineFunctions
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.McpConnectorTransportKind.Stdio
-import com.cloud.apim.otoroshi.extensions.aigateway.mcp.{MetaMcpClient, OpenApiMcpClient, WsMcpTransport}
+import com.cloud.apim.otoroshi.extensions.aigateway.mcp.{McpProtocol, McpStatelessHttpClient, McpStatelessHttpTransport, MetaMcpClient, OpenApiMcpClient, WsMcpTransport}
 import com.google.gson.Gson
 import dev.langchain4j.agent.tool.{ToolExecutionRequest, ToolSpecification}
 import dev.langchain4j.mcp.client.transport.http.{HttpMcpTransport, StreamableHttpMcpTransport}
@@ -44,6 +44,7 @@ object McpConnectorTransportKind {
     case "ws" => Websocket
     case "http_langchain" => HttpLangchain
     case "http" => Http
+    case "http_2026_07_28" => Http20260728
     case "meta" => Meta
     case "openapi" => Openapi
     case _ => Stdio
@@ -63,6 +64,11 @@ object McpConnectorTransportKind {
 
   case object Http extends McpConnectorTransportKind {
     def name: String = "http"
+  }
+
+  // stateless Streamable HTTP of MCP revision 2026-07-28 (no initialize handshake, per-request metadata)
+  case object Http20260728 extends McpConnectorTransportKind {
+    def name: String = "http_2026_07_28"
   }
 
   case object HttpLangchain extends McpConnectorTransportKind {
@@ -401,7 +407,18 @@ case class McpConnector(
   // For those we can proxy the raw JSON-RPC payloads and keep full fidelity (_meta, annotations,
   // outputSchema, structuredContent, rich content blocks) instead of going through the lossy
   // langchain4j McpClient/ToolSpecification abstraction.
-  def isRawHttpTransport: Boolean = transport.kind == McpConnectorTransportKind.Http
+  def isRawHttpTransport: Boolean = transport.kind == McpConnectorTransportKind.Http || isStatelessHttpTransport
+
+  def isStatelessHttpTransport: Boolean = transport.kind == McpConnectorTransportKind.Http20260728
+
+  // protocol version requested by the initialize-based transports (metadata `protocol_version` overrides it)
+  private def legacyProtocolVersion: String = metadata.getOrElse("protocol_version", McpProtocol.V2025_11_25)
+
+  private def statelessClient(attrs: TypedMap)(using ec: ExecutionContext, env: Env): McpStatelessHttpClient = {
+    val (finaltransport, hdrs) = resolvedTransportAndHeaders(attrs)
+    val opts = finaltransport.sseOptions
+    new McpStatelessHttpClient(opts.url, hdrs, opts.timeout, opts.log, name, metadata.getOrElse("version", "1.0"))
+  }
 
   private def parseSseRaw(body: String): Seq[JsValue] = {
     body.split("\\r?\\n\\r?\\n").toSeq.flatMap { event =>
@@ -434,6 +451,7 @@ case class McpConnector(
   // raw JSON-RPC call to the upstream streamable-HTTP MCP server: initialize handshake (to obtain the
   // Mcp-Session-Id), then the actual request. Returns the raw `result` object of the response.
   def rawHttpRpc(method: String, params: JsValue, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[JsValue] = {
+    if (isStatelessHttpTransport) return statelessClient(attrs).call(method, params.asOpt[JsObject].getOrElse(Json.obj()))
     val (finaltransport, hdrs) = resolvedTransportAndHeaders(attrs)
     val opts = finaltransport.sseOptions
     val url = opts.url
@@ -442,7 +460,7 @@ case class McpConnector(
       "Content-Type" -> "application/json",
       "Accept" -> "application/json, text/event-stream",
     ) ++ hdrs.toSeq
-    val protocolVersion: String = metadata.getOrElse("protocol_version", "2025-06-18").toString
+    val protocolVersion: String = legacyProtocolVersion
     val clientVersion: String = metadata.getOrElse("version", "1.0").toString
     val initBody = Json.obj(
       "jsonrpc" -> "2.0", "id" -> 0, "method" -> "initialize",
@@ -472,8 +490,11 @@ case class McpConnector(
   def rawListTools(attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Seq[JsObject]] = {
     val ctx = attrs.json
     McpClientAudit.audited[Seq[JsObject]](this, "tools/list", Json.obj("raw" -> true), attrs)(rs => Json.obj("tools" -> JsArray(rs))) {
-      rawHttpRpc("tools/list", Json.obj(), attrs).map { result =>
-        (result \ "tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty).filter { tool =>
+      val toolsF: Future[Seq[JsObject]] =
+        if (isStatelessHttpTransport) statelessClient(attrs).listTools()
+        else rawHttpRpc("tools/list", Json.obj(), attrs).map(result => (result \ "tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty))
+      toolsF.map { tools =>
+        tools.filter { tool =>
           val tname = (tool \ "name").asOpt[String].getOrElse("")
           matchesByName(tname, includeFunctions, excludeFunctions) && matchesRules(tname, ctx, allowRules.toolRules, disallowRules.toolRules)
         }
@@ -556,6 +577,17 @@ case class McpConnector(
           log = opts.log,
         )
       }
+      case McpConnectorTransportKind.Http20260728 => {
+        val opts = finaltransport.sseOptions
+        new McpStatelessHttpTransport(
+          url = opts.url,
+          customHeaders = headers,
+          timeout = opts.timeout,
+          log = opts.log,
+          clientName = name,
+          clientVersion = metadata.getOrElse("version", "1.0"),
+        )
+      }
       case McpConnectorTransportKind.Meta => throw new IllegalStateException("unreachable")
       case McpConnectorTransportKind.Openapi => throw new IllegalStateException("unreachable")
     }
@@ -563,7 +595,7 @@ case class McpConnector(
       .transport(trsprt)
       .clientName(name)
       .clientVersion(metadata.getOrElse("version", "1.0"))
-      .protocolVersion(metadata.getOrElse("protocol_version", "2025-06-18"))
+      .protocolVersion(legacyProtocolVersion)
       .toolExecutionTimeout(java.time.Duration.ofMillis(Duration.apply(metadata.get("timeout").getOrElse("180s")).toMillis))
       .build()
   }

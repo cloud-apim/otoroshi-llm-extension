@@ -5,7 +5,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities.*
 import otoroshi.models.{EntityLocation, WasmPlugin}
 import otoroshi.next.models.*
 import otoroshi.utils.syntax.implicits.*
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpRespEndpoint, McpSseEndpoint, McpWebsocketEndpoint, OpenAiCompatProxy}
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AssistantMcpEndpoint, McpRespEndpoint, McpSseEndpoint, McpWebsocketEndpoint, OpenAiCompatProxy}
 import play.api.libs.json.{JsObject, Json}
 import reactor.core.publisher.Mono
 
@@ -756,6 +756,264 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "tool-functions").deleteEntity(llmFunction).awaitf(10.seconds)
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").deleteEntity(llmProvider).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+  }
+
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  /////////                           MCP 2026-07-28 (stateless streamable http)                           ///////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  private def flightFunction(): LlmToolFunction = LlmToolFunction(
+    id = UUID.randomUUID().toString,
+    name = "get_flight_times",
+    description = "Get the flight times between two cities",
+    parameters = Json.parse("""{
+                              |  "departure": {
+                              |    "type": "string",
+                              |    "description": "The departure city (airport code)",
+                              |    "x-mcp-header": "Departure"
+                              |  },
+                              |  "arrival": {
+                              |    "type": "string",
+                              |    "description": "The arrival city (airport code)"
+                              |  }
+                              |}""".stripMargin).asObject,
+    backend = LlmToolFunctionBackend(
+      kind = LlmToolFunctionBackendKind.Http,
+      options = LlmToolFunctionBackendOptions.Http(Json.obj(
+        "method" -> "GET",
+        "url" -> s"http://localhost:${fakeApiServerPort}/flight"
+      ))
+    )
+  )
+
+  private def mcpHttpRoute(path: String, config: JsObject): NgRoute = NgRoute(
+    location = EntityLocation.default,
+    id = UUID.randomUUID().toString,
+    name = s"test route $path",
+    description = "test route",
+    tags = Seq.empty,
+    metadata = Map.empty,
+    enabled = true,
+    debugFlow = false,
+    capture = false,
+    exportReporting = false,
+    frontend = NgFrontend.empty.copy(domains = Seq(NgDomainAndPath(s"test.oto.tools$path")), stripPath = false),
+    backend = NgBackend.empty.copy(targets = Seq(NgTarget.default)),
+    plugins = NgPlugins(Seq(NgPluginInstance(
+      plugin = s"cp:${classOf[McpRespEndpoint].getName}",
+      config = NgPluginInstanceConfig(config)
+    )))
+  )
+
+  private val modernMeta = Json.obj(
+    "io.modelcontextprotocol/protocolVersion" -> "2026-07-28",
+    "io.modelcontextprotocol/clientInfo" -> Json.obj("name" -> "test", "version" -> "1.0.0"),
+    "io.modelcontextprotocol/clientCapabilities" -> Json.obj(),
+  )
+
+  private def modernCall(url: String, id: Int, method: String, params: JsObject = Json.obj(), headers: Map[String, String] = Map.empty, meta: JsObject = modernMeta) = {
+    val defaultHeaders = Map("MCP-Protocol-Version" -> "2026-07-28", "Mcp-Method" -> method)
+    client.call("POST", url, defaultHeaders ++ headers, Some(Json.obj(
+      "jsonrpc" -> "2.0",
+      "id" -> id,
+      "method" -> method,
+      "params" -> (params ++ Json.obj("_meta" -> meta))
+    ))).awaitf(30.seconds)
+  }
+
+  test("otoroshi can expose a stateless 2026-07-28 mcp server over streamable http") {
+    val llmFunction = flightFunction()
+    val route = mcpHttpRoute("/modern", Json.obj(
+      "refs" -> Json.arr(llmFunction.id),
+      "protocol_version" -> "2026-07-28",
+      "cache_ttl_ms" -> 60000,
+    ))
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "tool-functions").upsertEntity(llmFunction).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+    val url = s"http://test.oto.tools:${port}/modern"
+    val callParams = Json.obj("name" -> "get_flight_times", "arguments" -> Json.obj("departure" -> "LAX", "arrival" -> "CDG"))
+    val callHeaders = Map("Mcp-Name" -> "get_flight_times", "Mcp-Param-Departure" -> "LAX")
+
+    // no standalone stream, no session termination
+    assertEquals(client.call("GET", url, Map.empty, None).awaitf(30.seconds).status, 405)
+
+    val discover = modernCall(url, 1, "server/discover")
+    assertEquals(discover.status, 200, discover.body)
+    assert((discover.json \ "result" \ "supportedVersions").as[Seq[String]].contains("2026-07-28"))
+    assertEquals((discover.json \ "result" \ "resultType").as[String], "complete")
+    assertEquals((discover.json \ "result" \ "ttlMs").as[Long], 60000L)
+    assertEquals((discover.json \ "result" \ "cacheScope").as[String], "public")
+    assert((discover.json \ "result" \ "_meta" \ "io.modelcontextprotocol/serverInfo" \ "name").asOpt[String].isDefined)
+
+    val tools = modernCall(url, 2, "tools/list")
+    assertEquals(tools.status, 200, tools.body)
+    assertEquals((tools.json \ "result" \ "resultType").as[String], "complete")
+    assert(tools.body.contains("get_flight_times"))
+
+    val toolCall = modernCall(url, 3, "tools/call", callParams, callHeaders)
+    assertEquals(toolCall.status, 200, toolCall.body)
+    assertEquals((toolCall.json \ "result" \ "resultType").as[String], "complete")
+    assert(toolCall.body.contains("13h"))
+
+    // x-mcp-header mirrored parameter missing or not matching the body
+    val missingParam = modernCall(url, 4, "tools/call", callParams, Map("Mcp-Name" -> "get_flight_times"))
+    assertEquals(missingParam.status, 400, missingParam.body)
+    assertEquals((missingParam.json \ "error" \ "code").as[Int], -32020)
+    val wrongParam = modernCall(url, 5, "tools/call", callParams, Map("Mcp-Name" -> "get_flight_times", "Mcp-Param-Departure" -> "JFK"))
+    assertEquals((wrongParam.json \ "error" \ "code").as[Int], -32020)
+    val wrongName = modernCall(url, 6, "tools/call", callParams, Map("Mcp-Name" -> "other_tool", "Mcp-Param-Departure" -> "LAX"))
+    assertEquals(wrongName.status, 400, wrongName.body)
+    assertEquals((wrongName.json \ "error" \ "code").as[Int], -32020)
+
+    // per-request metadata validation
+    val missingVersionHeader = client.call("POST", url, Map("Mcp-Method" -> "tools/list"), Some(Json.obj(
+      "jsonrpc" -> "2.0", "id" -> 7, "method" -> "tools/list", "params" -> Json.obj("_meta" -> modernMeta)
+    ))).awaitf(30.seconds)
+    assertEquals(missingVersionHeader.status, 400, missingVersionHeader.body)
+    assertEquals((missingVersionHeader.json \ "error" \ "code").as[Int], -32020)
+    val unsupported = modernCall(url, 8, "tools/list", headers = Map("MCP-Protocol-Version" -> "2027-01-01"), meta = modernMeta ++ Json.obj("io.modelcontextprotocol/protocolVersion" -> "2027-01-01"))
+    assertEquals(unsupported.status, 400, unsupported.body)
+    assertEquals((unsupported.json \ "error" \ "code").as[Int], -32022)
+    assert((unsupported.json \ "error" \ "data" \ "supported").as[Seq[String]].contains("2026-07-28"))
+    val missingCapabilities = modernCall(url, 9, "tools/list", meta = modernMeta - "io.modelcontextprotocol/clientCapabilities")
+    assertEquals(missingCapabilities.status, 400, missingCapabilities.body)
+    assertEquals((missingCapabilities.json \ "error" \ "code").as[Int], -32602)
+    val ping = modernCall(url, 10, "ping")
+    assertEquals(ping.status, 404, ping.body)
+    assertEquals((ping.json \ "error" \ "code").as[Int], -32601)
+
+    // notifications are accepted without body
+    val notification = client.call("POST", url, Map("MCP-Protocol-Version" -> "2026-07-28", "Mcp-Method" -> "notifications/cancelled"), Some(Json.obj(
+      "jsonrpc" -> "2.0", "method" -> "notifications/cancelled", "params" -> Json.obj("requestId" -> 3)
+    ))).awaitf(30.seconds)
+    assertEquals(notification.status, 202)
+
+    // subscriptions/listen opens a long lived stream starting with the acknowledgment
+    import play.api.libs.ws.JsonBodyWritables.writeableOf_JsValue
+    val listen = client.client.url(url)
+      .withMethod("POST")
+      .withHttpHeaders("MCP-Protocol-Version" -> "2026-07-28", "Mcp-Method" -> "subscriptions/listen", "Content-Type" -> "application/json")
+      .withBody(Json.obj("jsonrpc" -> "2.0", "id" -> 11, "method" -> "subscriptions/listen", "params" -> Json.obj("_meta" -> modernMeta, "notifications" -> Json.obj("toolsListChanged" -> true))): play.api.libs.json.JsValue)
+      .stream()
+      .awaitf(30.seconds)
+    assertEquals(listen.status, 200)
+    assert(listen.contentType.contains("text/event-stream"), listen.contentType)
+    val firstEvent = listen.bodyAsSource.take(1).runWith(org.apache.pekko.stream.scaladsl.Sink.head).awaitf(30.seconds).utf8String
+    assert(firstEvent.contains("notifications/subscriptions/acknowledged"), firstEvent)
+
+    // legacy clients are still served on the same endpoint
+    val initialize = client.call("POST", url, Map.empty, Some(Json.obj(
+      "jsonrpc" -> "2.0", "id" -> 12, "method" -> "initialize", "params" -> Json.obj("protocolVersion" -> "2025-11-25", "capabilities" -> Json.obj(), "clientInfo" -> Json.obj("name" -> "legacy", "version" -> "1.0"))
+    ))).awaitf(30.seconds)
+    assertEquals(initialize.status, 200, initialize.body)
+    assertEquals((initialize.json \ "result" \ "protocolVersion").as[String], "2025-11-25")
+    val legacyTools = client.call("POST", url, Map("MCP-Protocol-Version" -> "2025-11-25"), Some(Json.obj(
+      "jsonrpc" -> "2.0", "id" -> "string-id", "method" -> "tools/list"
+    ))).awaitf(30.seconds)
+    assertEquals(legacyTools.status, 200, legacyTools.body)
+    assertEquals((legacyTools.json \ "id").as[String], "string-id")
+    assert((legacyTools.json \ "result" \ "resultType").asOpt[String].isEmpty)
+    assert(legacyTools.body.contains("get_flight_times"))
+
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "tool-functions").deleteEntity(llmFunction).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+  }
+
+  test("a 2025-11-25 mcp exposition rejects stateless requests with a non modern error") {
+    val llmFunction = flightFunction()
+    val route = mcpHttpRoute("/legacy", Json.obj("refs" -> Json.arr(llmFunction.id)))
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "tool-functions").upsertEntity(llmFunction).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+    val url = s"http://test.oto.tools:${port}/legacy"
+    val res = modernCall(url, 1, "tools/list")
+    assertEquals(res.status, 400, res.body)
+    assertEquals((res.json \ "error" \ "code").as[Int], -32600)
+    val unknown = client.call("POST", url, Map.empty, Some(Json.obj("jsonrpc" -> "2.0", "id" -> 2, "method" -> "tools/call", "params" -> Json.obj("name" -> "nope")))).awaitf(30.seconds)
+    assertEquals((unknown.json \ "error" \ "code").as[Int], -32602)
+    val templates = client.call("POST", url, Map.empty, Some(Json.obj("jsonrpc" -> "2.0", "id" -> 3, "method" -> "resources/templates/list"))).awaitf(30.seconds)
+    assert((templates.json \ "result" \ "resourceTemplates").asOpt[Seq[JsObject]].isDefined, templates.body)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "tool-functions").deleteEntity(llmFunction).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+  }
+
+  test("an http_2026_07_28 mcp connector can consume a stateless mcp server") {
+    val llmFunction = flightFunction()
+    val upstream = mcpHttpRoute("/upstream", Json.obj(
+      "refs" -> Json.arr(llmFunction.id),
+      "protocol_version" -> "2026-07-28",
+    ))
+    val mcpConnector = McpConnector(
+      enabled = true,
+      id = UUID.randomUUID().toString,
+      name = "stateless connector",
+      transport = McpConnectorTransport(
+        kind = McpConnectorTransportKind.Http20260728,
+        options = Json.obj("url" -> s"http://test.oto.tools:${port}/upstream")
+      )
+    )
+    val aggregate = mcpHttpRoute("/aggregate", Json.obj("mcp_refs" -> Json.arr(mcpConnector.id)))
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "tool-functions").upsertEntity(llmFunction).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "mcp-connectors").upsertEntity(mcpConnector).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(upstream).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(aggregate).awaitf(10.seconds)
+    await(2.seconds)
+    val url = s"http://test.oto.tools:${port}/aggregate"
+    val resListTools = client.call("POST", url, Map.empty, Some(Json.obj(
+      "jsonrpc" -> "2.0", "id" -> 1, "method" -> "tools/list"
+    ))).awaitf(30.seconds)
+    assertEquals(resListTools.status, 200, resListTools.body)
+    assert(resListTools.body.contains("get_flight_times"), resListTools.body)
+    // the upstream validates the Mcp-Param-Departure header derived from the x-mcp-header annotation
+    val resToolCall = client.call("POST", url, Map.empty, Some(Json.obj(
+      "jsonrpc" -> "2.0", "id" -> 2, "method" -> "tools/call",
+      "params" -> Json.obj("name" -> "get_flight_times", "arguments" -> Json.obj("departure" -> "LAX", "arrival" -> "CDG"))
+    ))).awaitf(30.seconds)
+    assertEquals(resToolCall.status, 200, resToolCall.body)
+    assert(resToolCall.body.contains("13h"), resToolCall.body)
+    assert((resToolCall.json \ "result" \ "resultType").asOpt[String].isEmpty, resToolCall.body)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(aggregate).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(upstream).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "mcp-connectors").deleteEntity(mcpConnector).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "tool-functions").deleteEntity(llmFunction).awaitf(10.seconds)
+    await(2.seconds)
+  }
+
+  test("the assistant mcp endpoint can be exposed as a stateless 2026-07-28 mcp server") {
+    val route = mcpHttpRoute("/assistant", Json.obj()).copy(plugins = NgPlugins(Seq(NgPluginInstance(
+      plugin = s"cp:${classOf[AssistantMcpEndpoint].getName}",
+      config = NgPluginInstanceConfig(Json.obj("protocol_version" -> "2026-07-28", "cache_ttl_ms" -> 10000))
+    ))))
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+    val url = s"http://test.oto.tools:${port}/assistant"
+
+    val discover = modernCall(url, 1, "server/discover")
+    assertEquals(discover.status, 200, discover.body)
+    assertEquals((discover.json \ "result" \ "capabilities").as[JsObject], Json.obj("tools" -> Json.obj()))
+    assertEquals((discover.json \ "result" \ "ttlMs").as[Long], 10000L)
+    assertEquals((discover.json \ "result" \ "_meta" \ "io.modelcontextprotocol/serverInfo" \ "name").as[String], "otoroshi-assistant-mcp")
+
+    val tools = modernCall(url, 2, "tools/list")
+    assertEquals(tools.status, 200, tools.body)
+    assertEquals((tools.json \ "result" \ "resultType").as[String], "complete")
+    assert((tools.json \ "result" \ "tools").as[Seq[JsObject]].nonEmpty, tools.body)
+
+    val unknown = modernCall(url, 3, "tools/call", Json.obj("name" -> "nope", "arguments" -> Json.obj()), Map("Mcp-Name" -> "nope"))
+    assertEquals(unknown.status, 400, unknown.body)
+    assertEquals((unknown.json \ "error" \ "code").as[Int], -32602)
+
+    val initialize = client.call("POST", url, Map.empty, Some(Json.obj(
+      "jsonrpc" -> "2.0", "id" -> 4, "method" -> "initialize", "params" -> Json.obj("protocolVersion" -> "2025-06-18")
+    ))).awaitf(30.seconds)
+    assertEquals(initialize.status, 200, initialize.body)
+    assertEquals((initialize.json \ "result" \ "protocolVersion").as[String], "2025-06-18")
+
     client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
     await(2.seconds)
   }

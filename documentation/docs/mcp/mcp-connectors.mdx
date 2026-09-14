@@ -33,15 +33,44 @@ The connector's `transport.kind` selects how Otoroshi reaches the tools:
 |------|-------|-------------|
 | **stdio** | `stdio` | Launch a local MCP server process and talk to it over stdin/stdout. |
 | **SSE** | `sse` | Connect to a remote MCP server over Server-Sent Events. |
-| **Streamable HTTP** | `http` | Connect to a remote MCP server over the Streamable HTTP transport. |
+| **Streamable HTTP (2025-11-25)** | `http` | Connect to a remote MCP server over the Streamable HTTP transport, with the `initialize` handshake. |
+| **Streamable HTTP (2026-07-28)** | `http_2026_07_28` | Connect to a remote MCP server speaking the [stateless `2026-07-28` revision](#stateless-mcp-servers-2026-07-28). |
 | **HTTP (Langchain)** | `http_langchain` | Legacy HTTP transport (deprecated). |
 | **WebSocket** | `ws` | Full-duplex transport (non-standard, experimental). |
 | **Meta** | `meta` | Aggregate several other MCP connectors behind a single connector. |
 | **OpenAPI** | `openapi` | No MCP server at all — turn any [OpenAPI / Swagger spec](#expose-an-openapi-spec-as-mcp-tools) into MCP tools and call the target REST API directly. |
 
-:::tip Full-fidelity passthrough with the `http` transport
-When this connector is re-exposed through an [MCP server plugin](/docs/mcp/mcp-plugins), the **Streamable HTTP** transport (`http`) preserves the full upstream payload: tool `outputSchema`, `annotations`, `_meta`, `title`, and rich `tools/call` results (`structuredContent`, resource links, images). Other transports go through an abstraction layer that recovers `_meta`/`annotations`/`title` but not `outputSchema`. Prefer `http` for MCP apps that rely on this metadata.
+:::tip Full-fidelity passthrough with the Streamable HTTP transports
+When this connector is re-exposed through an [MCP server plugin](/docs/mcp/mcp-plugins), the **Streamable HTTP** transports (`http` and `http_2026_07_28`) preserve the full upstream payload: tool `outputSchema`, `annotations`, `_meta`, `title`, and rich `tools/call` results (`structuredContent`, resource links, images). Other transports go through an abstraction layer that recovers `_meta`/`annotations`/`title` but not `outputSchema`. Prefer them for MCP apps that rely on this metadata.
 :::
+
+The `http` transport asks for protocol version `2025-11-25` by default. Set the connector metadata `protocol_version` to request another one.
+
+## Stateless MCP servers (2026-07-28)
+
+The `http_2026_07_28` transport talks to MCP servers implementing the stateless revision of the protocol, including any Otoroshi [MCP exposition](/docs/mcp/mcp-plugins#protocol-versions) configured with `protocol_version: "2026-07-28"`. It takes the same options as `http`:
+
+```js
+{
+  "transport": {
+    "kind": "http_2026_07_28",
+    "options": {
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${vault://local/mcp-token}"
+      },
+      "timeout": 30000
+    }
+  }
+}
+```
+
+Every request is self-contained and fully compliant with the revision:
+
+- the server is checked with `server/discover` and must support `2026-07-28`,
+- each request carries the protocol version, the client identity (connector name and metadata `version`) and the client capabilities in `_meta`, along with the `MCP-Protocol-Version`, `Mcp-Method` and `Mcp-Name` headers,
+- tool parameters annotated with `x-mcp-header` are mirrored into `Mcp-Param-*` headers (Base64 encoded when needed). Tools whose annotations are invalid are left out of the tool list, and if the server reports a header mismatch after a tool definition changed, the connector refreshes the definitions and retries once,
+- paginated lists are fetched page by page, and servers that ask for a retry with a `requestState` are followed transparently.
 
 ## Configuration
 
@@ -535,7 +564,7 @@ Each upstream operation produces an `AuditEvent` with the audit type `McpClientA
 | `request_id` | string \| null | The Otoroshi request id (snowflake) of the triggering request, for correlation with `LLMUsageAudit` and [`McpAudit`](/docs/mcp/mcp-plugins#audit-events) events. `null` when the call happens outside a request context. |
 | `mcp_connector_id` | string | The connector entity id |
 | `mcp_connector_name` | string | The connector name |
-| `mcp_connector_kind` | string | The transport kind (`stdio`, `sse`, `ws`, `http`, `http_langchain`, `meta`, `openapi`) |
+| `mcp_connector_kind` | string | The transport kind (`stdio`, `sse`, `ws`, `http`, `http_2026_07_28`, `http_langchain`, `meta`, `openapi`) |
 | `mcp_operation` | string | The operation performed: `tools/list`, `tools/call`, `resources/list`, `resources/read`, `resources/templates/list`, `prompts/list`, `prompts/get` |
 | `mcp_request` | object | The request (e.g. tool name and arguments for `tools/call`, uri for `resources/read`) |
 | `mcp_response` | object | The full upstream response payload (e.g. the list of tools/resources/prompts, the `tools/call` result with its content) |
