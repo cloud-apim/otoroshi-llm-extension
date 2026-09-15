@@ -47,7 +47,7 @@ Create a new LLM Provider entity with `provider` set to `loadbalancer`. The `con
 
 ### Provider references
 
-The `refs` array can contain either simple provider IDs (strings) or objects with weight and selector:
+The `refs` array can contain either simple provider IDs (strings) or objects with weight, selector and model:
 
 **Simple format** — each provider has equal weight:
 
@@ -84,6 +84,20 @@ In this example, OpenAI would receive approximately 75% of requests and Anthropi
   "selector_expr": "model"
 }
 ```
+
+**With a model** — spread the traffic over several models, even of the same provider:
+
+```js
+{
+  "refs": [
+    { "ref": "provider_openai_1", "weight": 3, "model": "gpt-4o-mini" },
+    { "ref": "provider_openai_1", "weight": 1, "model": "gpt-4o" }
+  ]
+}
+```
+
+A target without `model` uses the default model of its provider. A target with a `model` always uses it, even
+when the request asks for another model.
 
 ## Load balancing strategies
 

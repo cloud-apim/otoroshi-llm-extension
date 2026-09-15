@@ -30,6 +30,7 @@ This is useful for post-processing responses: translating, summarizing, reformat
   "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiResponseBodyModifier",
   "config": {
     "ref": "provider-entity-id",
+    "model": null,
     "prompt": "Summarize the following API response in 2-3 sentences:",
     "prompt_ref": null,
     "context_ref": null,
@@ -44,6 +45,7 @@ This is useful for post-processing responses: translating, summarizing, reformat
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `ref` | string | `""` | LLM Provider entity ID |
+| `model` | string | `null` | Model of the LLM provider to use, its default model when empty |
 | `prompt` | string | `""` | System prompt sent to the LLM along with the response body |
 | `prompt_ref` | string | `null` | Reference to a stored prompt entity |
 | `context_ref` | string | `null` | Reference to a stored context entity for pre/post messages |

@@ -226,6 +226,7 @@ Unlike the web providers, the `rag` provider has **no `connection` block**. It i
 |-------|------|---------|-------------|
 | `config.embedding_store` | string | — | Id of the [embedding store](/docs/embeddings/overview#embedding-stores) (vector database) to search (**required**) |
 | `config.embedding_model` | string | — | Id of the [embedding model](/docs/embeddings/embedding-models) used to embed the query (**required**) |
+| `config.embedding_model_name` | string | default model of the embedding model | Model of that embedding model to use. It must be the model the documents of the store were embedded with |
 | `config.options.max_results` | number | `5` | Maximum number of passages to return. Overridable per request via `max_results`. |
 | `config.options.min_score` | number | `0.5` | Minimum similarity score (0–1); passages below it are dropped. Overridable per request via `min_score`. |
 

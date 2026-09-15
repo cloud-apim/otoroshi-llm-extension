@@ -148,8 +148,18 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(balancer.select("name").asString, "balanced_pool")
     assertEquals(balancer.select("targets").as[Seq[JsObject]].map(_.select("ref").asString).toSet, Set(ollamaText, openaiText))
     expect(studio("POST", s"/workspaces/$wsId/load-balancers", Json.obj("name" -> "balanced_pool")), 409)
+    val twoModels = expect(studio("PUT", s"/workspaces/$wsId/load-balancers/${balancer.select("id").asString}", Json.obj("targets" -> Json.arr(
+      Json.obj("ref" -> openaiText, "model" -> "gpt-4o-mini"), Json.obj("ref" -> openaiText, "model" -> "gpt-4o"),
+    ))), 200)
+    assertEquals(twoModels.select("targets").as[Seq[JsObject]].map(_.select("model").asString), Seq("gpt-4o-mini", "gpt-4o"))
+    assertEquals(aiEntity("providers", balancer.select("id").asString).get.select("options").select("refs").as[Seq[JsObject]].map(_.select("model").asString), Seq("gpt-4o-mini", "gpt-4o"))
     val router = expect(studio("POST", s"/workspaces/$wsId/routers", Json.obj("auto_router_refs" -> Json.arr(ollamaText, openaiText), "cost_quality_tradeoff" -> 42)), 201)
     assertEquals(router.select("modes").as[Seq[String]], Seq("auto"))
+    // a candidate given with a model keeps it when the candidates are later given as ids
+    expect(studio("PUT", s"/workspaces/$wsId/routers/${router.select("id").asString}", Json.obj("auto_router_refs" -> Json.arr(Json.obj("ref" -> openaiText, "model" -> "gpt-4o-mini"), ollamaText), "auto_router_classifier_model" -> "gpt-4o-mini")), 200)
+    val kept = expect(studio("PUT", s"/workspaces/$wsId/routers/${router.select("id").asString}", Json.obj("auto_router_refs" -> Json.arr(openaiText, ollamaText))), 200)
+    assertEquals(kept.select("auto_router_refs").as[Seq[JsValue]], Seq(Json.obj("ref" -> openaiText, "model" -> "gpt-4o-mini"), play.api.libs.json.JsString(ollamaText)))
+    assertEquals(kept.select("auto_router_classifier_model").asString, "gpt-4o-mini")
     assertEquals(router.select("cost_quality_tradeoff").as[BigDecimal], BigDecimal(10))
     expect(studio("POST", s"/workspaces/$wsId/routers", Json.obj("name" -> "empty")), 400)
     assertEquals(compat(wsId).select("language_model_refs").as[Seq[String]], Seq(ollamaText, openaiText, balancer.select("id").asString, router.select("id").asString))

@@ -46,6 +46,10 @@ You can now choose from the list of available Guardrails.
 
 ![](/img/guardrails-setup-3.png)
 
+### Choose the model that judges
+
+The guardrails that ask a model to judge the messages (personal information, secrets leakage, prompt injection, toxic language, moderation, and so on) take a validation `provider` and an optional `model`. Keep the default model of the provider, or pick a smaller and faster one dedicated to validation: a provider can even judge its own messages with another of its models.
+
 ### Available Guardrails
 
 - [Rampart — local PII detection/redaction (no LLM)](/docs/guardrails/rampart)

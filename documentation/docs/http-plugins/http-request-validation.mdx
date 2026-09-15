@@ -29,6 +29,7 @@ This enables context-aware access validation that goes beyond simple rules — t
   "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiContextValidator",
   "config": {
     "ref": "provider-entity-id",
+    "model": null,
     "prompt": "You are a security validator. Analyze the following HTTP request context and determine if it should be allowed. Return only 'true' or 'false'.",
     "prompt_ref": null,
     "context_ref": null,
@@ -42,6 +43,7 @@ This enables context-aware access validation that goes beyond simple rules — t
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `ref` | string | `""` | LLM Provider entity ID |
+| `model` | string | `null` | Model of the LLM provider to use, its default model when empty |
 | `prompt` | string | `""` | System prompt instructing the LLM how to validate the request |
 | `prompt_ref` | string | `null` | Reference to a stored prompt entity |
 | `context_ref` | string | `null` | Reference to a stored context entity for pre/post messages |

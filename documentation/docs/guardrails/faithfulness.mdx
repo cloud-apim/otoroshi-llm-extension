@@ -58,6 +58,7 @@ The following configuration has to be placed in your LLM provider entity in the 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|:--------:|---------|-------------|
 | `ref` (or `provider`) | string | Yes | — | Reference ID of the LLM provider used to perform the faithfulness evaluation. This provider makes the LLM calls for statement extraction and verdict generation. |
+| `model` | string | No | default model of the provider | Model of the evaluation provider used for statement extraction and verdict generation. |
 | `context` | string or array of strings | No | `"--"` | The reference context against which faithfulness is evaluated. Can be a single string or an array of strings (joined together). |
 | `threshold` | number | No | `0.8` | Minimum faithfulness score (0.0 to 1.0) required for the content to pass. |
 | `exclude_out_of_scope_statements` | boolean | No | `true` | When `true`, statements that do not refer to the context at all receive verdict 1 (pass). When `false`, all statements must be directly inferable from the context. |

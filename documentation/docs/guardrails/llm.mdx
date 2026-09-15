@@ -43,7 +43,8 @@ The validation LLM provider must be different from the main LLM provider being g
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|:--------:|---------|-------------|
-| `provider` | string | Yes | — | Reference ID of the LLM provider used for validation. Must be different from the main provider. |
+| `provider` | string | Yes | — | Reference ID of the LLM provider used for validation. Must be different from the main provider, unless a `model` is set. |
+| `model` | string | No | default model of the provider | Model of the validation provider used to judge the messages, for instance a smaller and faster one. With a model set, the guarded provider can judge its own messages with another of its models. |
 | `prompt` | string | Yes | — | Reference ID of a prompt template entity that defines the validation rules. The prompt should instruct the LLM to respond with `true` or `false`. |
 
 ### Prompt template

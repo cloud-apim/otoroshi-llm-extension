@@ -164,6 +164,8 @@ object OtoroshiAssistant {
 
 case class AssistantConfiguration(
   provider: Option[String],
+  // the model of the provider to use, its default model when empty
+  model: Option[String],
   apikey: Option[String],
   maxToolCalls: Int,
   allowApiUsage: Boolean,
@@ -176,6 +178,7 @@ object AssistantConfiguration {
   def fromJson(json: JsValue): AssistantConfiguration = {
     AssistantConfiguration(
       provider = json.select("provider").asOptString,
+      model = json.select("model").asOptString.map(_.trim).filter(_.nonEmpty),
       apikey = json.select("apikey").asOptString,
       maxToolCalls = json.select("max_tool_calls").asOptInt.getOrElse(30),
       allowApiUsage = json.select("allow_api_usage").asOptBoolean.getOrElse(false),
@@ -198,10 +201,11 @@ class OtoroshiAssistant(env: Env, ext: AiExtension) {
   }
 
   def assistantProvider: Option[AiProvider] = {
-    config.provider match {
+    val conf = config
+    (conf.provider match {
       case None => ext.states.allProviders().find(_.isOtoroshiAssistant)
       case Some(id) => ext.states.provider(id)
-    }
+    }).map(_.withModel(conf.model))
   }
 
   def isEnabled: Boolean = config.enabled && assistantProvider.isDefined

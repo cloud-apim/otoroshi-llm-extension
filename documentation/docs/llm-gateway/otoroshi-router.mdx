@@ -170,18 +170,22 @@ A fusion request costs the sum of its calls: every panel member, the judge and t
 
 | Option | Routing model | Default | Description |
 |--------|---------------|---------|-------------|
-| `code_router_refs` | code-router | `[]` | Candidate provider ids |
+| `code_router_refs` | code-router | `[]` | Candidates: provider ids or `{ "ref", "model" }` objects |
 | `min_coding_score` | code-router | `0.5` | Quality floor from `0` to `1`, relative to the best candidate |
-| `auto_router_refs` | auto-router | `[]` | Candidate provider ids |
+| `auto_router_refs` | auto-router | `[]` | Candidates: provider ids or `{ "ref", "model" }` objects |
 | `auto_router_classifier_ref` | auto-router | cheapest candidate | Provider id of the judge that picks the model |
+| `auto_router_classifier_model` | auto-router | default model of the judge | Model of the judge provider |
 | `cost_quality_tradeoff` | auto-router | `7` | `0` = best quality, `10` = cheapest |
 | `allowed_models` | auto-router | `[]` (all) | Wildcard patterns restricting the candidates |
-| `fusion_router_refs` | fusion-router | `[]` | Panel provider ids (up to 8) |
+| `fusion_router_refs` | fusion-router | `[]` | Panel: provider ids or `{ "ref", "model" }` objects (up to 8) |
 | `fusion_router_judge_ref` | fusion-router | best panel member | Provider id of the judge comparing the answers |
+| `fusion_router_judge_model` | fusion-router | default model of the judge | Model of the judge provider |
 | `fusion_router_synthesizer_ref` | fusion-router | best panel member | Provider id of the model writing the final answer |
+| `fusion_router_synthesizer_model` | fusion-router | default model of the synthesizer | Model of the synthesizer provider |
 
-Candidate lists accept provider ids (`["provider_1"]`) or objects (`[{ "ref": "provider_1" }]`). A
-router never routes to itself.
+Candidate lists accept provider ids (`["provider_1"]`) or objects (`[{ "ref": "provider_1", "model": "gpt-4o-mini" }]`).
+A candidate uses the model given with it, or the default model of its provider: one provider can be a candidate
+several times with different models, each one scored and priced on its own model. A router never routes to itself.
 
 ### Per-request parameters
 

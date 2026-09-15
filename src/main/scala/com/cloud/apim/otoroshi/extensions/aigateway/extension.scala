@@ -1146,6 +1146,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          flow: [
             |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.enabled`,
             |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.provider`,
+            |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.model`,
             |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.apikey`,
             |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.max_tool_calls`,
             |            `extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.allow_api_usage`,
@@ -1164,6 +1165,10 @@ class AiExtension(val env: Env) extends AdminExtension {
             |                valuesFrom: "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers",
             |                transformer: (item) => ({ label: item.name, value: item.id }),
             |              },
+            |            },
+            |            [`extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.model`]: {
+            |              type: 'string',
+            |              props: { label: 'Assistant model', placeholder: 'Default model of the provider' },
             |            },
             |            [`extensions.$${extensionId.replace(/\\./g, '_')}.otoroshiassistant.apikey`]: {
             |              type: 'select',

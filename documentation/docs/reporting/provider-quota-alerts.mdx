@@ -87,6 +87,7 @@ healthy provider right up to the outage.
 | `healthcheck.every` | `300000` | Interval in millis, floored to one minute |
 | `healthcheck.max_tokens` | `1` | Keep it at 1 unless the provider refuses such a small value |
 | `healthcheck.prompt` | `"ping"` | What to send |
+| `healthcheck.model` | default model of the provider | The model the probe calls: a cheap one is enough to know the account still has credit |
 
 The probe runs outside the decorators: no guardrail, no budget consumption, no audit noise — and above all no
 cache, since a cached answer would report a healthy provider while the account is empty.

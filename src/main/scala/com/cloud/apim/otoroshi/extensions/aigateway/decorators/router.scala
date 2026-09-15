@@ -89,13 +89,17 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
       .map(m => m.input_cost_per_token + (m.output_cost_per_token * 3))
   }
 
-  // resolve a refs list (Seq[String] of ids, or Seq[{ref}]) into candidates, skipping self-references
+  // resolve a refs list (ids, or objects { ref, model }) into candidates, skipping self-references. A candidate
+  // with a model is its provider serving that model instead of its default one, so a provider can be a candidate
+  // several times with different models, each one scored and priced on its own model
   private def resolveCandidates(refsKey: String, refKey: String)(using env: Env): Seq[RouterCandidate] = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    val refs: Seq[String] = provider.options.select(refsKey).asOpt[Seq[String]]
-      .orElse(provider.options.select(refsKey).asOpt[Seq[JsObject]].map(_.map(_.select(refKey).asString)))
-      .getOrElse(Seq.empty)
-    refs.flatMap(r => ext.states.provider(r))
+    val refs: Seq[(String, Option[String])] = provider.options.select(refsKey).asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
+      case JsString(id) => Some((id, None))
+      case obj: JsObject => obj.select("ref").asOptString.orElse(obj.select(refKey).asOptString).map(id => (id, obj.select("model").asOptString))
+      case _ => None
+    }
+    refs.flatMap { case (r, model) => ext.states.provider(r).map(_.withModel(model)) }
       .filterNot(_.id == provider.id) // avoid routing to ourselves (infinite loop)
       .map { p =>
         val model = candidateModel(p)
@@ -146,10 +150,16 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     cands.sortBy(c => -desirability(c))
   }
 
-  private def judgeClient(cands: Seq[RouterCandidate])(using env: Env): Option[ChatClient] = {
+  // a single provider reference of the router options (`<name>_ref`), with its optional model (`<name>_model`)
+  private def auxProvider(refKey: String)(using env: Env): Option[AiProvider] = {
     val ext = env.adminExtensions.extension[AiExtension].get
-    provider.options.select("auto_router_classifier_ref").asOptString
-      .flatMap(r => ext.states.provider(r)).filterNot(_.id == provider.id).flatMap(_.getChatClient())
+    provider.options.select(refKey).asOptString
+      .flatMap(r => ext.states.provider(r)).filterNot(_.id == provider.id)
+      .map(_.withModel(provider.options.select(refKey.stripSuffix("_ref") + "_model").asOptString))
+  }
+
+  private def judgeClient(cands: Seq[RouterCandidate])(using env: Env): Option[ChatClient] = {
+    auxProvider("auto_router_classifier_ref").flatMap(_.getChatClient())
       .orElse {
         // fallback: use the cheapest candidate as the judge
         cands.filter(_.cost.isDefined).sortBy(_.cost.get).headOption.orElse(cands.headOption).flatMap(_.provider.getChatClient())
@@ -223,7 +233,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
       val tradeoff = math.max(0.0, math.min(10.0, rawTradeoff))
       val fallbackOrder = tradeoffOrdered(cands, tradeoff)
       pickWithJudge(prompt, cands, tradeoff).map {
-        case Some(chosen) => chosen.provider +: fallbackOrder.filterNot(_.provider.id == chosen.provider.id).map(_.provider)
+        case Some(chosen) => chosen.provider +: fallbackOrder.filterNot(c => c.provider.id == chosen.provider.id && c.model == chosen.model).map(_.provider)
         case None => fallbackOrder.map(_.provider)
       }
     }
@@ -241,9 +251,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
 
   // a configured aux provider (judge or synthesizer), falling back to the highest-quality panel member
   private def fusionAuxClient(refKey: String, panel: Seq[RouterCandidate])(using env: Env): Option[ChatClient] = {
-    val ext = env.adminExtensions.extension[AiExtension].get
-    provider.options.select(refKey).asOptString
-      .flatMap(r => ext.states.provider(r)).filterNot(_.id == provider.id).flatMap(_.getChatClient())
+    auxProvider(refKey).flatMap(_.getChatClient())
       .orElse(panel.sortBy(c => -c.score.getOrElse(0.0)).headOption.flatMap(_.provider.getChatClient()))
   }
 

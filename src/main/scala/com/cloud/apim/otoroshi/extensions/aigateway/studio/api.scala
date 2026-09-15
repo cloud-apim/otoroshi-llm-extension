@@ -1326,6 +1326,21 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     case _ => None
   }.filter(_.nonEmpty)
 
+  // router candidates as stored: a provider id, or { ref, model } when the candidate uses another model than the
+  // default model of its provider
+  private def candidateEntries(value: JsLookupResult): Seq[JsValue] = value.asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
+    case JsString(s) if s.nonEmpty => Some(JsString(s))
+    case o: JsObject => o.select("ref").asOptString.filter(_.nonEmpty).map { ref =>
+      o.select("model").asOptString.map(_.trim).filter(_.nonEmpty).map(m => Json.obj("ref" -> ref, "model" -> m)).getOrElse(JsString(ref))
+    }
+    case _ => None
+  }
+
+  private def entryRef(entry: JsValue): String = entry match {
+    case JsString(s) => s
+    case o => o.select("ref").asOptString.getOrElse("")
+  }
+
   private def chainOf(provider: JsObject, byId: Map[String, JsObject]): Seq[JsObject] = {
     var chain = Seq(Json.obj("id" -> Providers.idOf(provider), "name" -> provider.select("name").asOptString.getOrElse("")))
     var seen = Set(Providers.idOf(provider))
@@ -1345,8 +1360,12 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     "name" -> b.select("name").asOptString.getOrElse(""),
     "strategy" -> b.select("options").select("loadbalancing").asOptString.getOrElse("round_robin"),
     "targets" -> b.select("options").select("refs").asOpt[Seq[JsValue]].getOrElse(Seq.empty).map {
-      case JsString(ref) => Json.obj("ref" -> ref, "weight" -> 1)
-      case o => Json.obj("ref" -> o.select("ref").asOpt[JsValue].getOrElse(JsNull).as[JsValue], "weight" -> o.select("weight").asOpt[BigDecimal].filter(_ != 0).getOrElse(BigDecimal(1)))
+      case JsString(ref) => Json.obj("ref" -> ref, "weight" -> 1, "model" -> JsNull)
+      case o => Json.obj(
+        "ref" -> o.select("ref").asOpt[JsValue].getOrElse(JsNull).as[JsValue],
+        "weight" -> o.select("weight").asOpt[BigDecimal].filter(_ != 0).getOrElse(BigDecimal(1)),
+        "model" -> optString(nonEmptyString(o.select("model"))),
+      )
     },
   )
 
@@ -1356,15 +1375,18 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       "id" -> Providers.idOf(r),
       "name" -> r.select("name").asOptString.getOrElse(""),
       "modes" -> routerModes.filter(m => refsOf(o.select(m.refs)).nonEmpty).map(_.id),
-      "code_router_refs" -> refsOf(o.select("code_router_refs")),
+      "code_router_refs" -> candidateEntries(o.select("code_router_refs")),
       "min_coding_score" -> o.select("min_coding_score").asOpt[BigDecimal].getOrElse(BigDecimal(0.5)),
-      "auto_router_refs" -> refsOf(o.select("auto_router_refs")),
+      "auto_router_refs" -> candidateEntries(o.select("auto_router_refs")),
       "auto_router_classifier_ref" -> optString(nonEmptyString(o.select("auto_router_classifier_ref"))),
+      "auto_router_classifier_model" -> optString(nonEmptyString(o.select("auto_router_classifier_model"))),
       "cost_quality_tradeoff" -> o.select("cost_quality_tradeoff").asOpt[BigDecimal].getOrElse(BigDecimal(7)),
       "allowed_models" -> stringsOf(o.select("allowed_models")),
-      "fusion_router_refs" -> refsOf(o.select("fusion_router_refs")),
+      "fusion_router_refs" -> candidateEntries(o.select("fusion_router_refs")),
       "fusion_router_judge_ref" -> optString(nonEmptyString(o.select("fusion_router_judge_ref"))),
+      "fusion_router_judge_model" -> optString(nonEmptyString(o.select("fusion_router_judge_model"))),
       "fusion_router_synthesizer_ref" -> optString(nonEmptyString(o.select("fusion_router_synthesizer_ref"))),
+      "fusion_router_synthesizer_model" -> optString(nonEmptyString(o.select("fusion_router_synthesizer_model"))),
     )
   }
 
@@ -1457,14 +1479,14 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       val current = existing.map(balancerJson)
       val name = string(form, "name").map(connectionName).orElse(current.map(_.select("name").asString)).getOrElse("balanced")
       val strategy = string(form, "strategy").orElse(current.map(_.select("strategy").asString)).getOrElse("round_robin")
-      val targets: Seq[(String, BigDecimal)] = form.value.get("targets") match {
-        case None => current.map(_.select("targets").as[Seq[JsObject]].map(t => (t.select("ref").asOptString.getOrElse(""), t.select("weight").asOpt[BigDecimal].getOrElse(BigDecimal(1))))).getOrElse(real.take(2).map(r => (r, BigDecimal(1))))
+      val targets: Seq[(String, BigDecimal, Option[String])] = form.value.get("targets") match {
+        case None => current.map(_.select("targets").as[Seq[JsObject]].map(t => (t.select("ref").asOptString.getOrElse(""), t.select("weight").asOpt[BigDecimal].getOrElse(BigDecimal(1)), nonEmptyString(t.select("model"))))).getOrElse(real.take(2).map(r => (r, BigDecimal(1), None)))
         case Some(JsArray(values)) => values.toSeq.map {
-          case JsString(ref) => (ref, BigDecimal(1))
-          case t: JsObject => (t.select("ref").asOptString.getOrElse(""), number(t, "weight").filter(_ != 0).getOrElse(BigDecimal(1)))
-          case _ => throw badRequest("'targets' must be an array of { ref, weight } objects")
+          case JsString(ref) => (ref, BigDecimal(1), None)
+          case t: JsObject => (t.select("ref").asOptString.getOrElse(""), number(t, "weight").filter(_ != 0).getOrElse(BigDecimal(1)), string(t, "model").map(_.trim).filter(_.nonEmpty))
+          case _ => throw badRequest("'targets' must be an array of { ref, weight, model } objects")
         }
-        case Some(_) => throw badRequest("'targets' must be an array of { ref, weight } objects")
+        case Some(_) => throw badRequest("'targets' must be an array of { ref, weight, model } objects")
       }
       checkVirtualName(name, providers, existing)
       if (!strategies.contains(strategy)) throw badRequest(s"'strategy' must be one of ${strategies.mkString(", ")}")
@@ -1472,7 +1494,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       if (valid.isEmpty) throw badRequest("a load balancer needs at least one target")
       valid.map(_._1).filterNot(real.contains).headOption.foreach(r => throw badRequest(s"the target '$r' is not a provider of this workspace"))
       val entity = virtualEntity(ws, existing, name, "Load balancer", "loadbalancer", Json.obj(
-        "refs" -> valid.map { case (ref, weight) => Json.obj("ref" -> ref, "weight" -> weight) },
+        "refs" -> valid.map { case (ref, weight, model) => Json.obj("ref" -> ref, "weight" -> weight) ++ model.map(m => Json.obj("model" -> m)).getOrElse(Json.obj()) },
         "loadbalancing" -> strategy,
       ))
       (if (existing.isDefined) Providers.update(entity) else Providers.create(entity))
@@ -1486,7 +1508,20 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         "name" -> "router", "code_router_refs" -> Json.arr(), "min_coding_score" -> 0.5, "auto_router_refs" -> Json.arr(), "auto_router_classifier_ref" -> JsNull,
         "cost_quality_tradeoff" -> 7, "allowed_models" -> Json.arr(), "fusion_router_refs" -> Json.arr(), "fusion_router_judge_ref" -> JsNull, "fusion_router_synthesizer_ref" -> JsNull,
       ))
-      def refs(key: String): Seq[String] = strings(form, key).getOrElse(stringsOf(current.select(key)))
+      // candidates given as ids keep the model already configured for them, { ref, model } objects set it
+      def refs(key: String): Seq[JsValue] = {
+        val previous = current.select(key).asOpt[Seq[JsValue]].getOrElse(Seq.empty)
+        form.value.get(key) match {
+          case None => previous
+          case Some(JsNull) => Seq.empty
+          case Some(JsArray(values)) => values.toSeq.map {
+            case JsString(id) => previous.find(e => e.isInstanceOf[JsObject] && entryRef(e) == id).getOrElse(JsString(id))
+            case o: JsObject => candidateEntries(JsDefined(Json.arr(o))).headOption.getOrElse(throw badRequest(s"'$key' entries need a 'ref'"))
+            case _ => throw badRequest(s"'$key' must be an array of provider ids or { ref, model } objects")
+          }
+          case Some(_) => throw badRequest(s"'$key' must be an array of provider ids or { ref, model } objects")
+        }
+      }
       def ref(key: String): Option[String] = if (has(form, key)) string(form, key).filter(_.nonEmpty) else current.select(key).asOptString
       def clamped(key: String, min: Int, max: Int, default: BigDecimal): BigDecimal =
         number(form, key).orElse(current.select(key).asOpt[BigDecimal]).getOrElse(default).max(BigDecimal(min)).min(BigDecimal(max))
@@ -1497,17 +1532,20 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       val singles = Seq("auto_router_classifier_ref", "fusion_router_judge_ref", "fusion_router_synthesizer_ref").map(k => k -> ref(k))
       checkVirtualName(name, providers, existing)
       if (code.isEmpty && auto.isEmpty && fusion.isEmpty) throw badRequest("a router needs candidates in 'code_router_refs', 'auto_router_refs' or 'fusion_router_refs'")
-      (code ++ auto ++ fusion ++ singles.flatMap(_._2)).filterNot(real.contains).headOption.foreach(r => throw badRequest(s"'$r' is not a provider of this workspace"))
+      ((code ++ auto ++ fusion).map(entryRef) ++ singles.flatMap(_._2)).filterNot(real.contains).headOption.foreach(r => throw badRequest(s"'$r' is not a provider of this workspace"))
       val entity = virtualEntity(ws, existing, name, "Otoroshi router", "otoroshi", Json.obj(
         "code_router_refs" -> code,
         "min_coding_score" -> clamped("min_coding_score", 0, 1, BigDecimal(0.5)),
         "auto_router_refs" -> auto,
         "auto_router_classifier_ref" -> optString(singles(0)._2),
+        "auto_router_classifier_model" -> optString(ref("auto_router_classifier_model")),
         "cost_quality_tradeoff" -> clamped("cost_quality_tradeoff", 0, 10, BigDecimal(7)),
         "allowed_models" -> strings(form, "allowed_models").getOrElse(stringsOf(current.select("allowed_models"))).map(_.trim).filter(_.nonEmpty),
         "fusion_router_refs" -> fusion,
         "fusion_router_judge_ref" -> optString(singles(1)._2),
+        "fusion_router_judge_model" -> optString(ref("fusion_router_judge_model")),
         "fusion_router_synthesizer_ref" -> optString(singles(2)._2),
+        "fusion_router_synthesizer_model" -> optString(ref("fusion_router_synthesizer_model")),
       ))
       (if (existing.isDefined) Providers.update(entity) else Providers.create(entity))
         .flatMap(saved => syncWorkspaceRefs(ws.id).map(_ => routerJson(saved)))

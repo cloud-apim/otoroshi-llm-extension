@@ -39,6 +39,7 @@ The following configuration has to be placed in your LLM provider entity in the 
 
 #### **Config Section**  
 - **provider**: The LLM provider responsible for enforcing the guardrail.  
+- **model**: The model of that provider to use, its default model when omitted. With a model set, the guarded provider can judge its own messages with another of its models.  
 
 - **pif_items**: A list of sensitive data types to be filtered or protected
   Available **pif_items** :

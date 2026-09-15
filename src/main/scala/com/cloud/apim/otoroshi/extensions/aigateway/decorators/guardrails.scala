@@ -30,6 +30,8 @@ object Guardrails {
     override def writes(o: Guardrails): JsValue = JsArray(o.items.map(_.json))
   }
   def get(name: String): Option[Guardrail] = possibleGuardrails.get(name)
+  // the guardrails asking a chat model to judge the messages: `provider` (`ref` for faithfulness) and `model` in their config
+  val llmJudged: Set[String] = Set("llm", "gibberish", "pif", "moderation", "secrets_leakage", "prompt_injection", "auto_secrets_leakage", "toxic_language", "racial_bias", "gender_bias", "personal_health_information", "faithfulness")
   val possibleGuardrails: Map[String, Guardrail] = Map(
     "regex" -> new RegexGuardrail(),
     "webhook" -> new WebhookGuardrail(),

@@ -29,6 +29,7 @@ The **LLM Websocket message validator** plugin uses an LLM to validate WebSocket
   "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiWebsocketMessageValidator",
   "config": {
     "ref": "provider-entity-id",
+    "model": null,
     "prompt": "You are a content moderator. Analyze the following WebSocket message. Return 'true' if the message is appropriate, or a JSON object {\"result\": false, \"reason\": \"explanation\"} if it should be blocked.",
     "prompt_ref": null,
     "context_ref": null,
@@ -42,6 +43,7 @@ The **LLM Websocket message validator** plugin uses an LLM to validate WebSocket
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `ref` | string | `""` | LLM Provider entity ID |
+| `model` | string | `null` | Model of the LLM provider to use, its default model when empty |
 | `prompt` | string | `""` | System prompt instructing the LLM how to validate messages |
 | `prompt_ref` | string | `null` | Reference to a stored prompt entity |
 | `context_ref` | string | `null` | Reference to a stored context entity |

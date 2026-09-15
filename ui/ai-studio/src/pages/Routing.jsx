@@ -27,7 +27,7 @@ function LoadBalancerModal({ workspace, balancer, providers, existingNames, onCl
   const [form, setForm] = useState({
     name: balancer ? balancer.name : 'balanced',
     strategy: (balancer && balancer.options && balancer.options.loadbalancing) || 'round_robin',
-    targets: refs.length ? refs.map((r) => (typeof r === 'string' ? { ref: r, weight: 1 } : { ref: r.ref, weight: r.weight || 1 })) : providers.slice(0, 2).map((p) => ({ ref: p.id, weight: 1 })),
+    targets: refs.length ? refs.map((r) => (typeof r === 'string' ? { ref: r, weight: 1, model: '' } : { ref: r.ref, weight: r.weight || 1, model: r.model || '' })) : providers.slice(0, 2).map((p) => ({ ref: p.id, weight: 1, model: '' })),
   });
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
@@ -50,7 +50,7 @@ function LoadBalancerModal({ workspace, balancer, providers, existingNames, onCl
         metadata: { ...((balancer && balancer.metadata) || {}), ...workspaceMetadata(workspace.id, 'provider', { [META.connection]: id }) },
         provider: 'loadbalancer',
         connection: {},
-        options: { ...((balancer && balancer.options) || {}), refs: form.targets.filter((t) => t.ref).map((t) => ({ ref: t.ref, weight: Number(t.weight) || 1 })), loadbalancing: form.strategy },
+        options: { ...((balancer && balancer.options) || {}), refs: form.targets.filter((t) => t.ref).map((t) => ({ ref: t.ref, weight: Number(t.weight) || 1, ...(t.model && t.model.trim() ? { model: t.model.trim() } : {}) })), loadbalancing: form.strategy },
       };
       if (balancer) await Resources.providers.update(entity);
       else await Resources.providers.create(entity);
@@ -96,11 +96,14 @@ function LoadBalancerModal({ workspace, balancer, providers, existingNames, onCl
           />
         </Field>
       </div>
-      <Field label="Targets" hint="Each target is called with its own default model.">
+      <Field label="Targets" hint="Each target is called with the model set here, or with its own default model. A provider can be a target several times with different models.">
         <div className="stack tight">
           {form.targets.map((t, idx) => (
             <div key={idx} className="row">
               <Select className="grow" value={t.ref} onChange={(v) => set({ targets: form.targets.map((x, i) => (i === idx ? { ...x, ref: v } : x)) })} placeholder="Select a provider" options={providers.map((p) => ({ value: p.id, label: `${p.name} (${(p.options || {}).model || 'default'})` }))} />
+              <div style={{ width: 170 }}>
+                <TextInput value={t.model} onChange={(v) => set({ targets: form.targets.map((x, i) => (i === idx ? { ...x, model: v } : x)) })} placeholder="Default model" />
+              </div>
               <div style={{ width: 90 }}>
                 <NumberInput value={t.weight} onChange={(v) => set({ targets: form.targets.map((x, i) => (i === idx ? { ...x, weight: v } : x)) })} min="1" title="weight" />
               </div>
@@ -109,7 +112,7 @@ function LoadBalancerModal({ workspace, balancer, providers, existingNames, onCl
               </button>
             </div>
           ))}
-          <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ targets: [...form.targets, { ref: '', weight: 1 }] })}>
+          <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ targets: [...form.targets, { ref: '', weight: 1, model: '' }] })}>
             <Icon name="plus" />
             Add target
           </button>
@@ -145,6 +148,9 @@ export const ROUTER_MODES = [
 ];
 
 const refsOf = (value) => (value || []).map((r) => (typeof r === 'string' ? r : r.ref)).filter(Boolean);
+
+// the selected candidates, keeping the entries (and their model) already configured for them
+const keepEntries = (previous, ids) => ids.map((id) => (previous || []).find((r) => typeof r === 'object' && r && r.ref === id) || id);
 
 export const configuredModes = (router) => ROUTER_MODES.filter((m) => refsOf((router.options || {})[m.refs]).length > 0);
 
@@ -191,13 +197,13 @@ function RouterModal({ workspace, router, providers, existingNames, onClose, onS
         connection: {},
         options: {
           ...o,
-          code_router_refs: form.code_router_refs,
+          code_router_refs: keepEntries(o.code_router_refs, form.code_router_refs),
           min_coding_score: Math.min(1, Math.max(0, num(form.min_coding_score, 0.5))),
-          auto_router_refs: form.auto_router_refs,
+          auto_router_refs: keepEntries(o.auto_router_refs, form.auto_router_refs),
           auto_router_classifier_ref: form.auto_router_classifier_ref || null,
           cost_quality_tradeoff: Math.min(10, Math.max(0, num(form.cost_quality_tradeoff, 7))),
           allowed_models: form.allowed_models.map((m) => m.trim()).filter(Boolean),
-          fusion_router_refs: form.fusion_router_refs.slice(0, 8),
+          fusion_router_refs: keepEntries(o.fusion_router_refs, form.fusion_router_refs.slice(0, 8)),
           fusion_router_judge_ref: form.fusion_router_judge_ref || null,
           fusion_router_synthesizer_ref: form.fusion_router_synthesizer_ref || null,
         },
@@ -449,6 +455,7 @@ export function RoutingPage() {
                               return (
                                 <Badge key={i} kind="accent">
                                   {(byId[ref] || { name: ref }).name}
+                                  {typeof r === 'object' && r.model ? ` · ${r.model}` : ''}
                                   {typeof r === 'object' && r.weight > 1 ? ` ×${r.weight}` : ''}
                                 </Badge>
                               );

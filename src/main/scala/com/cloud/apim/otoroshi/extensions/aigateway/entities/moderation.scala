@@ -42,6 +42,12 @@ case class ModerationModel(
 
   def slugName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
 
+  /** The same moderation model using `model` instead of its default model, when a model is given (set in its options). */
+  def withModel(model: Option[String]): ModerationModel = model.map(_.trim).filter(_.nonEmpty) match {
+    case None    => this
+    case Some(m) => copy(config = config ++ Json.obj("options" -> (config.select("options").asOpt[JsObject].getOrElse(Json.obj()) ++ Json.obj("model" -> m))))
+  }
+
   def getModerationModelClient()(using env: Env): Option[ModerationModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())

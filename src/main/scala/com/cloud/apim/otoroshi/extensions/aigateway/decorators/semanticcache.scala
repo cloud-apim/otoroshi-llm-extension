@@ -47,11 +47,11 @@ object ChatClientWithSemanticCache {
    * If embeddingRef is set and points to a valid EmbeddingModel entity, use it.
    * Otherwise, fall back to the local AllMiniLmL6V2 model.
    */
-  def embedText(text: String, embeddingRef: Option[String])(using ec: ExecutionContext, env: Env): Future[Array[Float]] = {
+  def embedText(text: String, embeddingRef: Option[String], embeddingModel: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Array[Float]] = {
     embeddingRef.flatMap { ref =>
       env.adminExtensions.extension[AiExtension]
         .flatMap(_.states.embeddingModel(ref))
-        .flatMap(_.getEmbeddingModelClient()(using env))
+        .flatMap(_.withModel(embeddingModel).getEmbeddingModelClient()(using env))
     } match {
       case Some(client) =>
         client.embed(
@@ -108,6 +108,7 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
 
   private val ttl = originalProvider.cache.ttl
   private val embeddingRef = originalProvider.cache.embeddingRef
+  private val embeddingModel = originalProvider.cache.embeddingModel
 
   private def getStore = ChatClientWithSemanticCacheMemory.embeddingStores.getOrUpdate(originalProvider.id) {
     new dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore[TextSegment]()
@@ -120,7 +121,7 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
       case Left(err) => err.leftf
       case Right(resp) =>
         val text = originalPrompt.messages.map(_.content).mkString(". ")
-        ChatClientWithSemanticCache.embedText(text, embeddingRef).map { vector =>
+        ChatClientWithSemanticCache.embedText(text, embeddingRef, embeddingModel).map { vector =>
           val segment = TextSegment.from(text)
           val embedding = new dev.langchain4j.data.embedding.Embedding(vector)
           embeddingStore.add(key, embedding, segment)
@@ -146,7 +147,7 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
           .alsoTo(Sink.foreach { chunk => chunks = chunks :+ chunk })
           .alsoTo(Sink.onComplete { _ =>
             val text = originalPrompt.messages.map(_.content).mkString(". ")
-            ChatClientWithSemanticCache.embedText(text, embeddingRef).foreach { vector =>
+            ChatClientWithSemanticCache.embedText(text, embeddingRef, embeddingModel).foreach { vector =>
               val segment = TextSegment.from(text)
               val embedding = new dev.langchain4j.data.embedding.Embedding(vector)
               embeddingStore.add(key, embedding, segment)
@@ -170,7 +171,7 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
         )).rightf
       case None =>
         val embeddingStore = getStore
-        ChatClientWithSemanticCache.embedText(query, embeddingRef).flatMap { vector =>
+        ChatClientWithSemanticCache.embedText(query, embeddingRef, embeddingModel).flatMap { vector =>
           val queryEmbedding = new dev.langchain4j.data.embedding.Embedding(vector)
           val relevant = embeddingStore.search(dev.langchain4j.store.embedding.EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding).maxResults(1).minScore(originalProvider.cache.score).build())
           val matches = relevant.matches().asScala
@@ -198,7 +199,7 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
       case Some((_, response, _)) => Source(response.toList).rightf
       case None =>
         val embeddingStore = getStore
-        ChatClientWithSemanticCache.embedText(query, embeddingRef).flatMap { vector =>
+        ChatClientWithSemanticCache.embedText(query, embeddingRef, embeddingModel).flatMap { vector =>
           val queryEmbedding = new dev.langchain4j.data.embedding.Embedding(vector)
           val relevant = embeddingStore.search(dev.langchain4j.store.embedding.EmbeddingSearchRequest.builder().queryEmbedding(queryEmbedding).maxResults(1).minScore(originalProvider.cache.score).build())
           val matches = relevant.matches().asScala
@@ -245,6 +246,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
   private val ttl = originalProvider.cache.ttl
   private val minScore = originalProvider.cache.score
   private val embeddingRef = originalProvider.cache.embeddingRef
+  private val embeddingModel = originalProvider.cache.embeddingModel
   private val providerId = originalProvider.id
   private val indexName = s"sem-cache:$providerId:idx"
   private val embKeyPrefix = s"sem-cache:$providerId:"
@@ -385,7 +387,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
       case Left(err) => err.leftf
       case Right(resp) =>
         val query = originalPrompt.messages.map(_.content).mkString(". ")
-        ChatClientWithSemanticCache.embedText(query, embeddingRef).flatMap { vector =>
+        ChatClientWithSemanticCache.embedText(query, embeddingRef, embeddingModel).flatMap { vector =>
           val vectorBytes = floatsToBytes(vector)
           ensureIndex(vector.length).flatMap { _ =>
             storeEmbedding(key, query, vectorBytes).map { _ =>
@@ -413,7 +415,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
           .alsoTo(Sink.foreach { chunk => chunks = chunks :+ chunk })
           .alsoTo(Sink.onComplete { _ =>
             val query = originalPrompt.messages.map(_.content).mkString(". ")
-            ChatClientWithSemanticCache.embedText(query, embeddingRef).foreach { vector =>
+            ChatClientWithSemanticCache.embedText(query, embeddingRef, embeddingModel).foreach { vector =>
               val vectorBytes = floatsToBytes(vector)
               ensureIndex(vector.length).flatMap(_ => storeEmbedding(key, query, vectorBytes)).foreach { _ =>
                 redisPutChunks(key, chunks)
@@ -437,7 +439,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
         )).rightf
       case None =>
         // 2. semantic similarity search
-        ChatClientWithSemanticCache.embedText(query, embeddingRef).flatMap { vector =>
+        ChatClientWithSemanticCache.embedText(query, embeddingRef, embeddingModel).flatMap { vector =>
           val vectorBytes = floatsToBytes(vector)
           ensureIndex(vector.length).flatMap { _ =>
             searchSimilar(vectorBytes).flatMap {
@@ -465,7 +467,7 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
       case Some((chunks, _)) => Source(chunks.toList).rightf
       case None =>
         // 2. semantic similarity search
-        ChatClientWithSemanticCache.embedText(query, embeddingRef).flatMap { vector =>
+        ChatClientWithSemanticCache.embedText(query, embeddingRef, embeddingModel).flatMap { vector =>
           val vectorBytes = floatsToBytes(vector)
           ensureIndex(vector.length).flatMap { _ =>
             searchSimilar(vectorBytes).flatMap {

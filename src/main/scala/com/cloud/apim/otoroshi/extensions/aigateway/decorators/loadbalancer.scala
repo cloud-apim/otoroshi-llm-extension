@@ -96,7 +96,9 @@ object LoadBalancerChatClient {
   val counter = new AtomicLong(0L)
 }
 
-case class LoadBalancingTarget(ref: String, weight: Int, selector: Option[String])
+// `model`: the model of the target provider to use, its default model when empty. The same provider can be a target
+// several times with different models.
+case class LoadBalancingTarget(ref: String, weight: Int, selector: Option[String], model: Option[String] = None)
 
 class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
 
@@ -106,21 +108,20 @@ class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
   override def isOpenAi: Boolean = true
   override def isAnthropic: Boolean = false
 
-  def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: (AiProvider, ChatClient) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
-    val refs: Seq[LoadBalancingTarget] = provider.options.select("refs")
-      .asOpt[Seq[String]].map { seq =>
-        seq.map(i => LoadBalancingTarget(i, 1, None))
+  def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: (AiProvider, ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
+    // targets are provider ids or { ref, weight, selector_expected, model } objects, possibly mixed
+    val refs: Seq[LoadBalancingTarget] = provider.options.select("refs").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
+      case JsString(id) => Some(LoadBalancingTarget(id, 1, None))
+      case obj: JsObject => obj.select("ref").asOptString.map { ref =>
+        LoadBalancingTarget(
+          ref,
+          obj.select("weight").asOpt[Int].getOrElse(1),
+          obj.select("selector_expected").asOptString,
+          obj.select("model").asOptString.map(_.trim).filter(_.nonEmpty),
+        )
       }
-      .orElse(provider.options.select("refs").asOpt[Seq[JsObject]].map { seq =>
-        seq.map { obj =>
-          LoadBalancingTarget(
-            obj.select("ref").asString,
-            obj.select("weight").asOpt[Int].getOrElse(1),
-            obj.select("selector_expected").asOptString
-          )
-        }
-      })
-      .getOrElse(Seq.empty)
+      case _ => None
+    }
     val loadBalancing: LoadBalancing = provider.options.select("loadbalancing").asOpt[String].map(_.toLowerCase()).getOrElse("round_robin") match {
       case "random" => Random
       case "best_response_time" => BestResponseTime
@@ -130,9 +131,13 @@ class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
       Json.obj("error" -> "no provider configured").leftf
     } else {
       val selector_expr = provider.options.select("selector_expr").asOpt[String]
-      val all_providers: Seq[(AiProvider, Option[String])] = refs
-        .flatMap(r => if (r.weight <= 1) Seq(r) else (0 to r.weight).map(_ => r))
-        .flatMap(r => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r.ref)).map(v => (v, r.selector)))
+      // one provider instance per target (with the model of the target applied), repeated by weight: the
+      // strategies pick one of these instances, which tells which target was selected
+      val targets: Seq[(LoadBalancingTarget, AiProvider)] = refs
+        .flatMap(r => env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r.ref)).map(v => (r, v.withModel(r.model))))
+      val withModel: Seq[AiProvider] = targets.collect { case (r, v) if r.model.isDefined => v }
+      val all_providers: Seq[(AiProvider, Option[String])] = targets
+        .flatMap { case (r, v) => if (r.weight <= 1) Seq((v, r.selector)) else (0 to r.weight).map(_ => (v, r.selector)) }
       // val index = LoadBalancerChatClient.counter.incrementAndGet() % (if (providers.nonEmpty) providers.size else 1)
 
       def filterAll(body: JsObject, f: (JsObject, Option[String]) => JsLookupResult): Seq[(AiProvider, Option[String])] = {
@@ -170,7 +175,12 @@ class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
       selectedProvider.getChatClient() match {
         case None => Json.obj("error" -> "no client found").leftf
         case Some(client) =>
-          val result = f(selectedProvider, client)
+          // a model asked in the request means nothing to a target that has its own model configured
+          val body = originalBody match {
+            case obj: JsObject if withModel.exists(_ eq selectedProvider) => obj - "model"
+            case other => other
+          }
+          val result = f(selectedProvider, client, body)
           if (settings.enabled) {
             result.andThen {
               case Success(Right(_)) => ProviderCircuitBreaker.recordSuccess(selectedProvider.id)
@@ -185,9 +195,9 @@ class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
   }
 
   override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    execute(prompt, attrs, originalBody) { (selected, client) =>
+    execute(prompt, attrs, originalBody) { (selected, client, body) =>
       val start = System.currentTimeMillis()
-      client.invoke(kind, prompt, attrs, originalBody).map { resp =>
+      client.invoke(kind, prompt, attrs, body).map { resp =>
         BestResponseTime.record(selected, System.currentTimeMillis() - start)
         resp
       }
@@ -195,9 +205,9 @@ class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
   }
 
   override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
-    execute(prompt, attrs, originalBody) { (selected, client) =>
+    execute(prompt, attrs, originalBody) { (selected, client, body) =>
       val start = System.currentTimeMillis()
-      client.invokeStream(kind, prompt, attrs, originalBody).map { resp =>
+      client.invokeStream(kind, prompt, attrs, body).map { resp =>
         BestResponseTime.record(selected, System.currentTimeMillis() - start)
         resp
       }

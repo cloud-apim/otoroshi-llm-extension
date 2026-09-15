@@ -7,7 +7,6 @@ import org.apache.commons.lang3.math.NumberUtils
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -254,9 +253,10 @@ abstract class HardCodedLLMGuardrail extends Guardrail {
     val llmValidation = LlmValidationSettings.format.reads(config).getOrElse(LlmValidationSettings())
     llmValidation.provider match {
       case None => pass()
-      case Some(ref) if provider.isDefined && ref == provider.get.id => pass()
+      // a provider judging itself with its own model would run this guardrail again, forever
+      case Some(ref) if provider.exists(_.id == ref) && llmValidation.model.isEmpty => pass()
       case Some(ref) => {
-        env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(ref).flatMap(_.getChatClient())) match {
+        LlmValidationSettings.client(ref, llmValidation, provider) match {
           case None => GuardrailResult.GuardrailDenied("validation provider not found").vfuture
           case Some(validationClient) => {
             val messages = _messages.map {

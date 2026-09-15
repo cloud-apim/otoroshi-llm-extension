@@ -63,7 +63,7 @@ object ProviderHealthchecks {
   /** one minimal inference call. The result is ignored on purpose: what matters is the http status, which the
     * provider api records into the quota state on its way back. */
   def probe(provider: AiProvider)(using ec: ExecutionContext, env: Env): Future[Unit] = {
-    provider.getRawChatClient() match {
+    provider.withModel(provider.healthcheck.model).getRawChatClient() match {
       case None =>
         AiExtension.logger.warn(s"unable to build a client to probe provider '${provider.name}'")
         ().vfuture

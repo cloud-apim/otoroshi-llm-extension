@@ -36,6 +36,7 @@ case class AssistantMcpEndpointConfig(
   def exposedProtocolVersion: String = protocolVersion.filter(McpProtocol.ExposableVersions.contains).getOrElse(McpProtocol.DefaultExposedVersion)
   def toAssistantConfiguration: AssistantConfiguration = AssistantConfiguration(
     provider = provider,
+    model = None,
     apikey = apikey,
     maxToolCalls = maxToolCalls,
     allowApiUsage = allowApiUsage,

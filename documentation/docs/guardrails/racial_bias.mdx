@@ -45,7 +45,8 @@ The guardrail sends messages to a validation LLM with a specialized system promp
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|:--------:|---------|-------------|
-| `provider` | string | Yes | — | Reference ID of the LLM provider used to evaluate messages for racial bias. Must be different from the main provider. |
+| `provider` | string | Yes | — | Reference ID of the LLM provider used to evaluate messages for racial bias. Must be different from the main provider, unless a `model` is set. |
+| `model` | string | No | default model of the provider | Model of the validation provider used to judge the messages, for instance a smaller and faster one. With a model set, the guarded provider can judge its own messages with another of its models. |
 | `err_msg` | string | No | `"This message has been blocked by the 'racial-bias' guardrail !"` | Custom error message returned when a message is blocked. |
 
 ### Guardrail example

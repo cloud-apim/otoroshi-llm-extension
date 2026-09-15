@@ -23,6 +23,7 @@ The **LLM Response endpoint** plugin acts as a backend that sends a predefined p
   "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.LlmResponseEndpoint",
   "config": {
     "ref": "provider-entity-id",
+    "model": null,
     "prompt": "The user is requesting ${req.uri}. Generate a helpful response based on this path.",
     "prompt_ref": null,
     "context_ref": null
@@ -35,6 +36,7 @@ The **LLM Response endpoint** plugin acts as a backend that sends a predefined p
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `ref` | string | `""` | LLM Provider entity ID |
+| `model` | string | `null` | Model of the LLM provider to use, its default model when empty |
 | `prompt` | string | `""` | The prompt to send to the LLM. Supports [Expression Language](https://maif.github.io/otoroshi/manual/topics/expression-language.html) |
 | `prompt_ref` | string | `null` | Reference to a stored prompt entity (EL is also applied) |
 | `context_ref` | string | `null` | Reference to a stored context entity (EL is also applied) |

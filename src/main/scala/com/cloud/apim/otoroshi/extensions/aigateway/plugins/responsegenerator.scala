@@ -14,7 +14,7 @@ import play.api.mvc.Results
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
-case class AiResponseGeneratorConfig(ref: String = "", _prompt: String = "", promptRef: Option[String] = None, contextRef: Option[String] = None, isResponse: Boolean = false, status: Int = 200, headers: Map[String, String] = Map.empty) extends NgPluginConfig {
+case class AiResponseGeneratorConfig(ref: String = "", _prompt: String = "", promptRef: Option[String] = None, contextRef: Option[String] = None, isResponse: Boolean = false, status: Int = 200, headers: Map[String, String] = Map.empty, model: Option[String] = None) extends NgPluginConfig {
   def json: JsValue = AiResponseGeneratorConfig.format.writes(this)
   def prompt(using env: Env): String = promptRef match {
     case None => _prompt
@@ -58,6 +58,7 @@ object AiResponseGeneratorConfig {
     override def reads(json: JsValue): JsResult[AiResponseGeneratorConfig] = Try {
       AiResponseGeneratorConfig(
         ref = json.select("ref").asOpt[String].getOrElse(""),
+        model = json.select("model").asOpt[String].map(_.trim).filter(_.nonEmpty),
         _prompt = json.select("prompt").asOpt[String].getOrElse(""),
         promptRef = json.select("prompt_ref").asOpt[String].filterNot(_.isBlank),
         contextRef = json.select("context_ref").asOpt[String].filterNot(_.isBlank),
@@ -71,6 +72,7 @@ object AiResponseGeneratorConfig {
     }
     override def writes(o: AiResponseGeneratorConfig): JsValue = Json.obj(
       "ref" -> o.ref,
+      "model" -> o.model.map(_.json).getOrElse(JsNull).asValue,
       "prompt" -> o._prompt,
       "prompt_ref" -> o.promptRef.map(_.json).getOrElse(JsNull).asValue,
       "context_ref" -> o.contextRef.map(_.json).getOrElse(JsNull).asValue,
@@ -79,7 +81,7 @@ object AiResponseGeneratorConfig {
       "headers" -> o.headers,
     )
   }
-  val configFlow: Seq[String] = Seq("ref", "prompt", "prompt_ref", "context_ref", "is_response", "status", "headers")
+  val configFlow: Seq[String] = Seq("ref", "model", "prompt", "prompt_ref", "context_ref", "is_response", "status", "headers")
   val configSchema: Option[JsObject] = Some(Json.obj(
     "is_response" -> Json.obj(
       "type" -> "bool",
@@ -121,6 +123,11 @@ object AiResponseGeneratorConfig {
       "type" -> "object",
       "label" -> "Http response headers"
     ),
+    "model" -> Json.obj(
+      "type" -> "string",
+      "label" -> "Model",
+      "props" -> Json.obj("placeholder" -> "Default model of the provider"),
+    ),
     "ref" -> Json.obj(
       "type" -> "select",
       "label" -> s"AI LLM Provider",
@@ -160,7 +167,7 @@ class AiResponseGenerator extends NgBackendCall {
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(AiResponseGeneratorConfig.format).getOrElse(AiResponseGeneratorConfig.default)
-    env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref)) match {
+    env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref).map(_.withModel(config.model))) match {
       case None => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "provider not found")))).vfuture // TODO: rewrite error
       case Some(provider) => provider.getChatClient() match {
         case Some(client) => {

@@ -27,14 +27,15 @@ class LLMGuardrail extends Guardrail {
     val llmValidation = LlmValidationSettings.format.reads(config).getOrElse(LlmValidationSettings())
     llmValidation.provider match {
       case None => pass()
-      case Some(ref) if provider.isDefined && ref == provider.get.id => pass()
+      // a provider judging itself with its own model would run this guardrail again, forever
+      case Some(ref) if provider.exists(_.id == ref) && llmValidation.model.isEmpty => pass()
       case Some(ref) => {
         llmValidation.prompt match {
           case None => pass()
           case Some(pref) => env.adminExtensions.extension[AiExtension].flatMap(_.states.prompt(pref)) match {
             case None => GuardrailResult.GuardrailDenied("validation prompt not found").vfuture
             case Some(prompt) => {
-              env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(ref).flatMap(_.getChatClient())) match {
+              LlmValidationSettings.client(ref, llmValidation, provider) match {
                 case None => GuardrailResult.GuardrailDenied("validation provider not found").vfuture
                 case Some(validationClient) => {
                   val messages = _messages.map {

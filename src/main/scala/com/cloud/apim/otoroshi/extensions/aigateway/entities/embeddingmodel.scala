@@ -35,6 +35,12 @@ case class EmbeddingModel(
   override def theTags: Seq[String]             = tags
   override def theMetadata: Map[String, String] = metadata
   def slugName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
+  /** The same embedding model using `model` instead of its default model, when a model is given (set in its options). */
+  def withModel(model: Option[String]): EmbeddingModel = model.map(_.trim).filter(_.nonEmpty) match {
+    case None    => this
+    case Some(m) => copy(config = config ++ Json.obj("options" -> (config.select("options").asOpt[JsObject].getOrElse(Json.obj()) ++ Json.obj("model" -> m))))
+  }
+
   def getEmbeddingModelClient()(using env: Env): Option[EmbeddingModelClient] = {
     val connection = config.select("connection").asOpt[JsObject].getOrElse(Json.obj())
     val options = config.select("options").asOpt[JsObject].getOrElse(Json.obj())

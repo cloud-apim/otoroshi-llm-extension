@@ -40,6 +40,7 @@ The fallback is configured directly on the provider entity using the `provider_f
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `provider_fallback` | string | — | ID of the fallback provider entity |
+| `provider_fallback_model` | string | default model of the fallback provider | Model of the fallback provider to use. When set, the model asked for the primary provider is not sent to the fallback, so a fallback on another vendor always gets a model it serves. |
 
 ## When fallback triggers
 

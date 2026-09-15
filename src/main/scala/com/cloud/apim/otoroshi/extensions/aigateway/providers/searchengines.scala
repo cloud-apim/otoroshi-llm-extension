@@ -581,10 +581,10 @@ class ExaSearchClient(api: ExaApi, options: ExaSearchOptions, id: String) extend
 // A "search engine" backed by a RAG retriever: it embeds the query with the referenced embedding model, then runs a
 // vector similarity search against the referenced embedding store. The (store, model) pair lives in the entity config
 // and is never exposed to the LLM (the tool is still named after the single, id-safe SearchEngine id, like web engines).
-class RagSearchClient(embeddingStoreId: String, embeddingModelId: String, maxResults: Int, minScore: Double, id: String) extends SearchEngineClient {
+class RagSearchClient(embeddingStoreId: String, embeddingModelId: String, maxResults: Int, minScore: Double, id: String, embeddingModelName: Option[String] = None) extends SearchEngineClient {
   override def search(opts: SearchEngineSearchOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, SearchEngineResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension]
-    val modelClientOpt = ext.flatMap(_.states.embeddingModel(embeddingModelId)).flatMap(_.getEmbeddingModelClient())
+    val modelClientOpt = ext.flatMap(_.states.embeddingModel(embeddingModelId)).flatMap(_.withModel(embeddingModelName).getEmbeddingModelClient())
     val storeClientOpt = ext.flatMap(_.states.embeddingStore(embeddingStoreId)).flatMap(_.getEmbeddingStoreClient())
     (modelClientOpt, storeClientOpt) match {
       case (None, _) => Left(Json.obj("error" -> s"unknown or unavailable embedding model: ${embeddingModelId}")).vfuture

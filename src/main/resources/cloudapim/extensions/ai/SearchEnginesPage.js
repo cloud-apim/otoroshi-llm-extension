@@ -158,6 +158,10 @@ class SearchEnginesPage extends Component {
         transformer: (a) => ({ value: a.id, label: a.name }),
       },
     },
+    'config.embedding_model_name': {
+      type: 'string',
+      props: { label: 'Embedding model name', placeholder: 'Default model of the embedding model' },
+    },
     'config.embedding_model': {
       type: 'select',
       props: {
@@ -299,6 +303,7 @@ class SearchEnginesPage extends Component {
         '<<<Knowledge base',
         'config.embedding_store',
         'config.embedding_model',
+        'config.embedding_model_name',
         '<<<Search options',
         'config.options.max_results',
         'config.options.min_score',

@@ -34,7 +34,7 @@ class AiContextValidator extends NgAccessValidator {
   }
 
   private def validate(ctx: NgAccessContext, config: AiPromptRequestConfig)(using env: Env, ec: ExecutionContext): Future[Boolean] = {
-    env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref)) match {
+    env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref).map(_.withModel(config.model))) match {
       case None => false.vfuture // TODO: log it
       case Some(provider) => provider.getChatClient() match {
         case None => false.vfuture // TODO: log it

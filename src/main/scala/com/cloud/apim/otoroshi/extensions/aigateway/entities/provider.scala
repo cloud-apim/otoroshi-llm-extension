@@ -10,7 +10,7 @@ import otoroshi.next.extensions.AdminExtensionId
 import otoroshi.security.IdGenerator
 import otoroshi.storage.*
 import otoroshi.utils.syntax.implicits.*
-import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiGatewayExtensionDatastores, AiGatewayExtensionState}
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.{AiExtension, AiGatewayExtensionDatastores, AiGatewayExtensionState}
 import play.api.libs.json.*
 
 import java.util.concurrent.TimeUnit
@@ -26,16 +26,31 @@ case class RegexValidationSettings(
 case class LlmValidationSettings(
   provider: Option[String] = None,
   prompt: Option[String] = None,
+  // the model of the validation provider to use, its default model when empty
+  model: Option[String] = None,
 ) {
   def json: JsValue = LlmValidationSettings.format.writes(this)
 }
 
 object LlmValidationSettings {
+
+  /**
+   * The chat client of a llm validation (guardrails). The guarded provider can judge its own messages with another
+   * of its models: it is then used without its guardrails, so the validation call does not run them again.
+   */
+  def client(ref: String, settings: LlmValidationSettings, guarded: Option[AiProvider])(using env: Env): Option[ChatClient] = {
+    env.adminExtensions.extension[AiExtension]
+      .flatMap(_.states.provider(ref))
+      .map(p => if (guarded.exists(_.id == p.id)) p.copy(guardrails = Guardrails.empty) else p)
+      .flatMap(_.withModel(settings.model).getChatClient())
+  }
+
   val format = new Format[LlmValidationSettings] {
     override def reads(json: JsValue): JsResult[LlmValidationSettings] = Try {
       LlmValidationSettings(
         provider = (json \ "provider").asOpt[String],
         prompt = (json \ "prompt").asOpt[String],
+        model = (json \ "model").asOpt[String].map(_.trim).filter(_.nonEmpty),
       )
     } match {
       case Failure(ex)    => JsError(ex.getMessage)
@@ -44,6 +59,7 @@ object LlmValidationSettings {
     override def writes(o: LlmValidationSettings): JsValue = Json.obj(
       "provider" -> o.provider,
       "prompt" -> o.prompt,
+      "model" -> o.model,
     )
   }
 }
@@ -84,7 +100,9 @@ case class CacheSettings(
   ttl: FiniteDuration = 24.hours,
   score: Double = 0.8,
   redisUrl: Option[String] = None,
-  embeddingRef: Option[String] = None
+  embeddingRef: Option[String] = None,
+  // the model of the embedding model entity to use, its default model when empty
+  embeddingModel: Option[String] = None,
 )
 
 case class ContextSettings(default: Option[String] = None, contexts: Seq[String] = Seq.empty) {
@@ -122,6 +140,8 @@ case class ProviderHealthcheck(
   everyMs: Long = 300000L,
   maxTokens: Int = 1,
   prompt: String = "ping",
+  // the model the probe calls, the default model of the provider when empty
+  model: Option[String] = None,
 ) {
   def json: JsValue = ProviderHealthcheck.format.writes(this)
 }
@@ -134,6 +154,7 @@ object ProviderHealthcheck {
       "every" -> o.everyMs,
       "max_tokens" -> o.maxTokens,
       "prompt" -> o.prompt,
+      "model" -> o.model.map(JsString.apply).getOrElse(JsNull).asValue,
     )
     override def reads(json: JsValue): JsResult[ProviderHealthcheck] = Try {
       ProviderHealthcheck(
@@ -142,6 +163,7 @@ object ProviderHealthcheck {
         everyMs = json.select("every").asOpt[Long].getOrElse(300000L).max(60000L),
         maxTokens = json.select("max_tokens").asOpt[Int].getOrElse(1).max(1),
         prompt = json.select("prompt").asOptString.getOrElse("ping"),
+        model = json.select("model").asOptString.map(_.trim).filter(_.nonEmpty),
       )
     } match {
       case Failure(e) => JsError(e.getMessage)
@@ -212,6 +234,8 @@ case class AiProvider(
                        connection: JsObject,
                        options: JsObject,
                        providerFallback: Option[String] = None,
+                       // the model of the fallback provider to use, its default model when empty
+                       providerFallbackModel: Option[String] = None,
                        cache: CacheSettings = CacheSettings(),
                        guardrails: Guardrails = Guardrails.empty,
                        guardrailsFailOnDeny: Boolean = false,
@@ -229,6 +253,17 @@ case class AiProvider(
   lazy val isOtoroshiAssistant: Boolean = metadata.get("otoroshi_assistant").contains("true")
   def computedName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name)
   def slugName: String = metadata.get("endpoint_name").orElse(metadata.get("provider_name")).getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
+  /**
+   * The same provider serving `model` instead of its default one, when a model is given. Everything that
+   * references a provider to call it for its own needs (guardrails, fallbacks, routers, plugins...) can also
+   * name the model to use, and goes through here. The model is set in the options, so it applies even when
+   * the provider does not allow the call body to override its config.
+   */
+  def withModel(model: Option[String]): AiProvider = model.map(_.trim).filter(_.nonEmpty) match {
+    case None    => this
+    case Some(m) => copy(options = options ++ Json.obj("model" -> m))
+  }
+
   def getChatClient()(using env: Env): Option[ChatClient] = {
     val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val _token = connection.select("token").asOpt[String].getOrElse("xxx")
@@ -487,6 +522,7 @@ object AiProvider {
       "connection"        -> o.connection,
       "options"           -> o.options,
       "provider_fallback" -> o.providerFallback.map(_.json).getOrElse(JsNull).asValue,
+      "provider_fallback_model" -> o.providerFallbackModel.map(_.json).getOrElse(JsNull).asValue,
       "memory"            -> o.memory.map(_.json).getOrElse(JsNull).asValue,
       "context"           -> o.context.json,
       "models"            -> o.models.json,
@@ -498,7 +534,8 @@ object AiProvider {
         "ttl"           -> o.cache.ttl.toMillis,
         "score"         -> o.cache.score,
         "redis_url"     -> o.cache.redisUrl.map(JsString.apply).getOrElse(JsNull).asValue,
-        "embedding_ref" -> o.cache.embeddingRef.map(JsString.apply).getOrElse(JsNull).asValue
+        "embedding_ref" -> o.cache.embeddingRef.map(JsString.apply).getOrElse(JsNull).asValue,
+        "embedding_model" -> o.cache.embeddingModel.map(JsString.apply).getOrElse(JsNull).asValue,
       )
     )
     override def reads(json: JsValue): JsResult[AiProvider] = Try {
@@ -513,6 +550,7 @@ object AiProvider {
         connection = (json \ "connection").asOpt[JsObject].getOrElse(Json.obj()),
         options = (json \ "options").asOpt[JsObject].getOrElse(Json.obj()),
         providerFallback = (json \ "provider_fallback").asOpt[String],
+        providerFallbackModel = (json \ "provider_fallback_model").asOpt[String].map(_.trim).filter(_.nonEmpty),
         memory = (json \ "memory").asOpt[String],
         guardrails = json.select("guardrails").asOpt[JsArray].orElse(json.select("fences").asOpt[JsArray]).flatMap(seq => Guardrails.format.reads(seq).asOpt).getOrElse(Guardrails.empty),
         guardrailsFailOnDeny = json.select("guardrails_fail_on_deny").asOpt[Boolean].getOrElse(false),
@@ -525,6 +563,7 @@ object AiProvider {
           score = (json \ "cache" \ "score").asOpt[Double].getOrElse(0.8),
           redisUrl = (json \ "cache" \ "redis_url").asOpt[String].filter(_.nonEmpty),
           embeddingRef = (json \ "cache" \ "embedding_ref").asOpt[String].filter(_.nonEmpty),
+          embeddingModel = (json \ "cache" \ "embedding_model").asOpt[String].map(_.trim).filter(_.nonEmpty),
         )
       )
     } match {

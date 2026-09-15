@@ -45,7 +45,7 @@ class AiRequestBodyModifier extends NgRequestTransformer {
   override def transformRequest(ctx: NgTransformerRequestContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[Result, NgPluginHttpRequest]] = {
     val config = ctx.cachedConfig(internalName)(AiPromptRequestConfig.format).getOrElse(AiPromptRequestConfig.default)
     if (ctx.otoroshiRequest.hasBody) {
-      env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref)) match {
+      env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref).map(_.withModel(config.model))) match {
         case None => Left(Results.InternalServerError(Json.obj("error" -> "provider not found"))).vfuture // TODO: rewrite error
         case Some(provider) => provider.getChatClient() match {
           case Some(client) => {

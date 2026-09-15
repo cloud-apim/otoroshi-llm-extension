@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.agents
 
 import org.apache.pekko.stream.scaladsl.Source
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.Guardrails
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailItem, Guardrails}
 import com.cloud.apim.otoroshi.extensions.aigateway.*
 import otoroshi.env.Env
 import otoroshi.next.workflow.{Node, NodeLike, NoopNode, WorkflowError, WorkflowOperator, WorkflowRun}
@@ -410,8 +410,7 @@ class AgentRunner(env: Env) {
               memory = agent.memory,
               guardrailsFailOnDeny = true,
               guardrails = agent.guardrails.copy(items = agent.guardrails.items.map { it =>
-                val actualProvider = it.config.select("provider").asOptString.orElse(agent.model.orElse(rcfg.model)).get
-                it.copy(config = it.config ++ Json.obj("provider" -> actualProvider))
+                it.copy(config = inheritAgentModel(it, pref, agent.model.orElse(rcfg.model)))
               }),
             ).getChatClient() match {
               case None => Json.obj("error" -> "no client").leftf
@@ -426,6 +425,18 @@ class AgentRunner(env: Env) {
           }
         }
       }
+    }
+  }
+
+  // a guardrail of the agent that names no provider is judged by the provider of the agent, and by its model
+  // when the guardrail asks a chat model and names none
+  private def inheritAgentModel(item: GuardrailItem, providerRef: String, model: Option[String]): JsObject = {
+    val config = item.config
+    def named(key: String) = config.select(key).asOptString.exists(_.trim.nonEmpty)
+    if (named("provider") || named("ref")) config
+    else {
+      val inheritedModel = model.filter(_ => Guardrails.llmJudged.contains(item.guardrailId) && !named("model"))
+      config ++ Json.obj("provider" -> providerRef) ++ inheritedModel.map(m => Json.obj("model" -> m)).getOrElse(Json.obj())
     }
   }
 
@@ -493,8 +504,7 @@ class AgentRunner(env: Env) {
                 memory = agent.memory,
                 guardrailsFailOnDeny = true,
                 guardrails = agent.guardrails.copy(items = agent.guardrails.items.map { it =>
-                  val actualProvider = it.config.select("provider").asOptString.orElse(agent.model.orElse(rcfg.model)).get
-                  it.copy(config = it.config ++ Json.obj("provider" -> actualProvider))
+                  it.copy(config = inheritAgentModel(it, pref, agent.model.orElse(rcfg.model)))
                 }),
               ).getChatClient() match {
                 case None => Json.obj("error" -> "no client").leftf

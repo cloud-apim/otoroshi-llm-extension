@@ -28,6 +28,7 @@ This is useful for preprocessing, reformatting, translating, or enriching reques
   "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiRequestBodyModifier",
   "config": {
     "ref": "provider-entity-id",
+    "model": null,
     "prompt": "Translate the following text to English and return only the translation:",
     "prompt_ref": null,
     "context_ref": null,
@@ -41,6 +42,7 @@ This is useful for preprocessing, reformatting, translating, or enriching reques
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `ref` | string | `""` | LLM Provider entity ID to use for processing |
+| `model` | string | `null` | Model of the LLM provider to use, its default model when empty |
 | `prompt` | string | `""` | System prompt sent to the LLM along with the request body |
 | `prompt_ref` | string | `null` | Reference to a stored prompt entity (alternative to inline prompt) |
 | `context_ref` | string | `null` | Reference to a stored context entity for pre/post messages |

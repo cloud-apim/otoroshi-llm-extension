@@ -37,7 +37,8 @@ export const RAMPART_ENTITIES = [
   'IP_ADDRESS',
 ];
 
-const validator = { name: 'provider', label: 'Validation model', kind: 'provider', hint: 'Text provider of this workspace asked to judge the messages.' };
+const validator = { name: 'provider', label: 'Validation provider', kind: 'provider', hint: 'Text provider of this workspace asked to judge the messages.' };
+const validatorModel = { name: 'model', label: 'Model', kind: 'text', hint: 'Leave empty to use the default model of the provider. A provider can judge its own messages with another of its models.' };
 const errMsg = { name: 'err_msg', label: 'Refusal message', kind: 'text', hint: 'Returned when the guardrail blocks a message.' };
 
 export const GUARDRAIL_KINDS = [
@@ -106,7 +107,7 @@ export const GUARDRAIL_KINDS = [
     label: 'Prompt injection',
     description: 'Asks a model to score how likely the message is an injection attempt.',
     defaults: { max_injection_score: 90 },
-    fields: [validator, { name: 'max_injection_score', label: 'Max injection score (0-100)', kind: 'number' }, errMsg],
+    fields: [validator, validatorModel, { name: 'max_injection_score', label: 'Max injection score (0-100)', kind: 'number' }, errMsg],
     llm: true,
   },
   {
@@ -114,7 +115,7 @@ export const GUARDRAIL_KINDS = [
     label: 'Personal information',
     description: 'Asks a model to detect personal information in the messages.',
     defaults: { pif_items: PERSONAL_INFORMATIONS },
-    fields: [validator, { name: 'pif_items', label: 'Information kinds', kind: 'checks', options: PERSONAL_INFORMATIONS }, errMsg],
+    fields: [validator, validatorModel, { name: 'pif_items', label: 'Information kinds', kind: 'checks', options: PERSONAL_INFORMATIONS }, errMsg],
     llm: true,
   },
   {
@@ -122,7 +123,7 @@ export const GUARDRAIL_KINDS = [
     label: 'Secrets leakage',
     description: 'Asks a model to detect api keys, passwords, tokens or private keys.',
     defaults: { secrets_leakage_items: SECRETS },
-    fields: [validator, { name: 'secrets_leakage_items', label: 'Secret kinds', kind: 'checks', options: SECRETS }, errMsg],
+    fields: [validator, validatorModel, { name: 'secrets_leakage_items', label: 'Secret kinds', kind: 'checks', options: SECRETS }, errMsg],
     llm: true,
   },
   {
@@ -130,16 +131,19 @@ export const GUARDRAIL_KINDS = [
     label: 'Language moderation',
     description: 'Asks a model to detect hate, harassment, violence, sexual content…',
     defaults: { moderation_items: MODERATION_CATEGORIES },
-    fields: [validator, { name: 'moderation_items', label: 'Categories', kind: 'checks', options: MODERATION_CATEGORIES }, errMsg],
+    fields: [validator, validatorModel, { name: 'moderation_items', label: 'Categories', kind: 'checks', options: MODERATION_CATEGORIES }, errMsg],
     llm: true,
   },
-  { id: 'toxic_language', label: 'Toxic language', description: 'Asks a model to detect toxic language.', fields: [validator, errMsg], llm: true },
-  { id: 'gibberish', label: 'Gibberish', description: 'Asks a model to detect meaningless content.', fields: [validator, errMsg], llm: true },
+  { id: 'toxic_language', label: 'Toxic language', description: 'Asks a model to detect toxic language.', fields: [validator, validatorModel, errMsg], llm: true },
+  { id: 'gibberish', label: 'Gibberish', description: 'Asks a model to detect meaningless content.', fields: [validator, validatorModel, errMsg], llm: true },
   {
     id: 'moderation_model',
     label: 'Moderation model',
     description: 'Uses a moderation model of this workspace (e.g. omni-moderation) to flag harmful content.',
-    fields: [{ name: 'moderation_model', label: 'Moderation model', kind: 'moderation_model' }],
+    fields: [
+      { name: 'moderation_model', label: 'Moderation model', kind: 'moderation_model' },
+      { name: 'model', label: 'Model', kind: 'text', hint: 'Leave empty to use the default model of the moderation model.' },
+    ],
   },
   {
     id: 'webhook',
@@ -159,7 +163,7 @@ export function summaryOf(item, providers) {
   if (kind.summary) return kind.summary(item.config || {});
   if (kind.llm) {
     const p = providers.find((x) => x.id === (item.config || {}).provider);
-    return p ? `judged by ${p.name}` : 'no validation model';
+    return p ? `judged by ${p.name}${(item.config || {}).model ? ` (${item.config.model})` : ''}` : 'no validation model';
   }
   if (item.id === 'moderation_model') return (item.config || {}).moderation_model ? 'moderation model set' : 'no moderation model';
   return '';

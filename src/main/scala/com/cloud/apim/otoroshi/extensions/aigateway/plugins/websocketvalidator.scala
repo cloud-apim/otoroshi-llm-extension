@@ -43,7 +43,7 @@ class AiWebsocketMessageValidator extends NgWebsocketValidatorPlugin {
     given mat: Materializer = env.otoroshiMaterializer
     if (message.isText) {
       message.str().flatMap { str =>
-        env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref)) match {
+        env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(config.ref).map(_.withModel(config.model))) match {
           case None => Left(NgWebsocketError(CloseCodes.ProtocolError, "provider not found")).vfuture
           case Some(provider) => provider.getChatClient() match {
             case None => Left(NgWebsocketError(CloseCodes.ProtocolError, "client not found")).vfuture

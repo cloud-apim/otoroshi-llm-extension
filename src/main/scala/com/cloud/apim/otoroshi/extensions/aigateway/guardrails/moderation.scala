@@ -25,7 +25,8 @@ class ModerationGuardrail extends Guardrail {
     ext.states.moderationModel(moderationModelRef) match {
       case None => GuardrailResult.GuardrailError("Moderation model not found").vfuture
       case Some(moderation) => {
-        moderation.getModerationModelClient() match {
+        // the model of the moderation model entity to use, its default model when empty
+        moderation.withModel(config.select("model").asOptString).getModerationModelClient() match {
           case None => GuardrailResult.GuardrailError("Moderation client not found").vfuture
           case Some(client) => {
             val opts = ModerationModelClientInputOptions.textArray(messages.map(_.wholeTextContent))

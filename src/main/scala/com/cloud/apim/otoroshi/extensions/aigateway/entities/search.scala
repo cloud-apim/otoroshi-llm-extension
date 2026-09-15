@@ -92,9 +92,11 @@ case class SearchEngine(
       case "rag" | "vector" => {
         val storeId = config.select("embedding_store").asOpt[String].getOrElse("")
         val modelId = config.select("embedding_model").asOpt[String].getOrElse("")
+        // the model of the embedding model entity to use, its default model when empty
+        val modelName = config.select("embedding_model_name").asOptString.map(_.trim).filter(_.nonEmpty)
         val maxResults = options.select("max_results").asOpt[Int].getOrElse(5)
         val minScore = options.select("min_score").asOpt[Double].getOrElse(0.5)
-        new RagSearchClient(storeId, modelId, maxResults, minScore, id).some
+        new RagSearchClient(storeId, modelId, maxResults, minScore, id, modelName).some
       }
       case _ => None
     }

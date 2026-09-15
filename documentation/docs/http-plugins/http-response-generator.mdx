@@ -29,6 +29,7 @@ This is useful for creating AI-powered endpoints that generate content entirely 
   "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AiResponseGenerator",
   "config": {
     "ref": "provider-entity-id",
+    "model": null,
     "prompt": "Generate a random motivational quote in JSON format: {\"quote\": \"...\", \"author\": \"...\"}",
     "prompt_ref": null,
     "context_ref": null,
@@ -44,6 +45,7 @@ This is useful for creating AI-powered endpoints that generate content entirely 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `ref` | string | `""` | LLM Provider entity ID |
+| `model` | string | `null` | Model of the LLM provider to use, its default model when empty |
 | `prompt` | string | `""` | The prompt to send to the LLM |
 | `prompt_ref` | string | `null` | Reference to a stored prompt entity |
 | `context_ref` | string | `null` | Reference to a stored context entity for pre/post messages |

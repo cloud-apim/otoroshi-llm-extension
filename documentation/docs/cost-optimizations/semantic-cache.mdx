@@ -44,6 +44,7 @@ The cache is configured on the **LLM Provider entity** in the `cache` section:
 | `ttl` | number (ms) | `86400000` (24h) | Time-to-live for cached entries in milliseconds |
 | `score` | number (0-1) | `0.8` | Minimum cosine similarity score for a semantic match. Higher values require closer matches. |
 | `embedding_ref` | string | — | Optional reference to an Embedding Model entity to use instead of the built-in AllMiniLmL6V2 |
+| `embedding_model` | string | default model of the embedding model | Model of that Embedding Model entity to use |
 | `redis_url` | string | — | Optional Redis URL to use Redis Stack as cache and vector search backend |
 
 ### Score tuning
@@ -74,10 +75,14 @@ You can use any embedding model registered in the extension instead of the built
     "strategy": "semantic",
     "ttl": 300000,
     "score": 0.85,
-    "embedding_ref": "embedding-model_xxxxx"
+    "embedding_ref": "embedding-model_xxxxx",
+    "embedding_model": "text-embedding-3-small"
   }
 }
 ```
+
+`embedding_model` is optional: without it, the default model of the Embedding Model entity is used. The cached
+vectors are only comparable with vectors of the same model, so changing the model starts a fresh cache.
 
 This lets you use a higher-quality model (OpenAI, Mistral, Cohere, etc.) for cache matching. If the referenced model is unavailable or returns an error, the cache falls back to the built-in AllMiniLmL6V2 automatically.
 

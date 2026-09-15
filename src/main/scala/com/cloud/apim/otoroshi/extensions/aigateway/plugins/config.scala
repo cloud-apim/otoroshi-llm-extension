@@ -19,7 +19,7 @@ object AiPluginsKeys {
   val PromptValidatorsKey = TypedKey[Seq[PromptValidatorConfig]]("cloud-apim.ai-gateway.PromptValidators")
 }
 
-case class AiPromptRequestConfig(ref: String = "", _prompt: String = "", promptRef: Option[String] = None, contextRef: Option[String] = None, extractor: Option[String] = None) extends NgPluginConfig {
+case class AiPromptRequestConfig(ref: String = "", _prompt: String = "", promptRef: Option[String] = None, contextRef: Option[String] = None, extractor: Option[String] = None, model: Option[String] = None) extends NgPluginConfig {
   def json: JsValue = AiPromptRequestConfig.format.writes(this)
   def preChatMessages(using env: Env): Seq[InputChatMessage] = {
     contextRef match {
@@ -63,6 +63,7 @@ object AiPromptRequestConfig {
     override def reads(json: JsValue): JsResult[AiPromptRequestConfig] = Try {
       AiPromptRequestConfig(
         ref = json.select("ref").asOpt[String].getOrElse(""),
+        model = json.select("model").asOpt[String].map(_.trim).filter(_.nonEmpty),
         _prompt = json.select("prompt").asOpt[String].getOrElse(""),
         promptRef = json.select("prompt_ref").asOpt[String].filterNot(_.isBlank),
         contextRef = json.select("context_ref").asOpt[String].filterNot(_.isBlank),
@@ -74,13 +75,14 @@ object AiPromptRequestConfig {
     }
     override def writes(o: AiPromptRequestConfig): JsValue = Json.obj(
       "ref" -> o.ref,
+      "model" -> o.model.map(_.json).getOrElse(JsNull).asValue,
       "prompt" -> o._prompt,
       "prompt_ref" -> o.promptRef.map(_.json).getOrElse(JsNull).asValue,
       "context_ref" -> o.contextRef.map(_.json).getOrElse(JsNull).asValue,
       "extractor" -> o.extractor.map(_.json).getOrElse(JsNull).asValue,
     )
   }
-  val configFlow: Seq[String] = Seq("ref", "prompt", "prompt_ref", "context_ref", "extractor")
+  val configFlow: Seq[String] = Seq("ref", "model", "prompt", "prompt_ref", "context_ref", "extractor")
   def configSchema(what: String): Option[JsObject] = Some(Json.obj(
     "prompt" -> Json.obj(
       "type" -> "text",
@@ -114,6 +116,11 @@ object AiPromptRequestConfig {
       "type" -> "string",
       "suffix" -> "regex",
       "label" -> "Response extractor"
+    ),
+    "model" -> Json.obj(
+      "type" -> "string",
+      "label" -> "Model",
+      "props" -> Json.obj("placeholder" -> "Default model of the provider"),
     ),
     "ref" -> Json.obj(
       "type" -> "select",
