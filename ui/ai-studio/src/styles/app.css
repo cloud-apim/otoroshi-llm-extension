@@ -396,6 +396,8 @@ a.btn { text-decoration: none; }
 }
 .input:disabled, select:disabled, textarea:disabled { background: var(--selected); color: var(--muted); }
 .input:focus, select:focus, textarea:focus { border-color: var(--grape); box-shadow: 0 0 0 3px var(--accent-subtle); }
+/* fields have their own focus ring, the global focus outline would draw a second one */
+.input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; }
 .input.sm, select.sm { padding: 6px 10px; }
 select.sm { padding-right: 32px; }
 select {
@@ -627,8 +629,6 @@ dialog.modal::backdrop { background: rgba(3, 8, 10, 0.35); }
 .chat-side { border-right: 1px solid var(--border); background: var(--surface); overflow: auto; display: flex; flex-direction: column; gap: 10px; padding: 16px 14px; }
 .chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chat > * { min-height: 0; }
-.msg .bubble hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
-.msg .bubble .md-h { font-weight: 650; display: inline-block; margin-top: 4px; }
 .chat-head { display: flex; border-bottom: 1px solid var(--border); background: var(--surface); align-items: center; gap: 10px; padding: 12px 20px; }
 .chat-msgs { overflow: auto; flex: 1 1 0%; padding: 24px 0; }
 .chat-msgs .inner { display: flex; flex-direction: column; gap: 18px; max-width: 820px; margin: 0 auto; padding: 0 20px; }
@@ -645,8 +645,41 @@ dialog.modal::backdrop { background: rgba(3, 8, 10, 0.35); }
 .thinking-body { color: var(--muted); font-size: 13px; border-left: 2px solid var(--border-strong); padding: 4px 0 4px 10px; margin-top: 6px; max-height: 260px; overflow: auto; }
 .msg .meta { color: var(--faint); display: flex; gap: 12px; font-size: 12px; }
 .msg .bubble img { max-width: 100%; border-radius: 8px; }
+.msg.assistant:not(.error) .bubble { white-space: normal; }
+
+/* markdown of the model answers */
+.md { min-width: 0; overflow-wrap: anywhere; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md.plain { white-space: pre-wrap; }
+.md p, .md ul, .md ol, .md blockquote, .md .md-table, .md .md-code, .md hr { margin: 0 0 10px; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 16px 0 8px; line-height: 1.3; font-weight: 650; }
+.md h1 { font-size: 20px; }
+.md h2 { font-size: 17px; }
+.md h3 { font-size: 15px; }
+.md h4, .md h5, .md h6 { font-size: 14px; }
+.md ul, .md ol { padding-left: 22px; }
+.md li + li { margin-top: 3px; }
+.md li > ul, .md li > ol, .md li > p { margin: 4px 0; }
+.md li.task { list-style: none; margin-left: -20px; }
+.md li.task input { margin: 0 6px 0 0; vertical-align: middle; }
+.md blockquote { border-left: 3px solid var(--border-strong); color: var(--muted); padding: 2px 0 2px 12px; }
+.md a { color: var(--accent-text); text-decoration: underline; text-underline-offset: 2px; }
+.md hr { border: 0; border-top: 1px solid var(--border); }
+.md img { max-width: 100%; border-radius: 8px; }
+.md code { font-size: 0.9em; }
+.md-table { max-width: 100%; overflow-x: auto; }
+.md-table table { border-collapse: collapse; font-size: 13px; }
+.md-table th, .md-table td { border: 1px solid var(--border); text-align: left; padding: 6px 10px; }
+.md-table th { background: var(--code-bg); font-weight: 600; }
+.md-code { border: 1px solid var(--pre-border); overflow: hidden; background: var(--pre-bg); border-radius: var(--radius); }
+.md-code-head { display: flex; border-bottom: 1px solid rgba(255, 255, 255, 0.08); color: rgba(230, 232, 235, 0.6); font-family: var(--mono); justify-content: space-between; align-items: center; font-size: 12px; padding: 2px 4px 2px 14px; }
+.md-code-head .copy-btn { color: inherit; }
+.md-code-head .copy-btn:hover { background: rgba(255, 255, 255, 0.08); color: rgb(230, 232, 235); }
+.md-code pre { border: 0; border-radius: 0; white-space: pre; overflow-wrap: normal; }
 .chat-input { background: linear-gradient(transparent, var(--cloud) 30%); padding: 16px 20px 22px; }
 .chat-input .box { background: var(--surface); border: 1px solid var(--border-strong); display: flex; border-radius: 16px; flex-direction: column; gap: 8px; max-width: 820px; margin: 0 auto; padding: 10px 12px; }
+.chat-input .box:focus-within { border-color: var(--accent-border); }
 .chat-input textarea { border: 0; min-height: 44px; padding: 6px 4px; box-shadow: none !important; background: transparent; }
 .chat-input .disclaimer { text-align: center; color: var(--faint); font-size: 12px; margin-top: 8px; }
 .send { background: var(--grape); color: #fff; display: grid; cursor: pointer; border: 0; border-radius: 50%; place-items: center; width: 36px; height: 36px; flex-shrink: 0; }

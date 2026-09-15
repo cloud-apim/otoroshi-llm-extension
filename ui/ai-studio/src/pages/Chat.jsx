@@ -1,7 +1,8 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useWorkspace } from '../App';
 import { Field, NumberInput, Select, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
+import { Markdown } from '../components/Markdown';
 import { chatCompletion } from '../lib/chat';
 import { Resources, randomId, workspaceFilter } from '../lib/entities';
 import { fmtInt, fmtMs } from '../lib/format';
@@ -31,52 +32,6 @@ function storageSet(key, value) {
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
   } catch (e) {}
-}
-
-// very small markdown renderer: fenced code blocks, inline code and bold, everything else as text
-function Markdown({ text }) {
-  const parts = useMemo(() => {
-    const out = [];
-    const re = /```([\w-]*)\n?([\s\S]*?)(```|$)/g;
-    let last = 0;
-    let m;
-    while ((m = re.exec(text))) {
-      if (m.index > last) out.push({ kind: 'text', value: text.substring(last, m.index) });
-      out.push({ kind: 'code', value: m[2], lang: m[1] });
-      last = re.lastIndex;
-      if (m[3] === '') break;
-    }
-    if (last < text.length) out.push({ kind: 'text', value: text.substring(last) });
-    return out;
-  }, [text]);
-  return parts.map((p, i) =>
-    p.kind === 'code' ? (
-      <pre key={i} style={{ margin: '8px 0', whiteSpace: 'pre' }}>
-        <code>{p.value}</code>
-      </pre>
-    ) : (
-      <Fragment key={i}>{inline(p.value)}</Fragment>
-    )
-  );
-}
-
-function inline(text) {
-  // headings and horizontal rules, line by line
-  return text.split(/(\n)/).map((line, idx) => {
-    if (/^\s*(\*\*\*|---|___)\s*$/.test(line)) return <hr key={idx} />;
-    const h = line.match(/^\s*#{1,6}\s+(.*)$/);
-    if (h) return <span key={idx} className="md-h">{inlineSpans(h[1])}</span>;
-    return <Fragment key={idx}>{inlineSpans(line)}</Fragment>;
-  });
-}
-
-function inlineSpans(text) {
-  const tokens = text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*)/g);
-  return tokens.map((t, i) => {
-    if (t.startsWith('`') && t.endsWith('`') && t.length > 2) return <code key={i}>{t.substring(1, t.length - 1)}</code>;
-    if (t.startsWith('**') && t.endsWith('**') && t.length > 4) return <b key={i}>{t.substring(2, t.length - 2)}</b>;
-    return <Fragment key={i}>{t}</Fragment>;
-  });
 }
 
 function ModelPicker({ value, onChange, models }) {
@@ -306,7 +261,9 @@ export function ChatPage() {
                       {m.reasoning && (
                         <details className="thinking" open={m.pending && !m.content}>
                           <summary>{m.pending && !m.content ? 'Thinking…' : 'Thought process'}</summary>
-                          <div className="thinking-body">{m.reasoning}</div>
+                          <div className="thinking-body">
+                            <Markdown text={m.reasoning} />
+                          </div>
                         </details>
                       )}
                       {m.role === 'assistant' && !m.error ? <Markdown text={m.content || (m.pending && !m.reasoning ? '…' : '')} /> : m.content}
