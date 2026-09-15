@@ -350,8 +350,6 @@ class AiStudio(env: Env, ext: AiExtension) {
     }
   }
 
-  // Lists the models reachable through the workspace endpoint, with the same ids as the
-  // `/models` endpoint of the OpenAI compatible plugin (`<provider>/<model>` when several providers).
   def handleWorkspaceModels(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
     user match {
       case None => unauthorized
@@ -360,88 +358,95 @@ class AiStudio(env: Env, ext: AiExtension) {
         val force = req.getQueryString("force").contains("true")
         withWorkspaceRoute(wsId, u, write = false) { route =>
           val config = route.plugins.slots.find(_.plugin == openAiCompatPlugin).map(_.config.raw).getOrElse(Json.obj())
-          def refs(key: String): Seq[String] = config.select(key).asOpt[Seq[String]].getOrElse(Seq.empty)
-          val textRefs = refs("language_model_refs")
-          val now = System.currentTimeMillis() / 1000
-          val fuText: Future[Seq[(JsObject, Seq[JsObject])]] = Future.sequence(textRefs.map { ref =>
-            ext.datastores.providersDatastore.findById(ref).flatMap {
-              case None => (Json.obj("id" -> ref, "error" -> "provider not found"), Seq.empty[JsObject]).vfuture
-              case Some(provider) =>
-                val info = Json.obj(
-                  "id" -> provider.id,
-                  "name" -> provider.name,
-                  "slug" -> provider.slugName,
-                  "kind" -> provider.provider,
-                  "modality" -> "text",
-                  "default_model" -> provider.options.select("model").asOptString.map(JsString.apply).getOrElse(JsNull).as[JsValue],
-                )
-                // a router only lists the routing models that have candidates
-                def usable(model: String): Boolean = provider.provider != "otoroshi" ||
-                  provider.options.select(s"${model.replace("-", "_")}_refs").asOpt[JsArray].exists(_.value.nonEmpty)
-                def toModels(models: Seq[String]): Seq[JsObject] = models.filter(usable).map { model =>
-                  val id = if (textRefs.size == 1) model else if (model.contains("/")) s"${provider.slugName}###$model" else s"${provider.slugName}/$model"
-                  Json.obj("id" -> id, "model" -> model, "provider" -> provider.slugName, "provider_id" -> provider.id, "provider_kind" -> provider.provider, "modality" -> "text", "created" -> now)
-                }
-                val token = provider.connection.select("token").asOptString.getOrElse("--")
-                val key = s"${provider.id}-$token".sha256
-                ext.modelsCache.getIfPresent(key).filterNot(_ => force) match {
-                  case Some(models) => (info, toModels(models)).vfuture
-                  case None =>
-                    provider.getChatClient() match {
-                      case None => (info ++ Json.obj("error" -> "no client"), Seq.empty[JsObject]).vfuture
-                      case Some(client) =>
-                        client.listModels(false, otoroshi.utils.TypedMap.empty).map {
-                          case Left(err) =>
-                            val fallback = provider.options.select("model").asOptString.toSeq
-                            (info ++ Json.obj("error" -> err), toModels(fallback))
-                          case Right(models) =>
-                            ext.modelsCache.put(key, models)
-                            (info, toModels(models))
-                        }.recover { case e: Throwable =>
-                          (info ++ Json.obj("error" -> e.getMessage), toModels(provider.options.select("model").asOptString.toSeq))
-                        }
-                    }
-                }
-            }
-          })
-          val others: Seq[(String, String, String => Future[Option[JsValue]])] = Seq(
-            ("embedding", "embedding_model_refs", id => ext.datastores.embeddingModelsDataStore.findById(id).map(_.map(_.json))),
-            ("image", "image_model_refs", id => ext.datastores.imageModelsDataStore.findById(id).map(_.map(_.json))),
-            ("audio", "audio_model_refs", id => ext.datastores.AudioModelsDataStore.findById(id).map(_.map(_.json))),
-            ("moderation", "moderation_model_refs", id => ext.datastores.moderationModelsDataStore.findById(id).map(_.map(_.json))),
-            ("ocr", "ocr_model_refs", id => ext.datastores.ocrModelsDataStore.findById(id).map(_.map(_.json))),
-          )
-          val fuOthers: Future[Seq[(JsObject, Seq[JsObject])]] = Future.sequence(others.flatMap { case (modality, key, find) =>
-            val all = refs(key)
-            all.map { ref =>
-              find(ref).map {
-                case None => (Json.obj("id" -> ref, "modality" -> modality, "error" -> "entity not found"), Seq.empty[JsObject])
-                case Some(entity) =>
-                  val name = entity.select("name").asOptString.getOrElse(ref)
-                  val slug = entity.select("metadata").select("endpoint_name").asOptString
-                    .orElse(entity.select("metadata").select("provider_name").asOptString)
-                    .getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
-                  val model = modelOf(entity.select("config").asOpt[JsValue].getOrElse(Json.obj()), modality)
-                  val info = Json.obj("id" -> ref, "name" -> name, "slug" -> slug, "kind" -> entity.select("provider").asOptString.getOrElse("--").json, "modality" -> modality, "default_model" -> model.map(JsString.apply).getOrElse(JsNull).as[JsValue])
-                  val models = model.toSeq.map { m =>
-                    val id = if (all.size == 1) m else if (m.contains("/")) s"$slug###$m" else s"$slug/$m"
-                    Json.obj("id" -> id, "model" -> m, "provider" -> slug, "provider_id" -> ref, "provider_kind" -> entity.select("provider").asOptString.getOrElse("--").json, "modality" -> modality, "created" -> now)
-                  }
-                  (info, models)
-              }
-            }
-          })
-          for {
-            text <- fuText
-            other <- fuOthers
-          } yield {
-            val all = text ++ other
-            Results.Ok(Json.obj(
-              "providers" -> JsArray(all.map(_._1)),
-              "models" -> JsArray(all.flatMap(_._2)),
-            ))
-          }
+          workspaceModels(config, force).map(json => Results.Ok(json))
         }
+    }
+  }
+
+  // Lists the models reachable through the workspace endpoint, with the same ids as the
+  // `/models` endpoint of the OpenAI compatible plugin (`<provider>/<model>` when several providers).
+  // `config` is the config of the OpenAI compatible plugin of the workspace route.
+  def workspaceModels(config: JsValue, force: Boolean): Future[JsObject] = {
+    def refs(key: String): Seq[String] = config.select(key).asOpt[Seq[String]].getOrElse(Seq.empty)
+    val textRefs = refs("language_model_refs")
+    val now = System.currentTimeMillis() / 1000
+    val fuText: Future[Seq[(JsObject, Seq[JsObject])]] = Future.sequence(textRefs.map { ref =>
+      ext.datastores.providersDatastore.findById(ref).flatMap {
+        case None => (Json.obj("id" -> ref, "error" -> "provider not found"), Seq.empty[JsObject]).vfuture
+        case Some(provider) =>
+          val info = Json.obj(
+            "id" -> provider.id,
+            "name" -> provider.name,
+            "slug" -> provider.slugName,
+            "kind" -> provider.provider,
+            "modality" -> "text",
+            "default_model" -> provider.options.select("model").asOptString.map(JsString.apply).getOrElse(JsNull).as[JsValue],
+          )
+          // a router only lists the routing models that have candidates
+          def usable(model: String): Boolean = provider.provider != "otoroshi" ||
+            provider.options.select(s"${model.replace("-", "_")}_refs").asOpt[JsArray].exists(_.value.nonEmpty)
+          def toModels(models: Seq[String]): Seq[JsObject] = models.filter(usable).map { model =>
+            val id = if (textRefs.size == 1) model else if (model.contains("/")) s"${provider.slugName}###$model" else s"${provider.slugName}/$model"
+            Json.obj("id" -> id, "model" -> model, "provider" -> provider.slugName, "provider_id" -> provider.id, "provider_kind" -> provider.provider, "modality" -> "text", "created" -> now)
+          }
+          val token = provider.connection.select("token").asOptString.getOrElse("--")
+          val key = s"${provider.id}-$token".sha256
+          ext.modelsCache.getIfPresent(key).filterNot(_ => force) match {
+            case Some(models) => (info, toModels(models)).vfuture
+            case None =>
+              provider.getChatClient() match {
+                case None => (info ++ Json.obj("error" -> "no client"), Seq.empty[JsObject]).vfuture
+                case Some(client) =>
+                  client.listModels(false, otoroshi.utils.TypedMap.empty).map {
+                    case Left(err) =>
+                      val fallback = provider.options.select("model").asOptString.toSeq
+                      (info ++ Json.obj("error" -> err), toModels(fallback))
+                    case Right(models) =>
+                      ext.modelsCache.put(key, models)
+                      (info, toModels(models))
+                  }.recover { case e: Throwable =>
+                    (info ++ Json.obj("error" -> e.getMessage), toModels(provider.options.select("model").asOptString.toSeq))
+                  }
+              }
+          }
+      }
+    })
+    val others: Seq[(String, String, String => Future[Option[JsValue]])] = Seq(
+      ("embedding", "embedding_model_refs", id => ext.datastores.embeddingModelsDataStore.findById(id).map(_.map(_.json))),
+      ("image", "image_model_refs", id => ext.datastores.imageModelsDataStore.findById(id).map(_.map(_.json))),
+      ("audio", "audio_model_refs", id => ext.datastores.AudioModelsDataStore.findById(id).map(_.map(_.json))),
+      ("moderation", "moderation_model_refs", id => ext.datastores.moderationModelsDataStore.findById(id).map(_.map(_.json))),
+      ("ocr", "ocr_model_refs", id => ext.datastores.ocrModelsDataStore.findById(id).map(_.map(_.json))),
+    )
+    val fuOthers: Future[Seq[(JsObject, Seq[JsObject])]] = Future.sequence(others.flatMap { case (modality, key, find) =>
+      val all = refs(key)
+      all.map { ref =>
+        find(ref).map {
+          case None => (Json.obj("id" -> ref, "modality" -> modality, "error" -> "entity not found"), Seq.empty[JsObject])
+          case Some(entity) =>
+            val name = entity.select("name").asOptString.getOrElse(ref)
+            val slug = entity.select("metadata").select("endpoint_name").asOptString
+              .orElse(entity.select("metadata").select("provider_name").asOptString)
+              .getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
+            val model = modelOf(entity.select("config").asOpt[JsValue].getOrElse(Json.obj()), modality)
+            val info = Json.obj("id" -> ref, "name" -> name, "slug" -> slug, "kind" -> entity.select("provider").asOptString.getOrElse("--").json, "modality" -> modality, "default_model" -> model.map(JsString.apply).getOrElse(JsNull).as[JsValue])
+            val models = model.toSeq.map { m =>
+              val id = if (all.size == 1) m else if (m.contains("/")) s"$slug###$m" else s"$slug/$m"
+              Json.obj("id" -> id, "model" -> m, "provider" -> slug, "provider_id" -> ref, "provider_kind" -> entity.select("provider").asOptString.getOrElse("--").json, "modality" -> modality, "created" -> now)
+            }
+            (info, models)
+        }
+      }
+    })
+    for {
+      text <- fuText
+      other <- fuOthers
+    } yield {
+      val all = text ++ other
+      Json.obj(
+        "providers" -> JsArray(all.map(_._1)),
+        "models" -> JsArray(all.flatMap(_._2)),
+      )
     }
   }
 

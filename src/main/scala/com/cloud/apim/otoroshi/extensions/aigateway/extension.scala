@@ -3,7 +3,7 @@ package otoroshi_plugins.com.cloud.apim.extensions.aigateway
 import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.OtoroshiAssistant
-import com.cloud.apim.otoroshi.extensions.aigateway.studio.AiStudio
+import com.cloud.apim.otoroshi.extensions.aigateway.studio.{AiStudio, AiStudioApi}
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsTracking, CostsTrackingSettings, LLMImpacts, LLMImpactsSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.*
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHardcodedItems
@@ -244,6 +244,7 @@ class AiExtension(val env: Env) extends AdminExtension {
 
   lazy val assistant = new OtoroshiAssistant(env, this)
   lazy val studio = new AiStudio(env, this)
+  lazy val studioApi = new AiStudioApi(env, this)
   // one alert when a provider endpoint starts refusing calls on quota grounds, one when it serves again
   lazy val quotaAlertsEnabled = configuration.getOptional[Boolean]("quota-alerts.enabled").getOrElse(true)
   lazy val budgetsEnabled = configuration.getOptional[Boolean]("budgets.enabled").getOrElse(true)
@@ -877,7 +878,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       wantsBody = false,
       handle = handleModelCapabilities,
     )
-  )
+  ) ++ studioApi.routes
 
   override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = Seq(
     AdminExtensionBackofficeAuthRoute(

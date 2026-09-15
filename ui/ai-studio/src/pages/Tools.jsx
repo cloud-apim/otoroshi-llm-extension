@@ -63,7 +63,7 @@ function ToolModal({ workspace, kind, tool, providers, onClose, onSaved }) {
           transport: { kind: 'http', options: { url: form.url, headers: form.headers, timeout: Number(form.timeout) } },
         };
       } else {
-        base = tool && tool.provider === form.search_provider ? tool : await Resources.searchEngines.template({ provider: form.search_provider });
+        base = tool && tool.provider === form.search_provider ? tool : await Resources.searchEngines.template({ kind: form.search_provider });
         const prev = (base.config && base.config.connection) || {};
         patch = {
           name: form.name,

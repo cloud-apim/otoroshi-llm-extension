@@ -13,6 +13,10 @@ extension at `/extensions/cloud-apim/ai-studio` (backoffice session required) an
   page, the provider catalog, the models listing, the chat (the OpenAI compatible plugin of the
   workspace route invoked in process for the backoffice user, without api key) and the chat conversations storage
 - usage and logs come from the otoroshi user analytics (LLM usage projection of the extension)
+- `src/main/scala/.../studio/api.scala` offers the same operations as a workspace scoped admin api
+  (`/api/extensions/cloud-apim/extensions/ai-extension/studio`), producing the very same entities: when
+  you change what the front writes (ids, metadata, plugin configs, defaults), mirror it there and in
+  `StudioApiSuite`
 
 ## Workspace mapping
 

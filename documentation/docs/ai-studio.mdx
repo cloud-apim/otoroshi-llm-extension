@@ -195,6 +195,59 @@ route in the backoffice.
 
 *The settings of a workspace.*
 
+## Automate with the admin API
+
+Everything you do in a workspace can also be scripted with the **AI Studio admin API**: provision a
+workspace per team from your onboarding pipeline, connect providers from your CI, hand out API keys with a
+credit limit from your developer portal. The API speaks the same language as the studio (providers,
+capabilities, credits, presets…) and produces exactly the same entities, so a workspace created by script
+opens in the studio as if you had created it by hand, and the other way around.
+
+The API is served by the Otoroshi admin API under
+`/api/extensions/cloud-apim/extensions/ai-extension/studio` and uses the same credentials. Every change is
+recorded in the Otoroshi audit trail.
+
+```sh
+export OTO_API='https://otoroshi-api.oto.tools/api/extensions/cloud-apim/extensions/ai-extension/studio'
+export OTO_AUTH='admin-api-apikey-id:admin-api-apikey-secret'
+
+# create a workspace, exposed on https://support-bot.<workspaces domain>/v1
+curl -u $OTO_AUTH -X POST "$OTO_API/workspaces" -H 'Content-Type: application/json' \
+  -d '{ "name": "Support bot", "description": "The assistant of the support team" }'
+
+# connect OpenAI with text and embeddings
+curl -u $OTO_AUTH -X POST "$OTO_API/workspaces/<workspace id>/providers" -H 'Content-Type: application/json' \
+  -d '{ "kind": "openai", "token": "sk-...", "modalities": { "text": { "model": "gpt-4o-mini" }, "embedding": {} } }'
+
+# create an API key with a monthly credit of $50, the response contains its bearer token
+curl -u $OTO_AUTH -X POST "$OTO_API/workspaces/<workspace id>/apikeys" -H 'Content-Type: application/json' \
+  -d '{ "name": "support-app", "credit_limit": { "usd": 50, "period": "monthly" } }'
+```
+
+When a request omits a field of an existing object, its current value is kept, so `PUT` and `PATCH` can
+send only what changes. Fields left out at creation get the same defaults as in the studio (suggested
+models from the catalog, workspace quotas, every provider selected for a preset or a tool, and so on).
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /catalog` | The providers you can connect, with their capabilities, suggested models and connection fields. |
+| `GET` `POST /workspaces` | List or create workspaces (`name`, `description`, `slug`). The `Otoroshi-Tenant` header sets the tenant of a new workspace. |
+| `GET` `PUT` `PATCH` `DELETE /workspaces/:id` | Read, update or delete a workspace: `name`, `description`, `enabled`, `slug`, `call_timeout`, `global_timeout`, `max_size_upload`, `decode_images`, `allowed_ip_addresses`, `blocked_ip_addresses`. Deleting a workspace deletes all of its entities. |
+| `GET /workspaces/:id/models` | Every model reachable through the workspace endpoint, with the id to use in requests (`?force=true` refreshes the lists of models). |
+| `GET` `POST /workspaces/:id/providers` | List or connect providers: `kind`, `name`, `token`, `base_url`, `timeout`, `enabled`, `fields` and `modalities` (`text`, `embedding`, `image`, `audio`, `moderation`, `ocr`, `video`, each with `enabled`, `model`, and `stt_model` for audio). |
+| `GET` `PUT` `DELETE /workspaces/:id/providers/:provider` | Read, update or remove a provider and all of its capabilities. |
+| `GET /workspaces/:id/providers/:provider/models`, `POST /workspaces/:id/providers/_models` | The models offered by a connected provider, or by a provider before connecting it. |
+| `GET` `POST /workspaces/:id/apikeys`, `GET` `PUT` `DELETE /workspaces/:id/apikeys/:clientId` | API keys: `name`, `description`, `enabled`, `quotas` (`null` for the workspace defaults) and `credit_limit` (`{ usd, period }`, `null` to remove it). |
+| `GET` `POST /workspaces/:id/budgets`, `GET` `PUT` `DELETE /workspaces/:id/budgets/:budget` | Credits: `name`, `usd`, `tokens`, `period` (`lifetime`, `daily`, `weekly`, `monthly`, `yearly`), `mode` (`block` or `soft`), `alert`, `scope` (`workspace`, `apikey` or `custom`) with `apikeys`, `users`, `models` and `rules`. `?consumption=true` adds the live consumption to the list. |
+| `GET /workspaces/:id/budgets/:budget/consumption`, `POST .../consumption/_reset` | Live consumption of a budget, and reset of its current window (`?all=true` resets everything). |
+| `GET` `PUT /workspaces/:id/guardrails` | Content policies of the workspace (`items`, `fail_on_deny`), applied to every provider. |
+| `GET` `PUT /workspaces/:id/model-access` | Models the workspace may call (`include`, `exclude`). |
+| `GET` `PUT /workspaces/:id/routing` | Default provider (`default_provider`) and fallbacks (`fallbacks`: provider id to fallback id, `null` to remove). |
+| `/workspaces/:id/load-balancers[/:id]`, `/workspaces/:id/routers[/:id]` | Load balancers (`name`, `strategy`, `targets`) and [Otoroshi routers](/docs/llm-gateway/otoroshi-router) (candidates, judges and settings of the code, auto and fusion routers). |
+| `/workspaces/:id/presets[/:id]` | Presets: `name`, `description`, `system`, `trailing`, `providers`. |
+| `/workspaces/:id/tools/functions[/:id]`, `/tools/mcp[/:id]`, `/tools/search[/:id]` | HTTP functions, MCP connectors and web search engines, with the `providers` they are available on. |
+| `POST /workspaces/:id/analytics/_query` | Runs the LLM analytics queries of the extension (`cloudapim_llm_*`) on the calls of the workspace only, the same data as the Activity and Logs pages. |
+
 ## Setup
 
 AI Studio is configured in the global Otoroshi configuration (**Danger Zone**), in the **AI Studio**
