@@ -19,6 +19,89 @@ const TABS = [
 
 const DEFAULT_PERIOD = '7d';
 
+// impacts are tiny per call: pick the unit that keeps a readable number
+const scaled = (units) => (v) => {
+  const n = Number(v) || 0;
+  if (n === 0) return `0 ${(units.find(([f]) => f === 1) || units[0])[1]}`;
+  const [factor, unit] = units.find(([f]) => Math.abs(n) >= f) || units[units.length - 1];
+  const x = n / factor;
+  return `${x >= 100 ? x.toFixed(0) : x >= 10 ? x.toFixed(1) : x.toFixed(2)} ${unit}`;
+};
+const fmtGrams = scaled([[1000000, 't'], [1000, 'kg'], [1, 'g'], [0.001, 'mg']]);
+const fmtWh = scaled([[1000000, 'MWh'], [1000, 'kWh'], [1, 'Wh'], [0.001, 'mWh']]);
+const fmtLiters = scaled([[1000, 'm³'], [1, 'L'], [0.001, 'mL']]);
+
+// EcoLogits estimates: emissions (electricity drawn while inferring, and the share of the hardware manufacturing
+// the calls used up), energy and water
+function ImpactSection({ q, deps, bucket }) {
+  const data = useAsync(async () => {
+    const [gwp, energy, water, per1k, overTime, byModel, efficiency] = await Promise.all([
+      q('cloudapim_llm_gwp_total', { compare: true }),
+      q('cloudapim_llm_energy_total', { compare: true }),
+      q('cloudapim_llm_wcf_total', { compare: true }),
+      q('cloudapim_llm_gwp_per_1k_tokens', { compare: true }),
+      q('cloudapim_llm_gwp_over_time'),
+      q('cloudapim_llm_gwp_by_model', { params: { top_n: 8 } }),
+      q('cloudapim_llm_gwp_per_1k_output_tokens_by_model', { params: { top_n: 50 } }),
+    ]);
+    return { gwp, energy, water, per1k, overTime, byModel, efficiency };
+  }, deps);
+  const d = data.data;
+  if (!d) return data.error ? <ErrorAlert error={data.error} /> : null;
+  const models = itemsOf(d.byModel);
+  const efficiencyOf = (model) => (itemsOf(d.efficiency).find((e) => e.key === model) || {}).value;
+  const max = Math.max(0, ...models.map((m) => Number(m.value) || 0));
+  const points = totalPoints(d.overTime);
+  return (
+    <div className="stack tight">
+      <div>
+        <h2>Environmental impact</h2>
+        <p className="muted small" style={{ marginTop: 4 }}>
+          Estimated with EcoLogits for the models it knows: the electricity drawn while inferring and the share of the hardware manufacturing the calls used up.
+        </p>
+      </div>
+      <div className="grid cols-4">
+        <Kpi label="Emissions (CO2eq)" value={scalarOf(d.gwp)} previous={compareOf(d.gwp)} format={fmtGrams} points={points} inverse />
+        <Kpi label="Energy" value={scalarOf(d.energy)} previous={compareOf(d.energy)} format={fmtWh} points={[]} inverse />
+        <Kpi label="Water" value={scalarOf(d.water)} previous={compareOf(d.water)} format={fmtLiters} points={[]} inverse />
+        <Kpi label="CO2eq per 1k tokens" value={scalarOf(d.per1k)} previous={compareOf(d.per1k)} format={fmtGrams} points={[]} inverse />
+      </div>
+      <div className="grid cols-2">
+        <div className="card">
+          <h3 style={{ marginBottom: 12 }}>Emissions over time</h3>
+          <StackedBars series={seriesOf(d.overTime)} bucket={bucket} format={fmtGrams} empty="No impact estimated in this period" />
+        </div>
+        <div className="card">
+          <h3 style={{ marginBottom: 4 }}>Emissions by model</h3>
+          <p className="muted small" style={{ marginBottom: 8 }}>
+            With the CO2eq of every thousand generated tokens: the same answer, a very different footprint.
+          </p>
+          {models.length === 0 && <p className="muted small">No impact estimated in this period.</p>}
+          <div className="rank">
+            {models.map((m, i) => (
+              <div key={m.key} className="item">
+                <span className="pos">{i + 1}</span>
+                <div className="grow" style={{ minWidth: 0 }}>
+                  <div className="row between">
+                    <span className="mono truncate small">{m.label || m.key}</span>
+                    <span className="small">
+                      {fmtGrams(m.value)}
+                      {efficiencyOf(m.key) !== undefined && <span className="faint"> · {fmtGrams(efficiencyOf(m.key))} / 1k tok</span>}
+                    </span>
+                  </div>
+                  <div className="bar">
+                    <i style={{ width: `${max ? ((Number(m.value) || 0) / max) * 100 : 0}%` }} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ActivityPage() {
   const { workspace } = useWorkspace();
   // the filters live in the url (`?apikey=<client id>&user=<email>&period=24h`) so any page can link to
@@ -218,6 +301,8 @@ export function ActivityPage() {
                   <AreaChart series={seriesOf(c.latencyTs)} bucket={bucket} format={fmtMs} />
                 </div>
               </div>
+
+              <ImpactSection q={q} deps={deps} bucket={bucket} />
 
               <div className="card flush">
                 <div style={{ padding: '18px 22px 6px' }}>
