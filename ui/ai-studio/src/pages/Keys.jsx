@@ -1,19 +1,34 @@
 import { useState } from 'react';
 import { useWorkspace } from '../App';
-import { Badge, CopyButton, Empty, ErrorAlert, Field, Loading, Modal, NumberInput, PageHeader, Select, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
+import { Badge, CopyButton, Empty, ErrorAlert, Field, Loading, Modal, NumberInput, PageHeader, Segmented, Select, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { BudgetModal } from '../components/BudgetModal';
 import { Icon } from '../components/icons';
-import { listApikeys, saveApikey, usesWorkspaceQuotas } from '../lib/apikeys';
+import { listApikeys, OWNER_PATTERN, ownerOf, saveApikey, usesWorkspaceQuotas } from '../lib/apikeys';
 import { bootstrap } from '../lib/bootstrap';
-import { keyBudgetOf, listBudgets, periodLabel, PERIODS, periodOf, saveBudget } from '../lib/budgets';
+import { budgetsOfKey, keyBudgetOf, listBudgets, periodLabel, PERIODS, periodOf, saveBudget } from '../lib/budgets';
 import { Resources } from '../lib/entities';
 import { fmtCost, fmtInt } from '../lib/format';
 import { Link } from '../lib/router';
+
+const OWNER_KINDS = [
+  { value: 'me', label: 'Me' },
+  { value: 'teammate', label: 'Teammate' },
+  { value: 'workspace', label: 'Workspace' },
+];
+
+function ownerKindOf(apikey) {
+  const owner = ownerOf(apikey);
+  if (!apikey) return 'me';
+  if (!owner) return 'workspace';
+  return owner === bootstrap.user.email ? 'me' : 'teammate';
+}
 
 function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
   const toast = useToast();
   const c = bootstrap.config;
   const [form, setForm] = useState(() => ({
+    ownerKind: ownerKindOf(apikey),
+    teammate: ownerKindOf(apikey) === 'teammate' ? ownerOf(apikey) : '',
     name: apikey ? apikey.clientName : '',
     description: apikey ? apikey.description : '',
     enabled: apikey ? apikey.enabled : true,
@@ -26,11 +41,13 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
   }));
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const owner = form.ownerKind === 'me' ? bootstrap.user.email : form.ownerKind === 'teammate' ? form.teammate.trim() : null;
+  const invalidOwner = form.ownerKind !== 'workspace' && !OWNER_PATTERN.test(owner || '');
 
   const save = async () => {
     setSaving(true);
     try {
-      const saved = await saveApikey(workspace.id, form, apikey);
+      const saved = await saveApikey(workspace.id, { ...form, owner }, apikey);
       const hasCredit = form.credit !== null && form.credit !== '' && !Number.isNaN(Number(form.credit));
       if (hasCredit) {
         await saveBudget(
@@ -69,12 +86,21 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
           <button className="btn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn primary" disabled={!form.name.trim() || saving} onClick={save}>
+          <button className="btn primary" disabled={!form.name.trim() || invalidOwner || saving} onClick={save}>
             {saving ? 'Saving…' : apikey ? 'Save' : 'Create'}
           </button>
         </>
       }
     >
+      <Field label="Owner" hint="The usage of the key counts for its owner in Activity and Logs. Workspace keys have no individual owner: use them for shared apps and agents.">
+        <div className="stack tight">
+          <div>
+            <Segmented value={form.ownerKind} onChange={(v) => set({ ownerKind: v })} options={OWNER_KINDS} />
+          </div>
+          {form.ownerKind === 'me' && <TextInput value={bootstrap.user.email} onChange={() => {}} disabled />}
+          {form.ownerKind === 'teammate' && <TextInput value={form.teammate} onChange={(v) => set({ teammate: v })} placeholder="jane@company.com" type="email" />}
+        </div>
+      </Field>
       <Field label="Name">
         <TextInput value={form.name} onChange={(v) => set({ name: v })} placeholder="My app" autoFocus />
       </Field>
@@ -211,6 +237,7 @@ export function KeysPage() {
               <thead>
                 <tr>
                   <th>Name</th>
+                  <th>Owner</th>
                   <th>Client id</th>
                   <th>Key limit</th>
                   <th>Budgets</th>
@@ -225,6 +252,15 @@ export function KeysPage() {
                   return (
                     <tr key={k.clientId}>
                       <td>{k.clientName}</td>
+                      <td className="truncate" style={{ maxWidth: 220 }}>
+                        {ownerOf(k) ? (
+                          <Link className="link" to={`/workspaces/${workspace.id}/users/${encodeURIComponent(ownerOf(k))}`} title={`Profile of ${ownerOf(k)}`}>
+                            {ownerOf(k)}
+                          </Link>
+                        ) : (
+                          <span className="muted">Workspace key</span>
+                        )}
+                      </td>
                       <td className="mono truncate" style={{ maxWidth: 260 }}>
                         {k.clientId}
                       </td>
@@ -239,8 +275,7 @@ export function KeysPage() {
                       </td>
                       <td>
                         {(() => {
-                          // budgets counting the calls of this key: workspace wide ones and the ones naming it
-                          const applying = budgets.filter((x) => x.enabled && (((x.scope && x.scope.apikeys) || []).length === 0 ? ((x.scope && x.scope.users) || []).length === 0 : x.scope.apikeys.includes(k.clientId)));
+                          const applying = budgetsOfKey(budgets, k.clientId, ownerOf(k));
                           return applying.length ? <Badge title={applying.map((x) => x.name).join(', ')}>{applying.length}</Badge> : <span className="muted">none</span>;
                         })()}
                       </td>

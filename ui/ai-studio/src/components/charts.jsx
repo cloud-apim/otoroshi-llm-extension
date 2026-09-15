@@ -280,3 +280,89 @@ export function Sparkline({ points, width = 90, height = 30, color = 'var(--char
     </svg>
   );
 }
+
+// A year of daily values as a week by weekday grid (github style). `points` are daily UTC buckets.
+const DAY = 24 * 3600 * 1000;
+const WEEKDAYS = ['Mon', '', 'Wed', '', 'Fri', '', ''];
+
+function dayKey(ms) {
+  return new Date(ms).toISOString().substring(0, 10);
+}
+
+export function CalendarHeatmap({ points, format = (v) => v, days = 365 }) {
+  const [hover, setHover] = useState(null);
+  const { cells, weeks, months, thresholds } = useMemo(() => {
+    const values = new Map();
+    (points || []).forEach((p) => values.set(dayKey(Number(p.ts)), (values.get(dayKey(Number(p.ts))) || 0) + (Number(p.value) || 0)));
+    const today = new Date();
+    const end = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+    const first = end - (days - 1) * DAY;
+    // weeks start on monday
+    const start = first - ((new Date(first).getUTCDay() + 6) % 7) * DAY;
+    const cells = [];
+    const months = [];
+    for (let t = start, i = 0; t <= end; t += DAY, i++) {
+      const col = Math.floor(i / 7);
+      const date = new Date(t);
+      if (date.getUTCDate() === 1 && t >= first) months.push({ col, label: date.toLocaleDateString(undefined, { month: 'short', timeZone: 'UTC' }) });
+      cells.push({ t, col, row: i % 7, value: t < first ? null : values.get(dayKey(t)) || 0 });
+    }
+    // four levels, from the quartiles of the active days
+    const active = cells.map((c) => c.value).filter((v) => v > 0).sort((a, b) => a - b);
+    const q = (f) => active[Math.min(active.length - 1, Math.floor(active.length * f))];
+    return { cells, weeks: Math.ceil(cells.length / 7), months, thresholds: active.length ? [q(0.25), q(0.5), q(0.75)] : [] };
+  }, [points, days]);
+  const level = (v) => (!v ? 0 : 1 + thresholds.filter((th) => v > th).length);
+  const pitch = 14;
+  const size = 11;
+  const left = 30;
+  const top = 16;
+  const width = left + weeks * pitch;
+  const height = top + 7 * pitch;
+  return (
+    <div className="calendar">
+      <div className="table-wrap">
+        <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: 'auto', minWidth: width }} onMouseLeave={() => setHover(null)}>
+          {months.map((m) => (
+            <text key={`${m.col}-${m.label}`} className="axis-label" x={left + m.col * pitch} y={10}>
+              {m.label}
+            </text>
+          ))}
+          {WEEKDAYS.map((d, i) =>
+            d ? (
+              <text key={d} className="axis-label" x={0} y={top + i * pitch + size - 1}>
+                {d}
+              </text>
+            ) : null
+          )}
+          {cells
+            .filter((c) => c.value !== null)
+            .map((c) => (
+              <rect
+                key={c.t}
+                className={`cal-cell l${level(c.value)}`}
+                x={left + c.col * pitch}
+                y={top + c.row * pitch}
+                width={size}
+                height={size}
+                rx={2}
+                onMouseEnter={() => setHover(c)}
+              />
+            ))}
+        </svg>
+      </div>
+      <div className="row between small" style={{ marginTop: 8 }}>
+        <span className="muted">{hover ? `${new Date(hover.t).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })}: ${format(hover.value)}` : ' '}</span>
+        <span className="row faint" style={{ gap: 4 }}>
+          Less
+          <svg width={5 * pitch} height={size} aria-hidden="true">
+            {[0, 1, 2, 3, 4].map((l) => (
+              <rect key={l} className={`cal-cell l${l}`} x={l * pitch} y={0} width={size} height={size} rx={2} />
+            ))}
+          </svg>
+          More
+        </span>
+      </div>
+    </div>
+  );
+}

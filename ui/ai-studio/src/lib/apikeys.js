@@ -1,9 +1,17 @@
 import { bootstrap } from './bootstrap';
-import { Resources, workspaceFilter } from './entities';
+import { META, Resources, workspaceFilter } from './entities';
 import { consumerTagOf, routeIdOf, workspaceLocation, workspaceMetadata } from './workspaces';
 
 export function listApikeys(wsId) {
   return Resources.apikeys.list(workspaceFilter(wsId)).then((keys) => keys.sort((a, b) => (a.clientName || '').localeCompare(b.clientName || '')));
+}
+
+// same pattern as the studio api: an owner is always an email
+export const OWNER_PATTERN = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$/;
+
+// the email the usage of the key counts for, null for a workspace key
+export function ownerOf(apikey) {
+  return (apikey && apikey.metadata && apikey.metadata[META.owner]) || null;
 }
 
 export function usesWorkspaceQuotas(apikey) {
@@ -17,6 +25,7 @@ export async function saveApikey(wsId, form, existing) {
   const c = bootstrap.config;
   const base = existing || (await Resources.apikeys.template());
   const tag = consumerTagOf(wsId);
+  const { [META.owner]: _previousOwner, ...metadata } = (existing && existing.metadata) || {};
   const apikey = {
     ...base,
     _loc: (existing && existing._loc) || workspaceLocation(wsId),
@@ -28,7 +37,7 @@ export async function saveApikey(wsId, form, existing) {
     authorizedEntities: [],
     authorizedGroup: null,
     tags: [...new Set([...((existing && existing.tags) || []), tag])],
-    metadata: { ...((existing && existing.metadata) || {}), ...workspaceMetadata(wsId, 'apikey') },
+    metadata: { ...metadata, ...workspaceMetadata(wsId, 'apikey'), ...(form.owner ? { [META.owner]: form.owner } : {}) },
     throttlingQuota: form.override ? Number(form.throttlingQuota) : c.default_throttling_quota,
     dailyQuota: form.override ? Number(form.dailyQuota) : c.default_daily_quota,
     monthlyQuota: form.override ? Number(form.monthlyQuota) : c.default_monthly_quota,

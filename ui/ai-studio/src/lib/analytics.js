@@ -15,9 +15,10 @@ export const PERIODS = [
 export class NoExporterError extends Error {}
 
 // `apikey` is a platform filter, `user` (a studio user email) a param every llm query of the extension understands
-export async function runQuery(wsId, query, { period = '7d', apikey, user, err, params = {}, compare = false, nocache = false, bucket } = {}) {
+// `from` (`now-365d`) overrides the period, for views longer than the periods offered in the pickers
+export async function runQuery(wsId, query, { period = '7d', from, apikey, user, err, params = {}, compare = false, nocache = false, bucket } = {}) {
   const p = PERIODS.find((x) => x.value === period) || PERIODS[2];
-  const filters = { from: p.from, to: 'now', route_id: routeIdOf(wsId) };
+  const filters = { from: from || p.from, to: 'now', route_id: routeIdOf(wsId) };
   if (apikey) filters.apikey_id = apikey;
   if (err !== undefined) filters.err = err;
   const allParams = user ? { ...params, user } : params;

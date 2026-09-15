@@ -11,13 +11,14 @@ import otoroshi.env.Env
 import otoroshi.events.AuditEvent
 import otoroshi.models.Entity
 import otoroshi.utils.TypedMap
+import otoroshi.utils.http.RequestImplicits.*
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.LlmTokensRateLimitingValidatorConfig
-import play.api.libs.json.{JsArray, JsNull, JsObject, JsString, JsValue, Json}
+import play.api.libs.json.{JsArray, JsNull, JsNumber, JsObject, JsString, JsValue, Json}
 import play.api.libs.typedmap.TypedKey
 
-import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success}
 
@@ -39,6 +40,71 @@ object ChatClientWithAuding {
   val BudgetConsumptionKey = TypedKey[(AiBudgetConsumptions, AiBudget)]("cloud-apim.ai-gateway.BudgetConsumption")
 }
 
+// What a log line of a model call needs beyond the usage: how it ended, how long it took, and who it was for.
+object LlmCallTelemetry {
+
+  private def bounded(value: Option[String]): Option[String] = value.map(_.trim).filter(_.nonEmpty).map(_.take(256))
+
+  /** Every provider says it its own way: `end_turn`, `MAX_TOKENS`, `done`… one vocabulary, openai's. */
+  def normalizeFinishReason(reason: String): String = reason.trim.toLowerCase match {
+    case "end_turn" | "stop_sequence" | "complete" | "completed" | "eos" => "stop"
+    case "max_tokens" | "max_output_tokens" | "incomplete"               => "length"
+    case "tool_use" | "tool_call" | "function_call"                      => "tool_calls"
+    case "safety" | "refusal" | "recitation"                             => "content_filter"
+    case other                                                           => other
+  }
+
+  /** A blocking response keeps the provider's own reason in its raw payload only. */
+  def finishReasonOf(response: ChatResponse): Option[String] = {
+    val raw = response.raw
+    val message = response.generations.headOption.map(_.message)
+    Seq(
+      message.flatMap(_.raw.select("finish_reason").asOptString),
+      raw.select("choices").asOpt[Seq[JsValue]].flatMap(_.headOption).flatMap(_.select("finish_reason").asOptString),
+      raw.select("stop_reason").asOptString,
+      message.flatMap(_.raw.select("done_reason").asOptString),
+      raw.select("done_reason").asOptString,
+      raw.select("finish_reason").asOptString,
+      raw.select("incomplete_details").select("reason").asOptString,
+      raw.select("status").asOptString.filter(s => s == "completed" || s == "incomplete"),
+    ).flatten.map(_.trim).find(_.nonEmpty).map(normalizeFinishReason)
+      .orElse(message.filter(_.has_tool_calls).map(_ => "tool_calls"))
+  }
+
+  /** The last reason a stream sent, a meaningful one over a plain `stop` when chunks disagree. */
+  def finishReasonOf(chunks: Seq[ChatResponseChunk]): Option[String] = {
+    val reasons = chunks.flatMap(_.choices.flatMap(_.finishReason)).map(normalizeFinishReason)
+    reasons.filterNot(_ == "stop").lastOption.orElse(reasons.lastOption)
+  }
+
+  def carriesToken(chunk: ChatResponseChunk): Boolean =
+    chunk.choices.exists(c => c.delta.content.exists(_.nonEmpty) || c.delta.reasoning.exists(_.nonEmpty) || c.delta.tool_calls.nonEmpty)
+
+  /** Groups the calls of one conversation or agent run, as the caller names it. */
+  def sessionIdOf(attrs: TypedMap, body: JsValue): Option[String] = bounded(
+    attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.headers.get("x-session-id"))
+      .orElse(body.select("session_id").asOptString)
+      .orElse(body.select("metadata").select("session_id").asOptString)
+  )
+
+  /** The end user of the calling application (`user`, `safety_identifier`, anthropic's `metadata.user_id`). */
+  def endUserOf(body: JsValue): Option[String] = bounded(
+    body.select("user").asOptString
+      .orElse(body.select("safety_identifier").asOptString)
+      .orElse(body.select("metadata").select("user_id").asOptString)
+  )
+
+  def clientIpOf(attrs: TypedMap)(using env: Env): Option[String] = attrs.get(otoroshi.plugins.Keys.RequestKey).map(_.theIpAddress)
+
+  def js(value: Option[String]): JsValue = value.map(JsString.apply).getOrElse(JsNull)
+
+  def json(attrs: TypedMap, body: JsValue)(using env: Env): JsObject = Json.obj(
+    "session_id" -> js(sessionIdOf(attrs, body)),
+    "end_user" -> js(endUserOf(body)),
+    "client_ip" -> js(clientIpOf(attrs)),
+  )
+}
+
 class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
   def consumerRateLimit(attrs: TypedMap, usageSlug: JsObject): JsValue = {
@@ -57,7 +123,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
   }
 
   // fields shared by every LLMUsageAudit event, whatever the endpoint and the outcome
-  private def commonFields(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap): JsObject = Json.obj(
+  private def commonFields(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using env: Env): JsObject = LlmCallTelemetry.json(attrs, originalBody) ++ Json.obj(
     "provider_kind" -> originalProvider.provider.toLowerCase,
     "consumed_using" -> consumedUsing,
     "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
@@ -68,14 +134,14 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     "provider_details" -> originalProvider.redactedJson,
   )
 
-  private def auditError(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, error: JsValue)(using env: Env): Unit = {
+  private def auditError(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, start: Long, error: JsValue)(using env: Env): Unit = {
     AuditEvent.generic("LLMUsageAudit") {
-      commonFields(consumedUsing, prompt, attrs) ++ Json.obj("error" -> error, "output" -> JsNull)
+      commonFields(consumedUsing, prompt, attrs, originalBody) ++ Json.obj("error" -> error, "output" -> JsNull, "call_duration" -> (System.currentTimeMillis() - start))
     }.toAnalytics()
   }
 
   // usage/costs/impacts are only known once the inner clients have run, hence the attrs lookups
-  private def auditSuccess(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, output: JsObject)(using ec: ExecutionContext, env: Env): Future[Unit] = {
+  private def auditSuccess(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, output: JsObject)(using ec: ExecutionContext, env: Env): Future[Unit] = {
     val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.lastOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
     val impacts = attrs.get(ChatClientWithEcoImpact.key)
     val costs = attrs.get(ChatClientWithCostsTracking.key)
@@ -84,7 +150,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
     ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs).map { budgetIds =>
       AuditEvent.generic("LLMUsageAudit") {
-        usageSlug ++ commonFields(consumedUsing, prompt, attrs) ++ output ++ Json.obj(
+        usageSlug ++ commonFields(consumedUsing, prompt, attrs, originalBody) ++ output ++ Json.obj(
           "error" -> JsNull,
           "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
           "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
@@ -104,33 +170,44 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
 
   override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val consumedUsing = kind.consumedUsing(streaming = false)
+    val start = System.currentTimeMillis()
     prepare(attrs, originalBody)
     AiBudgetsDataStore.handleWithinBudget(attrs)(
       Json.obj("error" -> "budget exceeded").leftf,
       chatClient.invoke(kind, prompt, attrs, originalBody).andThen {
-        case Failure(exception) => auditError(consumedUsing, prompt, attrs, Json.obj("exception" -> exception.getMessage))
-        case Success(Left(err)) => auditError(consumedUsing, prompt, attrs, err)
-        case Success(Right(value)) => auditSuccess(consumedUsing, prompt, attrs, Json.obj("output" -> value.json(env)))
+        case Failure(exception) => auditError(consumedUsing, prompt, attrs, originalBody, start, Json.obj("exception" -> exception.getMessage))
+        case Success(Left(err)) => auditError(consumedUsing, prompt, attrs, originalBody, start, err)
+        case Success(Right(value)) => auditSuccess(consumedUsing, prompt, attrs, originalBody, Json.obj(
+          "output" -> value.json(env),
+          "call_duration" -> (System.currentTimeMillis() - start),
+          "finish_reason" -> LlmCallTelemetry.js(LlmCallTelemetry.finishReasonOf(value)),
+        ))
       }
     )
   }
 
   override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val consumedUsing = kind.consumedUsing(streaming = true)
+    val start = System.currentTimeMillis()
     prepare(attrs, originalBody)
     AiBudgetsDataStore.handleWithinBudget(attrs)(
       Json.obj("error" -> "budget exceeded").leftf,
       chatClient.invokeStream(kind, prompt, attrs, originalBody).transformWith {
         case Failure(exception) =>
-          auditError(consumedUsing, prompt, attrs, Json.obj("exception" -> exception.getMessage))
+          auditError(consumedUsing, prompt, attrs, originalBody, start, Json.obj("exception" -> exception.getMessage))
           FastFuture.failed(exception)
         case Success(Left(err)) =>
-          auditError(consumedUsing, prompt, attrs, err)
+          auditError(consumedUsing, prompt, attrs, originalBody, start, err)
           FastFuture.successful(Left(err))
         case Success(Right(value)) => {
           var seq = Seq.empty[ChatResponseChunk]
+          // the first chunk carrying something to show: role only chunks come before any token
+          val firstTokenAt = new AtomicLong(0L)
           val source = value
-            .alsoTo(Sink.foreach { chunk => seq = seq :+ chunk })
+            .alsoTo(Sink.foreach { chunk =>
+              if (firstTokenAt.get() == 0L && LlmCallTelemetry.carriesToken(chunk)) firstTokenAt.compareAndSet(0L, System.currentTimeMillis())
+              seq = seq :+ chunk
+            })
             .alsoTo(Sink.onComplete { _ =>
               // the audited output is rebuilt from the chunks: the individual ones for traceability,
               // the aggregated text + usage as the equivalent of a blocking response
@@ -153,9 +230,12 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                   cache = None
                 )
               )
-              auditSuccess(consumedUsing, prompt, attrs, Json.obj(
+              auditSuccess(consumedUsing, prompt, attrs, originalBody, Json.obj(
                 "output_stream" -> JsArray(seq.map(_.json(env))),
                 "output" -> aggregated.json(env),
+                "call_duration" -> (System.currentTimeMillis() - start),
+                "time_to_first_token" -> Option(firstTokenAt.get()).filter(_ > 0L).map(t => JsNumber(t - start)).getOrElse(JsNull).asValue,
+                "finish_reason" -> LlmCallTelemetry.js(LlmCallTelemetry.finishReasonOf(seq)),
               ))
             })
           FastFuture.successful(Right(source))

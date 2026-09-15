@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
 import otoroshi.utils.syntax.implicits.*
-import play.api.libs.json.{JsObject, JsValue, Json}
+import play.api.libs.json.{JsNull, JsObject, JsValue, Json}
 import play.api.libs.ws.WSResponse
 import reactor.core.publisher.Mono
 
@@ -92,6 +92,14 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(keyBudget.select("metadata").select("ai_studio_key_limit").asString, clientId)
     expect(studio("POST", s"/workspaces/$wsId/apikeys", Json.obj("name" -> "bad", "credit_limit" -> Json.obj("usd" -> 1, "period" -> "custom"))), 400)
     assertEquals(expect(studio("GET", s"/workspaces/$wsId/apikeys"), 200).as[Seq[JsObject]].map(_.select("name").asString), Seq("my app"))
+    // the owner of a key: kept when absent, removed by null, never anything but an email
+    assertEquals(key.select("owner").asOpt[String], None)
+    expect(studio("POST", s"/workspaces/$wsId/apikeys", Json.obj("name" -> "bad", "owner" -> "jane' OR '1'='1")), 400)
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("owner" -> "jane@acme.io")), 200).select("owner").asString, "jane@acme.io")
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("description" -> "the app")), 200).select("owner").asString, "jane@acme.io")
+    assertEquals(entity("apim.otoroshi.io", "apikeys", clientId).get.select("metadata").select("ai_studio_owner").asString, "jane@acme.io")
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("owner" -> JsNull)), 200).select("owner").asOpt[String], None)
+    assertEquals(entity("apim.otoroshi.io", "apikeys", clientId).get.select("metadata").select("ai_studio_owner").asOpt[String], None)
     assert(key.select("bearer").asString.nonEmpty)
 
     // a second provider with two capabilities, then one of them disabled

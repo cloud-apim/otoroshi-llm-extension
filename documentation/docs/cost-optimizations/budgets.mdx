@@ -44,7 +44,7 @@ A budget is defined for a scope based on pretty much whatever you want (apikey, 
 | Scope | Description |
 |-------|-------------|
 | `apikeys` | List of API key IDs |
-| `users` | List of user IDs |
+| `users` | List of user emails or IDs (regexes). Calls made with an API key count for the owner of the key (its `ai_studio_owner` metadata) when no user is authenticated |
 | `groups` | List of API group IDs |
 | `providers` | List of LLM provider IDs |
 | `models` | List of model names |

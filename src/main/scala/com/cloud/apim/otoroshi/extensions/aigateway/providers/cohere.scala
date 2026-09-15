@@ -3,6 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import org.apache.pekko.stream.scaladsl.{Framing, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.*
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.LlmCallTelemetry
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -486,7 +487,8 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
                 }
                 case None => Json.obj("ai" -> Seq(slug))
               }
-              true
+              // a chunk that also carries the finish reason is kept (its usage is not forwarded): dropping it loses how the stream ended
+              chunk.choices.forall(_.finish_reason.isEmpty)
             } else {
               false
             }
@@ -502,7 +504,7 @@ class CohereAiChatClient(api: CohereAiApi, options: CohereAiChatClientOptions, i
                   delta = ChatResponseChunkChoiceDelta(
                     choice.content
                   ),
-                  finishReason = choice.finish_reason
+                  finishReason = choice.finish_reason.map(LlmCallTelemetry.normalizeFinishReason)
                 )
               }
             )

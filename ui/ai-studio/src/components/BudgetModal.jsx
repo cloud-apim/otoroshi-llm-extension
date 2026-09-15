@@ -131,7 +131,7 @@ export function BudgetModal({ workspace, budget, keys, apikey, onClose, onSaved 
             <Field label="API keys">
               {keys.length === 0 ? <span className="muted">No API key in this workspace.</span> : <Checks options={keys.map((k) => ({ value: k.clientId, label: k.clientName }))} value={form.apikeys} onChange={(v) => set({ apikeys: v })} />}
             </Field>
-            <Field label="Studio users" hint="One email (or regex) per line: users chatting with the workspace from AI Studio.">
+            <Field label="Users" hint="One email (or regex) per line: their chats in AI Studio and the calls of the API keys they own.">
               <LinesInput value={form.users} onChange={(v) => set({ users: v })} rows={2} />
             </Field>
             <Field label="Conditions" hint="JSON path checked on the call context (apikey, user, route, provider, model, request). Every condition must match.">

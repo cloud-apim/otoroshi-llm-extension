@@ -3,6 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import org.apache.pekko.stream.scaladsl.{Framing, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.*
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.LlmCallTelemetry
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{GenericApiResponseChoiceMessageToolCall, LlmFunctions}
 import org.joda.time.DateTime
 import otoroshi.env.Env
@@ -70,9 +71,9 @@ case class OllamaAiChatResponseChunkMessage(raw: JsValue) {
 
 case class OllamaAiChatResponseChunk(raw: JsValue) {
 
-  println(s"chunk: ${raw.stringify}")
   lazy val model: String = raw.select("model").asString
   lazy val done: Boolean = raw.select("done").asOptBoolean.getOrElse(false)
+  lazy val done_reason: Option[String] = raw.select("done_reason").asOptString
   lazy val created_at: String = raw.select("created_at").asString
   lazy val created_at_datetime: DateTime = DateTime.parse(created_at)
   lazy val message: OllamaAiChatResponseChunkMessage = OllamaAiChatResponseChunkMessage(raw.select("message").asObject)
@@ -492,7 +493,8 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
                   }
                   case None => Json.obj("ai" -> Seq(slug))
                 }
-                true
+                // a chunk that also carries the finish reason is kept (its usage is not forwarded): dropping it loses how the stream ended
+                !chunk.done
               } else {
                 false
               }
@@ -512,7 +514,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
                       role = chunk.message.role,
                       tool_calls = chunk.message.toolCalls.map(tc => tc.asChatResponseChunkChoiceDeltaToolCall),
                     ),
-                    finishReason = if (chunk.done) Some("stop") else None
+                    finishReason = if (chunk.done) Some(chunk.done_reason.map(LlmCallTelemetry.normalizeFinishReason).getOrElse("stop")) else None
                   ))
                 )
             }.right

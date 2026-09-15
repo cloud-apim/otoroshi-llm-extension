@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.studio
 
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ApikeyOwner}
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
@@ -234,6 +234,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   private val MetaConnection = "ai_studio_connection"
   private val MetaDisabled = "ai_studio_disabled"
   private val MetaKeyLimit = "ai_studio_key_limit"
+  // the person the usage of an api key counts for, in the analytics and the budgets scoped to users
+  private val MetaOwner = ApikeyOwner.MetadataKey
+  private val OwnerPattern = "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$".r
 
   private val OpenAiCompatPlugin = "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatApi"
   private val ConsumerPresetPlugin = "cp:otoroshi.next.plugins.MandatoryConsumerPreset"
@@ -1129,6 +1132,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       "name" -> apikey.select("clientName").asOptString.getOrElse(clientId),
       "description" -> apikey.select("description").asOptString.getOrElse(""),
       "enabled" -> apikey.select("enabled").asOptBoolean.getOrElse(true),
+      "owner" -> optString(metaOf(apikey, MetaOwner)),
       "uses_workspace_quotas" -> usesWorkspaceQuotas(apikey, config),
       "quotas" -> Json.obj(
         "throttling_quota" -> apikey.select("throttlingQuota").asOpt[JsValue].getOrElse(JsNull).as[JsValue],
@@ -1167,6 +1171,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         (number(q, "throttling_quota").map(_.toLong).getOrElse(base._1), number(q, "daily_quota").map(_.toLong).getOrElse(base._2), number(q, "monthly_quota").map(_.toLong).getOrElse(base._3))
       case Some(_) => throw badRequest("'quotas' must be an object or null")
     }
+    // `owner`: the email the usage of the key is attributed to, null makes it a workspace key, absent keeps the current one
+    val owner = if (has(form, "owner")) string(form, "owner").map(_.trim).filter(_.nonEmpty) else metaOf(prev, MetaOwner)
+    if (owner.exists(o => !OwnerPattern.matches(o))) throw badRequest("'owner' must be an email")
     val tag = consumerTagOf(ws.id)
     for {
       budgets <- Budgets.list(ws.id)
@@ -1194,7 +1201,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         "authorizedEntities" -> Json.arr(),
         "authorizedGroup" -> JsNull,
         "tags" -> (stringsOf(prev.select("tags")) :+ tag).distinct,
-        "metadata" -> (objOf(prev.select("metadata")) ++ workspaceMetadata(ws.id, "apikey")),
+        "metadata" -> ((objOf(prev.select("metadata")) - MetaOwner) ++ workspaceMetadata(ws.id, "apikey") ++ JsObject(owner.map(o => MetaOwner -> JsString(o)).toSeq)),
         "throttlingQuota" -> quotas._1,
         "dailyQuota" -> quotas._2,
         "monthlyQuota" -> quotas._3,

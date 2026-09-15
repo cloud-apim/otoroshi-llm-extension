@@ -34,6 +34,31 @@ export function extraRulesOf(budget) {
   return ((budget && budget.scope && budget.scope.rules) || []).filter((r) => r.path !== WORKSPACE_RULE_PATH).map((r) => ({ path: r.path, value: r.value }));
 }
 
+// whether a budget names a user: its users are regexes matched against the whole email, as the gateway does
+export function budgetNamesUser(budget, email) {
+  return (
+    !!email &&
+    ((budget.scope && budget.scope.users) || []).some((u) => {
+      try {
+        return new RegExp(`^(?:${u})$`).test(email);
+      } catch (e) {
+        return u === email;
+      }
+    })
+  );
+}
+
+// workspace wide budgets: no key and no user in their scope
+export function isWorkspaceWide(budget) {
+  return ((budget.scope && budget.scope.apikeys) || []).length === 0 && ((budget.scope && budget.scope.users) || []).length === 0;
+}
+
+// the budgets counting the calls of an api key: workspace wide ones, the ones naming the key and the
+// ones naming its owner
+export function budgetsOfKey(budgets, apikey, owner) {
+  return budgets.filter((b) => b.enabled && (isWorkspaceWide(b) || ((b.scope && b.scope.apikeys) || []).includes(apikey) || budgetNamesUser(b, owner)));
+}
+
 // how the scope of an existing budget is presented: the whole workspace, one api key or custom
 export function scopeModeOf(budget) {
   const scope = (budget && budget.scope) || {};

@@ -647,7 +647,8 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
                 }
                 case None => Json.obj("ai" -> Seq(slug))
               }
-              true
+              // a chunk that also carries the finish reason is kept (its usage is not forwarded): dropping it loses how the stream ended
+              chunk.choices.forall(_.finish_reason.isEmpty)
             } else {
               false
             }

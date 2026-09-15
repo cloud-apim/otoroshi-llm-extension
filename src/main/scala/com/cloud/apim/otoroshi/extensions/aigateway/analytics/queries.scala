@@ -53,7 +53,7 @@ object AiGatewayQueries {
       // the patterns rule out quotes and anything a literal could escape with, so the values can be inlined.
       // A user that does not look like an email matches nothing rather than everything
       val user     = (ctx.params \ "user").asOpt[String].map(_.trim).filter(_.nonEmpty).map {
-        case u if UserPattern.matches(u) => s"user_email = '$u'"
+        case u if UserPattern.matches(u) => s"$UserKey = '$u'"
         case _                           => "1 = 0"
       }
       (Seq("delegated = false") ++ modality.map(m => s"modality = '$m'") ++ user ++ Option(extra).filter(_.nonEmpty).map(e => s"($e)"))
@@ -63,6 +63,12 @@ object AiGatewayQueries {
     private val ModalityPattern = "^[a-z_]{1,32}$".r
     private val UserPattern     = "^[A-Za-z0-9._%+@-]{1,254}$".r
 
+    /**
+     * Who a call counts for: the person who made it (the AI Studio chat), otherwise the owner of the api
+     * key it was made with. A key shared by a workspace has no owner, and its calls count for no user.
+     */
+    private val UserKey = "COALESCE(user_email, apikey_owner)"
+
     private val ModalityParam = QueryParam(
       "modality",
       "string",
@@ -70,7 +76,7 @@ object AiGatewayQueries {
       "Only count calls of one modality: chat, responses, completion, embedding, image, audio, video, moderation or ocr"
     )
 
-    private val UserParam = QueryParam("user", "string", JsNull, "Only count calls of one user (email)")
+    private val UserParam = QueryParam("user", "string", JsNull, "Only count calls of one user (email): the calls they made and the calls of the API keys they own")
 
     // every llm query can be narrowed to one modality — "the image generation spend", "embedding latency" —
     // and to one user
@@ -147,21 +153,21 @@ object AiGatewayQueries {
     val TopModels       = top("top_models", "Top models", "Models by number of calls.", "model")
     val TopProviders    = top("top_providers", "Top providers", "Provider entities by number of calls.", "provider_id", Some("provider_name"))
     val TopApikeys      = top("top_apikeys", "Top API keys", "API keys by number of calls.", "apikey_id", Some("apikey_name"))
-    val TopUsers        = top("top_users", "Top users", "Users by number of calls.", "user_email")
+    val TopUsers        = top("top_users", "Top users", "Users by number of calls.", UserKey)
     val TopRoutes       = top("top_routes", "Top routes", "Routes by number of calls.", "route_id", Some("route_name"))
     val CallsByModelTs  = tsByKey("requests_by_model_over_time", "Calls by model over time", "One series per model, for the most used models of the period.", "model")
     private val ApikeyKey = "COALESCE(apikey_name, apikey_id)"
     val CallsByApikeyTs  = tsByKey("requests_by_apikey_over_time", "Calls by API key over time", "One series per API key, for the most active keys of the period.", ApikeyKey)
     val TokensByApikeyTs = tsByKey("tokens_by_apikey_over_time", "Tokens by API key over time", "One series per API key, for the keys consuming the most tokens.", ApikeyKey, "SUM(total_tokens)")
     val CostByApikeyTs   = tsByKey("cost_by_apikey_over_time", "Spend by API key over time ($)", "One series per API key, for the most expensive keys of the period.", ApikeyKey, "SUM(total_cost)", "total_cost IS NOT NULL", asDouble = true)
-    val CallsByUserTs    = tsByKey("requests_by_user_over_time", "Calls by user over time", "One series per user, for the most active users of the period.", "user_email")
-    val TokensByUserTs   = tsByKey("tokens_by_user_over_time", "Tokens by user over time", "One series per user, for the users consuming the most tokens.", "user_email", "SUM(total_tokens)")
-    val CostByUserTs     = tsByKey("cost_by_user_over_time", "Spend by user over time ($)", "One series per user, for the most expensive users of the period.", "user_email", "SUM(total_cost)", "total_cost IS NOT NULL", asDouble = true)
+    val CallsByUserTs    = tsByKey("requests_by_user_over_time", "Calls by user over time", "One series per user, for the most active users of the period.", UserKey)
+    val TokensByUserTs   = tsByKey("tokens_by_user_over_time", "Tokens by user over time", "One series per user, for the users consuming the most tokens.", UserKey, "SUM(total_tokens)")
+    val CostByUserTs     = tsByKey("cost_by_user_over_time", "Spend by user over time ($)", "One series per user, for the most expensive users of the period.", UserKey, "SUM(total_cost)", "total_cost IS NOT NULL", asDouble = true)
     val CallsByModalityTs = tsByKey("requests_by_modality_over_time", "Calls by modality over time", "One series per modality: chat, embeddings, images, audio…", "modality")
     val ActivityHeatmap = lq("cloudapim_llm_activity_heatmap", "LLM activity by weekday and hour", "Calls by day of week and hour of day (UTC) over the period: when the gateway is actually used.", AnalyticsShape.Heatmap, "heatmap") { ctx =>
       weekHourHeatmap(t(ctx.settings), real(ctx))(ctx)
     }
-    val DistinctUsers     = metric("distinct_users", "Users", "Distinct users who called a model.", "COUNT(DISTINCT user_email)")
+    val DistinctUsers     = metric("distinct_users", "Users", "Distinct users who called a model, directly or through an API key they own.", s"COUNT(DISTINCT $UserKey)")
     val DistinctApikeys   = metric("distinct_apikeys", "API keys", "Distinct API keys that called a model.", "COUNT(DISTINCT apikey_id)")
     val DistinctModels    = metric("distinct_models", "Models", "Distinct models called.", "COUNT(DISTINCT model)")
     val DistinctProviders = metric("distinct_providers", "Providers", "Distinct provider entities called.", "COUNT(DISTINCT provider_id)")
@@ -170,6 +176,7 @@ object AiGatewayQueries {
         "time"     -> "to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')",
         "route"    -> "COALESCE(route_name, route_id, '—')",
         "consumer" -> "COALESCE(user_email, apikey_name, apikey_id, '—')",
+        "owner"    -> "COALESCE(apikey_owner, '—')",
         "model"    -> "COALESCE(model, '—')",
         "tokens"   -> "total_tokens::text",
         "cost_usd" -> "COALESCE(to_char(total_cost, 'FM999999990.000000'), '—')",
@@ -189,7 +196,8 @@ object AiGatewayQueries {
       }
     val RoutesTable  = consumers("routes_table", "Routes", "Calls, tokens, spend, errors and emissions per route.", "route_id", "route", "COALESCE(route_name, route_id)")
     val ApikeysTable = consumers("apikeys_table", "API keys", "Calls, tokens, spend, errors and emissions per API key — the chargeback table.", "apikey_id", "apikey", "COALESCE(apikey_name, apikey_id)")
-    val UsersTable   = consumers("users_table", "Users", "Calls, tokens, spend, errors and emissions per user.", "user_email", "user", "user_email")
+    val EndUsersTable = consumers("end_users_table", "End users", "Calls, tokens, spend, errors and emissions per end user of the calling applications (the `user` field of their requests).", "end_user", "end_user", "end_user")
+    val UsersTable   = consumers("users_table", "Users", "Calls, tokens, spend, errors and emissions per user, the calls of the API keys they own included.", UserKey, "user", UserKey)
 
     // ---- tokens -----------------------------------------------------------------------------------
 
@@ -206,7 +214,7 @@ object AiGatewayQueries {
     val TokensByModel     = top("tokens_by_model", "Tokens by model", "Models by tokens consumed.", "model", value = "SUM(total_tokens)")
     val TokensByProvider  = pieOf("tokens_by_provider", "Tokens by provider", "Tokens consumed per provider entity.", Provider, "SUM(total_tokens)")
     val TokensByApikey    = top("tokens_by_apikey", "Tokens by API key", "API keys by tokens consumed.", "apikey_id", Some("apikey_name"), "SUM(total_tokens)")
-    val TokensByUser      = top("tokens_by_user", "Tokens by user", "Users by tokens consumed.", "user_email", value = "SUM(total_tokens)")
+    val TokensByUser      = top("tokens_by_user", "Tokens by user", "Users by tokens consumed.", UserKey, value = "SUM(total_tokens)")
     val TokensByRoute     = top("tokens_by_route", "Tokens by route", "Routes by tokens consumed.", "route_id", Some("route_name"), "SUM(total_tokens)")
     val TokensByModality  = pieOf("tokens_by_modality", "Tokens by modality", "Tokens consumed per modality.", "modality", "SUM(total_tokens)")
     val PromptRatio       = metric("prompt_completion_ratio", "Prompt / completion ratio", "Prompt tokens sent for each token generated: how much context each answer carries.", "COALESCE(SUM(input_tokens)::float / NULLIF(SUM(output_tokens + reasoning_tokens), 0), 0)", asDouble = true)
@@ -239,7 +247,7 @@ object AiGatewayQueries {
     val CostByProvider   = pieOf("cost_by_provider", "Spend by provider ($)", "Cost per provider entity.", Provider, "SUM(total_cost)", HasCost, asDouble = true)
     val CostByModality   = pieOf("cost_by_modality", "Spend by modality ($)", "Cost per modality.", "modality", "SUM(total_cost)", HasCost, asDouble = true, widget = "pie")
     val CostByApikey     = top("cost_by_apikey", "Spend by API key ($)", "API keys by cost — the chargeback view.", "apikey_id", Some("apikey_name"), "SUM(total_cost)", HasCost, asDouble = true)
-    val CostByUser       = top("cost_by_user", "Spend by user ($)", "Users by cost.", "user_email", value = "SUM(total_cost)", extra = HasCost, asDouble = true)
+    val CostByUser       = top("cost_by_user", "Spend by user ($)", "Users by cost.", UserKey, value = "SUM(total_cost)", extra = HasCost, asDouble = true)
     val CostByRoute      = top("cost_by_route", "Spend by route ($)", "Routes by cost.", "route_id", Some("route_name"), "SUM(total_cost)", HasCost, asDouble = true)
     val CostByModelTs    = tsByKey("cost_by_model_over_time", "Spend by model over time ($)", "One series per model, for the most expensive models of the period.", "model", "SUM(total_cost)", HasCost, asDouble = true)
     val CostPerMillion   = top("cost_per_million_tokens_by_model", "Cost per million tokens by model ($)", "The effective price actually paid, reasoning tokens included — not the list price.", "model", value = "SUM(total_cost) * 1000000.0 / NULLIF(SUM(total_tokens), 0)", extra = HasCost, asDouble = true, having = "SUM(total_tokens) > 0")
@@ -340,6 +348,14 @@ object AiGatewayQueries {
     val LatencyByProvider = top("latency_by_provider", "Slowest providers (avg ms)", "Provider entities by average call duration.", "provider_id", Some("provider_name"), "AVG(duration_ms)", HasTime, asDouble = true)
     val P95ByModel        = top("latency_p95_by_model", "p95 latency by model (ms)", "The tail each model makes callers wait for.", "model", value = "percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)", extra = HasTime, asDouble = true)
     val TokensPerSecond   = top("output_tokens_per_second_by_model", "Generation speed by model (tokens/s)", "Generated tokens per second of call duration — the throughput a user feels.", "model", value = "SUM(output_tokens + reasoning_tokens) * 1000.0 / NULLIF(SUM(duration_ms), 0)", extra = "duration_ms > 0 AND output_tokens > 0", asDouble = true)
+    private val HasTtft   = "ttft_ms IS NOT NULL"
+    val TtftP50           = metric("ttft_p50", "Median time to first token", "Median delay before the first token of a streamed answer.", "COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY ttft_ms), 0)", HasTtft, asDouble = true)
+    val TtftP95           = metric("ttft_p95", "p95 time to first token", "95th percentile of the delay before the first token of a streamed answer.", "COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttft_ms), 0)", HasTtft, asDouble = true)
+    val TtftPctTs         = ts("ttft_percentiles_over_time", "Time to first token percentiles", "p50 and p95 of the delay before the first token of streamed answers, per bucket.", Seq(
+      "p50" -> "COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY ttft_ms), 0)",
+      "p95" -> "COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttft_ms), 0)"
+    ), HasTtft, asDouble = true, widget = "line")
+    val TtftByModel       = top("ttft_p50_by_model", "Time to first token by model (median ms)", "How long each model makes a streaming caller wait before answering.", "model", value = "percentile_cont(0.5) WITHIN GROUP (ORDER BY ttft_ms)", extra = HasTtft, asDouble = true)
     val LatencyHeatmap    = lq("cloudapim_llm_latency_heatmap", "LLM latency heatmap", "Call durations over time, by band.", AnalyticsShape.Heatmap, "heatmap") { ctx =>
       heatmap(t(ctx.settings), Seq(
         "<500ms"   -> "duration_ms < 500",
@@ -371,6 +387,8 @@ object AiGatewayQueries {
     }
     val ErrorsByModel      = top("errors_by_model", "Errors by model", "Models by number of failed calls.", "model", extra = "err = true")
     val ErrorRateByProvider = top("error_rate_by_provider", "Error rate by provider", "Share of failed calls per provider entity.", "provider_id", Some("provider_name"), ErrorRate, asDouble = true)
+    val ByFinishReason     = pieOf("by_finish_reason", "Calls by finish reason", "How answers ended: stop, length (truncated), tool_calls, content_filter…", "finish_reason", extra = "finish_reason IS NOT NULL")
+    val TruncatedRate      = metric("truncated_rate", "Truncated answers", "Share of answers cut by the maximum output length.", "COALESCE(AVG(CASE WHEN finish_reason = 'length' THEN 1.0 ELSE 0.0 END), 0)", "finish_reason IS NOT NULL", asDouble = true)
     val GuardrailDenials   = metric("guardrail_denials_total", "Guardrail denials", "Calls refused by a guardrail configured to fail on deny.", "COUNT(*)", "error_kind = 'guardrail_denied'")
     val GuardrailDenialsTs = ts("guardrail_denials_over_time", "Guardrail denials over time", "Calls refused by a guardrail, per bucket.", Seq("denied" -> "COUNT(*)"), "error_kind = 'guardrail_denied'")
     val RateLimitHeadroom  = top("ratelimit_headroom_by_provider", "Provider rate limit headroom (tokens)", "The lowest remaining token allowance each provider reported: the closest to being throttled first.", "provider_id", Some("provider_name"), "MIN(ratelimit_tokens_remaining)", "ratelimit_tokens_remaining IS NOT NULL", ascending = true)
@@ -387,9 +405,9 @@ object AiGatewayQueries {
     // ---- calls log --------------------------------------------------------------------------------
 
     private val LogColumns = Seq(
-      "id", "ts", "request_id", "route_id", "route_name", "apikey_id", "apikey_name", "user_email", "from_ip",
+      "id", "ts", "request_id", "route_id", "route_name", "apikey_id", "apikey_name", "apikey_owner", "user_email", "from_ip",
       "consumed_using", "modality", "streaming", "provider_kind", "provider_id", "provider_name", "model", "err",
-      "error_kind", "error_message", "duration_ms", "input_tokens", "output_tokens", "reasoning_tokens", "total_tokens",
+      "error_kind", "error_message", "duration_ms", "ttft_ms", "finish_reason", "session_id", "end_user", "input_tokens", "output_tokens", "reasoning_tokens", "total_tokens",
       "cache_status", "input_cost", "output_cost", "reasoning_cost", "total_cost", "cost_source", "energy_kwh",
       "gwp_kgco2eq", "budget_ids"
     )
@@ -435,6 +453,8 @@ object AiGatewayQueries {
       QueryParam("model", "string", JsNull, "Only calls to this model"),
       QueryParam("provider_id", "string", JsNull, "Only calls served by this provider entity"),
       QueryParam("status", "string", JsNull, "ok, error or cached"),
+      QueryParam("finish_reason", "string", JsNull, "Only calls that ended this way: stop, length, tool_calls, content_filter…"),
+      QueryParam("session_id", "string", JsNull, "Only the calls of this session"),
       QueryParam("search", "string", JsNull, "Text searched in the model, the consumer and the error message")
     )) { ctx =>
       given ExecutionContext = ctx.ec
@@ -443,7 +463,9 @@ object AiGatewayQueries {
       (ctx.params \ "before").asOpt[Long].foreach(v => b.bind("ts < ?", java.time.OffsetDateTime.ofInstant(java.time.Instant.ofEpochMilli(v), java.time.ZoneOffset.UTC)))
       param(ctx, "model").foreach(v => b.bind("model = ?", v))
       param(ctx, "provider_id").foreach(v => b.bind("provider_id = ?", v))
-      param(ctx, "search").foreach(v => b.bind("(model ILIKE ? OR apikey_name ILIKE ? OR user_email ILIKE ? OR error_message ILIKE ?)", s"%$v%"))
+      param(ctx, "finish_reason").foreach(v => b.bind("finish_reason = ?", v))
+      param(ctx, "session_id").foreach(v => b.bind("session_id = ?", v))
+      param(ctx, "search").foreach(v => b.bind("(model ILIKE ? OR apikey_name ILIKE ? OR user_email ILIKE ? OR apikey_owner ILIKE ? OR end_user ILIKE ? OR session_id ILIKE ? OR error_message ILIKE ?)", s"%$v%"))
       param(ctx, "status").collect {
         case "ok"     => b.clauses += "err = false AND cache_status IS DISTINCT FROM 'hit'"
         case "error"  => b.clauses += "err = true"
@@ -474,8 +496,234 @@ object AiGatewayQueries {
       }
     }
 
+    // the calls of a period grouped by the session their caller named, most recently active first
+    val SessionsTable = lq("cloudapim_llm_sessions_table", "LLM sessions", "Calls grouped by the session id their caller sent (`x-session-id` header, `session_id` or `metadata.session_id` body field): one row per conversation or agent run.", AnalyticsShape.Table, "table", params = Seq(
+      QueryParam("limit", "int", JsNumber(50), "Number of sessions (max 200)")
+    )) { ctx =>
+      given ExecutionContext = ctx.ec
+      val (where, vals) = FilterSql.whereClause(ctx.filters)
+      val limit = (ctx.params \ "limit").asOpt[Int].getOrElse(50).max(1).min(200)
+      val sql =
+        s"""SELECT session_id, COUNT(*) AS calls, COALESCE(SUM(total_tokens), 0) AS tokens, SUM(total_cost) AS spend_usd,
+           |  COUNT(*) FILTER (WHERE err) AS errors, COUNT(DISTINCT model) AS models, mode() WITHIN GROUP (ORDER BY model) AS primary_model,
+           |  MAX($UserKey) AS user_email, MAX(end_user) AS end_user, MIN(ts) AS first_ts, MAX(ts) AS last_ts
+           |FROM ${t(ctx.settings)}${and(where, real(ctx, "session_id IS NOT NULL"))}
+           |GROUP BY session_id
+           |ORDER BY MAX(ts) DESC
+           |LIMIT $limit""".stripMargin
+      QueryHelpers.runSelect(ctx.pool, sql, vals).map { rows =>
+        val items = rows.map(rowJson)
+        QueryResult(AnalyticsShape.Table, Json.obj("items" -> JsArray(items)), JsArray(items))
+      }
+    }
+
+    // every model call of one request, oldest first: guardrail calls, failed attempts before a fallback, and the
+    // re-reports of load balancers and routers (flagged `delegated`) — the only query that reads those
+    val RequestCalls = q("cloudapim_llm_request_calls", "LLM calls of a request", "Every model call made while serving one request, re-reports of load balancers, routers and fallbacks included, oldest first.", AnalyticsShape.Table, "table", params = Seq(
+      QueryParam("request_id", "string", JsNull, "Id of the request (the `request_id` column of the calls log)")
+    )) { ctx =>
+      given ExecutionContext = ctx.ec
+      val (where, vals) = FilterSql.whereClause(ctx.filters)
+      param(ctx, "request_id") match {
+        case None => Future.successful(QueryResult(AnalyticsShape.Table, Json.obj("items" -> JsArray())))
+        case Some(requestId) =>
+          val sql = s"SELECT ${(LogColumns :+ "delegated").mkString(", ")} FROM ${t(ctx.settings)}${and(where, s"request_id = $$${vals.size + 1}")} ORDER BY ts ASC LIMIT 50"
+          QueryHelpers.runSelect(ctx.pool, sql, vals :+ requestId).map { rows =>
+            val items = rows.map(rowJson)
+            QueryResult(AnalyticsShape.Table, Json.obj("items" -> JsArray(items)), JsArray(items))
+          }
+      }
+    }
+
+    // ---- explore ----------------------------------------------------------------------------------
+
+    /** A metric of the explorer. `additive` ones can be shown as a share of the total. */
+    final case class ExploreMetric(sql: String, asDouble: Boolean, additive: Boolean)
+
+    val ExploreMetrics: Map[String, ExploreMetric] = Map(
+      "requests"          -> ExploreMetric("COUNT(*)", asDouble = false, additive = true),
+      "spend"             -> ExploreMetric("COALESCE(SUM(total_cost), 0)", asDouble = true, additive = true),
+      "input_spend"       -> ExploreMetric("COALESCE(SUM(input_cost), 0)", asDouble = true, additive = true),
+      "output_spend"      -> ExploreMetric("COALESCE(SUM(output_cost), 0)", asDouble = true, additive = true),
+      "reasoning_spend"   -> ExploreMetric("COALESCE(SUM(reasoning_cost), 0)", asDouble = true, additive = true),
+      "tokens"            -> ExploreMetric("COALESCE(SUM(total_tokens), 0)", asDouble = false, additive = true),
+      "input_tokens"      -> ExploreMetric("COALESCE(SUM(input_tokens), 0)", asDouble = false, additive = true),
+      "output_tokens"     -> ExploreMetric("COALESCE(SUM(output_tokens), 0)", asDouble = false, additive = true),
+      "reasoning_tokens"  -> ExploreMetric("COALESCE(SUM(reasoning_tokens), 0)", asDouble = false, additive = true),
+      "blended_cost"      -> ExploreMetric("COALESCE(SUM(total_cost) * 1000000.0 / NULLIF(SUM(total_tokens), 0), 0)", asDouble = true, additive = false),
+      "avg_latency"       -> ExploreMetric("COALESCE(AVG(duration_ms), 0)", asDouble = true, additive = false),
+      "p50_latency"       -> ExploreMetric("COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms), 0)", asDouble = true, additive = false),
+      "p90_latency"       -> ExploreMetric("COALESCE(percentile_cont(0.9) WITHIN GROUP (ORDER BY duration_ms), 0)", asDouble = true, additive = false),
+      "p95_latency"       -> ExploreMetric("COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)", asDouble = true, additive = false),
+      "p99_latency"       -> ExploreMetric("COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)", asDouble = true, additive = false),
+      "avg_ttft"          -> ExploreMetric("COALESCE(AVG(ttft_ms), 0)", asDouble = true, additive = false),
+      "p50_ttft"          -> ExploreMetric("COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY ttft_ms), 0)", asDouble = true, additive = false),
+      "p95_ttft"          -> ExploreMetric("COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttft_ms), 0)", asDouble = true, additive = false),
+      "speed"             -> ExploreMetric("COALESCE(SUM(output_tokens + reasoning_tokens) * 1000.0 / NULLIF(SUM(CASE WHEN duration_ms > COALESCE(ttft_ms, 0) THEN duration_ms - COALESCE(ttft_ms, 0) END), 0), 0)", asDouble = true, additive = false),
+      "cache_hits"        -> ExploreMetric("COUNT(*) FILTER (WHERE cache_status = 'hit')", asDouble = false, additive = true),
+      "cache_hit_rate"    -> ExploreMetric("COALESCE(AVG(CASE WHEN cache_status = 'hit' THEN 1.0 ELSE 0.0 END) FILTER (WHERE cache_status IS NOT NULL), 0)", asDouble = true, additive = false),
+      "errors"            -> ExploreMetric("COUNT(*) FILTER (WHERE err)", asDouble = false, additive = true),
+      "error_rate"        -> ExploreMetric(ErrorRate, asDouble = true, additive = false),
+      "guardrail_denials" -> ExploreMetric("COUNT(*) FILTER (WHERE error_kind = 'guardrail_denied')", asDouble = false, additive = true),
+      "truncated_rate"    -> ExploreMetric("COALESCE(AVG(CASE WHEN finish_reason = 'length' THEN 1.0 ELSE 0.0 END) FILTER (WHERE finish_reason IS NOT NULL), 0)", asDouble = true, additive = false),
+      "gco2eq"            -> ExploreMetric("COALESCE(SUM(gwp_kgco2eq), 0) * 1000", asDouble = true, additive = true),
+      "energy_wh"         -> ExploreMetric("COALESCE(SUM(energy_kwh), 0) * 1000", asDouble = true, additive = true),
+      "users"             -> ExploreMetric(s"COUNT(DISTINCT $UserKey)", asDouble = false, additive = false),
+      "sessions"          -> ExploreMetric("COUNT(DISTINCT session_id)", asDouble = false, additive = false),
+    )
+
+    val ExploreDimensions: Map[String, String] = Map(
+      "model"         -> "model",
+      "provider"      -> Provider,
+      "provider_kind" -> "provider_kind",
+      "apikey"        -> ApikeyKey,
+      "user"          -> UserKey,
+      "key_owner"     -> "apikey_owner",
+      "end_user"      -> "end_user",
+      "modality"      -> "modality",
+      "operation"     -> "consumed_using",
+      "streamed"      -> "CASE WHEN streaming THEN 'streaming' ELSE 'blocking' END",
+      "finish_reason" -> "finish_reason",
+      "cache"         -> "cache_status",
+      "status"        -> "CASE WHEN err THEN COALESCE(error_kind, 'error') WHEN cache_status = 'hit' THEN 'cached' ELSE 'ok' END",
+      "error_kind"    -> "error_kind",
+      "error_message" -> "error_message",
+      "session"       -> "session_id",
+      "cost_source"   -> "cost_source",
+      "route"         -> "COALESCE(route_name, route_id)",
+    )
+
+    // time buckets aligned on UTC, gaps included
+    private val ExploreRollups: Map[String, (String, java.time.temporal.ChronoUnit, String)] = Map(
+      "hour"  -> ("to_timestamp(floor(extract(epoch from ts) / 3600) * 3600)", java.time.temporal.ChronoUnit.HOURS, "1h"),
+      "day"   -> ("to_timestamp(floor(extract(epoch from ts) / 86400) * 86400)", java.time.temporal.ChronoUnit.DAYS, "1d"),
+      "week"  -> ("(date_trunc('week', ts AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')", java.time.temporal.ChronoUnit.WEEKS, "1d"),
+      "month" -> ("(date_trunc('month', ts AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')", java.time.temporal.ChronoUnit.MONTHS, "1d"),
+    )
+
+    private def bucketStart(instant: java.time.Instant, unit: java.time.temporal.ChronoUnit): java.time.ZonedDateTime = {
+      val utc = instant.atZone(java.time.ZoneOffset.UTC)
+      unit match {
+        case java.time.temporal.ChronoUnit.WEEKS  => utc.truncatedTo(java.time.temporal.ChronoUnit.DAYS).`with`(java.time.DayOfWeek.MONDAY)
+        case java.time.temporal.ChronoUnit.MONTHS => utc.truncatedTo(java.time.temporal.ChronoUnit.DAYS).withDayOfMonth(1)
+        case other                                => utc.truncatedTo(other)
+      }
+    }
+
+    private val ExploreStatus: Map[String, String] = Map(
+      "ok"        -> "err = false AND cache_status IS DISTINCT FROM 'hit'",
+      "error"     -> "err = true",
+      "cached"    -> "cache_status = 'hit'",
+      "guardrail" -> "error_kind = 'guardrail_denied'",
+    )
+
+    /**
+     * The explorer: one metric by one dimension, as a ranking (optionally split by a second dimension and
+     * compared to the previous period) or over time. Metrics, dimensions and rollups are picked from fixed
+     * lists, so nothing the caller sends is ever inlined in the SQL.
+     */
+    val Explore = lq("cloudapim_llm_explore", "LLM explorer", "Any metric of the calls by any dimension: a ranking, split by a second dimension, compared to the previous period, or over time.", AnalyticsShape.Table, "table", params = Seq(
+      QueryParam("metric", "string", JsString("spend"), s"One of ${ExploreMetrics.keys.toSeq.sorted.mkString(", ")}"),
+      QueryParam("group_by", "string", JsString("model"), s"One of ${ExploreDimensions.keys.toSeq.sorted.mkString(", ")}"),
+      QueryParam("subgroup", "string", JsNull, "A second dimension, rankings only"),
+      QueryParam("rollup", "string", JsString("total"), "total, hour, day, week or month"),
+      QueryParam("top_n", "int", JsNumber(10), "Number of groups (max 50)"),
+      QueryParam("status", "string", JsNull, "ok, error, cached or guardrail"),
+      QueryParam("compare", "boolean", JsBoolean(false), "Rankings only: the value of each group over the previous period too")
+    )) { ctx =>
+      given ExecutionContext = ctx.ec
+      val metric    = param(ctx, "metric").flatMap(ExploreMetrics.get).getOrElse(ExploreMetrics("spend"))
+      val dimension = param(ctx, "group_by").flatMap(ExploreDimensions.get).getOrElse("model")
+      val subgroup  = param(ctx, "subgroup").flatMap(ExploreDimensions.get).filter(_ != dimension)
+      val rollup    = param(ctx, "rollup").flatMap(ExploreRollups.get)
+      val n         = (ctx.params \ "top_n").asOpt[Int].getOrElse(10).max(1).min(50)
+      val status    = param(ctx, "status").flatMap(ExploreStatus.get).getOrElse("")
+      val scope     = (filters: Filters) => {
+        val (where, vals) = FilterSql.whereClause(filters)
+        (and(where, real(ctx, Seq(s"$dimension IS NOT NULL", status).filter(_.nonEmpty).mkString(" AND "))), vals)
+      }
+      val number    = (r: io.vertx.sqlclient.Row, i: Int) => if (metric.asDouble) JsNumber(BigDecimal(QueryHelpers.safeDouble(r, i))) else JsNumber(QueryHelpers.safeLong(r, i))
+      val (where, vals) = scope(ctx.filters)
+      val top       = s"SELECT $dimension AS k, ${metric.sql} AS v FROM ${t(ctx.settings)}$where GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT $n"
+      rollup match {
+        case Some((trunc, unit, bucketName)) =>
+          val sql = s"""WITH top AS ($top)
+                       |SELECT $trunc AS bucket, $dimension AS k, ${metric.sql} AS v
+                       |FROM ${t(ctx.settings)}${and(where, s"$dimension IN (SELECT k FROM top)")}
+                       |GROUP BY 1, 2""".stripMargin
+          QueryHelpers.runSelect(ctx.pool, sql, vals).map { rows =>
+            val cells   = rows.map(r => (r.getOffsetDateTime(0).toInstant.toEpochMilli, QueryHelpers.optString(r, 1).getOrElse("(unknown)")) -> number(r, 2)).toMap
+            val end     = ctx.filters.to
+            val buckets = Iterator.iterate(bucketStart(ctx.filters.from, unit))(_.plus(1, unit)).takeWhile(_.toInstant.isBefore(end)).map(_.toInstant.toEpochMilli).toSeq
+            val keys    = cells.toSeq.groupMapReduce(_._1._2)(_._2.value)(_ + _).toSeq.sortBy(-_._2).map(_._1)
+            val series  = keys.map { k =>
+              Json.obj("name" -> seriesName(k), "points" -> JsArray(buckets.map(b => Json.obj("ts" -> b, "value" -> cells.getOrElse((b, k), JsNumber(0))))))
+            }
+            QueryResult(AnalyticsShape.Timeseries, Json.obj("mode" -> "series", "bucket" -> bucketName, "series" -> JsArray(series)), JsArray())
+          }
+        case None =>
+          val (allWhere, allVals) = {
+            val (w, v) = FilterSql.whereClause(ctx.filters)
+            (and(w, real(ctx, status)), v)
+          }
+          val totalSql = s"SELECT ${metric.sql} AS v, COUNT(DISTINCT $dimension) AS groups FROM ${t(ctx.settings)}$allWhere"
+          val itemsSql = subgroup match {
+            case None      => s"$top"
+            case Some(sub) =>
+              s"""WITH top AS ($top)
+                 |SELECT split.k, top.v, split.s, split.v
+                 |FROM (
+                 |  SELECT $dimension AS k, COALESCE(($sub)::text, '(none)') AS s, ${metric.sql} AS v
+                 |  FROM ${t(ctx.settings)}${and(where, s"$dimension IN (SELECT k FROM top)")}
+                 |  GROUP BY 1, 2
+                 |) split JOIN top ON top.k = split.k
+                 |ORDER BY top.v DESC NULLS LAST, split.v DESC NULLS LAST""".stripMargin
+          }
+          val compare = (ctx.params \ "compare").asOpt[Boolean].contains(true)
+          for {
+            total <- QueryHelpers.runSelect(ctx.pool, totalSql, allVals)
+            rows  <- QueryHelpers.runSelect(ctx.pool, itemsSql, vals)
+            keys   = rows.map(r => QueryHelpers.optString(r, 0).getOrElse("(unknown)")).distinct
+            previous <- if (!compare || keys.isEmpty) Future.successful(Map.empty[String, JsNumber])
+                        else {
+                          val span          = java.time.Duration.between(ctx.filters.from, ctx.filters.to)
+                          val (pWhere, pVals) = scope(ctx.filters.copy(from = ctx.filters.from.minus(span), to = ctx.filters.from))
+                          val sql           = s"SELECT $dimension AS k, ${metric.sql} AS v FROM ${t(ctx.settings)}${and(pWhere, s"$dimension = ANY($$${pVals.size + 1})")} GROUP BY 1"
+                          QueryHelpers.runSelect(ctx.pool, sql, pVals :+ keys.toArray).map(_.map(r => QueryHelpers.optString(r, 0).getOrElse("") -> number(r, 1)).toMap)
+                        }
+          } yield {
+            // a group absent from the previous period was at zero then
+            val previousOf = (k: String) => if (compare) previous.getOrElse(k, JsNumber(0)) else JsNull
+            val items = subgroup match {
+              case None    => rows.map { r =>
+                val k = QueryHelpers.optString(r, 0).getOrElse("(unknown)")
+                Json.obj("key" -> k, "value" -> number(r, 1), "previous" -> previousOf(k))
+              }
+              case Some(_) => rows.groupBy(r => QueryHelpers.optString(r, 0).getOrElse("(unknown)")).toSeq
+                .sortBy { case (k, _) => keys.indexOf(k) }
+                .map { case (k, rs) =>
+                  Json.obj(
+                    "key" -> k,
+                    "value" -> number(rs.head, 1),
+                    "previous" -> previousOf(k),
+                    "subgroups" -> JsArray(rs.map(r => Json.obj("key" -> QueryHelpers.optString(r, 2).getOrElse("(none)"), "value" -> number(r, 3))))
+                  )
+                }
+            }
+            val summary = total.headOption
+            QueryResult(AnalyticsShape.Table, Json.obj(
+              "mode" -> "total",
+              "additive" -> metric.additive,
+              "total" -> summary.map(r => number(r, 0): JsValue).getOrElse(JsNull),
+              "groups" -> summary.map(r => QueryHelpers.safeLong(r, 1)).getOrElse(0L),
+              "items" -> JsArray(items)
+            ), JsArray(items))
+          }
+      }
+    }
+
     lazy val all: Seq[AnalyticsQuery] = Seq(
-      CallsLog, CallDetail, CallsByApikeyTs, TokensByApikeyTs, CostByApikeyTs, CallsByUserTs, TokensByUserTs, CostByUserTs,
+      CallsLog, CallDetail, RequestCalls, Explore, SessionsTable, EndUsersTable, TtftP50, TtftP95, TtftPctTs, TtftByModel, ByFinishReason, TruncatedRate, CallsByApikeyTs, TokensByApikeyTs, CostByApikeyTs, CallsByUserTs, TokensByUserTs, CostByUserTs,
       RequestsTotal, ErrorsTotal, ErrorRate_, CallsOverTime, CallsPerSecond, ByProviderKind, ByProvider, ByModality,
       ByOperation, StreamingRatio, TopModels, TopProviders, TopApikeys, TopUsers, TopRoutes, CallsByModelTs,
       CallsByModalityTs, ActivityHeatmap, DistinctUsers, DistinctApikeys, DistinctModels, DistinctProviders, RecentCalls,

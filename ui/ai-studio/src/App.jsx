@@ -18,6 +18,7 @@ import { RoutingPage } from './pages/Routing';
 import { PresetsPage } from './pages/Presets';
 import { ToolsPage } from './pages/Tools';
 import { CreditsPage } from './pages/Credits';
+import { UsersPage } from './pages/Users';
 
 const StudioContext = createContext(null);
 export const useStudio = () => useContext(StudioContext);
@@ -31,6 +32,7 @@ const PAGES = {
   activity: ActivityPage,
   logs: LogsPage,
   keys: KeysPage,
+  users: UsersPage,
   guardrails: GuardrailsPage,
   providers: ProvidersPage,
   routing: RoutingPage,
@@ -41,7 +43,7 @@ const PAGES = {
   models: ModelsPage,
 };
 
-function WorkspaceShell({ wsId, page }) {
+function WorkspaceShell({ wsId, page, sub }) {
   const studio = useStudio();
   const { navigate } = useRouter();
   const ws = useAsync(() => getWorkspace(wsId), [wsId]);
@@ -82,7 +84,7 @@ function WorkspaceShell({ wsId, page }) {
     <WorkspaceContext.Provider value={value}>
       <div className="shell">
         <WorkspaceSidebar workspace={ws.data} workspaces={studio.workspaces} page={sidebarPage} />
-        {page === 'chat' ? <ChatPage key={wsId} /> : <Page key={`${wsId}-${page}`} />}
+        {page === 'chat' ? <ChatPage key={wsId} /> : <Page key={`${wsId}-${page}-${sub || ''}`} sub={sub} />}
       </div>
     </WorkspaceContext.Provider>
   );
@@ -93,7 +95,8 @@ function Root() {
   const { path } = useRouter();
   const workspaces = useAsync(() => listWorkspaces(), []);
 
-  const wsMatch = matchPath('/workspaces/:id/:page', path) || matchPath('/workspaces/:id', path);
+  // `sub` is the item of a page, e.g. the user of `/workspaces/:id/users/:email`
+  const wsMatch = matchPath('/workspaces/:id/:page/:sub', path) || matchPath('/workspaces/:id/:page', path) || matchPath('/workspaces/:id', path);
   const currentWorkspace = wsMatch && workspaces.data ? workspaces.data.find((w) => w.id === wsMatch.id) : null;
 
   const studio = useMemo(
@@ -104,7 +107,7 @@ function Root() {
 
   let content = null;
   if (wsMatch) {
-    content = <WorkspaceShell wsId={wsMatch.id} page={wsMatch.page || 'overview'} />;
+    content = <WorkspaceShell wsId={wsMatch.id} page={wsMatch.page || 'overview'} sub={wsMatch.sub} />;
   } else {
     content = <WorkspacesPage loading={workspaces.loading} error={workspaces.error} />;
   }

@@ -7,6 +7,8 @@ export const META = {
   workspace: 'ai_studio_workspace',
   kind: 'ai_studio_kind',
   connection: 'ai_studio_connection',
+  // the person the usage of an api key is attributed to in activity and logs
+  owner: 'ai_studio_owner',
 };
 
 export const Groups = {

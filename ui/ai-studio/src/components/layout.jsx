@@ -9,6 +9,7 @@ export const WORKSPACE_PAGES = [
   { id: 'activity', label: 'Activity', icon: 'chart' },
   { id: 'logs', label: 'Logs', icon: 'list' },
   { id: 'keys', label: 'API Keys', icon: 'key' },
+  { id: 'users', label: 'Users', icon: 'users' },
   { id: 'guardrails', label: 'Guardrails', icon: 'shield' },
   { id: 'providers', label: 'Providers (BYOK)', icon: 'database' },
   { id: 'routing', label: 'Routing', icon: 'route' },
@@ -172,12 +173,21 @@ export function Topbar({ theme, workspaces, currentWorkspace }) {
         <Icon name="arrowLeft" />
         Back to Otoroshi
       </a>
-      <div className="user" title={user.email}>
-        <span className="avatar">{initials(user.name || user.email)}</span>
-        <span className="truncate" style={{ maxWidth: 140 }}>
-          {user.name || user.email}
-        </span>
-      </div>
+      {currentWorkspace ? (
+        <Link className="user" to={`/workspaces/${currentWorkspace.id}/users/${encodeURIComponent(user.email)}`} title={`${user.email}: my usage in ${currentWorkspace.name}`}>
+          <span className="avatar">{initials(user.name || user.email)}</span>
+          <span className="truncate" style={{ maxWidth: 140 }}>
+            {user.name || user.email}
+          </span>
+        </Link>
+      ) : (
+        <div className="user" title={user.email}>
+          <span className="avatar">{initials(user.name || user.email)}</span>
+          <span className="truncate" style={{ maxWidth: 140 }}>
+            {user.name || user.email}
+          </span>
+        </div>
+      )}
     </header>
   );
 }

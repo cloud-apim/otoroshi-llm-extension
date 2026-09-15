@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.analytics
 
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.ApikeyOwner
 import io.vertx.sqlclient.{Tuple => VertxTuple}
 import otoroshi.next.analytics.exporter.{AnalyticsProjection, UserAnalyticsExporterSettings}
 import play.api.libs.json.*
@@ -48,9 +49,18 @@ private[analytics] object EventJson {
 
   def id(event: JsValue): String = str(event, "@id").getOrElse(java.util.UUID.randomUUID().toString)
 
+  /** The api key metadata naming the person the usage of the key counts for, see [[ApikeyOwner]]. */
+  val ApikeyOwnerKey: String = ApikeyOwner.MetadataKey
+
+  def apikeyOwner(event: JsValue): Option[String] = str(event, s"apikey.metadata.$ApikeyOwnerKey")
+
   /** Caller identity cut down to what a filter or a ranking reads. */
   def stripIdentity(obj: JsObject): JsObject = {
-    val withApikey = pickAt(obj, "apikey", "clientId", "clientName", "_loc")
+    // of the key metadata, only the owner stays
+    val withApikey = (pickAt(obj, "apikey", "clientId", "clientName", "_loc"), apikeyOwner(obj)) match {
+      case (lean, Some(owner)) => lean ++ Json.obj("apikey" -> ((lean \ "apikey").as[JsObject] ++ Json.obj("metadata" -> Json.obj(ApikeyOwnerKey -> owner))))
+      case (lean, None)        => lean
+    }
     val withUser   = pickAt(withApikey, "user", "email", "name")
     pickAt(withUser, "route", "id", "name", "_loc", "groups", "api_ref")
   }
@@ -64,8 +74,8 @@ private[analytics] object EventJson {
   /**
    * The values of the column contract, in `AnalyticsProjection.commonColumns` order.
    *
-   * `from_ip` stays empty: no event of the extension carries the caller's address, and the gateway
-   * event of the same request (joined on `request_id`) already has it.
+   * `from_ip` is only known for the model calls (`client_ip`); for the other events, the gateway event of
+   * the same request (joined on `request_id`) has it.
    */
   def commonValues(event: JsValue): Seq[AnyRef] = Seq(
     id(event),
@@ -79,7 +89,7 @@ private[analytics] object EventJson {
     strings(event, "route.groups"),
     str(event, "apikey.clientId").orNull,
     str(event, "user.email").orNull,
-    null
+    str(event, "client_ip").orNull
   )
 
   val commonInsertColumns: String =
@@ -128,10 +138,15 @@ object LlmUsageProjection extends AnalyticsProjection {
        |  provider_name         TEXT,
        |  model                 TEXT,
        |  apikey_name           TEXT,
+       |  apikey_owner          TEXT,
        |  err                   BOOLEAN          NOT NULL DEFAULT false,
        |  error_kind            TEXT,
        |  error_message         TEXT,
        |  duration_ms           BIGINT,
+       |  ttft_ms               BIGINT,
+       |  finish_reason         TEXT,
+       |  session_id            TEXT,
+       |  end_user              TEXT,
        |  input_tokens          BIGINT           NOT NULL DEFAULT 0,
        |  output_tokens         BIGINT           NOT NULL DEFAULT 0,
        |  reasoning_tokens      BIGINT           NOT NULL DEFAULT 0,
@@ -162,12 +177,13 @@ object LlmUsageProjection extends AnalyticsProjection {
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_provider_ts ON ${table(s)} (provider_id, ts DESC);",
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_err_ts      ON ${table(s)} (ts DESC) WHERE err = true;",
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_request     ON ${table(s)} (request_id) WHERE request_id IS NOT NULL;",
+      s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_session_ts  ON ${table(s)} (session_id, ts DESC) WHERE session_id IS NOT NULL;",
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_budgets_gin ON ${table(s)} USING GIN (budget_ids);"
     )
 
   private val columns = Seq(
     "request_id", "consumed_using", "modality", "streaming", "delegated", "provider_kind", "provider_id",
-    "provider_name", "model", "apikey_name", "err", "error_kind", "error_message", "duration_ms", "input_tokens",
+    "provider_name", "model", "apikey_name", "apikey_owner", "err", "error_kind", "error_message", "duration_ms", "ttft_ms", "finish_reason", "session_id", "end_user", "input_tokens",
     "output_tokens", "reasoning_tokens", "total_tokens", "ocr_pages", "cache_status", "input_cost", "output_cost",
     "reasoning_cost", "total_cost", "cost_source", "energy_kwh", "gwp_kgco2eq", "gwp_usage_kgco2eq",
     "gwp_embodied_kgco2eq", "adpe_kgsbeq", "pe_mj", "wcf_l", "budget_ids", "ratelimit_tokens_remaining",
@@ -292,10 +308,16 @@ object LlmUsageProjection extends AnalyticsProjection {
       str(event, "provider_details.name").orNull,
       str(event, top("model") ++ Seq("output.model", "input_body.model", "provider_details.options.model")*).orNull,
       str(event, "apikey.clientName").orNull,
+      apikeyOwner(event).orNull,
       boxBool(error != JsNull),
       errorKind(error).orNull,
       errorMessage(error).orNull,
-      boxLong(if (slug) long(event, "duration") else None),
+      // measured around the call by the auditing decorator, the provider's own figure for older events
+      boxLong(if (slug) long(event, "call_duration", "duration") else None),
+      boxLong(if (slug) long(event, "time_to_first_token") else None),
+      str(event, "finish_reason").orNull,
+      str(event, "session_id").orNull,
+      str(event, "end_user").orNull,
       java.lang.Long.valueOf(input),
       java.lang.Long.valueOf(output),
       java.lang.Long.valueOf(reasoning),

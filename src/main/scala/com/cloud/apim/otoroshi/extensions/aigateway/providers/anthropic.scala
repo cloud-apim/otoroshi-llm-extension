@@ -3,6 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import org.apache.pekko.stream.scaladsl.{Framing, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.*
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.LlmCallTelemetry
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AnthropicApiResponseChoiceMessageToolCall, LlmFunctions}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -708,7 +709,8 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
               }
               case None => Json.obj("ai" -> Seq(slug))
             }
-            true
+            // a chunk that also carries the finish reason is kept (its usage is not forwarded): dropping it loses how the stream ended
+            chunk.choices.forall(_.finish_reason.isEmpty)
           } else {
             false
           }
@@ -752,7 +754,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
                   content = if (toolCalls.nonEmpty) None else choice.content,
                   tool_calls = toolCalls,
                 ),
-                finishReason = choice.finish_reason.map(fr => if (fr == "tool_use") "tool_calls" else fr),
+                finishReason = choice.finish_reason.map(LlmCallTelemetry.normalizeFinishReason),
               )
             }
           )

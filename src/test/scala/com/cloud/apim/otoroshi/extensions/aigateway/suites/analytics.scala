@@ -81,8 +81,13 @@ object AnalyticsSamples {
   private def costs(total: Double) =
     Json.obj("input_cost" -> total * 0.25, "output_cost" -> total * 0.75, "reasoning_cost" -> 0, "total_cost" -> total, "currency" -> "dollar", "source" -> "price-table")
 
-  // a plain chat call: 100 + 50 tokens, $0.002, 0.8 gCO2eq, one budget
+  // a plain chat call: 100 + 50 tokens, $0.002, 0.8 gCO2eq, one budget, in a session
   val chat: JsObject = envelope("llm_chat", "LLMUsageAudit") ++ slug("provider_1", "gpt-4.1-mini", 100, 50) ++ Json.obj(
+    "call_duration"    -> 450,
+    "finish_reason"    -> "stop",
+    "session_id"       -> "sess_1",
+    "end_user"         -> "customer-42",
+    "client_ip"        -> "10.0.0.1",
     "provider_kind"    -> "openai",
     "consumed_using"   -> "chat/completion/blocking",
     "input_prompt"     -> Json.arr(Json.obj("role" -> "user", "content" -> "my private question")),
@@ -94,8 +99,11 @@ object AnalyticsSamples {
     "budgets"          -> Json.arr(Json.obj("budget_id" -> "budget_1", "consumption" -> JsNull))
   )
 
-  // a streaming call on another model: 200 + 100 tokens, $0.01
+  // a streaming call on another model: 200 + 100 tokens, $0.01, truncated, in the same session
   val streaming: JsObject = envelope("llm_stream", "LLMUsageAudit") ++ slug("provider_2", "claude-sonnet-5", 200, 100, 1200) ++ Json.obj(
+    "time_to_first_token" -> 150,
+    "finish_reason"       -> "length",
+    "session_id"          -> "sess_1",
     "provider_kind"    -> "anthropic",
     "consumed_using"   -> "chat/completion/streaming",
     "output"           -> output("streamed"),
@@ -177,7 +185,9 @@ object AnalyticsSamples {
     "budgets"          -> Json.arr()
   )
 
-  val audio: JsObject = envelope("llm_audio", "LLMUsageAudit") ++ Json.obj(
+  // made by an app, with a key owned by john: the call counts for him
+  val audio: JsObject = (envelope("llm_audio", "LLMUsageAudit") - "user") ++ Json.obj(
+    "apikey"           -> (apikey ++ Json.obj("metadata" -> Json.obj("ai_studio_owner" -> "john@acme.io", "internal" -> "private-metadata"))),
     "provider_kind"    -> "openai",
     "provider"         -> "audio_1",
     "duration"         -> 700,
@@ -298,7 +308,7 @@ class AnalyticsProjectionsSuite extends munit.FunSuite {
       own.foreach { e =>
         val stored = Json.stringify(p.strip(e))
         Seq("s3cr3t-never-stored", "tok3n-never-stored", "my private question", "scarecrow", "private text",
-          "private transcript", "private-argument", "private-result", "AAAA", "a very long description", "long text")
+          "private transcript", "private-argument", "private-result", "private-metadata", "AAAA", "a very long description", "long text")
           .foreach(s => assert(!stored.contains(s), s"'$s' leaked into ${p.id} / ${(e \ "@id").as[String]}"))
       }
     }
@@ -329,6 +339,12 @@ class AnalyticsProjectionsSuite extends munit.FunSuite {
     assertEquals(r("apikey_id"), "key_1")
     assertEquals(r("apikey_name"), "team-a")
     assertEquals(r("user_email"), "jane@acme.io")
+    assertEquals(r("apikey_owner"), null)
+    assertEquals(r("from_ip"), "10.0.0.1")
+    // measured around the call, over the provider's own figure
+    assertEquals(r("duration_ms"), 450L)
+    assertEquals((r("finish_reason"), r("session_id"), r("end_user"), r("ttft_ms")), ("stop", "sess_1", "customer-42", null))
+    assertEquals(row(LlmUsageProjection, streaming)("ttft_ms"), 150L)
     assertEquals(r("modality"), "chat")
     assertEquals(r("streaming"), false)
     assertEquals(r("model"), "gpt-4.1-mini")
@@ -352,6 +368,12 @@ class AnalyticsProjectionsSuite extends munit.FunSuite {
     val a = row(LlmUsageProjection, audio)
     assertEquals((a("modality"), a("model"), a("total_tokens")), ("audio", "whisper-1", 12L))
     assertEquals(row(LlmUsageProjection, streaming)("streaming"), true)
+  }
+
+  test("a call made with an owned api key carries its owner, and nothing else of the key metadata") {
+    val r = row(LlmUsageProjection, audio)
+    assertEquals((r("apikey_id"), r("apikey_owner"), r("user_email")), ("key_1", "john@acme.io", null))
+    assertEquals((LlmUsageProjection.strip(audio) \ "apikey" \ "metadata").as[JsObject], Json.obj("ai_studio_owner" -> "john@acme.io"))
   }
 
   test("errors are classified") {
@@ -545,8 +567,10 @@ class AnalyticsQueriesSuite extends munit.FunSuite {
   }
 
   test("llm queries can be narrowed to one user, and a user that is not an email matches nothing") {
-    assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("user" -> "jane@acme.io"))), 8.0)
-    assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("user" -> "john@acme.io"))), 0.0)
+    assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("user" -> "jane@acme.io"))), 7.0)
+    // john made no call himself, one of his api keys did
+    assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("user" -> "john@acme.io"))), 1.0)
+    assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("user" -> "paul@acme.io"))), 0.0)
     assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("user" -> "jane@acme.io' OR '1'='1"))), 0.0)
     assertEquals(value(run("cloudapim_llm_requests_total", params = Json.obj("user" -> "  "))), 8.0)
   }
@@ -567,6 +591,8 @@ class AnalyticsQueriesSuite extends munit.FunSuite {
     assertEquals(recent.map(r => (r \ "kind").as[String]).toSet, Set("status_429", "guardrail_denied"))
     val keys = (run("cloudapim_llm_apikeys_table").data \ "items").as[Seq[JsObject]]
     assertEquals(keys.map(k => ((k \ "apikey").as[String], (k \ "calls").as[Long])), Seq("team-a" -> 8L))
+    val users = (run("cloudapim_llm_users_table").data \ "items").as[Seq[JsObject]]
+    assertEquals(users.map(u => ((u \ "user").as[String], (u \ "calls").as[Long])).toSet, Set("jane@acme.io" -> 7L, "john@acme.io" -> 1L))
     val models = (run("cloudapim_llm_models_table").data \ "items").as[Seq[JsObject]]
     assert(models.forall(m => (m \ "usd_per_1k_tokens").isDefined && (m \ "gco2eq_per_1k_tokens").isDefined))
   }
@@ -577,6 +603,47 @@ class AnalyticsQueriesSuite extends munit.FunSuite {
     assertEquals(value(run("cloudapim_llm_tokens_total")), 150.0 + 300.0 + 12.0 + 40.0 + 12.0)
     assertEquals(BigDecimal(value(run("cloudapim_llm_cost_total"))).setScale(6, BigDecimal.RoundingMode.HALF_UP), BigDecimal("0.012100"))
     assertEquals(BigDecimal(value(run("cloudapim_llm_gwp_total"))).setScale(3, BigDecimal.RoundingMode.HALF_UP), BigDecimal("2.800"))
+  }
+
+  test("the calls of a request include the re-reports the other queries skip") {
+    // the fallback sample re-reports the chat call, on the same request
+    val calls = (run("cloudapim_llm_request_calls", params = Json.obj("request_id" -> "req_llm_chat")).data \ "items").as[Seq[JsObject]]
+    assertEquals(calls.map(c => ((c \ "id").as[String], (c \ "delegated").as[Boolean])).toSet, Set("llm_chat" -> false, "llm_fallback_outer" -> true))
+    assertEquals((run("cloudapim_llm_request_calls").data \ "items").as[Seq[JsObject]], Seq.empty)
+  }
+
+  test("sessions, end users, finish reasons and time to first token") {
+    val sessions = (run("cloudapim_llm_sessions_table").data \ "items").as[Seq[JsObject]]
+    assertEquals(sessions.map(s => ((s \ "session_id").as[String], (s \ "calls").as[Long], (s \ "models").as[Long])), Seq(("sess_1", 2L, 2L)))
+    val endUsers = (run("cloudapim_llm_end_users_table").data \ "items").as[Seq[JsObject]]
+    assertEquals(endUsers.map(u => ((u \ "end_user").as[String], (u \ "calls").as[Long])), Seq("customer-42" -> 1L))
+    val reasons = (run("cloudapim_llm_by_finish_reason").data \ "items").as[Seq[JsObject]]
+    assertEquals(reasons.map(r => ((r \ "key").asOpt[String].orElse((r \ "label").asOpt[String]).getOrElse(""), (r \ "value").as[Long])).toSet, Set("stop" -> 1L, "length" -> 1L))
+    assertEquals(value(run("cloudapim_llm_truncated_rate")), 0.5)
+    assertEquals(value(run("cloudapim_llm_ttft_p50")), 150.0)
+    val log = (run("cloudapim_llm_calls_log", params = Json.obj("session_id" -> "sess_1", "finish_reason" -> "length")).data \ "items").as[Seq[JsObject]]
+    assertEquals(log.map(c => (c \ "id").as[String]), Seq("llm_stream"))
+  }
+
+  test("the explorer ranks, splits, compares and rolls up any metric by any dimension") {
+    val ranking = run("cloudapim_llm_explore", params = Json.obj("metric" -> "tokens", "group_by" -> "model", "compare" -> true)).data
+    val models  = (ranking \ "items").as[Seq[JsObject]]
+    assertEquals((models.head \ "key").as[String], "claude-sonnet-5")
+    assertEquals((models.head \ "value").as[Long], 300L)
+    // nothing happened in the previous period
+    assertEquals((models.head \ "previous").as[Long], 0L)
+    assertEquals((ranking \ "total").as[Long], 514L)
+    assertEquals((ranking \ "additive").as[Boolean], true)
+    val split   = (run("cloudapim_llm_explore", params = Json.obj("metric" -> "requests", "group_by" -> "user", "subgroup" -> "modality")).data \ "items").as[Seq[JsObject]]
+    assertEquals(split.map(i => ((i \ "key").as[String], (i \ "value").as[Long])), Seq("jane@acme.io" -> 7L, "john@acme.io" -> 1L))
+    assertEquals((split.head \ "subgroups").as[Seq[JsObject]].map(i => (i \ "key").as[String]).toSet, Set("chat", "embedding", "image"))
+    val series  = run("cloudapim_llm_explore", params = Json.obj("metric" -> "requests", "group_by" -> "model", "rollup" -> "hour")).data
+    assertEquals((series \ "bucket").as[String], "1h")
+    assert((series \ "series").as[Seq[JsObject]].forall(s => (s \ "points").as[Seq[JsObject]].nonEmpty))
+    assertEquals((series \ "series").as[Seq[JsObject]].flatMap(s => (s \ "points").as[Seq[JsObject]].map(p => (p \ "value").as[Long])).sum, 8L)
+    // an unknown metric or dimension falls back to the defaults, never reaches the SQL
+    assert((run("cloudapim_llm_explore", params = Json.obj("metric" -> "COUNT(*); DROP TABLE x", "group_by" -> "1; --")).data \ "items").isDefined)
+    assertEquals((run("cloudapim_llm_explore", params = Json.obj("metric" -> "requests", "group_by" -> "status", "status" -> "error")).data \ "items").as[Seq[JsObject]].map(i => (i \ "key").as[String]).toSet, Set("status_429", "guardrail_denied"))
   }
 
   test("errors, guardrails and cache are counted") {

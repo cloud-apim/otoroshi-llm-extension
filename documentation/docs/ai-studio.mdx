@@ -119,6 +119,10 @@ the chat.
 Create keys for your applications, reveal and copy them, set per-key quotas and a credit limit, and jump
 to the activity of a single key.
 
+Every key has an **owner**: yourself, a teammate, or the whole workspace. The usage of a key counts for
+its owner, so the activity of a person covers both their chats and the applications running with their
+keys. Workspace keys belong to no one in particular, which suits shared applications and agents.
+
 ![The API keys page of a workspace](/img/ai-studio-api-keys.png)
 
 *Each key with its credit limit, its budgets and its quotas, and shortcuts to its activity and its budget.*
@@ -144,8 +148,9 @@ to the activity of a single key.
 
 **Credits** creates [budgets](/docs/cost-optimizations/budgets) in dollars or tokens, per period, that
 block or alert when exceeded. A budget always applies to the calls of its workspace only, and can be
-narrowed to some API keys, some users, some models or extra conditions. The **Budget** button of an API
-key creates a budget for that key in one step.
+narrowed to some API keys, some users, some models or extra conditions. A budget of a user covers their
+chats and the calls of the API keys they own, so one limit follows a person across every application they
+run. The **Budget** button of an API key creates a budget for that key in one step.
 
 ![The credits page listing the budgets of a workspace](/img/ai-studio-credits.png)
 
@@ -162,15 +167,42 @@ period, with the usage broken down by model, by API key and by user. Filter the 
 key or one user from the selectors, or by clicking a row of the usage tables. The filters are part of
 the page URL, so a filtered view can be bookmarked and shared.
 
+- **Trends** puts side by side, for models, users, API keys and end users, how the spend, tokens or
+  requests evolve and the biggest moves against the previous period, new comers included.
+- **Explore** answers the questions the dashboards don't: pick a metric (spend, tokens, latency and time to
+  first token percentiles, throughput, cache hit rate, error rate, truncated answers, emissions…), a
+  dimension to break it down by (model, provider, API key, user, end user, session, finish reason, status…),
+  optionally a second one, and see it as a ranking with its share of the total and its change against the
+  previous period, or hour by hour, day by day, week by week or month by month.
+- **Guardrails** counts the requests your guardrails blocked, their rate, when they happened, and which
+  reasons, models, keys and users they concern.
+
 ![The activity dashboard of a workspace: KPIs, usage by API key, user and model, requests, tokens, caching and latency](/img/ai-studio-activity.png)
 
 *Spend, requests and tokens compared to the previous period, the usage by API key, by user and by model, and the live consumption of the budgets.*
 
-Calls made from the studio chat are attributed to the person chatting, calls made by your applications
-to their API key.
+Calls made from the studio chat are attributed to the person chatting. Calls made by your applications
+are attributed to their API key, and to the owner of that key. Filter on a user to see everything they
+consume, and on one of their keys to narrow it further.
 
-**Logs** lists every call, newest first, with its model, consumer, tokens, cost, latency and status.
-Only metadata is recorded: prompts and answers are never stored.
+**Users** lists the people using the workspace, whether they chat from the studio or run applications with
+the API keys they own. The profile of a user gathers their spend, tokens and requests by model, a year of
+daily activity, the keys they own and the budgets that apply to them. Your own profile is one click away
+from your name in the top bar.
+
+**Logs** lists every call, newest first, with its model, user, API key, tokens, cost, speed, latency, finish
+reason and status. Pick the columns you care about, filter by model, key, user, status or finish reason, and
+share a filtered view or a single call with its link. Only metadata is recorded: prompts and answers are
+never stored.
+
+The details of a call show how long the answer took and how long the first token made the caller wait, why it
+ended (a clean `stop`, an answer cut by `length`, `tool_calls`, a `content_filter`), who it counts for, down to
+the end user of the calling application, and the cost breakdown. When serving a request took several model
+calls (a guardrail, a failed attempt before a fallback, a router), they are laid out on one timeline.
+
+The **Sessions** tab groups the calls of a conversation or an agent run: send the same id in the
+`x-session-id` header, or in a `session_id` field of the body, with each call. The studio chat sends one per
+conversation. The end user comes from the standard `user` field of the request.
 
 ![The logs of a workspace: every call with its model, consumer, tokens, cost, latency and status](/img/ai-studio-logs.png)
 
@@ -237,7 +269,7 @@ models from the catalog, workspace quotas, every provider selected for a preset 
 | `GET` `POST /workspaces/:id/providers` | List or connect providers: `kind`, `name`, `token`, `base_url`, `timeout`, `enabled`, `fields` and `modalities` (`text`, `embedding`, `image`, `audio`, `moderation`, `ocr`, `video`, each with `enabled`, `model`, and `stt_model` for audio). |
 | `GET` `PUT` `DELETE /workspaces/:id/providers/:provider` | Read, update or remove a provider and all of its capabilities. |
 | `GET /workspaces/:id/providers/:provider/models`, `POST /workspaces/:id/providers/_models` | The models offered by a connected provider, or by a provider before connecting it. |
-| `GET` `POST /workspaces/:id/apikeys`, `GET` `PUT` `DELETE /workspaces/:id/apikeys/:clientId` | API keys: `name`, `description`, `enabled`, `quotas` (`null` for the workspace defaults) and `credit_limit` (`{ usd, period }`, `null` to remove it). |
+| `GET` `POST /workspaces/:id/apikeys`, `GET` `PUT` `DELETE /workspaces/:id/apikeys/:clientId` | API keys: `name`, `description`, `enabled`, `owner` (the email the usage of the key counts for, `null` for a workspace key), `quotas` (`null` for the workspace defaults) and `credit_limit` (`{ usd, period }`, `null` to remove it). |
 | `GET` `POST /workspaces/:id/budgets`, `GET` `PUT` `DELETE /workspaces/:id/budgets/:budget` | Credits: `name`, `usd`, `tokens`, `period` (`lifetime`, `daily`, `weekly`, `monthly`, `yearly`), `mode` (`block` or `soft`), `alert`, `scope` (`workspace`, `apikey` or `custom`) with `apikeys`, `users`, `models` and `rules`. `?consumption=true` adds the live consumption to the list. |
 | `GET /workspaces/:id/budgets/:budget/consumption`, `POST .../consumption/_reset` | Live consumption of a budget, and reset of its current window (`?all=true` resets everything). |
 | `GET` `PUT /workspaces/:id/guardrails` | Content policies of the workspace (`items`, `fail_on_deny`), applied to every provider. |

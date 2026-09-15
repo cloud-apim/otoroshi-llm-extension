@@ -863,9 +863,25 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
             val modelName = originalProvider.metadata.getOrElse("eco-impacts-model", getModel(originalBody))
             val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_impacts")).contains("true")
             val addCostsInResp = ext.llmImpactsSettings.embedImpactsInResponses || enableInRequest
+            // the real finish reason is stripped from the chunks and restored on the terminal chunk, as the costs do
+            val lastFinishReason = new AtomicReference[Option[String]](None)
+            def terminal(impacts: Option[ImpactsOutput]) = ChatResponseChunk(
+              id = s"chatcmpl-${ULID.random().toLowerCase()}",
+              created = (System.currentTimeMillis() / 1000L),
+              model = modelName,
+              choices = Seq(ChatResponseChunkChoice(
+                index = 0L,
+                delta = ChatResponseChunkChoiceDelta(None),
+                finishReason = lastFinishReason.get().orElse("stop".some),
+              )),
+              impacts = impacts
+            )
             if (ext.llmImpacts.canHandle(finalProvider, modelName)) {
               (resp: Source[ChatResponseChunk, Any]).applyOnIf(addCostsInResp) { src =>
-                src.map(r => r.copy(choices = r.choices.map(c => c.copy(finishReason = None))))
+                src.map { r =>
+                  r.choices.flatMap(_.finishReason).lastOption.foreach(reason => lastFinishReason.set(reason.some))
+                  r.copy(choices = r.choices.map(c => c.copy(finishReason = None)))
+                }
               }.alsoTo(Sink.onComplete { _ =>
                 val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
                 val generationTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L)
@@ -878,23 +894,14 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
                   requestLatency = (System.currentTimeMillis() - start).toDouble,
                   electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
                 ) match {
-                  case Left(_) => promise.trySuccess(None)
+                  // finish reasons were stripped above: the stream must still end with one
+                  case Left(_) => promise.trySuccess(if (addCostsInResp) terminal(None).some else None)
                   case Right(impacts) if !addCostsInResp =>
                     attrs.put(ChatClientWithEcoImpact.key -> impacts)
                     promise.trySuccess(None)
                   case Right(impacts) =>
                     attrs.put(ChatClientWithEcoImpact.key -> impacts)
-                    promise.trySuccess(ChatResponseChunk(
-                      id = s"chatcmpl-${ULID.random().toLowerCase()}",
-                      created = (System.currentTimeMillis() / 1000L),
-                      model = modelName,
-                      choices = Seq(ChatResponseChunkChoice(
-                        index = 0L,
-                        delta = ChatResponseChunkChoiceDelta(None),
-                        finishReason = "stop".some,
-                      )),
-                      impacts = impacts.some
-                    ).some)
+                    promise.trySuccess(terminal(impacts.some).some)
                 }
               }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right
             } else {

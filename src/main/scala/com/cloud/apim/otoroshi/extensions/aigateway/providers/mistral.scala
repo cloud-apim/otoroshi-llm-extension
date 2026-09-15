@@ -513,8 +513,8 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
                 }
                 case None => Json.obj("ai" -> Seq(slug))
               }
-              val hasToolCalls = chunk.choices.exists(_.finish_reason.contains("tool_calls"))
-              !hasToolCalls
+              // a chunk that also carries the finish reason is kept (its usage is not forwarded): dropping it loses how the stream ended
+              chunk.choices.forall(_.finish_reason.isEmpty)
             } else {
               false
             }

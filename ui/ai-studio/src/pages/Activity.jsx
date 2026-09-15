@@ -1,165 +1,21 @@
 import { useState } from 'react';
 import { useWorkspace } from '../App';
-import { AreaChart, Sparkline, StackedBars } from '../components/charts';
+import { AreaChart, StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
-import { Empty, ErrorAlert, Loading, PageHeader, Progress, Segmented, Select, useAsync } from '../components/ui';
+import { Empty, ErrorAlert, Loading, PageHeader, Select, Tabs, useAsync } from '../components/ui';
+import { BudgetsCard, ConsumersCard, Kpi, UsageCard } from '../components/usage';
 import { compareOf, itemsOf, NoExporterError, PERIODS, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
 import { listApikeys } from '../lib/apikeys';
-import { budgetConsumption, listBudgets, periodLabel } from '../lib/budgets';
 import { fmtCost, fmtInt, fmtMs, fmtNumber, fmtPercent } from '../lib/format';
-import { useRouter } from '../lib/router';
+import { Link, useRouter } from '../lib/router';
+import { ExploreTab, GuardrailsTab, TrendsTab } from './ActivityTabs';
 
-function Delta({ value, previous, inverse }) {
-  if (previous === null || previous === undefined) return null;
-  if (previous === 0) return value > 0 ? <span className="kpi delta up">new</span> : <span className="faint small">—</span>;
-  const ratio = (value - previous) / previous;
-  const up = ratio >= 0;
-  const good = inverse ? !up : up;
-  return (
-    <span className={`delta ${good ? 'up' : 'down'}`}>
-      {up ? '↑' : '↓'} {Math.abs(ratio * 100).toFixed(1)}%
-    </span>
-  );
-}
-
-function Kpi({ label, value, previous, format, points, inverse }) {
-  return (
-    <div className="card tight kpi">
-      <div className="top">
-        <div>
-          <div className="label">{label}</div>
-          <div className="value">{format(value)}</div>
-        </div>
-        <Sparkline points={points} />
-      </div>
-      <div className="row between">
-        <Delta value={value} previous={previous} inverse={inverse} />
-        <span className="vs">vs prev period</span>
-      </div>
-    </div>
-  );
-}
-
-// Usage per API key or per user over the period, one row per consumer. Clicking a row narrows the whole
-// page to that consumer.
-function ConsumersCard({ title, description, items, active, onPick, empty }) {
-  const max = Math.max(1, ...items.map((i) => Number(i.tokens) || 0));
-  return (
-    <div className="card flush">
-      <div style={{ padding: '18px 22px 6px' }}>
-        <h2>{title}</h2>
-        {description && (
-          <p className="muted small" style={{ marginTop: 4 }}>
-            {description}
-          </p>
-        )}
-      </div>
-      {items.length === 0 ? (
-        <Empty>{empty}</Empty>
-      ) : (
-        <div className="table-wrap">
-          <table className="table consumers">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th className="num">Requests</th>
-                <th className="num">Tokens</th>
-                <th className="num">Spend</th>
-                <th className="num">Errors</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((it) => (
-                <tr key={it.key} className={`clickable ${active === it.value ? 'selected' : ''}`} onClick={() => onPick(it.value)} title={active === it.value ? 'Clear this filter' : `Only show the usage of ${it.label}`}>
-                  <td>
-                    <div className="truncate" style={{ maxWidth: 260 }}>
-                      {it.label}
-                    </div>
-                    <div className="rank">
-                      <div className="bar">
-                        <i style={{ width: `${((Number(it.tokens) || 0) / max) * 100}%` }} />
-                      </div>
-                    </div>
-                  </td>
-                  <td className="num">{fmtInt(it.calls)}</td>
-                  <td className="num">{fmtNumber(it.tokens)}</td>
-                  <td className="num">{fmtCost(it.spend_usd)}</td>
-                  <td className="num">{Number(it.errors) ? fmtInt(it.errors) : <span className="faint">0</span>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function LiveSection({ workspace }) {
-  const data = useAsync(async () => {
-    const budgets = await listBudgets(workspace.id);
-    const consumptions = await Promise.all(budgets.map((b) => budgetConsumption(b.id).catch(() => null)));
-    return budgets.map((b, i) => ({ budget: b, consumption: consumptions[i] }));
-  }, [workspace.id]);
-  const list = data.data || [];
-  if (data.loading && !data.data) return null;
-  return (
-    <div className="card">
-      <h2>Budgets</h2>
-      <p className="muted" style={{ margin: '4px 0 12px' }}>
-        Live consumption of the current window of each budget.
-      </p>
-      {list.length === 0 && <p className="muted small">No budget in this workspace.</p>}
-      <div className="stack">
-        {list.map(({ budget, consumption }) => {
-          const usd = consumption ? Number(consumption.consumed_total_usd) || 0 : 0;
-          const tokens = consumption ? Number(consumption.consumed_total_tokens) || 0 : 0;
-          const limitUsd = budget.limits && budget.limits.total_usd;
-          const limitTokens = budget.limits && budget.limits.total_tokens;
-          return (
-            <div key={budget.id} className="stack tight">
-              <div className="row between">
-                <span>
-                  {budget.name} <span className="faint small">· {periodLabel(budget)}</span>
-                </span>
-                <span className="small">
-                  {limitUsd !== undefined && limitUsd !== null ? `${fmtCost(usd)} / ${fmtCost(limitUsd)}` : fmtCost(usd)}
-                  {' · '}
-                  {limitTokens ? `${fmtNumber(tokens)} / ${fmtNumber(limitTokens)} tokens` : `${fmtNumber(tokens)} tokens`}
-                </span>
-              </div>
-              {(limitUsd || limitTokens) && <Progress value={limitUsd ? usd : tokens} max={limitUsd || limitTokens} />}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-const METRICS = {
-  spend: { label: 'Spend', query: 'cost', format: fmtCost },
-  tokens: { label: 'Tokens', query: 'tokens', format: fmtNumber },
-  requests: { label: 'Requests', query: 'requests', format: fmtNumber },
-};
-
-// "Usage by <dimension>" card: one stacked bar series per model, api key or user
-function UsageCard({ title, description, dimension, run, deps, bucket, empty }) {
-  const [metric, setMetric] = useState('tokens');
-  const data = useAsync(() => run(`cloudapim_llm_${METRICS[metric].query}_by_${dimension}_over_time`, { params: { top_n: 7 } }), [...deps, metric]);
-  return (
-    <div className="card">
-      <div className="card-head">
-        <div>
-          <h2>{title}</h2>
-          {description && <p>{description}</p>}
-        </div>
-        <Segmented value={metric} onChange={setMetric} options={Object.entries(METRICS).map(([value, m]) => ({ value, label: m.label }))} />
-      </div>
-      {data.loading && !data.data ? <Loading /> : <StackedBars series={seriesOf(data.data)} bucket={bucket} format={METRICS[metric].format} height={240} empty={empty} />}
-    </div>
-  );
-}
+const TABS = [
+  { value: 'overview', label: 'Overview' },
+  { value: 'trends', label: 'Trends' },
+  { value: 'explore', label: 'Explore' },
+  { value: 'guardrails', label: 'Guardrails' },
+];
 
 const DEFAULT_PERIOD = '7d';
 
@@ -171,10 +27,11 @@ export function ActivityPage() {
   const period = PERIODS.some((p) => p.value === query.period) ? query.period : DEFAULT_PERIOD;
   const apikey = query.apikey || '';
   const user = query.user || '';
-  // a key and a user are never filtered together: picking one clears the other
+  const tab = TABS.some((t) => t.value === query.tab) ? query.tab : 'overview';
+  // a key and a user combine: the keys a user owns count for them. The tabs keep their own settings in the url too
   const setFilters = (patch) => {
-    const next = { apikey, user, period, ...patch, ...(patch.apikey ? { user: '' } : {}), ...(patch.user ? { apikey: '' } : {}) };
-    const qs = new URLSearchParams(Object.entries(next).filter(([k, v]) => v && !(k === 'period' && v === DEFAULT_PERIOD))).toString();
+    const next = { ...query, period, ...patch };
+    const qs = new URLSearchParams(Object.entries(next).filter(([k, v]) => v && !(k === 'period' && v === DEFAULT_PERIOD) && !(k === 'tab' && v === 'overview'))).toString();
     navigate(`/workspaces/${workspace.id}/activity${qs ? `?${qs}` : ''}`, { replace: true, keepScroll: true });
   };
   const [refresh, setRefresh] = useState(0);
@@ -188,13 +45,14 @@ export function ActivityPage() {
     [workspace.id, period, apikey, refresh]
   );
 
-  const opts = { period, apikey: apikey || undefined, user: user || undefined, nocache: refresh > 0 };
+  const opts = { period, apikey: apikey || undefined, user: user || undefined, nocache: refresh > 0, refresh };
   const q = (id, extra = {}) => runQuery(workspace.id, id, { ...opts, ...extra });
   const clientIdOf = (name) => ((keys.data || []).find((k) => k.clientName === name) || (keys.data || []).find((k) => k.clientId === name) || {}).clientId;
   const keyName = (clientId) => ((keys.data || []).find((k) => k.clientId === clientId) || { clientName: clientId }).clientName;
   const userOptions = [...new Set([...(users.data || []).map((u) => u.user), ...(user ? [user] : [])])].map((u) => ({ value: u, label: u }));
 
   const kpis = useAsync(async () => {
+    if (tab !== 'overview') return null;
     const [spend, spendTs, requests, requestsTs, tokens, tokensTs, cache, cacheTs, per1k, latency] = await Promise.all([
       q('cloudapim_llm_cost_total', { compare: true }),
       q('cloudapim_llm_cost_over_time'),
@@ -208,9 +66,10 @@ export function ActivityPage() {
       q('cloudapim_llm_latency_p95', { compare: true }),
     ]);
     return { spend, spendTs, requests, requestsTs, tokens, tokensTs, cache, cacheTs, per1k, latency };
-  }, [workspace.id, period, apikey, user, refresh]);
+  }, [workspace.id, period, apikey, user, refresh, tab]);
 
   const charts = useAsync(async () => {
+    if (tab !== 'overview') return null;
     const [calls, tokensTs, cacheTs, latencyTs, models, apikeysTable, usersTable] = await Promise.all([
       q('cloudapim_llm_requests_over_time'),
       q('cloudapim_llm_tokens_over_time'),
@@ -221,7 +80,7 @@ export function ActivityPage() {
       q('cloudapim_llm_users_table', { params: { top_n: 20 } }),
     ]);
     return { calls, tokensTs, cacheTs, latencyTs, models, apikeysTable, usersTable };
-  }, [workspace.id, period, apikey, user, refresh]);
+  }, [workspace.id, period, apikey, user, refresh, tab]);
   const deps = [workspace.id, period, apikey, user, refresh];
 
   const noExporter = [kpis.error, charts.error].some((e) => e instanceof NoExporterError);
@@ -232,19 +91,17 @@ export function ActivityPage() {
   return (
     <div className="content wide" style={{ maxWidth: 1400 }}>
       <PageHeader title="Activity" description="Usage of this workspace across models, API keys and users.">
-        {!user && (
-          <Select
-            className="sm"
-            value={apikey}
-            onChange={(v) => setFilters({ apikey: v })}
-            placeholder="All API keys"
-            options={[
-              ...(keys.data || []).map((key) => ({ value: key.clientId, label: key.clientName })),
-              ...(apikey && keys.data && !keys.data.some((k) => k.clientId === apikey) ? [{ value: apikey, label: apikey }] : []),
-            ]}
-          />
-        )}
-        {!apikey && <Select className="sm" value={user} onChange={(v) => setFilters({ user: v })} placeholder="All users" options={userOptions} />}
+        <Select
+          className="sm"
+          value={apikey}
+          onChange={(v) => setFilters({ apikey: v })}
+          placeholder="All API keys"
+          options={[
+            ...(keys.data || []).map((key) => ({ value: key.clientId, label: key.clientName })),
+            ...(apikey && keys.data && !keys.data.some((k) => k.clientId === apikey) ? [{ value: apikey, label: apikey }] : []),
+          ]}
+        />
+        <Select className="sm" value={user} onChange={(v) => setFilters({ user: v })} placeholder="All users" options={userOptions} />
         <Select className="sm" value={period} onChange={(v) => setFilters({ period: v })} options={PERIODS.map((p) => ({ value: p.value, label: p.label }))} />
         <button className="btn sm" onClick={() => setRefresh((r) => r + 1)} title="Refresh">
           <Icon name="refresh" />
@@ -262,10 +119,16 @@ export function ActivityPage() {
             </button>
           )}
           {user && (
-            <button className="chip" onClick={() => setFilters({ user: '' })} title="Remove this filter">
-              {user}
-              <Icon name="x" />
-            </button>
+            <>
+              <button className="chip" onClick={() => setFilters({ user: '' })} title="Remove this filter">
+                {user}
+                <Icon name="x" />
+              </button>
+              <Link className="btn sm ghost" to={`/workspaces/${workspace.id}/users/${encodeURIComponent(user)}`} title={`The keys, budgets and yearly activity of ${user}`}>
+                <Icon name="user" />
+                Profile
+              </Link>
+            </>
           )}
           <button className="btn sm ghost" onClick={() => setFilters({ apikey: '', user: '' })}>
             Clear filters
@@ -273,7 +136,12 @@ export function ActivityPage() {
         </div>
       )}
 
-      {noExporter ? (
+      <Tabs tabs={TABS} value={tab} onChange={(v) => setFilters({ tab: v })} />
+
+      {tab === 'trends' && <TrendsTab workspace={workspace} opts={opts} period={period} user={user} apikey={apikey} />}
+      {tab === 'explore' && <ExploreTab workspace={workspace} query={query} setQuery={setFilters} opts={opts} />}
+      {tab === 'guardrails' && <GuardrailsTab workspace={workspace} opts={opts} />}
+      {tab !== 'overview' ? null : noExporter ? (
         <div className="stack">
           <div className="alert info">
             Usage analytics need an active <b>user analytics exporter</b> (PostgreSQL) in Otoroshi. Create one in{' '}
@@ -282,7 +150,7 @@ export function ActivityPage() {
             </a>{' '}
             and every call of this workspace will show up here. Budgets below are live counters and work without it.
           </div>
-          <LiveSection workspace={workspace} />
+          <BudgetsCard workspace={workspace} />
         </div>
       ) : (
         <div className="stack">
@@ -306,34 +174,30 @@ export function ActivityPage() {
 
           {c && (
             <>
-              <div className={`grid ${!user && !apikey ? 'cols-2' : ''}`}>
-                {!user && (
-                  <ConsumersCard
-                    title="Usage by API key"
-                    description="Click a key to only show its usage."
-                    // the table is keyed by key name, the filter needs the client id
-                    items={itemsOf(c.apikeysTable).map((i) => ({ ...i, label: i.apikey || i.key, value: clientIdOf(i.apikey || i.key) }))}
-                    active={apikey}
-                    onPick={(v) => v && setFilters({ apikey: v === apikey ? '' : v })}
-                    empty="No call made with an API key in this period."
-                  />
-                )}
-                {!apikey && (
-                  <ConsumersCard
-                    title="Usage by user"
-                    description="People chatting with this workspace from AI Studio. Click a user to only show their usage."
-                    items={itemsOf(c.usersTable).map((i) => ({ ...i, label: i.user || i.key, value: i.user || i.key }))}
-                    active={user}
-                    onPick={(v) => setFilters({ user: v === user ? '' : v })}
-                    empty="No call attributed to a user in this period. Calls from the AI Studio chat are counted for the person chatting; calls made by your apps only count for their API key."
-                  />
-                )}
+              <div className="grid cols-2">
+                <ConsumersCard
+                  title="Usage by API key"
+                  description={user ? `The API keys of ${user}. Click a key to only show its usage.` : 'Click a key to only show its usage.'}
+                  // the table is keyed by key name, the filter needs the client id
+                  items={itemsOf(c.apikeysTable).map((i) => ({ ...i, label: i.apikey || i.key, value: clientIdOf(i.apikey || i.key) }))}
+                  active={apikey}
+                  onPick={(v) => v && setFilters({ apikey: v === apikey ? '' : v })}
+                  empty="No call made with an API key in this period."
+                />
+                <ConsumersCard
+                  title="Usage by user"
+                  description="People chatting from AI Studio and owners of API keys. Click a user to only show their usage."
+                  items={itemsOf(c.usersTable).map((i) => ({ ...i, label: i.user || i.key, value: i.user || i.key }))}
+                  active={user}
+                  onPick={(v) => setFilters({ user: v === user ? '' : v })}
+                  empty="No call attributed to a user in this period. Calls from the AI Studio chat count for the person chatting, calls made with an API key count for its owner. Workspace keys have no owner."
+                />
               </div>
 
               <UsageCard title="Usage by model" dimension="model" run={q} deps={deps} bucket={bucket} />
-              <div className={`grid ${!user && !apikey ? 'cols-2' : ''}`}>
-                {!user && <UsageCard title="Usage by API key over time" dimension="apikey" run={q} deps={deps} bucket={bucket} />}
-                {!apikey && <UsageCard title="Usage by user over time" dimension="user" run={q} deps={deps} bucket={bucket} empty="No call attributed to a user in this period" />}
+              <div className="grid cols-2">
+                <UsageCard title="Usage by API key over time" dimension="apikey" run={q} deps={deps} bucket={bucket} />
+                <UsageCard title="Usage by user over time" dimension="user" run={q} deps={deps} bucket={bucket} empty="No call attributed to a user in this period" />
               </div>
 
               <div className="grid cols-2">
@@ -394,7 +258,7 @@ export function ActivityPage() {
               </div>
             </>
           )}
-          <LiveSection workspace={workspace} />
+          <BudgetsCard workspace={workspace} />
         </div>
       )}
     </div>

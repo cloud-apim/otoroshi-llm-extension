@@ -592,6 +592,16 @@ case class AiBudgetConsumptions(
   )
 }
 
+/**
+ * The owner of an api key: the email the usage of the key counts for, in the budgets scoped to users and
+ * in the analytics. Set from the AI Studio keys page, absent on a key shared by a whole workspace.
+ */
+object ApikeyOwner {
+  val MetadataKey: String = "ai_studio_owner"
+
+  def of(apikey: ApiKey): Option[String] = apikey.metadata.get(MetadataKey).map(_.trim).filter(_.nonEmpty)
+}
+
 case class AiBudget(
                        location: EntityLocation,
                        id: String,
@@ -949,6 +959,13 @@ case class AiBudget(
     }
   }
 
+  // a call counts for the person who made it, otherwise for the owner of the api key it was made with,
+  // the same way the analytics attribute it
+  private def matchesUser(apikey: Option[ApiKey], user: Option[PrivateAppsUser]): Boolean = user match {
+    case Some(u) => scope.users.exists(id => RegexPool.regex(id).matches(u.email)) || scope.users.exists(id => RegexPool.regex(id).matches(u.internalId))
+    case None    => apikey.flatMap(ApikeyOwner.of).exists(owner => scope.users.exists(id => RegexPool.regex(id).matches(owner)))
+  }
+
   def matches(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String])(using env: Env): Boolean = {
     if (!enabled) {
       false
@@ -958,7 +975,7 @@ case class AiBudget(
       false
     } else if (scope.apikeys.nonEmpty && apikey.nonEmpty && scope.apikeys.exists(id => RegexPool.regex(id).matches(apikey.get.clientId))) {
       true
-    } else if (scope.users.nonEmpty && user.nonEmpty && (scope.users.exists(id => RegexPool.regex(id).matches(user.get.email)) || scope.users.exists(id => RegexPool.regex(id).matches(user.get.internalId)))) {
+    } else if (scope.users.nonEmpty && matchesUser(apikey, user)) {
       true
     } else if (scope.groups.nonEmpty && apikey.nonEmpty && scope.groups.exists(id => apikey.get.authorizedEntities.exists(ae => ae.prefix == "group" && RegexPool.regex(id).matches(ae.id)))) {
       true

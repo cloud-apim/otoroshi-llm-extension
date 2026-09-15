@@ -173,6 +173,7 @@ export function ChatPage() {
         body,
         stream: settings.stream,
         signal: controller.signal,
+        sessionId: base.id,
         onDelta: (c, r) => replaceLast({ ...pending, content: c, reasoning: r }),
       });
       replaceLast({
