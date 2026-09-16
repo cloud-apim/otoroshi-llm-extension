@@ -30,6 +30,10 @@ costs-tracking {
     refresh-every = 6 hours
     refresh-every = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_OPENROUTER_CATALOG_REFRESH_EVERY}
   }
+  models-catalog {
+    enabled = true
+    enabled = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_MODELS_CATALOG_ENABLED}
+  }
 }
 ```
 
@@ -40,6 +44,7 @@ costs-tracking {
 | `custom-prices` | string (JSON) | `"{}"` | Custom model prices in LiteLLM format (see below) |
 | `openrouter-catalog.enabled` | boolean | `false` | Keep OpenRouter model prices in sync with its public catalog. Opt-in: it is the only outbound call the extension makes on its own |
 | `openrouter-catalog.refresh-every` | duration | `6 hours` | How often the OpenRouter catalog is refreshed |
+| `models-catalog.enabled` | boolean | `true` | Price the models the price table does not know with the bundled [models.dev](https://models.dev) catalog |
 
 Once it's enabled, audit events of kind `LLMUsageAudit` will have a `costs` object.
 
@@ -55,6 +60,7 @@ Costs are always billed from the most accurate source available for the call:
    - **Built-in custom prices**: additional prices shipped by the extension for models absent from LiteLLM
    - **Built-in LiteLLM prices**: the full [LiteLLM](https://docs.litellm.ai/) model price dictionary, bundled with the extension
    - **The OpenRouter catalog**, when enabled, kept in sync with the prices OpenRouter publishes, so new models are priced the day they ship
+   - **The models.dev catalog**, bundled with the extension, which prices thousands of models across more than 200 providers. It is only used for the provider that actually serves the model, and it recognizes the many ways providers spell a model id: `models/gemini-2.5-flash`, dated snapshots like `claude-sonnet-4-5-20250929`, `claude-sonnet-4.5` versus `claude-sonnet-4-5`, and so on. Prices sourced this way are the ones a model shows in its [enriched `/models` entry](/docs/llm-gateway/openai-compat-api#enriched-models), with `"source": "models.dev"`
 
 OpenRouter model variants and aliases — `anthropic/claude-opus-5:batch`, `~vendor/model-latest` — are billed at the price of the model they point to.
 
@@ -74,7 +80,7 @@ the dollar amount is missing.
 
 ### Supported providers
 
-Cost tracking natively supports the following providers:
+Cost tracking natively supports the following providers, and every other provider the models.dev catalog knows (Together AI, Fireworks AI, DeepInfra, Nebius, Novita, Nvidia NIM, Perplexity, Cerebras, Z.AI...):
 
 - openai
 - deepseek

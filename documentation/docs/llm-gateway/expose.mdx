@@ -178,7 +178,25 @@ Response:
 }
 ```
 
-When multiple providers are configured, model IDs are prefixed with the provider slug name (e.g., `my_openai/gpt-4o`). Use `?raw=true` to get the raw model identifiers without prefixes.
+When multiple providers are configured, model IDs are prefixed with the provider slug name (e.g., `my_openai/gpt-4o`, or `my_openrouter###openai/gpt-4o` when the model id already contains a `/`).
+
+The listing accepts the same [query parameters](/docs/llm-gateway/openai-compat-api#query-parameters) as the unified API: `enriched`, `kind`, `endpoint`, `has_cost` and `raw`.
+
+Add `?enriched=true` to get the types, capabilities, modalities, limits and prices of each model in a `_metadata` object, ready to power a model picker. See [enriched models](/docs/llm-gateway/openai-compat-api#enriched-models) for the details.
+
+```sh
+curl "https://my-own-llm-endpoint.on.otoroshi/v1/models?enriched=true" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY"
+```
+
+Add `?kind=` to only keep the models of some [model types](/docs/llm-gateway/openai-compat-api#filter-models-by-type) (`text`, `audio`, `image`, `ocr`, `embedding`, `moderation`, `video`):
+
+```sh
+curl "https://my-own-llm-endpoint.on.otoroshi/v1/models?kind=image,video" \
+  -H "Authorization: Bearer $OTOROSHI_API_KEY"
+```
+
+Add `?endpoint=` to only keep the models served on some [OpenAI API endpoints](/docs/llm-gateway/openai-compat-api#filter-models-by-endpoint) (`chat_completions`, `responses`, `images_generations`...), and `?has_cost=true` (or `false`) to only keep the models [cost tracking](/docs/llm-gateway/openai-compat-api#filter-models-by-cost) can (or cannot) put a price on.
 
 ### Models list with provider info
 
@@ -207,6 +225,8 @@ Similar to the models list, but enriches each model entry with provider metadata
   ]
 }
 ```
+
+`?enriched=true` adds the same `_metadata` object to each entry, and `?kind=`, `?endpoint=` and `?has_cost=` filter the entries the same way.
 
 ### LLM response endpoint
 

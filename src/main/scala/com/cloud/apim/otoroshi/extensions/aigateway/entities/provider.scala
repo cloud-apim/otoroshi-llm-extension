@@ -511,6 +511,16 @@ object AiProvider {
 
   val supportedProviders: Set[String] = chatClientBuilders.keySet
 
+  // the provider kinds the gateway talks to in the OpenAI format (OpenAiChatClient, or a client of an OpenAI shaped
+  // api): the models they serve are called on the OpenAI endpoints. Keep it in sync with `chatClientBuilders`.
+  val openAiCompatibleProviders: Set[String] = OpenAiLikeProviders.all.map(_.id).toSet ++ Set(
+    "openai", "openai-compatible", "azure-openai", "azure-ai-foundry", "cloud-temple", "scaleway", "deepseek", "x-ai",
+    "groq", "ovh-ai-endpoints", "ovh-ai-endpoints-unified", "gemini", "huggingface", "ollama-openai",
+  )
+
+  // the provider kinds whose models are served by other providers
+  val routingProviders: Set[String] = Set("loadbalancer", "otoroshi")
+
   val format = new Format[AiProvider] {
     override def writes(o: AiProvider): JsValue = o.location.jsonWithKey ++ Json.obj(
       "id"                -> o.id,

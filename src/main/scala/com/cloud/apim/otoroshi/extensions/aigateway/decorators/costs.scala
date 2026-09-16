@@ -4,6 +4,7 @@ import org.apache.pekko.stream.scaladsl.{Sink, Source, StreamConverters}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import com.cloud.apim.otoroshi.extensions.aigateway.AiMetrics
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsCatalog
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel, ModelSettings, ModerationModel, OcrModel, VideoModel}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
@@ -33,6 +34,9 @@ case class CostsTrackingSettings(configuration: Configuration) {
   val openRouterCatalogEnabled = configuration.getOptional[Boolean]("openrouter-catalog.enabled").getOrElse(false)
   val openRouterCatalogUrl = configuration.getOptional[String]("openrouter-catalog.url").getOrElse(OpenRouterCatalog.defaultUrl)
   val openRouterCatalogRefreshEvery = configuration.getOptional[FiniteDuration]("openrouter-catalog.refresh-every").getOrElse(6.hours)
+  // the bundled models.dev catalog prices what the price table misses, as long as it knows the model for the
+  // provider serving it
+  val modelsCatalogEnabled = configuration.getOptional[Boolean]("models-catalog.enabled").getOrElse(true)
 }
 
 case class SearchContextCostPerQuery(raw: JsValue) {
@@ -193,7 +197,7 @@ object OpenRouterCatalog {
   }
 }
 
-class CostsTracking(settings: CostsTrackingSettings, env: Env) {
+class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCatalog) {
 
   lazy val extension = env.adminExtensions.extension[AiExtension].get
 
@@ -262,7 +266,13 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
     val all = models
     all.get(s"${provider}-${modelName}").orElse {
       fallbackModelNames(provider, modelName).iterator.flatMap(name => all.get(s"${provider}-${name}")).nextOption()
+    }.orElse {
+      if (settings.modelsCatalogEnabled) catalog.lookupCost(provider, modelName) else None
     }
+  }
+
+  def startModelsCatalog(): Unit = {
+    if (settings.modelsCatalogEnabled) catalog.load()
   }
 
   def canHandle(provider: String, modelName: String): Boolean = {
@@ -298,6 +308,21 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
   // through `usage.include` in OpenAiLikeProviders). Used to decide, before a stream even starts, whether a
   // cost may still show up for a model the price table does not know.
   def providerReportsCosts(provider: String): Boolean = provider == "openrouter"
+
+  // the price table provider and model a call on this model is billed as, as the costs decorator resolves them.
+  // None when the provider cannot be billed at all.
+  def billedAs(provider: AiProvider, model: String): Option[(String, String)] = {
+    getProvider(provider.provider).map { pricingProvider =>
+      (provider.metadata.getOrElse("costs-tracking-provider", pricingProvider), provider.metadata.getOrElse("costs-tracking-model", model))
+    }
+  }
+
+  // whether the costs decorator gets a cost for a call on this model
+  def hasCost(provider: AiProvider, model: String): Boolean = {
+    (settings.enabled || provider.models.requireKnownCosts) && billedAs(provider, model).exists {
+      case (pricingProvider, billedModel) => canHandle(pricingProvider, billedModel) || providerReportsCosts(pricingProvider)
+    }
+  }
 
   def startOpenRouterCatalogSync(): Unit = {
     if (settings.openRouterCatalogEnabled) {
@@ -360,6 +385,13 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env) {
       case "cohere" => "cohere".some
       case "anthropic" => "anthropic".some
       case "groq" => "groq".some
+      // the price table names these providers with underscores
+      case "together-ai" => "together_ai".some
+      case "fireworks-ai" => "fireworks_ai".some
+      case "nvidia-nim" => "nvidia_nim".some
+      case "featherless-ai" => "featherless_ai".some
+      case "lambda-ai" => "lambda_ai".some
+      case "meta-llama" => "meta_llama".some
       case v => v.some
     }
   }

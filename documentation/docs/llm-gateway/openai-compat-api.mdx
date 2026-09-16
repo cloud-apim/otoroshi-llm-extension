@@ -137,7 +137,164 @@ curl https://api.domain.tld/v1/models \
   -H "Authorization: Bearer $OTOROSHI_BEARER"
 ```
 
-When multiple providers are configured, model IDs are prefixed with the provider slug name (e.g., `my_openai/gpt-4o`). Use `?raw=true` to get raw model identifiers without prefixes.
+When multiple providers are configured, model IDs are prefixed with the provider slug name (e.g., `my_openai/gpt-4o`, or `my_openrouter###openai/gpt-4o` when the model id already contains a `/`).
+
+#### Query parameters
+
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| `enriched` | `true`, `1` or no value | Adds a `_metadata` object to each model: types, cost, API, capabilities, modalities, limits and prices. See [enriched models](#enriched-models) |
+| `kind` (or `kinds`) | `text`, `audio`, `image`, `ocr`, `embedding`, `moderation`, `video` | Only lists the models of at least one of these types. See [filter models by type](#filter-models-by-type) |
+| `endpoint` (or `endpoints`) | `chat_completions`, `completions`, `responses`, `embeddings`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `audio_translations`, `moderations`, `ocr`, `realtime`, `videos` | Only lists the models served on at least one of these OpenAI API endpoints. See [filter models by endpoint](#filter-models-by-endpoint) |
+| `has_cost` | `true`, `1` or no value / `false`, `0` | Only lists the models cost tracking can (or cannot) put a price on. See [filter models by cost](#filter-models-by-cost) |
+| `raw` | `true` | Asks the provider for the model ids of its API rather than its model names, for the providers making the difference (OVH AI Endpoints, when not unified) |
+
+`kind` and `endpoint` accept several values, by repeating the parameter or with a comma separated list, and values are case insensitive. Filters combine: a model is listed when it matches all of them. They never add the `_metadata` object by themselves, add `enriched=true` for that.
+
+```sh
+curl "https://api.domain.tld/v1/models?kind=text&endpoint=chat_completions&has_cost=true&enriched=true" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER"
+```
+
+#### Enriched models
+
+Add `?enriched=true` to get everything you need to build a model picker, route by capability or show prices in your own UI: each model comes with a `_metadata` object describing what it can do, how much it can take and what it costs.
+
+```sh
+curl "https://api.domain.tld/v1/models?enriched=true" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER"
+```
+
+Response:
+
+```js
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "gpt-4o",
+      "object": "model",
+      "created": 1789575515,
+      "owned_by": "OpenAI",
+      // ...
+      "_metadata": {
+        "kinds": ["text"],
+        "has_cost": true,
+        "openai_compatible": true,
+        "endpoints": ["chat_completions"],
+        "mode": "chat",
+        "capabilities": {
+          "reasoning": false,
+          "tool_call": true,
+          "structured_output": true,
+          "temperature": true,
+          "attachment": true,
+          "prompt_caching": true
+        },
+        "modalities": {
+          "input": ["text", "image", "pdf"],
+          "output": ["text"]
+        },
+        "limits": {
+          "context": 128000,
+          "output": 16384
+        },
+        "pricing": {
+          "prompt": "0.0000025",
+          "completion": "0.00001",
+          "input_cache_read": "0.00000125"
+        },
+        "knowledge": "2023-09",
+        "sources": {
+          "catalog": { "provider": "openai", "model": "gpt-4o", "match": "exact" },
+          "pricing": { "source": "price-table", "model": "gpt-4o" }
+        }
+      }
+    }
+  ]
+}
+```
+
+The metadata combines the [models.dev](https://models.dev) catalog, bundled with the extension, with the price table used by [cost tracking](/docs/cost-optimizations/cost-tracking):
+
+| Field | Description |
+|-------|-------------|
+| `kinds` | The [model types](#filter-models-by-type) the model belongs to: `text`, `audio`, `image`, `ocr`, `embedding`, `moderation`, `video` |
+| `has_cost` | Whether [cost tracking](/docs/cost-optimizations/cost-tracking) puts a cost on the calls to this model, so they count against your dollar budgets |
+| `openai_compatible` | Whether the model is served through an OpenAI compatible API: the gateway talks to its provider in the OpenAI format (OpenAI, Azure OpenAI, Groq, xAI, Gemini, OVHcloud, OpenRouter and every OpenAI compatible provider), the provider serves this very model that way, and on at least one OpenAI endpoint. Models of Anthropic, Mistral, Cohere or Ollama are `false`: the gateway translates for them. Left out for routers, whose models are served by other providers |
+| `endpoints` | The OpenAI API endpoints the provider serves the model on, when it is `openai_compatible` (see [below](#filter-models-by-endpoint)) |
+| `mode` | What the price table bills the model as (`chat`, `responses`, `embedding`, ...), when it knows it |
+| `capabilities.reasoning`, `capabilities.reasoning_options` | Whether the model thinks before answering, and the reasoning controls it accepts (effort levels, token budget) |
+| `capabilities.tool_call`, `capabilities.structured_output` | Tool calling and JSON schema outputs support |
+| `capabilities.temperature`, `capabilities.attachment` | Temperature control and file attachments support |
+| `capabilities.prompt_caching`, `capabilities.web_search` | Prompt caching and built-in web search support |
+| `modalities.input`, `modalities.output` | Accepted and produced content: `text`, `image`, `pdf`, `audio`, `video` |
+| `limits.context`, `limits.input`, `limits.output` | Context window, maximum input and maximum output, in tokens |
+| `pricing` | Prices in dollars per token, as strings, in the OpenRouter format: `prompt`, `completion`, `input_cache_read`, `input_cache_write`, `internal_reasoning`, `audio`, `audio_output`, `image`, `image_output` |
+| `knowledge` | Knowledge cutoff |
+| `status`, `deprecation_date` | `beta` or `deprecated` status, and the announced deprecation date |
+| `sources` | Where the metadata comes from (see below) |
+
+Fields the sources know nothing about are left out: a model nobody knows only comes with its `kinds`, guessed from its name, and `has_cost`.
+
+The prices are exactly the ones your budgets are charged with: `sources.pricing.source` is `price-table` when they come from the price table (including your own `custom-prices`), and `models.dev` when the catalog fills the gap.
+
+Providers rarely spell a model id the same way, so each listed model is matched against what its own provider serves first, then against the rest of the catalog. `sources.catalog.match` tells how the model was recognized:
+
+| Match | Meaning | Pricing |
+|-------|---------|---------|
+| `exact` | The very id the provider serves (`models/gemini-2.5-flash` is `gemini-2.5-flash`) | ✅ |
+| `normalized` | The same model once cosmetic differences are removed: case, dated snapshots, `.` versus `-`, routing variants like `:free` | ✅ |
+| `approximate` | The same model family for this provider, a short version suffix like `-2411` or `-001` aside | ❌ |
+| `global`, `global-approximate` | The same model served by another provider, which is perfect for capabilities and limits, but not for prices | ❌ |
+
+#### Filter models by type
+
+Add `?kind=` to only list the models of one of the model types Otoroshi LLM supports: `text`, `audio`, `image`, `ocr`, `embedding`, `moderation` or `video`. It is the quickest way to find the model to put in an embedding model, an audio model or an image model entity, among everything a provider serves.
+
+```sh
+curl "https://api.domain.tld/v1/models?kind=embedding"   -H "Authorization: Bearer $OTOROSHI_BEARER"
+```
+
+Ask for several types by repeating the parameter or with a comma separated list (`?kind=image&kind=video`, `?kind=image,video`): a model is listed as soon as it belongs to one of them. The filter combines with `?enriched=true`.
+
+A model can belong to several types, an omni model both chats and speaks for instance. The types are worked out from what the model is for, then from what it produces. A model only served on image or realtime endpoints is not a `text` model, even when it answers with some text:
+
+| Type | Models |
+|------|--------|
+| `embedding` | Embedding models (`text-embedding-3-small`, `mistral-embed`, `e5-large-v2`...) |
+| `moderation` | Moderation and safety models (`omni-moderation-latest`, `llama-guard-4-12b`, `gpt-oss-safeguard-20b`...) |
+| `ocr` | Document text extraction models (`mistral-ocr-latest`, `deepseek-ocr`, `paddleocr-vl`...), and every model of an OCR provider like AlphaEdge |
+| `audio` | Models producing audio (`tts-1`, `gpt-4o-mini-tts`, omni models) and speech recognition models (`whisper-1`, `gpt-4o-transcribe`, `qwen3-asr-flash`) |
+| `image` | Models producing images (`gpt-image-1`, `gemini-2.5-flash-image`, `flux`...) |
+| `video` | Models producing videos (`sora-2`, `veo-3`...) |
+| `text` | Models producing text, apart from the ones above: a chat model that understands audio or images stays a `text` model |
+
+Rerankers belong to none of these types, so they only show up when no filter is set.
+
+#### Filter models by endpoint
+
+Add `?endpoint=` to only list the models their provider serves on one of these OpenAI API endpoints: `chat_completions`, `completions`, `responses`, `embeddings`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `audio_translations`, `moderations`, `ocr`, `realtime` or `videos`. It keeps out of a chat the models that would fail there, like `gpt-5-pro`, only served on `responses`, or the realtime models.
+
+```sh
+curl "https://api.domain.tld/v1/models?endpoint=chat_completions" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER"
+```
+
+The endpoints come from the price table when it lists them (`gpt-5.5` is served on `chat_completions` and `responses`, `gpt-image-1` on `images_generations` and `images_edits`), from what the price table bills the model as otherwise, and from the model types as a last resort. They are only given for the `openai_compatible` models, so the filter only keeps those. Repeat the parameter or use a comma separated list to accept several endpoints.
+
+#### Filter models by cost
+
+Add `?has_cost=true` to only list the models cost tracking can put a price on, and `?has_cost=false` for the others. Perfect to offer only the models your dollar budgets can keep in check, or to spot the ones still missing a [custom price](/docs/cost-optimizations/cost-tracking#custom-prices).
+
+```sh
+curl "https://api.domain.tld/v1/models?kind=text&has_cost=true" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER"
+```
+
+A model has a cost exactly when a call to it would be billed: the provider is priced by cost tracking, and either its price is known (from your custom prices, the price table or the models.dev catalog, honouring the `costs-tracking-provider` and `costs-tracking-model` metadata of the provider) or the provider reports the cost of each call itself, like OpenRouter.
+
+`?enriched=true`, `?kind=`, `?endpoint=` and `?has_cost=` combine, and also work on the [models list plugins](/docs/llm-gateway/expose#models-list).
 
 ### GET /contexts
 

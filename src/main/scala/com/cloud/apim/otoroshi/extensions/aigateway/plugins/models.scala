@@ -2,6 +2,7 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsListing
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.*
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.*
@@ -38,7 +39,9 @@ class OpenAiCompatModels extends NgBackendCall {
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
     val ext = env.adminExtensions.extension[AiExtension].get
-    Source(config.refs.toList)
+    val listing = ModelsListing(ctx)
+    val now: Long = System.currentTimeMillis() / 1000
+    Source.future(listing.prepare()).flatMapConcat(_ => Source(config.refs.toList))
       .map(ref => ext.states.provider(ref))
       .collect {
         case Some(provider) => provider
@@ -51,29 +54,27 @@ class OpenAiCompatModels extends NgBackendCall {
         case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true"), ctx.attrs).map(e => (provider, e))
       }
       .collect {
-        case (provider, Right(list)) => list.map { model =>
+        case (provider, Right(list)) => list.flatMap { model =>
           val res = if (config.refs.size == 1) {
             model
           } else {
             if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"
           }
-          (res, provider)
-          //(model, combined)
+          listing.entry(provider, model, Json.obj(
+            "id" -> res,
+            "object" -> "model",
+            "created" -> now,
+            "owned_by" -> provider.slugName,
+          ))
         }
       }
       .flatMapConcat(list => Source(list))
       .runWith(Sink.seq)
       .map { list =>
-        val now: Long = System.currentTimeMillis() / 1000
         Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
           Results.Ok(Json.obj(
             "object" -> "list",
-            "data" -> JsArray(list.map(m => Json.obj(
-              "id" -> m._1,
-              "object" -> "model",
-              "created" -> now,
-              "owned_by" -> m._2.slugName,
-            )))
+            "data" -> JsArray(list)
           ))
         ), None))
       }
@@ -84,7 +85,8 @@ object OpenAiCompatProvidersWithModels {
   def handleRequest(config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val now: Long = System.currentTimeMillis() / 1000
-    Source(config.refs.toList)
+    val listing = ModelsListing(ctx)
+    Source.future(listing.prepare()).flatMapConcat(_ => Source(config.refs.toList))
       .map(ref => ext.states.provider(ref))
       .collect {
         case Some(provider) => provider
@@ -98,13 +100,13 @@ object OpenAiCompatProvidersWithModels {
       }
       .collect {
         case (provider, Right(list)) => {
-          list.map { model =>
+          list.flatMap { model =>
             val combined = if (config.refs.size == 1) {
               model
             } else {
               if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"
             }
-            Json.obj(
+            listing.entry(provider, model, Json.obj(
               "id" -> combined,
               "combined_id" -> combined,
               "provider_id" -> provider.slugName,
@@ -113,7 +115,7 @@ object OpenAiCompatProvidersWithModels {
               "created" -> now,
               "owned_by" -> provider.computedName,
               "owned_by_with_model" -> s"${provider.computedName} / ${model}"
-            )
+            ))
           }
         }
       }

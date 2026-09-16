@@ -3,6 +3,7 @@ package otoroshi_plugins.com.cloud.apim.extensions.aigateway
 import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.OtoroshiAssistant
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsCatalog
 import com.cloud.apim.otoroshi.extensions.aigateway.studio.{AiStudio, AiStudioApi}
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsTracking, CostsTrackingSettings, LLMImpacts, LLMImpactsSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.*
@@ -233,7 +234,8 @@ class AiExtension(val env: Env) extends AdminExtension {
   val llmImpacts = new LLMImpacts(llmImpactsSettings, env)
 
   val costsTrackingSettings = CostsTrackingSettings(configuration.getOptional[Configuration]("costs-tracking").getOrElse(Configuration.empty))
-  val costsTracking = new CostsTracking(costsTrackingSettings, env)
+  val modelsCatalog = new ModelsCatalog(env)
+  val costsTracking = new CostsTracking(costsTrackingSettings, env, modelsCatalog)
 
   val logger = AiExtension.logger
 
@@ -267,6 +269,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     WorkflowFunctionsInitializer.initDefaults()
     AiBudgetClusterAgent.start(env, this)
     costsTracking.startOpenRouterCatalogSync()
+    costsTracking.startModelsCatalog()
     ProviderHealthchecks.start(env, this)
     env.datastores.wasmPluginsDataStore.findById(LlmToolFunction.wasmPluginId).flatMap {
       case Some(_) => ().vfuture
