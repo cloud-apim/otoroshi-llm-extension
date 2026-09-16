@@ -176,6 +176,13 @@ class ToolFunctionsPage extends Component {
     'backend.options.url': { type: 'string', props: { label: 'URL' } },
     'backend.options.body': { type: 'code', props: { label: 'Body' } },
     'backend.options.followRedirect': { type: 'bool', props: { label: 'Follow redirects' } },
+    'backend.options.kreuzberg': {
+      type: 'bool',
+      props: {
+        label: 'Response as markdown',
+        help: 'Convert the response body (html, pdf, docx, images...) to markdown before handing it to the model. Applies to the whole body, so the response selections below are ignored. Needs JDK 25 or above.',
+      },
+    },
     'backend.options.proxy': { type: Proxy, props: { label: 'Proxy' } },
     'backend.options.response_path': { type: 'string', props: { label: 'Response selection (JSON path)' } },
     'backend.options.response_at': { type: 'string', props: { label: 'Response selection (dotted path)' } },
@@ -287,6 +294,7 @@ class ToolFunctionsPage extends Component {
     (item.backend.kind === 'Http') ? 'backend.options.headers' : null,
     (item.backend.kind === 'Http') ? 'backend.options.timeout' : null,
     (item.backend.kind === 'Http') ? 'backend.options.followRedirect' : null,
+    (item.backend.kind === 'Http') ? 'backend.options.kreuzberg' : null,
     // (item.backend.kind === 'Http') ? 'backend.options.proxy' : null,
     (item.backend.kind === 'Http') ? 'backend.options.tls.enabled' : null,
     (item.backend.kind === 'Http') ? 'backend.options.tls.loose' : null,

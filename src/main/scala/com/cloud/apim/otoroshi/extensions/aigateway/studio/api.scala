@@ -1674,6 +1674,24 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
   private def toolKind(id: String): ToolKind = toolKinds.find(_.id == id).getOrElse(throw notFound(s"unknown tool kind '$id', expected ${toolKinds.map(_.id).mkString(", ")}"))
 
+  // Ready-made http functions, offered in one click by the studio (see lib/tools.js). `template` on creation
+  // fills the whole form; anything sent alongside overrides it.
+  private val functionTemplates: Map[String, JsObject] = Map(
+    "web_fetch" -> Json.obj(
+      "name" -> "web_fetch",
+      "description" -> "Fetch a web page or a document at a given URL and return its content as markdown",
+      "parameters" -> Json.obj(
+        "type" -> "object",
+        "properties" -> Json.obj("url" -> Json.obj("type" -> "string", "description" -> "The absolute URL to fetch, for instance https://example.com/article")),
+        "required" -> Json.arr("url"),
+      ),
+      "url" -> "${url}",
+      "method" -> "GET",
+      "timeout" -> 30000,
+      "kreuzberg" -> true,
+    )
+  )
+
   private def attachedProviders(providers: Seq[JsObject], kind: ToolKind, id: String): Seq[String] =
     providers.filter(p => stringsOf(p.select("options").select(kind.option)).contains(id)).map(Providers.idOf)
 
@@ -1704,6 +1722,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
           "headers" -> objOf(backend.select("headers")),
           "body" -> backend.select("body").asOptString.getOrElse(""),
           "timeout" -> backend.select("timeout").asOpt[BigDecimal].filter(_ != 0).getOrElse(BigDecimal(30000)),
+          "kreuzberg" -> backend.select("kreuzberg").asOpt[Boolean].getOrElse(false),
         )
       case "mcp" =>
         val transport = tool.select("transport").select("options")
@@ -1730,8 +1749,15 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       case _ => throw notFound("tool not found")
     }
 
-  private def saveTool(ws: Workspace, kind: ToolKind, form: JsObject, existing: Option[JsObject])(using call: AiStudioApiRequest): Future[JsObject] =
+  private def saveTool(ws: Workspace, kind: ToolKind, rawForm: JsObject, existing: Option[JsObject])(using call: AiStudioApiRequest): Future[JsObject] =
     Providers.list(ws.id).flatMap { providers =>
+      val form = string(rawForm, "template") match {
+        case None        => rawForm
+        case Some(_) if kind.id != "functions" || existing.isDefined =>
+          throw badRequest("'template' only applies when creating an http function")
+        case Some(id)    =>
+          functionTemplates.getOrElse(id, throw badRequest(s"unknown template '$id', expected ${functionTemplates.keys.mkString(", ")}")) ++ rawForm
+      }
       val providerIds = providers.map(Providers.idOf)
       val current = existing.map(t => toolFormOf(kind, t, providers))
       def text(key: String, default: String = ""): String =
@@ -1757,7 +1783,15 @@ class AiStudioApi(env: Env, ext: AiExtension) {
             "required" -> requiredOf(parameters),
             "backend" -> Json.obj(
               "kind" -> "Http",
-              "options" -> (Json.obj("url" -> url, "method" -> text("method", "GET"), "headers" -> headers, "timeout" -> timeout) ++ (if (body.nonEmpty) Json.obj("body" -> body) else Json.obj())),
+              // what the studio does not show (tls, proxy, response selection…) is kept as it was set
+              "options" -> (existing.map(e => objOf(e.select("backend").select("options"))).getOrElse(Json.obj()) ++
+                Json.obj(
+                  "url" -> url,
+                  "method" -> text("method", "GET"),
+                  "headers" -> headers,
+                  "timeout" -> timeout,
+                  "kreuzberg" -> boolean(form, "kreuzberg").orElse(current.flatMap(_.select("kreuzberg").asOpt[Boolean])).getOrElse(false),
+                ) ++ (if (body.nonEmpty) Json.obj("body" -> body) else Json.obj())),
             ),
           ))
         case "mcp" =>

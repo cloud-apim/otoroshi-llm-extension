@@ -135,9 +135,11 @@ keys. Workspace keys belong to no one in particular, which suits shared applicat
 - **Routing** sets fallbacks between providers, load balancers, [Otoroshi routers](/docs/llm-gateway/otoroshi-router)
   and the default provider used when a request does not name one.
 - **Presets** are reusable system prompts, selectable in the chat or with the `context` field of a request.
-- **Tools** give models server-side functions, MCP servers and web search. MCP connectors are created on the
-  stateless revision of the protocol ([2026-07-28](/docs/mcp/mcp-connectors)), where every request is
-  self-contained: no session to keep alive, and any instance of the cluster can serve the next call.
+- **Tools** give models server-side functions, MCP servers and web search. **Ready-made functions** adds
+  `web_fetch` in one click: give the model a URL and the gateway returns the page as markdown, pdf and images
+  included. Any HTTP function can do the same with its **Response as markdown** option. MCP connectors are
+  created on the stateless revision of the protocol ([2026-07-28](/docs/mcp/mcp-connectors)), where every
+  request is self-contained: no session to keep alive, and any instance of the cluster can serve the next call.
 
 ![The guardrails page: model access and content policies](/img/ai-studio-guardrails.png)
 
@@ -318,7 +320,7 @@ models from the catalog, workspace quotas, every provider selected for a preset 
 | `GET` `PUT /workspaces/:id/routing` | Default provider (`default_provider`) and fallbacks (`fallbacks`: provider id to fallback id, `null` to remove). |
 | `/workspaces/:id/load-balancers[/:id]`, `/workspaces/:id/routers[/:id]` | Load balancers (`name`, `strategy`, `targets`) and [Otoroshi routers](/docs/llm-gateway/otoroshi-router) (candidates, judges and settings of the code, auto and fusion routers). |
 | `/workspaces/:id/presets[/:id]` | Presets: `name`, `description`, `system`, `trailing`, `providers`. |
-| `/workspaces/:id/tools/functions[/:id]`, `/tools/mcp[/:id]`, `/tools/search[/:id]` | HTTP functions, MCP connectors and web search engines, with the `providers` they are available on. New MCP connectors get the stateless `http_2026_07_28` transport; an existing one keeps the transport it was given. |
+| `/workspaces/:id/tools/functions[/:id]`, `/tools/mcp[/:id]`, `/tools/search[/:id]` | HTTP functions, MCP connectors and web search engines, with the `providers` they are available on. An http function takes `kreuzberg` to get its response as markdown, and `template` (`web_fetch`) on creation to get a ready-made one. New MCP connectors get the stateless `http_2026_07_28` transport; an existing one keeps the transport it was given. |
 | `GET` `PUT` `DELETE /workspaces/:id/mcp-server` | The MCP server exposed on `/mcp`: `name`, `description`, `enabled`, `functions` and `connectors` (ids of the tools of the workspace). `PUT` creates it and starts serving it, `DELETE` stops serving and removes it. |
 | `POST /workspaces/:id/analytics/_query` | Runs the LLM and MCP analytics queries of the extension (`cloudapim_llm_*`, `cloudapim_mcp_*`) on the calls of the workspace only, the same data as the Activity and Logs pages. |
 

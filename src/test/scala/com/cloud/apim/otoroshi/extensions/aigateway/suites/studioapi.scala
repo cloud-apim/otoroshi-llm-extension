@@ -210,8 +210,30 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(functionEntity.select("parameters").as[JsObject], Json.obj("city" -> Json.obj("type" -> "string")))
     assertEquals(functionEntity.select("required").as[Seq[String]], Seq("city"))
     assertEquals(function.select("parameters").select("properties").select("city").select("type").asString, "string")
+    // the studio only writes the fields it shows: the rest of the backend options survives an update
+    client.call("PUT", s"http://otoroshi-api.oto.tools:$port/apis/ai-gateway.extensions.cloud-apim.com/v1/tool-functions/${function.select("id").asString}",
+      Map("Authorization" -> s"Basic $basic", "Content-Type" -> "application/json"),
+      Some(functionEntity ++ Json.obj("backend" -> (functionEntity.select("backend").as[JsObject] ++ Json.obj(
+        "options" -> (functionEntity.select("backend").select("options").as[JsObject] ++ Json.obj("response_at" -> "data.result"))
+      ))))).awaitf(10.seconds)
+    expect(studio("PUT", s"/workspaces/$wsId/tools/functions/${function.select("id").asString}", Json.obj("description" -> "renamed")), 200)
+    assertEquals(aiEntity("tool-functions", function.select("id").asString).get.select("backend").select("options").select("response_at").asString, "data.result")
     expect(studio("POST", s"/workspaces/$wsId/tools/mcp", Json.obj("name" -> "no url")), 400)
     expect(studio("GET", s"/workspaces/$wsId/tools/nope"), 404)
+
+    // the ready-made web_fetch function: one template name instead of the whole form
+    expect(studio("POST", s"/workspaces/$wsId/tools/functions", Json.obj("template" -> "nope")), 400)
+    val webFetch = expect(studio("POST", s"/workspaces/$wsId/tools/functions", Json.obj("template" -> "web_fetch")), 201)
+    assertEquals(webFetch.select("name").asString, "web_fetch")
+    assertEquals(webFetch.select("kreuzberg").asBoolean, true)
+    val webFetchEntity = aiEntity("tool-functions", webFetch.select("id").asString).get
+    val webFetchOptions = webFetchEntity.select("backend").select("options")
+    assertEquals(webFetchOptions.select("url").asString, "${url}")
+    assertEquals(webFetchOptions.select("kreuzberg").asBoolean, true)
+    assertEquals(webFetchEntity.select("required").as[Seq[String]], Seq("url"))
+    // a template only makes sense on creation
+    expect(studio("PUT", s"/workspaces/$wsId/tools/functions/${webFetch.select("id").asString}", Json.obj("template" -> "web_fetch")), 400)
+    expect(studio("DELETE", s"/workspaces/$wsId/tools/functions/${webFetch.select("id").asString}"), 204)
     // mcp connectors are created on the stateless revision of the protocol
     val connector = expect(studio("POST", s"/workspaces/$wsId/tools/mcp", Json.obj("name" -> "github", "url" -> "https://mcp.oto.tools/mcp")), 201)
     assertEquals(connector.select("transport").asString, "http_2026_07_28")

@@ -5,6 +5,7 @@ import org.apache.pekko.stream.connectors.s3.scaladsl.S3
 import org.apache.pekko.stream.scaladsl.{Keep, Sink, Source}
 import org.apache.pekko.stream.{Attributes, Materializer}
 import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.KreuzbergHelper
 import com.cloud.apim.otoroshi.extensions.aigateway.agents.InlineFunctions
 import com.github.blemale.scaffeine.Scaffeine
 import io.otoroshi.wasm4s.scaladsl.{WasmFunctionParameters, WasmSource, WasmSourceKind}
@@ -329,13 +330,27 @@ object LlmToolFunctionBackendOptions {
           case (builder, body) => builder.withBody(body)
         }
         .execute()
-        .map { resp =>
-          finalOptions.select("response_at").asOptString.filterNot(_.isEmpty) match {
-            case None => finalOptions.select("response_path").asOptString.filterNot(_.isEmpty) match {
-              case None => resp.body
-              case Some(path) => resp.json.atPath(path).asValue.stringify
-            }
-            case Some(at) => resp.json.at(at).asValue.stringify
+        .flatMap { resp =>
+          // `kreuzberg` hands the model the response as markdown instead of raw html (or a pdf, or a docx),
+          // which is what it can actually read. It works on the whole body: the json selectors below answer
+          // the opposite need, picking one field out of an api response.
+          if (finalOptions.select("kreuzberg").asOpt[Boolean].getOrElse(false)) {
+            val mimeType = resp.header("Content-Type").getOrElse("application/octet-stream").split(";").head.trim
+            KreuzbergHelper
+              .extractFromBytes(resp.bodyAsBytes.toArray, mimeType)
+              .recover {
+                case t: Throwable =>
+                  s"error: unable to convert the response to markdown: ${t.getMessage}".debugPrintln
+                  resp.body
+              }
+          } else {
+            (finalOptions.select("response_at").asOptString.filterNot(_.isEmpty) match {
+              case None => finalOptions.select("response_path").asOptString.filterNot(_.isEmpty) match {
+                case None => resp.body
+                case Some(path) => resp.json.atPath(path).asValue.stringify
+              }
+              case Some(at) => resp.json.at(at).asValue.stringify
+            }).vfuture
           }
         }
         .recover {

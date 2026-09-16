@@ -32,6 +32,28 @@ export function requiredOf(schema) {
   return Object.keys(propertiesOf(s));
 }
 
+// Ready-made HTTP functions: the ones every workspace ends up writing by hand, one click away. `build`
+// returns exactly what the tool form would have produced.
+export const FUNCTION_TEMPLATES = [
+  {
+    id: 'web_fetch',
+    name: 'web_fetch',
+    label: 'Web fetch',
+    summary: 'Give the model a URL to read: the gateway fetches the page and hands it back as markdown, images and pdf included.',
+    build: () => ({
+      name: 'web_fetch',
+      description: 'Fetch a web page or a document at a given URL and return its content as markdown',
+      strict: false,
+      parameters: { url: { type: 'string', description: 'The absolute URL to fetch, for instance https://example.com/article' } },
+      required: ['url'],
+      backend: {
+        kind: 'Http',
+        options: { url: '${url}', method: 'GET', headers: {}, timeout: 30000, followRedirect: true, kreuzberg: true },
+      },
+    }),
+  },
+];
+
 export const SEARCH_PROVIDERS = [
   { value: 'tavily', label: 'Tavily', token: true },
   { value: 'brave', label: 'Brave Search', token: true },

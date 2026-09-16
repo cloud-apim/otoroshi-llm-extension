@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useWorkspace } from '../App';
 import { Badge, Checks, Empty, ErrorAlert, Field, JsonInput, Loading, Modal, NumberInput, PageHeader, SecretInput, Select, StatusBadge, Tabs, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Resources, workspaceFilter } from '../lib/entities';
-import { attachedProviders, deleteTool, MCP_TRANSPORT, propertiesOf, requiredOf, saveTool, schemaOf, SEARCH_PROVIDERS } from '../lib/tools';
+import { attachedProviders, deleteTool, FUNCTION_TEMPLATES, MCP_TRANSPORT, propertiesOf, requiredOf, saveTool, schemaOf, SEARCH_PROVIDERS } from '../lib/tools';
 
 const TABS = {
   functions: { title: 'HTTP functions', add: 'Add function', description: 'Tools the model can call; the gateway performs the HTTP request and feeds the result back.' },
@@ -26,6 +26,7 @@ function ToolModal({ workspace, kind, tool, providers, onClose, onSaved }) {
     headers: (kind === 'functions' ? backend.headers : transport.headers) || {},
     body: backend.body || '',
     timeout: (kind === 'functions' ? backend.timeout : transport.timeout) || 30000,
+    kreuzberg: backend.kreuzberg === true,
     enabled: tool ? tool.enabled !== false : true,
     search_provider: tool ? tool.provider : 'tavily',
     token: connection.token || '',
@@ -51,7 +52,15 @@ function ToolModal({ workspace, kind, tool, providers, onClose, onSaved }) {
           required: requiredOf(form.parameters),
           backend: {
             kind: 'Http',
-            options: { url: form.url, method: form.method, headers: form.headers, timeout: Number(form.timeout), ...(form.body ? { body: form.body } : {}) },
+            options: {
+              ...((tool && tool.backend && tool.backend.options) || {}),
+              url: form.url,
+              method: form.method,
+              headers: form.headers,
+              timeout: Number(form.timeout),
+              kreuzberg: form.kreuzberg,
+              ...(form.body ? { body: form.body } : {}),
+            },
           },
         };
       } else if (kind === 'mcp') {
@@ -134,6 +143,9 @@ function ToolModal({ workspace, kind, tool, providers, onClose, onSaved }) {
             <Field label="Body" hint="Optional, ${param} placeholders allowed.">
               <TextInput value={form.body} onChange={(v) => set({ body: v })} placeholder='{"city": "${city}"}' />
             </Field>
+            <Field className="full" label="Response as markdown" hint="Convert the response (html, pdf, docx, images…) to markdown before handing it to the model. Needs JDK 25 or above.">
+              <Toggle value={form.kreuzberg} onChange={(v) => set({ kreuzberg: v })} />
+            </Field>
             <Field className="full" label="Parameters (JSON schema)">
               <JsonInput value={form.parameters} onChange={(v) => set({ parameters: v })} rows={8} />
             </Field>
@@ -166,6 +178,55 @@ function ToolModal({ workspace, kind, tool, providers, onClose, onSaved }) {
         </Field>
       </div>
     </Modal>
+  );
+}
+
+// Ready-made functions: one click instead of a form nobody enjoys filling. Adding one creates an ordinary
+// tool function, editable and deletable like any other.
+function TemplatesCard({ workspace, functions, providers, onAdded }) {
+  const toast = useToast();
+  const [adding, setAdding] = useState(null);
+  const add = async (template) => {
+    setAdding(template.id);
+    try {
+      const base = await Resources.functions.template();
+      await saveTool(workspace.id, 'functions', base, template.build(), null, providers, providers.map((p) => p.id));
+      toast.success(`${template.label} added`);
+      onAdded();
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setAdding(null);
+    }
+  };
+  return (
+    <div className="card" style={{ marginBottom: 14 }}>
+      <h2>Ready-made functions</h2>
+      <p className="muted" style={{ margin: '4px 0 14px' }}>
+        Add one and it becomes a normal function of this workspace, attached to every provider.
+      </p>
+      {FUNCTION_TEMPLATES.map((t) => {
+        const already = functions.some((f) => f.name === t.name);
+        return (
+          <div key={t.id} className="row between" style={{ gap: 20 }}>
+            <div style={{ minWidth: 0 }}>
+              <div className="row" style={{ gap: 8 }}>
+                <span>{t.label}</span>
+                <code className="mono small">{t.name}</code>
+              </div>
+              <p className="muted small" style={{ margin: '2px 0 0' }}>{t.summary}</p>
+            </div>
+            {already ? (
+              <Badge kind="accent">Added</Badge>
+            ) : (
+              <button className="btn sm" onClick={() => add(t)} disabled={adding === t.id}>
+                {adding === t.id ? 'Adding…' : 'Add'}
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -219,6 +280,9 @@ export function ToolsPage() {
         ]}
       />
       <ErrorAlert error={data.error} />
+      {tab === 'functions' && data.data && (
+        <TemplatesCard workspace={workspace} functions={data.data.functions} providers={providers} onAdded={data.reload} />
+      )}
       <div className="card">
         <h2>{TABS[tab].title}</h2>
         <p className="muted" style={{ margin: '4px 0 14px' }}>

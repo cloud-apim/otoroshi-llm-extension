@@ -53,8 +53,39 @@ HTTP functions allow you to create tool functions that call external HTTP endpoi
 | `headers` | object | `{}` | HTTP headers. Supports `${key}` substitution |
 | `timeout` | number | `10000` | Request timeout in milliseconds |
 | `followRedirect` | boolean | `true` | Follow HTTP redirects |
+| `kreuzberg` | boolean | `false` | Convert the response body to markdown before handing it to the model (see below) |
 | `response_at` | string | — | JSON path to extract from the response body |
 | `response_path` | string | — | JSON path to extract from the response body |
+
+### Response as markdown
+
+A model reads markdown, not raw html — and not a pdf at all. With `kreuzberg` set, the gateway converts the
+response body to markdown with [Kreuzberg](/docs/http-plugins/content-to-markdown), whatever it is: a web
+page, a pdf, a docx, a spreadsheet, an image it can OCR. It applies to the whole body, so the
+`response_at` / `response_path` selections are ignored — those answer the opposite need, picking one field
+out of a json API response.
+
+This is what turns a plain HTTP function into a web reader:
+
+```json
+{
+  "name": "web_fetch",
+  "description": "Fetch a web page or a document at a given URL and return its content as markdown",
+  "parameters": { "url": { "type": "string", "description": "The absolute URL to fetch" } },
+  "required": ["url"],
+  "backend": {
+    "kind": "Http",
+    "options": { "url": "${url}", "method": "GET", "timeout": 30000, "kreuzberg": true }
+  }
+}
+```
+
+[AI Studio](/docs/ai-studio) offers exactly this function in one click, under **Ready-made functions**.
+
+:::warning
+Kreuzberg needs **JDK 25 or above**. On an older JVM the conversion returns an explicit error message
+instead of the content, and Otoroshi warns about it at startup.
+:::
 
 ### TLS options
 
