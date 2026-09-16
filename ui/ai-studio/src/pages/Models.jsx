@@ -40,7 +40,20 @@ export function ModelsPage() {
       <ErrorAlert error={data.error} />
       {errors.length > 0 && (
         <div className="alert warning mb">
-          Some providers could not list their models: {errors.map((e) => `${e.name || e.id} (${typeof e.error === 'string' ? e.error : 'error'})`).join(', ')}. Their default model is still listed.
+          {errors.map((e) => (
+            <div key={e.id}>
+              <b>{e.name || e.id}</b> could not list its models: {typeof e.error === 'string' ? e.error : 'unknown error'}.
+              {e.default_model ? (
+                <>
+                  {' '}
+                  Only its default model, <span className="mono">{e.default_model}</span>, is listed below.
+                </>
+              ) : null}
+            </div>
+          ))}
+          <div style={{ marginTop: 6 }}>
+            Check the connection in <Link className="link" to={`/workspaces/${workspace.id}/providers`}>Providers (BYOK)</Link>.
+          </div>
         </div>
       )}
       <div className="catalog">

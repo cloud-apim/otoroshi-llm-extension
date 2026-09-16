@@ -23,6 +23,16 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     })
   )
 
+  // a provider whose key is not accepted: the most common reason a workspace shows no model
+  val (unauthorizedPort, _) = createTestServerWithRoutes("openai-unauthorized", routes => routes
+    .get("/v1/models", (_, response) => {
+      response
+        .status(401)
+        .addHeader("Content-Type", "application/json")
+        .sendString(Mono.just("""{"error":{"message":"Incorrect API key provided"}}"""))
+    })
+  )
+
   val basic: String = Base64.getEncoder.encodeToString("admin-api-apikey-id:admin-api-apikey-secret".getBytes(StandardCharsets.UTF_8))
 
   def studio(method: String, path: String, body: JsValue = null): WSResponse =
@@ -77,6 +87,22 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(compat(wsId).select("language_model_refs").as[Seq[String]], Seq(ollamaText))
     assertEquals(expect(studio("GET", s"/workspaces/$wsId/providers/${ollama.select("id").asString}/models"), 200).select("models").as[Seq[String]], Seq("llama3.2", "qwen3"))
     assertEquals(expect(studio("GET", s"/workspaces/$wsId/models"), 200).select("models").as[Seq[JsObject]].map(_.select("id").asString), Seq("llama3.2", "qwen3"))
+
+    // a provider that rejects the key says so, instead of a bare status code nobody can act on
+    val refused = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj(
+      "kind" -> "openai",
+      "name" -> "openai",
+      "token" -> "sk-wrong",
+      "base_url" -> s"http://localhost:$unauthorizedPort/v1",
+      "modalities" -> Json.obj("text" -> Json.obj("model" -> "gpt-4o-mini")),
+    )), 201)
+    val refusedInfo = expect(studio("GET", s"/workspaces/$wsId/models?force=true"), 200).select("providers").as[Seq[JsObject]]
+      .find(_.select("name").asOptString.contains("openai")).get
+    assertEquals(refusedInfo.select("error").asString, "the provider rejected the credentials, check the API key")
+    assertEquals(refusedInfo.select("error_details").select("error").asString, "bad response code: 401")
+    // its default model stays listed, so the workspace is still usable
+    assertEquals(refusedInfo.select("default_model").asString, "gpt-4o-mini")
+    expect(studio("DELETE", s"/workspaces/$wsId/providers/${refused.select("id").asString}"), 204)
 
     // api key with a credit limit
     val key = expect(studio("POST", s"/workspaces/$wsId/apikeys", Json.obj("name" -> "my app", "credit_limit" -> Json.obj("usd" -> 10, "period" -> "monthly"))), 201)

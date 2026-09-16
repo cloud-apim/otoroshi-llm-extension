@@ -366,12 +366,33 @@ class AiStudio(env: Env, ext: AiExtension) {
   // Lists the models reachable through the workspace endpoint, with the same ids as the
   // `/models` endpoint of the OpenAI compatible plugin (`<provider>/<model>` when several providers).
   // `config` is the config of the OpenAI compatible plugin of the workspace route.
+  /**
+   * Why a provider could not list its models, in words. Providers report it as `bad response code: <status>`,
+   * which tells an operator nothing about what to go and fix — and the most common one, by far, is a key that
+   * was mistyped or has expired.
+   */
+  def modelsListingError(err: JsValue): JsObject = {
+    val raw = err.select("error").asOpt[String].orElse(err.asOpt[String]).getOrElse(err.stringify)
+    val status = "bad response code: (\\d+)".r.findFirstMatchIn(raw).map(_.group(1).toInt)
+    val message = status match {
+      case Some(401) | Some(403) => "the provider rejected the credentials, check the API key"
+      case Some(404)             => "the provider has no models endpoint here, check the base URL"
+      case Some(408)             => "the provider did not answer in time"
+      case Some(429)             => "the provider is rate limiting the gateway, try again later"
+      case Some(s) if s >= 500   => s"the provider is failing (HTTP $s)"
+      case Some(s)               => s"the provider refused the request (HTTP $s)"
+      case None                  => raw
+    }
+    Json.obj("error" -> message, "error_details" -> err)
+  }
+
   def workspaceModels(config: JsValue, force: Boolean): Future[JsObject] = {
     def refs(key: String): Seq[String] = config.select(key).asOpt[Seq[String]].getOrElse(Seq.empty)
     val textRefs = refs("language_model_refs")
     val now = System.currentTimeMillis() / 1000
     val fuText: Future[Seq[(JsObject, Seq[JsObject])]] = Future.sequence(textRefs.map { ref =>
-      ext.datastores.providersDatastore.findById(ref).flatMap {
+      //ext.datastores.providersDatastore.findById(ref).flatMap {
+      ext.states.provider(ref).vfuture.flatMap { // by using state instance, fillSecrets has already been made ;)
         case None => (Json.obj("id" -> ref, "error" -> "provider not found"), Seq.empty[JsObject]).vfuture
         case Some(provider) =>
           val info = Json.obj(
@@ -400,12 +421,12 @@ class AiStudio(env: Env, ext: AiExtension) {
                   client.listModels(false, otoroshi.utils.TypedMap.empty).map {
                     case Left(err) =>
                       val fallback = provider.options.select("model").asOptString.toSeq
-                      (info ++ Json.obj("error" -> err), toModels(fallback))
+                      (info ++ modelsListingError(err), toModels(fallback))
                     case Right(models) =>
                       ext.modelsCache.put(key, models)
                       (info, toModels(models))
                   }.recover { case e: Throwable =>
-                    (info ++ Json.obj("error" -> e.getMessage), toModels(provider.options.select("model").asOptString.toSeq))
+                    (info ++ modelsListingError(JsString(e.getMessage)), toModels(provider.options.select("model").asOptString.toSeq))
                   }
               }
           }
