@@ -74,7 +74,7 @@ function WorkspaceShell({ wsId, page, sub }) {
 
   if (!ws.data) {
     return (
-      <div className="content center">
+      <div className="content">
         {ws.loading ? <Loading /> : <ErrorAlert error={ws.error} />}
       </div>
     );

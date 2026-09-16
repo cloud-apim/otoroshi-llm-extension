@@ -72,7 +72,7 @@ export function WorkspacesPage({ loading, error }) {
   const workspaces = studio.workspaces;
 
   return (
-    <div className="content center">
+    <div className="content">
       <PageHeader title="Workspaces" description="Each workspace has its own OpenAI-compatible base URL, API keys, providers and policies.">
         <button className="btn primary" onClick={() => setCreating(true)}>
           New Workspace
