@@ -372,3 +372,162 @@ export function GuardrailsTab({ workspace, opts }) {
     </div>
   );
 }
+
+// The MCP tab: what this workspace served to MCP clients. Every query is narrowed to `side: 'server'`,
+// because the same table also holds the calls the models make through connectors — the opposite direction,
+// which would otherwise be added to these numbers.
+export function McpTab({ workspace, opts }) {
+  const mcp = (extra = {}) => ({ ...opts, ...extra, params: { side: 'server', ...(extra.params || {}) } });
+  const data = useAsync(async () => {
+    const q = (id, extra = {}) => runQuery(workspace.id, id, mcp(extra));
+    const [calls, toolCalls, errorRate, p95, users, overTime, tools, byMethod, usersTable, keysTable, recent] = await Promise.all([
+      q('cloudapim_mcp_calls_total', { compare: true }),
+      q('cloudapim_mcp_tool_calls_total', { compare: true }),
+      q('cloudapim_mcp_error_rate', { compare: true }),
+      q('cloudapim_mcp_latency_p95', { compare: true }),
+      q('cloudapim_mcp_distinct_users', { compare: true }),
+      q('cloudapim_mcp_calls_over_time'),
+      q('cloudapim_mcp_tools_table', { params: { top_n: 20 } }),
+      q('cloudapim_mcp_by_method'),
+      q('cloudapim_mcp_users_table', { params: { top_n: 10 } }),
+      q('cloudapim_mcp_apikeys_table', { params: { top_n: 10 } }),
+      q('cloudapim_mcp_recent_calls', { params: { top_n: 25 } }),
+    ]);
+    return { calls, toolCalls, errorRate, p95, users, overTime, tools, byMethod, usersTable, keysTable, recent };
+  }, [workspace.id, JSON.stringify(opts)]);
+  const d = data.data;
+  const served = d ? scalarOf(d.calls) : 0;
+  return (
+    <div className="stack">
+      <ErrorAlert error={data.error} />
+      {data.loading && !d && <Loading />}
+      {d && served === 0 && (
+        <Empty title="Nothing served over MCP in this period">
+          Enable the MCP server of this workspace and point a client at it: every request it makes shows up here.
+        </Empty>
+      )}
+      {d && served > 0 && (
+        <>
+          <div className="grid cols-5">
+            <Kpi label="MCP requests" value={served} previous={compareOf(d.calls)} format={fmtNumber} points={totalPoints(d.overTime)} />
+            <Kpi label="Tool calls" value={scalarOf(d.toolCalls)} previous={compareOf(d.toolCalls)} format={fmtNumber} points={[]} />
+            <Kpi label="Failure rate" value={scalarOf(d.errorRate)} previous={compareOf(d.errorRate)} format={fmtRate} points={[]} inverse />
+            <Kpi label="p95 latency" value={scalarOf(d.p95)} previous={compareOf(d.p95)} format={fmtMs} points={[]} inverse />
+            <Kpi label="Users" value={scalarOf(d.users)} previous={compareOf(d.users)} format={fmtNumber} points={[]} />
+          </div>
+          <div className="card">
+            <h3 style={{ marginBottom: 12 }}>MCP requests over time</h3>
+            <StackedBars series={seriesOf(d.overTime)} bucket={d.overTime.meta && d.overTime.meta.bucket} format={fmtNumber} empty="No MCP request in this period" />
+          </div>
+          <div className="grid cols-2">
+            <McpTable
+              title="Tools"
+              description="What clients actually call, and what it costs them in latency."
+              items={itemsOf(d.tools)}
+              columns={[
+                ['tool', 'Tool', (r) => r.tool],
+                ['calls', 'Calls', (r) => fmtInt(r.calls)],
+                ['failures', 'Failures', (r) => fmtInt(r.failures)],
+                ['p95_ms', 'p95', (r) => fmtMs(r.p95_ms)],
+              ]}
+              empty="No tool was called."
+            />
+            <McpTable
+              title="Users"
+              description="Who called, the requests of the API keys they own included."
+              items={itemsOf(d.usersTable)}
+              columns={[
+                ['user', 'User', (r) => r.user],
+                ['calls', 'Requests', (r) => fmtInt(r.calls)],
+                ['tools', 'Tools', (r) => fmtInt(r.tools)],
+                ['failures', 'Failures', (r) => fmtInt(r.failures)],
+              ]}
+              empty="No request could be attributed to a user: the keys used have no owner."
+            />
+            <McpTable
+              title="API keys"
+              description="The keys clients authenticate with."
+              items={itemsOf(d.keysTable)}
+              columns={[
+                ['apikey', 'API key', (r) => r.apikey],
+                ['calls', 'Requests', (r) => fmtInt(r.calls)],
+                ['tool_calls', 'Tool calls', (r) => fmtInt(r.tool_calls)],
+                ['failures', 'Failures', (r) => fmtInt(r.failures)],
+              ]}
+              empty="No request was made with an API key."
+            />
+            <div className="card">
+              <h3 style={{ marginBottom: 8 }}>Requests by method</h3>
+              <p className="muted small" style={{ marginTop: 0 }}>Handshakes, listings and the calls themselves.</p>
+              <div className="rank">
+                {itemsOf(d.byMethod).map((it, i) => (
+                  <div key={it.key} className="item">
+                    <span className="pos">{i + 1}</span>
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <div className="row between">
+                        <span className="truncate small mono">{it.key}</span>
+                        <span className="small">{fmtInt(it.value)}</span>
+                      </div>
+                      <div className="bar">
+                        <i style={{ width: `${((Number(it.value) || 0) / Math.max(1, ...itemsOf(d.byMethod).map((x) => Number(x.value) || 0))) * 100}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <McpTable
+            title="Recent MCP calls"
+            description="The latest requests served, newest first."
+            items={itemsOf(d.recent)}
+            columns={[
+              ['time', 'Time', (r) => r.time],
+              ['consumer', 'Consumer', (r) => r.consumer],
+              ['owner', 'Counts for', (r) => r.owner],
+              ['method', 'Method', (r) => r.method],
+              ['tool', 'Tool', (r) => r.tool],
+              ['ms', 'Duration', (r) => (r.ms === '—' ? '—' : fmtMs(r.ms))],
+              ['status', 'Status', (r) => r.status],
+            ]}
+            empty="No MCP request in this period."
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+function McpTable({ title, description, items, columns, empty }) {
+  return (
+    <div className="card">
+      <h3 style={{ marginBottom: 8 }}>{title}</h3>
+      {description && <p className="muted small" style={{ marginTop: 0 }}>{description}</p>}
+      {items.length === 0 && <p className="muted small">{empty}</p>}
+      {items.length > 0 && (
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                {columns.map(([key, label]) => (
+                  <th key={key}>{label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((row, i) => (
+                <tr key={row.key || i}>
+                  {columns.map(([key, , render]) => (
+                    <td key={key} className={key === 'tool' || key === 'method' ? 'mono truncate' : 'truncate'}>
+                      {render(row)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}

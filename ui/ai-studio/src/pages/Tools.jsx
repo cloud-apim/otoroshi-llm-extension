@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useWorkspace } from '../App';
 import { Badge, Checks, Empty, ErrorAlert, Field, JsonInput, Loading, Modal, NumberInput, PageHeader, SecretInput, Select, StatusBadge, Tabs, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Resources, workspaceFilter } from '../lib/entities';
-import { attachedProviders, deleteTool, saveTool, SEARCH_PROVIDERS } from '../lib/tools';
+import { attachedProviders, deleteTool, propertiesOf, requiredOf, saveTool, schemaOf, SEARCH_PROVIDERS } from '../lib/tools';
 
 const TABS = {
   functions: { title: 'HTTP functions', add: 'Add function', description: 'Tools the model can call; the gateway performs the HTTP request and feeds the result back.' },
@@ -20,7 +20,7 @@ function ToolModal({ workspace, kind, tool, providers, onClose, onSaved }) {
   const [form, setForm] = useState({
     name: tool ? tool.name : '',
     description: tool ? tool.description : '',
-    parameters: tool ? tool.parameters || DEFAULT_PARAMETERS : DEFAULT_PARAMETERS,
+    parameters: tool && tool.parameters ? schemaOf(tool.parameters, tool.required) : DEFAULT_PARAMETERS,
     url: kind === 'functions' ? backend.url || '' : transport.url || '',
     method: backend.method || 'GET',
     headers: (kind === 'functions' ? backend.headers : transport.headers) || {},
@@ -47,8 +47,8 @@ function ToolModal({ workspace, kind, tool, providers, onClose, onSaved }) {
           name: form.name,
           description: form.description,
           strict: false,
-          parameters: form.parameters,
-          required: (form.parameters && form.parameters.required) || [],
+          parameters: propertiesOf(form.parameters),
+          required: requiredOf(form.parameters),
           backend: {
             kind: 'Http',
             options: { url: form.url, method: form.method, headers: form.headers, timeout: Number(form.timeout), ...(form.body ? { body: form.body } : {}) },

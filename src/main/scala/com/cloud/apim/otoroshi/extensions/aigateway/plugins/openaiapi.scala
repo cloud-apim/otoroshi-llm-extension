@@ -25,14 +25,16 @@ case class OpenAiCompatApiConfig(
   decodeImages: Boolean,
   useOpenResponseForResponses: Boolean,
   responseHeaders: Boolean,
-  responseHeadersIncludeCosts: Boolean
+  responseHeadersIncludeCosts: Boolean,
+  // the MCP virtual server served on `/mcp`, if any. No ref, no MCP endpoint (404).
+  mcpServerRef: Option[String] = None
 ) extends NgPluginConfig {
   def json: JsValue = OpenAiCompatApiConfig.format.writes(this)
 }
 
 object OpenAiCompatApiConfig {
 
-  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "ocr_model_refs", "embedding_model_refs", "moderation_model_refs", "context_refs", "max_size_upload", "decode_images", "use_open_response_for_responses", "response_headers", "response_headers_include_costs")
+  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "ocr_model_refs", "embedding_model_refs", "moderation_model_refs", "context_refs", "mcp_server_ref", "max_size_upload", "decode_images", "use_open_response_for_responses", "response_headers", "response_headers_include_costs")
 
   def configSchema: Option[JsObject] = Some(Json.obj(
     "language_model_refs" -> Json.obj(
@@ -119,6 +121,19 @@ object OpenAiCompatApiConfig {
         ),
       ),
     ),
+    "mcp_server_ref" -> Json.obj(
+      "type" -> "select",
+      "label" -> "MCP virtual server",
+      "help" -> "Serve this MCP virtual server on the /mcp endpoint of this route. Without it, /mcp returns 404",
+      "props" -> Json.obj(
+        "help" -> "Serve this MCP virtual server on the /mcp endpoint of this route. Without it, /mcp returns 404",
+        "optionsFrom" -> "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/mcp-virtual-servers",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      ),
+    ),
     "max_size_upload" -> Json.obj(
       "type" -> "number",
       "label" -> "Max file upload size (bytes)"
@@ -177,6 +192,7 @@ object OpenAiCompatApiConfig {
       "use_open_response_for_responses" -> o.useOpenResponseForResponses,
       "response_headers" -> o.responseHeaders,
       "response_headers_include_costs" -> o.responseHeadersIncludeCosts,
+      "mcp_server_ref" -> o.mcpServerRef.map(_.json).getOrElse(JsNull).asValue,
     )
     override def reads(json: JsValue): JsResult[OpenAiCompatApiConfig] = Try {
       OpenAiCompatApiConfig(
@@ -192,6 +208,7 @@ object OpenAiCompatApiConfig {
         useOpenResponseForResponses = json.select("use_open_response_for_responses").asOpt[Boolean].getOrElse(false),
         responseHeaders = json.select("response_headers").asOpt[Boolean].getOrElse(false),
         responseHeadersIncludeCosts = json.select("response_headers_include_costs").asOpt[Boolean].getOrElse(true),
+        mcpServerRef = json.select("mcp_server_ref").asOpt[String].map(_.trim).filter(_.nonEmpty),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -221,11 +238,35 @@ class OpenAiCompatApi extends NgBackendCall {
     ().vfuture
   }
 
+  /**
+   * The MCP virtual server this route exposes, if any. A missing or disabled server is no server: `/mcp`
+   * answers 404 rather than serving an empty tool list.
+   */
+  private def mcpServerConfig(config: OpenAiCompatApiConfig)(using env: Env): Option[McpProxyEndpointConfig] = {
+    for {
+      ref    <- config.mcpServerRef
+      ext    <- env.adminExtensions.extension[AiExtension]
+      server <- ext.states.mcpVirtualServer(ref) if server.enabled
+    } yield server.config
+  }
+
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(OpenAiCompatApiConfig.format).getOrElse(OpenAiCompatApiConfig.default)
     val path = ctx.request.path
     val method = ctx.request.method.toUpperCase()
-    val result: Future[Either[NgProxyEngineError, BackendCallResponse]] = if (method == "GET" && path.endsWith("/contexts")) {
+    val result: Future[Either[NgProxyEngineError, BackendCallResponse]] = if (path.endsWith("/mcp")) {
+      // Served by the same Streamable HTTP server as the dedicated MCP endpoint plugin, so the route exposes
+      // its tools to MCP clients with the keys that already call its models. Every method goes through it:
+      // it answers 405 with `Allow: POST` itself, which is what a client probing for a GET stream expects.
+      mcpServerConfig(config) match {
+        case Some(mcpConfig) => McpStreamableHttpServer.handle(ctx, McpProxyEndpointBackend(mcpConfig))
+        case None            => Left(NgProxyEngineError.NgResultProxyEngineError(Results.NotFound(Json.obj(
+          "error" -> "not_found",
+          "error_details" -> "no MCP virtual server is exposed on this route"
+        )))).vfuture
+      }
+
+    } else if (method == "GET" && path.endsWith("/contexts")) {
       val contexts = env.adminExtensions.extension[AiExtension].map(_.states.allContexts()).getOrElse(Seq.empty)
         .filter(c => config.contextRefs.contains(c.id))
         .map(c => Json.obj("id" -> c.id, "name" -> c.name))

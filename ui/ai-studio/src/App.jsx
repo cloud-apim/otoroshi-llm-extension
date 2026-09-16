@@ -17,6 +17,7 @@ import { GuardrailsPage } from './pages/Guardrails';
 import { RoutingPage } from './pages/Routing';
 import { PresetsPage } from './pages/Presets';
 import { ToolsPage } from './pages/Tools';
+import { McpServerPage } from './pages/McpServer';
 import { CreditsPage } from './pages/Credits';
 import { UsersPage } from './pages/Users';
 
@@ -38,6 +39,7 @@ const PAGES = {
   routing: RoutingPage,
   presets: PresetsPage,
   tools: ToolsPage,
+  'mcp-server': McpServerPage,
   credits: CreditsPage,
   settings: SettingsPage,
   models: ModelsPage,

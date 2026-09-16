@@ -70,6 +70,7 @@ A workspace is an isolated AI endpoint for a team or a project. Creating one cre
 | Routing | Provider **fallbacks**, **load balancers** and [Otoroshi routers](/docs/llm-gateway/otoroshi-router) |
 | Presets | **Prompt contexts** attached to the providers |
 | Tools | **Tool functions**, **MCP connectors** and **search engines** attached to the providers |
+| MCP server | An [**MCP virtual server**](/docs/mcp/mcp-virtual-servers) served on the `/mcp` path of the route |
 | Credits | **Budgets**, always scoped to the workspace |
 
 Every entity is tagged with the `ai_studio_workspace` metadata, so you can find everything that belongs
@@ -144,6 +145,39 @@ keys. Workspace keys belong to no one in particular, which suits shared applicat
 
 *Fallback chains, load balancers, Otoroshi routers and the default provider of the workspace.*
 
+### Serve your tools over MCP
+
+A workspace can be an [MCP server](/docs/mcp/overview) too. The tools it already has — its HTTP functions
+and the remote MCP servers it connects to — are exposed to MCP clients (Claude, Cursor, your own agents) on
+the `/mcp` path of the workspace endpoint: same URL as the models, same API keys, same budgets, same
+activity.
+
+**MCP server** picks what to expose and starts serving it; until then `/mcp` answers `404`. Clients connect
+over Streamable HTTP with a key of the workspace:
+
+```json
+{
+  "mcpServers": {
+    "acme": {
+      "type": "http",
+      "url": "https://acme.<workspaces domain>/v1/mcp",
+      "headers": { "Authorization": "Bearer <api key>" }
+    }
+  }
+}
+```
+
+Because a tool call carries an API key, it counts for the owner of that key exactly like a model call: the
+**MCP** tab of Activity shows what was served, tool by tool, user by user and key by key.
+
+:::info
+MCP clients look for an OAuth authorization server (RFC 9728) and will not send an API key on their own,
+which is why the key is given as a header. For an MCP server protected by OAuth, expose the virtual server
+on a route of its own with the [MCP exposition plugins](/docs/mcp/mcp-plugins) — the studio creates an
+ordinary [MCP virtual server](/docs/mcp/mcp-virtual-servers), and everything the console offers
+(scopes, rate limits, zero-trust, registry publication) keeps working on it.
+:::
+
 ### Control the spend
 
 **Credits** creates [budgets](/docs/cost-optimizations/budgets) in dollars or tokens, per period, that
@@ -178,6 +212,9 @@ energy and water, their evolution, and the footprint of each model for the same 
   previous period, or hour by hour, day by day, week by week or month by month.
 - **Guardrails** counts the requests your guardrails blocked, their rate, when they happened, and which
   reasons, models, keys and users they concern.
+- **MCP** covers what the workspace served to MCP clients: requests, tool calls, failure rate and latency,
+  the tools actually called, and who called them. It only counts what the gateway served — the tools a model
+  calls through a connector during a completion belong to the LLM side and stay out of these numbers.
 
 ![The activity dashboard of a workspace: KPIs, usage by API key, user and model, requests, tokens, caching and latency](/img/ai-studio-activity.png)
 
@@ -280,7 +317,8 @@ models from the catalog, workspace quotas, every provider selected for a preset 
 | `/workspaces/:id/load-balancers[/:id]`, `/workspaces/:id/routers[/:id]` | Load balancers (`name`, `strategy`, `targets`) and [Otoroshi routers](/docs/llm-gateway/otoroshi-router) (candidates, judges and settings of the code, auto and fusion routers). |
 | `/workspaces/:id/presets[/:id]` | Presets: `name`, `description`, `system`, `trailing`, `providers`. |
 | `/workspaces/:id/tools/functions[/:id]`, `/tools/mcp[/:id]`, `/tools/search[/:id]` | HTTP functions, MCP connectors and web search engines, with the `providers` they are available on. |
-| `POST /workspaces/:id/analytics/_query` | Runs the LLM analytics queries of the extension (`cloudapim_llm_*`) on the calls of the workspace only, the same data as the Activity and Logs pages. |
+| `GET` `PUT` `DELETE /workspaces/:id/mcp-server` | The MCP server exposed on `/mcp`: `name`, `description`, `enabled`, `functions` and `connectors` (ids of the tools of the workspace). `PUT` creates it and starts serving it, `DELETE` stops serving and removes it. |
+| `POST /workspaces/:id/analytics/_query` | Runs the LLM and MCP analytics queries of the extension (`cloudapim_llm_*`, `cloudapim_mcp_*`) on the calls of the workspace only, the same data as the Activity and Logs pages. |
 
 ## Setup
 

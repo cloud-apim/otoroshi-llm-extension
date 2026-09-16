@@ -196,11 +196,52 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assert(searchEntity.select("config").select("connection").select("base_url").asString.contains("tavily"))
     assertEquals(searchEntity.select("config").select("connection").select("token").asString, "tvly-test")
     assert(aiEntity("providers", openaiText).get.select("options").select("search_engines").as[Seq[String]].contains(search.select("id").asString))
-    val function = expect(studio("POST", s"/workspaces/$wsId/tools/functions", Json.obj("name" -> "weather", "url" -> "https://weather.oto.tools", "providers" -> Json.arr(ollamaText))), 201)
-    assertEquals(aiEntity("tool-functions", function.select("id").asString).get.select("backend").select("options").select("url").asString, "https://weather.oto.tools")
+    val function = expect(studio("POST", s"/workspaces/$wsId/tools/functions", Json.obj(
+      "name" -> "weather",
+      "url" -> "https://weather.oto.tools",
+      "providers" -> Json.arr(ollamaText),
+      "parameters" -> Json.obj("type" -> "object", "properties" -> Json.obj("city" -> Json.obj("type" -> "string")), "required" -> Json.arr("city")),
+    )), 201)
+    val functionEntity = aiEntity("tool-functions", function.select("id").asString).get
+    assertEquals(functionEntity.select("backend").select("options").select("url").asString, "https://weather.oto.tools")
     assertEquals(function.select("providers").as[Seq[String]], Seq(ollamaText))
+    // the form speaks json schema, the entity stores the properties and the required ones next to them,
+    // so what models and MCP clients are given is a valid schema and not a schema nested in a schema
+    assertEquals(functionEntity.select("parameters").as[JsObject], Json.obj("city" -> Json.obj("type" -> "string")))
+    assertEquals(functionEntity.select("required").as[Seq[String]], Seq("city"))
+    assertEquals(function.select("parameters").select("properties").select("city").select("type").asString, "string")
     expect(studio("POST", s"/workspaces/$wsId/tools/mcp", Json.obj("name" -> "no url")), 400)
     expect(studio("GET", s"/workspaces/$wsId/tools/nope"), 404)
+
+    // mcp server: a virtual server exposed on /mcp of the workspace route
+    val noServer = expect(studio("GET", s"/workspaces/$wsId/mcp-server"), 200)
+    assertEquals(noServer.select("served").asBoolean, false)
+    assert(noServer.select("url").asString.endsWith("/v1/mcp"), noServer.select("url").asString)
+    expect(studio("PUT", s"/workspaces/$wsId/mcp-server", Json.obj("name" -> "")), 400)
+    expect(studio("PUT", s"/workspaces/$wsId/mcp-server", Json.obj("name" -> "tools", "functions" -> Json.arr("not-of-this-workspace"))), 400)
+    val mcpServer = expect(studio("PUT", s"/workspaces/$wsId/mcp-server", Json.obj(
+      "name" -> "Studio tools",
+      "functions" -> Json.arr(function.select("id").asString),
+    )), 200)
+    assertEquals(mcpServer.select("served").asBoolean, true)
+    assertEquals(mcpServer.select("functions").as[Seq[String]], Seq(function.select("id").asString))
+    val serverId = mcpServer.select("id").asString
+    assertEquals(compat(wsId).select("mcp_server_ref").asString, serverId)
+    val serverEntity = aiEntity("mcp-virtual-servers", serverId).get
+    assertEquals(serverEntity.select("config").select("refs").as[Seq[String]], Seq(function.select("id").asString))
+    // the activity of the workspace needs the audit events, whatever the caller asked for
+    assertEquals(serverEntity.select("config").select("emit_audit_events").asBoolean, true)
+    assertEquals(serverEntity.select("metadata").select("ai_studio_workspace").asString, wsId)
+    // a partial update keeps what it does not name, on the entity as on the form
+    expect(studio("PUT", s"/workspaces/$wsId/mcp-server", Json.obj("enabled" -> false)), 200)
+    val disabledServer = aiEntity("mcp-virtual-servers", serverId).get
+    assertEquals(disabledServer.select("enabled").asBoolean, false)
+    assertEquals(disabledServer.select("name").asString, "Studio tools")
+    assertEquals(disabledServer.select("config").select("refs").as[Seq[String]], Seq(function.select("id").asString))
+    expect(studio("DELETE", s"/workspaces/$wsId/mcp-server"), 204)
+    assert(aiEntity("mcp-virtual-servers", serverId).isEmpty)
+    assertEquals(compat(wsId).select("mcp_server_ref").asOpt[String], None)
+
     expect(studio("DELETE", s"/workspaces/$wsId/tools/functions/${function.select("id").asString}"), 204)
     assert(!aiEntity("providers", ollamaText).get.select("options").select("tool_functions").asOpt[Seq[String]].getOrElse(Seq.empty).contains(function.select("id").asString))
 

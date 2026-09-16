@@ -46,6 +46,7 @@ This makes it the ideal choice when you want to expose a single, coherent API su
 | `POST` | `/audio/translations` | OpenAI Audio Translation API | `audio_model_refs` |
 | `POST` | `/moderations` | OpenAI Moderation API | `moderation_model_refs` |
 | `POST` | `/ocr` | OCR (text extraction from images and pdf) | `ocr_model_refs` |
+| `POST` | `/mcp` | [MCP](/docs/mcp/overview) Streamable HTTP endpoint serving an [MCP virtual server](/docs/mcp/mcp-virtual-servers) | `mcp_server_ref` |
 
 ## Plugin configuration
 
@@ -80,6 +81,7 @@ This makes it the ideal choice when you want to expose a single, coherent API su
 | `max_size_upload` | number | `104857600` (100MB) | Maximum file upload size in bytes for audio, image, and OCR endpoints |
 | `decode_images` | boolean | `false` | When enabled, decodes base64-encoded image results into binary responses |
 | `use_open_response_for_responses` | boolean | `false` | When enabled, the `/responses` endpoint uses the Open Responses proxy instead of the default OpenAI Responses proxy |
+| `mcp_server_ref` | string | `null` | Reference to the [MCP virtual server](/docs/mcp/mcp-virtual-servers) served on `/mcp`. Without it (or when the server is disabled), `/mcp` answers `404` |
 
 ## Route configuration example
 
@@ -579,6 +581,29 @@ Response:
   "usage_info": { "pages_processed": 1 }
 }
 ```
+
+### POST /mcp
+
+Serves the [MCP virtual server](/docs/mcp/mcp-virtual-servers) named by `mcp_server_ref` over the Streamable
+HTTP transport, exactly like the [MCP exposition plugins](/docs/mcp/mcp-plugins) — same protocol revisions,
+same tools, resources and prompts. The tools of your models and the tools of your MCP clients then live on
+one route, behind one API key, and the calls of both show up in the same analytics.
+
+```sh
+curl https://api.domain.tld/v1/mcp \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
+  -H "Content-Type: application/json" \
+  -d '{ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }'
+```
+
+Set `mcp_server_ref` to expose it: with no reference, or when the referenced virtual server is disabled or
+gone, `/mcp` answers `404` like any unknown path of the API.
+
+:::info
+MCP clients expect an OAuth authorization server (RFC 9728) and will not send an API key on their own. Either
+configure the client with an `Authorization` header, or expose the same virtual server on a route of its own
+with `enforce_oauth` — see the [MCP exposition plugins](/docs/mcp/mcp-plugins).
+:::
 
 ## Securing the API
 

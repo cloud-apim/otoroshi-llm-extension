@@ -5,8 +5,8 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities.*
 import otoroshi.models.{EntityLocation, WasmPlugin}
 import otoroshi.next.models.*
 import otoroshi.utils.syntax.implicits.*
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AssistantMcpEndpoint, McpRespEndpoint, McpSseEndpoint, McpWebsocketEndpoint, OpenAiCompatProxy}
-import play.api.libs.json.{JsObject, Json}
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AssistantMcpEndpoint, McpProxyEndpointConfig, McpRespEndpoint, McpSseEndpoint, McpWebsocketEndpoint, OpenAiCompatApi, OpenAiCompatProxy}
+import play.api.libs.json.{JsNull, JsObject, Json}
 import reactor.core.publisher.Mono
 
 import java.io.File
@@ -1015,6 +1015,63 @@ class McpSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals((initialize.json \ "result" \ "protocolVersion").as[String], "2025-06-18")
 
     client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+  }
+
+  test("the unified llm api serves the virtual server it references on /mcp") {
+    val llmFunction = flightFunction()
+    val server = McpVirtualServer(
+      id = UUID.randomUUID().toString,
+      name = "studio server",
+      config = McpProxyEndpointConfig.default.copy(name = "studio-server".some, functionRefs = Seq(llmFunction.id)),
+    )
+    def unifiedRoute(ref: Option[String]) = mcpHttpRoute("/unified", Json.obj()).copy(
+      id = "unified-mcp-route",
+      plugins = NgPlugins(Seq(NgPluginInstance(
+        plugin = s"cp:${classOf[OpenAiCompatApi].getName}",
+        config = NgPluginInstanceConfig(Json.obj("mcp_server_ref" -> ref.map(_.json).getOrElse(JsNull).asValue))
+      )))
+    )
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "tool-functions").upsertEntity(llmFunction).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "mcp-virtual-servers").upsertEntity(server).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(unifiedRoute(server.id.some)).awaitf(10.seconds)
+    await(2.seconds)
+    val url = s"http://test.oto.tools:${port}/unified/mcp"
+
+    val initialize = client.call("POST", url, Map.empty, Some(Json.obj(
+      "jsonrpc" -> "2.0", "id" -> 1, "method" -> "initialize", "params" -> Json.obj("protocolVersion" -> "2025-06-18")
+    ))).awaitf(30.seconds)
+    assertEquals(initialize.status, 200, initialize.body)
+    assertEquals((initialize.json \ "result" \ "serverInfo" \ "name").as[String], "studio-server")
+
+    val tools = client.call("POST", url, Map.empty, Some(Json.obj("jsonrpc" -> "2.0", "id" -> 2, "method" -> "tools/list"))).awaitf(30.seconds)
+    assertEquals(tools.status, 200, tools.body)
+    assert(tools.body.contains("get_flight_times"), tools.body)
+
+    val call = client.call("POST", url, Map.empty, Some(Json.obj("jsonrpc" -> "2.0", "id" -> 3, "method" -> "tools/call",
+      "params" -> Json.obj("name" -> "get_flight_times", "arguments" -> Json.obj("departure" -> "LAX", "arrival" -> "CDG"))))).awaitf(30.seconds)
+    assert(call.body.contains("13h"), call.body)
+
+    // the streamable http server answers the probes itself, rather than the plugin's generic 404
+    assertEquals(client.call("GET", url, Map.empty, None).awaitf(30.seconds).status, 405)
+    val unknownPath = client.call("POST", s"http://test.oto.tools:${port}/unified/nope", Map.empty, Some(Json.obj())).awaitf(30.seconds)
+    assertEquals(unknownPath.status, 404, unknownPath.body)
+
+    // a disabled server is no server
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "mcp-virtual-servers").upsertEntity(server.copy(enabled = false)).awaitf(10.seconds)
+    await(2.seconds)
+    val disabled = client.call("POST", url, Map.empty, Some(Json.obj("jsonrpc" -> "2.0", "id" -> 4, "method" -> "tools/list"))).awaitf(30.seconds)
+    assertEquals(disabled.status, 404, disabled.body)
+
+    // and neither is a route that references none
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(unifiedRoute(None)).awaitf(10.seconds)
+    await(2.seconds)
+    val noRef = client.call("POST", url, Map.empty, Some(Json.obj("jsonrpc" -> "2.0", "id" -> 5, "method" -> "tools/list"))).awaitf(30.seconds)
+    assertEquals(noRef.status, 404, noRef.body)
+
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(unifiedRoute(None)).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "mcp-virtual-servers").deleteEntity(server).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "tool-functions").deleteEntity(llmFunction).awaitf(10.seconds)
     await(2.seconds)
   }
 }

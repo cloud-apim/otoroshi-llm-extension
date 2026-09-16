@@ -2925,7 +2925,10 @@ object McpExpositionScanner {
     NgPluginHelper.pluginId[McpWebsocketEndpoint],
   )
   private def protectedPresetId: String = NgPluginHelper.pluginId[ProtectedMcpStreamableHttpPreset]
-  private val apikeyPluginId = "cp:otoroshi.next.plugins.ApikeyCalls"
+  // the unified LLM API serves its virtual server on `/mcp`, under its own config field
+  private def unifiedApiId: String = NgPluginHelper.pluginId[OpenAiCompatApi]
+  // the consumer preset expands into ApikeyCalls + mandatory tags: a route carrying it wants an apikey
+  private val apikeyPluginIds = Set("cp:otoroshi.next.plugins.ApikeyCalls", "cp:otoroshi.next.plugins.MandatoryConsumerPreset")
   private val mtlsPluginId = "cp:otoroshi.next.plugins.NgHasClientCertValidator"
   private val forceHttpsPluginId = "cp:otoroshi.next.plugins.ForceHttpsTraffic"
 
@@ -2954,12 +2957,16 @@ object McpExpositionScanner {
   }
 
   def slotReferences(pluginId: String, configRaw: JsObject, vsId: String): Boolean =
-    (mcpEndpointIds.contains(pluginId) || pluginId == protectedPresetId) &&
+    if (pluginId == unifiedApiId) (configRaw \ "mcp_server_ref").asOpt[String].contains(vsId)
+    else (mcpEndpointIds.contains(pluginId) || pluginId == protectedPresetId) &&
       (configRaw \ "server_ref").asOpt[String].contains(vsId)
 
-  // exposition path: the preset carries it as `mcp_path`; a raw MCP endpoint carries it as its `include` pattern.
+  // exposition path: the preset carries it as `mcp_path` (defaulting to /mcp, like the preset itself); the
+  // unified LLM API always serves it on `/mcp`; a raw MCP endpoint carries it as its `include` pattern, and
+  // with no pattern it serves the route root (None).
   def slotPath(pluginId: String, configRaw: JsObject, includePaths: Seq[String]): Option[String] =
-    if (pluginId == protectedPresetId) (configRaw \ "mcp_path").asOpt[String].filter(_.trim.nonEmpty)
+    if (pluginId == protectedPresetId) (configRaw \ "mcp_path").asOpt[String].filter(_.trim.nonEmpty).orElse("/mcp".some)
+    else if (pluginId == unifiedApiId) "/mcp".some
     else includePaths.headOption.filter(_.trim.nonEmpty)
 
   // ── glue ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -2980,7 +2987,7 @@ object McpExpositionScanner {
       val mcpSlots = slots.filter(s => slotReferences(s.plugin, s.config.raw, vsId))
       if (mcpSlots.isEmpty) Seq.empty
       else {
-        val hasApikey = slots.exists(_.plugin == apikeyPluginId)
+        val hasApikey = slots.exists(s => apikeyPluginIds.contains(s.plugin))
         val hasMtls = slots.exists(_.plugin == mtlsPluginId)
         val hasForceHttps = slots.exists(_.plugin == forceHttpsPluginId)
         mcpSlots.flatMap { slot =>

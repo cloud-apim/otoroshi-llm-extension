@@ -887,19 +887,56 @@ object AiGatewayQueries {
 
     private def t(s: UserAnalyticsExporterSettings): String = McpCallsProjection.table(s)
 
+    /**
+     * The two sides of MCP answer opposite questions and must not be added up: `server` is what the gateway
+     * served to MCP clients, `client` what a model called through a connector. No side param = all of them,
+     * which is what the cross-side dashboards want.
+     */
+    private def sided(ctx: QueryContext, extra: String = ""): String = {
+      val side = (ctx.params \ "side").asOpt[String].map(_.trim.toLowerCase).filter(SidePattern.matches)
+      val user = (ctx.params \ "user").asOpt[String].map(_.trim).filter(_.nonEmpty).map {
+        case u if UserPattern.matches(u) => s"$UserKey = '$u'"
+        case _                           => "1 = 0"
+      }
+      val clauses = side.map(s => s"side = '$s'").toSeq ++ user ++ Option(extra).filter(_.nonEmpty).map(e => s"($e)")
+      clauses.mkString(" AND ")
+    }
+
+    private val SidePattern = "^(server|client|fetch)$".r
+    private val UserPattern = "^[A-Za-z0-9._%+@-]{1,254}$".r
+
+    /** Who an MCP call counts for, the same way a model call counts, see [[Llm.UserKey]]. */
+    private val UserKey = "COALESCE(user_email, apikey_owner)"
+
+    private val SideParam = QueryParam("side", "string", JsNull, "Only count one side of MCP: `server` (requests Otoroshi served), `client` (calls made through a connector) or `fetch` (resource fetches)")
+    private val UserParam = QueryParam("user", "string", JsNull, "Only count the calls of one user (email): the calls they made and the calls of the API keys they own")
+
+    // every mcp query can be narrowed to one side — "the tools we serve", "what the models consume" — and
+    // to one user
+    private def mq(
+        id: String,
+        name: String,
+        description: String,
+        shape: AnalyticsShape,
+        widget: String,
+        compare: Boolean = false,
+        params: Seq[QueryParam] = Seq.empty
+    )(run: QueryContext => Future[QueryResult]): CatalogQuery =
+      q(id, name, description, shape, widget, compare, params :+ SideParam :+ UserParam)(run)
+
     private def metric(id: String, name: String, description: String, expr: String, extra: String = "", asDouble: Boolean = false) =
-      q(s"cloudapim_mcp_$id", name, description, AnalyticsShape.Scalar, "metric", compare = true) { ctx =>
-        scalar(t(ctx.settings), expr, name, extra, asDouble)(ctx)
+      mq(s"cloudapim_mcp_$id", name, description, AnalyticsShape.Scalar, "metric", compare = true) { ctx =>
+        scalar(t(ctx.settings), expr, name, sided(ctx, extra), asDouble)(ctx)
       }
 
     private def pieOf(id: String, name: String, description: String, key: String, extra: String = "", widget: String = "donut") =
-      q(s"cloudapim_mcp_$id", name, description, AnalyticsShape.Pie, widget) { ctx =>
-        pie(t(ctx.settings), key, name, extra = extra)(ctx)
+      mq(s"cloudapim_mcp_$id", name, description, AnalyticsShape.Pie, widget) { ctx =>
+        pie(t(ctx.settings), key, name, extra = sided(ctx, extra))(ctx)
       }
 
     private def top(id: String, name: String, description: String, key: String, label: Option[String] = None, value: String = "COUNT(*)", extra: String = "", asDouble: Boolean = false) =
-      q(s"cloudapim_mcp_$id", name, description, AnalyticsShape.TopN, "bar", params = Seq(TopNParam)) { ctx =>
-        topN(t(ctx.settings), key, label, value, s"$key IS NOT NULL${if (extra.isEmpty) "" else s" AND $extra"}", asDouble)(ctx)
+      mq(s"cloudapim_mcp_$id", name, description, AnalyticsShape.TopN, "bar", params = Seq(TopNParam)) { ctx =>
+        topN(t(ctx.settings), key, label, value, sided(ctx, s"$key IS NOT NULL${if (extra.isEmpty) "" else s" AND $extra"}"), asDouble)(ctx)
       }
 
     private val Failed    = "(err OR tool_error)"
@@ -912,11 +949,11 @@ object AiGatewayQueries {
     val ErrorsTotal    = metric("errors_total", "MCP failures", "Protocol errors, transport failures, and tools that reported an error.", "COUNT(*)", Failed)
     val ErrorRate      = metric("error_rate", "MCP failure rate", "Share of MCP requests that failed.", FailRate, asDouble = true)
     val LatencyP95     = metric("latency_p95", "MCP p95 latency", "95th percentile of the MCP request duration.", "COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)", HasTime, asDouble = true)
-    val CallsOverTime  = q("cloudapim_mcp_calls_over_time", "MCP calls over time", "Successful and failed MCP requests per bucket.", AnalyticsShape.Timeseries, "area") { ctx =>
-      series(t(ctx.settings), Seq("success" -> s"COUNT(*) FILTER (WHERE NOT $Failed)", "failure" -> s"COUNT(*) FILTER (WHERE $Failed)"))(ctx)
+    val CallsOverTime  = mq("cloudapim_mcp_calls_over_time", "MCP calls over time", "Successful and failed MCP requests per bucket.", AnalyticsShape.Timeseries, "area") { ctx =>
+      series(t(ctx.settings), Seq("success" -> s"COUNT(*) FILTER (WHERE NOT $Failed)", "failure" -> s"COUNT(*) FILTER (WHERE $Failed)"), sided(ctx))(ctx)
     }
-    val ErrorRateTs    = q("cloudapim_mcp_error_rate_over_time", "MCP failure rate over time", "Share of failed MCP requests per bucket.", AnalyticsShape.Timeseries, "line", compare = true) { ctx =>
-      series(t(ctx.settings), Seq("failure_rate" -> FailRate), asDouble = true)(ctx)
+    val ErrorRateTs    = mq("cloudapim_mcp_error_rate_over_time", "MCP failure rate over time", "Share of failed MCP requests per bucket.", AnalyticsShape.Timeseries, "line", compare = true) { ctx =>
+      series(t(ctx.settings), Seq("failure_rate" -> FailRate), sided(ctx), asDouble = true)(ctx)
     }
     val ByMethod       = pieOf("by_method", "MCP requests by method", "initialize, tools/list, tools/call, resources/read, prompts/get…", "method")
     val BySide         = pieOf("by_side", "Served vs consumed", "Requests Otoroshi served as an MCP server, versus calls it made through connectors.", "side", widget = "pie")
@@ -929,20 +966,20 @@ object AiGatewayQueries {
     val TopConnectors  = top("top_connectors", "Top MCP connectors", "Upstream MCP servers by calls made through them.", "connector_id", Some("connector_name"), extra = "side = 'client'")
     val FailingConnectors = top("failing_connectors", "Failing MCP connectors", "Upstream MCP servers by failed calls.", "connector_id", Some("connector_name"), extra = s"side = 'client' AND $Failed")
     val TopApikeys     = top("top_apikeys", "Top MCP API keys", "API keys by MCP requests.", "apikey_id", Some("apikey_name"))
-    val TopUsers       = top("top_users", "Top MCP users", "Users by MCP requests.", "user_email")
+    val TopUsers       = top("top_users", "Top MCP users", "Users by MCP requests, the requests of the API keys they own included.", UserKey)
     val TopErrors      = top("top_errors", "Top MCP errors", "The errors seen most often.", "error_message", extra = "err = true")
     val FailingFetches = top("failing_resource_fetches", "Failing resource fetches", "Resources whose fetch failed or was refused.", "target", extra = "side = 'fetch' AND err = true")
-    val CallsByToolTs  = q("cloudapim_mcp_calls_by_tool_over_time", "Tool calls by tool over time", "One series per tool, for the most called tools.", AnalyticsShape.Timeseries, "line", params = Seq(QueryParam("top_n", "int", JsNumber(5), "Number of series"))) { ctx =>
-      seriesByKey(t(ctx.settings), "tool", extra = ToolCalls)(ctx)
+    val CallsByToolTs  = mq("cloudapim_mcp_calls_by_tool_over_time", "Tool calls by tool over time", "One series per tool, for the most called tools.", AnalyticsShape.Timeseries, "line", params = Seq(QueryParam("top_n", "int", JsNumber(5), "Number of series"))) { ctx =>
+      seriesByKey(t(ctx.settings), "tool", extra = sided(ctx, ToolCalls))(ctx)
     }
-    val LatencyPctTs   = q("cloudapim_mcp_latency_percentiles_over_time", "MCP latency percentiles", "p50, p95 and p99 of the MCP request duration per bucket.", AnalyticsShape.Timeseries, "line") { ctx =>
+    val LatencyPctTs   = mq("cloudapim_mcp_latency_percentiles_over_time", "MCP latency percentiles", "p50, p95 and p99 of the MCP request duration per bucket.", AnalyticsShape.Timeseries, "line") { ctx =>
       series(t(ctx.settings), Seq(
         "p50" -> "COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms), 0)",
         "p95" -> "COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)",
         "p99" -> "COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)"
-      ), HasTime, asDouble = true)(ctx)
+      ), sided(ctx, HasTime), asDouble = true)(ctx)
     }
-    val LatencyHeatmap = q("cloudapim_mcp_latency_heatmap", "MCP latency heatmap", "MCP request durations over time, by band.", AnalyticsShape.Heatmap, "heatmap") { ctx =>
+    val LatencyHeatmap = mq("cloudapim_mcp_latency_heatmap", "MCP latency heatmap", "MCP request durations over time, by band.", AnalyticsShape.Heatmap, "heatmap") { ctx =>
       heatmap(t(ctx.settings), Seq(
         "<50ms"     -> "duration_ms < 50",
         "50-100ms"  -> "duration_ms >= 50 AND duration_ms < 100",
@@ -951,22 +988,56 @@ object AiGatewayQueries {
         "0.5-1s"    -> "duration_ms >= 500 AND duration_ms < 1000",
         "1-3s"      -> "duration_ms >= 1000 AND duration_ms < 3000",
         ">=3s"      -> "duration_ms >= 3000"
-      ), HasTime)(ctx)
+      ), sided(ctx, HasTime))(ctx)
     }
-    val ToolsTable     = q("cloudapim_mcp_tools_table", "Tools", "Calls, failures and latency per tool.", AnalyticsShape.Table, "table", params = Seq(TopNParam)) { ctx =>
+    val ToolsTable     = mq("cloudapim_mcp_tools_table", "Tools", "Calls, failures and latency per tool.", AnalyticsShape.Table, "table", params = Seq(TopNParam)) { ctx =>
       table(t(ctx.settings), "tool", "tool", Seq(
         ("calls", "COUNT(*)", false),
         ("failures", s"COUNT(*) FILTER (WHERE $Failed)", false),
         ("failure_rate_pct", s"ROUND(($FailRate * 100)::numeric, 2)", true),
         ("avg_ms", "ROUND(COALESCE(AVG(duration_ms), 0))", false),
         ("p95_ms", "ROUND(COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::numeric)", false)
-      ), s"$ToolCalls AND tool IS NOT NULL")(ctx)
+      ), sided(ctx, s"$ToolCalls AND tool IS NOT NULL"))(ctx)
+    }
+
+    // ---- who ------------------------------------------------------------------------------------------
+
+    val DistinctUsers   = metric("distinct_users", "MCP users", "Distinct users who made an MCP request, directly or through an API key they own.", s"COUNT(DISTINCT $UserKey)")
+    val DistinctApikeys = metric("distinct_apikeys", "MCP API keys", "Distinct API keys that made an MCP request.", "COUNT(DISTINCT apikey_id)")
+    val DistinctTools   = metric("distinct_tools", "Tools used", "Distinct tools actually called.", "COUNT(DISTINCT tool)", ToolCalls)
+    val CallsByUserTs   = mq("cloudapim_mcp_calls_by_user_over_time", "MCP calls by user over time", "One series per user, for the most active users of the period.", AnalyticsShape.Timeseries, "line", params = Seq(QueryParam("top_n", "int", JsNumber(5), "Number of series"))) { ctx =>
+      seriesByKey(t(ctx.settings), UserKey, extra = sided(ctx))(ctx)
+    }
+    private def consumers(id: String, name: String, description: String, key: String, keyName: String, label: String) =
+      mq(s"cloudapim_mcp_$id", name, description, AnalyticsShape.Table, "table", params = Seq(TopNParam)) { ctx =>
+        table(t(ctx.settings), label, keyName, Seq(
+          ("calls", "COUNT(*)", false),
+          ("tool_calls", s"COUNT(*) FILTER (WHERE $ToolCalls)", false),
+          ("tools", "COUNT(DISTINCT tool)", false),
+          ("failures", s"COUNT(*) FILTER (WHERE $Failed)", false),
+          ("avg_ms", "ROUND(COALESCE(AVG(duration_ms), 0))", false)
+        ), sided(ctx, s"$key IS NOT NULL"))(ctx)
+      }
+    val UsersTable   = consumers("users_table", "MCP users", "Requests, tools and failures per user, the calls of the API keys they own included.", UserKey, "user", UserKey)
+    val ApikeysTable = consumers("apikeys_table", "MCP API keys", "Requests, tools and failures per API key.", "apikey_id", "apikey", "COALESCE(apikey_name, apikey_id)")
+    val RecentCalls  = mq("cloudapim_mcp_recent_calls", "Recent MCP calls", "The latest MCP requests: who, which method, which tool, how long.", AnalyticsShape.Table, "table", params = Seq(QueryParam("top_n", "int", JsNumber(25), "Number of calls"))) { ctx =>
+      latest(t(ctx.settings), Seq(
+        "time"     -> "to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')",
+        "side"     -> "COALESCE(side, '—')",
+        "consumer" -> "COALESCE(user_email, apikey_name, apikey_id, '—')",
+        "owner"    -> "COALESCE(apikey_owner, '—')",
+        "method"   -> "COALESCE(method, '—')",
+        "tool"     -> "COALESCE(tool, target, '—')",
+        "ms"       -> "COALESCE(duration_ms::text, '—')",
+        "status"   -> s"CASE WHEN tool_error THEN 'tool error' WHEN err THEN COALESCE(error_message, 'error') ELSE 'ok' END"
+      ), sided(ctx))(ctx)
     }
 
     lazy val all: Seq[AnalyticsQuery] = Seq(
       CallsTotal, ToolCallsTotal, ErrorsTotal, ErrorRate, LatencyP95, CallsOverTime, ErrorRateTs, ByMethod, BySide,
       ByTransport, ByProtocol, TopTools, FailingTools, SlowestTools, TopServers, TopConnectors, FailingConnectors,
-      TopApikeys, TopUsers, TopErrors, FailingFetches, CallsByToolTs, LatencyPctTs, LatencyHeatmap, ToolsTable
+      TopApikeys, TopUsers, TopErrors, FailingFetches, CallsByToolTs, LatencyPctTs, LatencyHeatmap, ToolsTable,
+      DistinctUsers, DistinctApikeys, DistinctTools, CallsByUserTs, UsersTable, ApikeysTable, RecentCalls
     )
   }
 

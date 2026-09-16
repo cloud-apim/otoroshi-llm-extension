@@ -240,7 +240,12 @@ object AnalyticsSamples {
     "error"        -> "status 404"
   )
 
-  val mcp: Seq[JsObject] = Seq(mcpToolCall, mcpToolError, mcpInitialize, mcpClient, mcpFetch)
+  // served to an MCP client authenticating with a key owned by john: the tool call counts for him
+  val mcpOwned: JsObject = (mcpServer("mcp_owned", "tools/call", Some("list_incidents")) - "user") ++ Json.obj(
+    "apikey" -> (apikey ++ Json.obj("metadata" -> Json.obj("ai_studio_owner" -> "john@acme.io", "internal" -> "private-metadata")))
+  )
+
+  val mcp: Seq[JsObject] = Seq(mcpToolCall, mcpToolError, mcpInitialize, mcpClient, mcpFetch, mcpOwned)
 
   private def alert(id: String, name: String) = Json.obj(
     "@id"        -> id,
@@ -401,6 +406,10 @@ class AnalyticsProjectionsSuite extends munit.FunSuite {
     assertEquals((client("side"), client("tool"), client("connector_name"), client("transport")), ("client", "search_repos", "github", "http_2026_07_28"))
     val fetch = row(McpCallsProjection, mcpFetch)
     assertEquals((fetch("side"), fetch("target"), fetch("err"), fetch("http_status")), ("fetch", "file://docs/readme", true, 404))
+    // a call made with someone's key counts for them, as a model call does
+    val owned = row(McpCallsProjection, mcpOwned)
+    assertEquals((owned("apikey_owner"), owned("user_email"), owned("tool")), ("john@acme.io", null, "list_incidents"))
+    assertEquals(call("apikey_owner"), null)
   }
 
   test("alert rows are categorised") {
@@ -551,7 +560,7 @@ class AnalyticsQueriesSuite extends munit.FunSuite {
     for {
       q <- sqlQueries
       f <- variants
-      p <- Seq(Json.obj("top_n" -> 5), Json.obj("modality" -> "chat"), Json.obj("user" -> "jane@acme.io"))
+      p <- Seq(Json.obj("top_n" -> 5), Json.obj("modality" -> "chat"), Json.obj("user" -> "jane@acme.io"), Json.obj("side" -> "server"))
     } {
       val result = scala.util.Try(await(q.execute(f, p, Bucket.OneMinute, settings, pool)))
       assert(result.isSuccess, s"${q.id} failed with $f / $p: ${result.failed.map(_.getMessage).getOrElse("")}")
@@ -664,13 +673,32 @@ class AnalyticsQueriesSuite extends munit.FunSuite {
   }
 
   test("mcp and alert queries") {
-    assertEquals(value(run("cloudapim_mcp_calls_total")), 5.0)
-    assertEquals(value(run("cloudapim_mcp_tool_calls_total")), 3.0)
+    assertEquals(value(run("cloudapim_mcp_calls_total")), 6.0)
+    assertEquals(value(run("cloudapim_mcp_tool_calls_total")), 4.0)
     assertEquals(value(run("cloudapim_mcp_errors_total")), 2.0)
     val tools = (run("cloudapim_mcp_tools_table").data \ "items").as[Seq[JsObject]]
-    assertEquals(tools.map(t => ((t \ "tool").as[String], (t \ "calls").as[Long], (t \ "failures").as[Long])).toSet, Set(("get_weather", 2L, 1L), ("search_repos", 1L, 0L)))
+    assertEquals(tools.map(t => ((t \ "tool").as[String], (t \ "calls").as[Long], (t \ "failures").as[Long])).toSet, Set(("get_weather", 2L, 1L), ("search_repos", 1L, 0L), ("list_incidents", 1L, 0L)))
     assertEquals(value(run("cloudapim_mcp_zero_trust_blocked_total")), 1.0)
     assertEquals(value(run("cloudapim_llm_budget_exceeded_total")), 1.0)
     assertEquals(value(run("cloudapim_llm_provider_quota_refused_calls")), 17.0)
+  }
+
+  test("mcp usage is told apart by side and attributed to a person") {
+    // what the gateway served to MCP clients, and what the models consumed through connectors, never add up
+    assertEquals(value(run("cloudapim_mcp_calls_total", params = Json.obj("side" -> "server"))), 4.0)
+    assertEquals(value(run("cloudapim_mcp_calls_total", params = Json.obj("side" -> "client"))), 1.0)
+    assertEquals(value(run("cloudapim_mcp_calls_total", params = Json.obj("side" -> "fetch"))), 1.0)
+    assertEquals(value(run("cloudapim_mcp_distinct_users")), 2.0)
+    assertEquals(value(run("cloudapim_mcp_distinct_tools", params = Json.obj("side" -> "server"))), 2.0)
+    // the call made with john's key counts for him, the rest for the user who made them
+    assertEquals(value(run("cloudapim_mcp_calls_total", params = Json.obj("user" -> "john@acme.io"))), 1.0)
+    assertEquals(value(run("cloudapim_mcp_calls_total", params = Json.obj("user" -> "jane@acme.io"))), 5.0)
+    assertEquals(value(run("cloudapim_mcp_calls_total", params = Json.obj("user" -> "not an email; DROP"))), 0.0)
+    val users = (run("cloudapim_mcp_users_table").data \ "items").as[Seq[JsObject]]
+    assertEquals(users.map(u => ((u \ "user").as[String], (u \ "calls").as[Long], (u \ "tool_calls").as[Long])).toSet,
+      Set(("jane@acme.io", 5L, 3L), ("john@acme.io", 1L, 1L)))
+    val recent = (run("cloudapim_mcp_recent_calls").data \ "items").as[Seq[JsObject]]
+    assertEquals(recent.size, 6)
+    assertEquals(recent.count(r => (r \ "owner").as[String] == "john@acme.io"), 1)
   }
 }

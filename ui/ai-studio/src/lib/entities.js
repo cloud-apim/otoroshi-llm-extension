@@ -71,6 +71,7 @@ export const Resources = {
   contexts: resource(Groups.ai, 'prompt-contexts'),
   functions: resource(Groups.ai, 'tool-functions'),
   mcpConnectors: resource(Groups.ai, 'mcp-connectors'),
+  mcpVirtualServers: resource(Groups.ai, 'mcp-virtual-servers'),
   searchEngines: resource(Groups.ai, 'search-engines'),
   budgets: resource(Groups.ai, 'ai-budgets'),
 };

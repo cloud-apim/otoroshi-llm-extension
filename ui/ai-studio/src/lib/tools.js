@@ -7,6 +7,26 @@ export const TOOL_KINDS = {
   search: { resource: 'searchEngines', option: 'search_engines', kind: 'search-engine', prefix: 'search-engine' },
 };
 
+// A tool function entity stores the *properties* of its json schema, and the required ones next to them
+// (that is what the providers and the MCP endpoint wrap into an `inputSchema`). The form edits the whole
+// schema, which is what everybody writes, so it is unwrapped on the way in and rebuilt on the way out.
+export function schemaOf(parameters, required) {
+  const params = parameters || {};
+  if (params.type === 'object' && params.properties) return params;
+  return { type: 'object', properties: params, required: required || Object.keys(params) };
+}
+
+export function propertiesOf(schema) {
+  const s = schema || {};
+  return s.type === 'object' && s.properties ? s.properties : s;
+}
+
+export function requiredOf(schema) {
+  const s = schema || {};
+  if (Array.isArray(s.required)) return s.required;
+  return Object.keys(propertiesOf(s));
+}
+
 export const SEARCH_PROVIDERS = [
   { value: 'tavily', label: 'Tavily', token: true },
   { value: 'brave', label: 'Brave Search', token: true },

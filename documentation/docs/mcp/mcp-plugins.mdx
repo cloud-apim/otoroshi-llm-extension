@@ -269,6 +269,12 @@ The virtual server carries all the settings (OAuth enforcement, auth module, aud
 }
 ```
 
+## On an LLM API route
+
+The [unified OpenAI compatible API](/docs/llm-gateway/openai-compat-api) serves a virtual server on the `/mcp` path of its own route when its `mcp_server_ref` names one — the same Streamable HTTP server as `McpRespEndpoint`, with no second route and no second plugin. The models of a team and the tools of their MCP clients then share one URL, one API key and one set of analytics. Without a reference, `/mcp` answers `404`.
+
+This is what [AI Studio](/docs/ai-studio) exposes as the **MCP server** of a workspace. Note that the route is then protected by Otoroshi API keys rather than by OAuth: use the exposition plugins above for an OAuth-protected server.
+
 ## Other transports
 
 These plugins expose the **same surface and the same configuration** as the Streamable HTTP plugin, but over a different transport. Prefer Streamable HTTP unless you have a specific reason.

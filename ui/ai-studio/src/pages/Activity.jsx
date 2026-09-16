@@ -8,13 +8,14 @@ import { compareOf, itemsOf, NoExporterError, PERIODS, runQuery, scalarOf, serie
 import { listApikeys } from '../lib/apikeys';
 import { fmtCost, fmtInt, fmtMs, fmtNumber, fmtPercent } from '../lib/format';
 import { Link, useRouter } from '../lib/router';
-import { ExploreTab, GuardrailsTab, TrendsTab } from './ActivityTabs';
+import { ExploreTab, GuardrailsTab, McpTab, TrendsTab } from './ActivityTabs';
 
 const TABS = [
   { value: 'overview', label: 'Overview' },
   { value: 'trends', label: 'Trends' },
   { value: 'explore', label: 'Explore' },
   { value: 'guardrails', label: 'Guardrails' },
+  { value: 'mcp', label: 'MCP' },
 ];
 
 const DEFAULT_PERIOD = '7d';
@@ -224,6 +225,7 @@ export function ActivityPage() {
       {tab === 'trends' && <TrendsTab workspace={workspace} opts={opts} period={period} user={user} apikey={apikey} />}
       {tab === 'explore' && <ExploreTab workspace={workspace} query={query} setQuery={setFilters} opts={opts} />}
       {tab === 'guardrails' && <GuardrailsTab workspace={workspace} opts={opts} />}
+      {tab === 'mcp' && <McpTab workspace={workspace} opts={opts} />}
       {tab !== 'overview' ? null : noExporter ? (
         <div className="stack">
           <div className="alert info">

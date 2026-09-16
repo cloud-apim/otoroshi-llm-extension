@@ -39,6 +39,7 @@ const paths = {
   user: <><circle cx="12" cy="8" r="4" /><path d="M4 21v-1a7 7 0 0 1 14 0v1" /></>,
   users: <><circle cx="9" cy="8" r="4" /><path d="M1 21v-1a7 7 0 0 1 14 0v1" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /><path d="M23 21v-1a7 7 0 0 0-5-6.7" /></>,
   sparkles: <><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z" /></>,
+  plug: <><path d="M9 2v6" /><path d="M15 2v6" /><path d="M6 8h12v3a6 6 0 0 1-12 0z" /><path d="M12 17v5" /></>,
 };
 
 export function Icon({ name, size, className, style }) {

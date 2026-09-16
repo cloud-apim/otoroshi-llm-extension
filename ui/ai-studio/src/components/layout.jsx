@@ -15,6 +15,7 @@ export const WORKSPACE_PAGES = [
   { id: 'routing', label: 'Routing', icon: 'route' },
   { id: 'presets', label: 'Presets', icon: 'sliders' },
   { id: 'tools', label: 'Tools', icon: 'wrench' },
+  { id: 'mcp-server', label: 'MCP server', icon: 'plug' },
   { id: 'credits', label: 'Credits', icon: 'wallet' },
   { id: 'settings', label: 'Settings', icon: 'settings' },
 ];

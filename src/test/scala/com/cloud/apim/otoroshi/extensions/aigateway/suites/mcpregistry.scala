@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{McpRegistryConfig, McpVirtualServer}
 import otoroshi.next.plugins.api.NgPluginHelper
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpExpositionScanner, McpRegistry, McpRespEndpoint, ProtectedMcpStreamableHttpPreset}
+import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{McpExpositionScanner, McpRegistry, McpRespEndpoint, OpenAiCompatApi, ProtectedMcpStreamableHttpPreset}
 import play.api.libs.json.{Json, JsObject}
 
 // Pure unit tests for the MCP registry projection (publish-only). No Otoroshi server is booted: the server.json
@@ -189,6 +189,7 @@ class McpRegistrySuite extends munit.FunSuite {
 
   private val mcpId = NgPluginHelper.pluginId[McpRespEndpoint]
   private val presetId = NgPluginHelper.pluginId[ProtectedMcpStreamableHttpPreset]
+  private val unifiedId = NgPluginHelper.pluginId[OpenAiCompatApi]
 
   // test("deriveUrl assumes https and normalizes slashes between host and exposition path") {
   //   assertEquals(McpExpositionScanner.deriveUrl("gw.acme", Some("/mcp")), "https://gw.acme/mcp")
@@ -221,10 +222,21 @@ class McpRegistrySuite extends munit.FunSuite {
     assert(!McpExpositionScanner.slotReferences(mcpId, Json.obj(), "vs1")) // no server_ref
   }
 
+  test("slotReferences follows the unified LLM API, which names the server in its own field") {
+    assert(McpExpositionScanner.slotReferences(unifiedId, Json.obj("mcp_server_ref" -> "vs1"), "vs1"))
+    assert(!McpExpositionScanner.slotReferences(unifiedId, Json.obj("mcp_server_ref" -> "vs2"), "vs1"))
+    // the unified API carries no `server_ref`: an LLM-only route must not look like an MCP exposition
+    assert(!McpExpositionScanner.slotReferences(unifiedId, Json.obj("server_ref" -> "vs1"), "vs1"))
+    assert(!McpExpositionScanner.slotReferences(unifiedId, Json.obj(), "vs1"))
+  }
+
   test("slotPath reads mcp_path for the preset and the include head for a raw endpoint") {
     assertEquals(McpExpositionScanner.slotPath(presetId, Json.obj("mcp_path" -> "/custom"), Seq.empty), Some("/custom"))
     assertEquals(McpExpositionScanner.slotPath(presetId, Json.obj(), Seq.empty), Some("/mcp"))
     assertEquals(McpExpositionScanner.slotPath(mcpId, Json.obj(), Seq("/mcp/gh")), Some("/mcp/gh"))
-    assertEquals(McpExpositionScanner.slotPath(mcpId, Json.obj(), Seq.empty), Some("/mcp"))
+    // an endpoint with no include pattern serves every path of the route: the url is the route root
+    assertEquals(McpExpositionScanner.slotPath(mcpId, Json.obj(), Seq.empty), None)
+    // the unified API always serves it on /mcp, whatever its include patterns say
+    assertEquals(McpExpositionScanner.slotPath(unifiedId, Json.obj(), Seq("/v1/.*")), Some("/mcp"))
   }
 }

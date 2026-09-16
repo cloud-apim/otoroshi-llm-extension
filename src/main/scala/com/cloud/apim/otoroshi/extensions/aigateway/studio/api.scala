@@ -209,6 +209,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   private val Contexts = new Entities(AiGroup, "prompt-contexts")
   private val Functions = new Entities(AiGroup, "tool-functions")
   private val McpConnectors = new Entities(AiGroup, "mcp-connectors")
+  private val McpVirtualServers = new Entities(AiGroup, "mcp-virtual-servers")
   private val SearchEngines = new Entities(AiGroup, "search-engines")
   private val Budgets = new Entities(AiGroup, "ai-budgets")
 
@@ -1654,6 +1655,19 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
   private val defaultParameters = Json.obj("type" -> "object", "properties" -> Json.obj("city" -> Json.obj("type" -> "string", "description" -> "The city name")), "required" -> Json.arr("city"))
 
+  // A tool function entity stores the *properties* of its json schema, and the required ones next to them
+  // (that is what the providers and the MCP endpoint wrap into an `inputSchema`). The form speaks the whole
+  // schema, which is what everybody writes, so it is unwrapped on the way in and rebuilt on the way out.
+  private def schemaOf(parameters: JsObject, required: Seq[String]): JsObject =
+    if (parameters.select("type").asOptString.contains("object") && parameters.select("properties").asOpt[JsObject].isDefined) parameters
+    else Json.obj("type" -> "object", "properties" -> parameters, "required" -> (if (required.nonEmpty) required else parameters.keys.toSeq))
+
+  private def propertiesOf(schema: JsObject): JsObject =
+    if (schema.select("type").asOptString.contains("object")) schema.select("properties").asOpt[JsObject].getOrElse(schema) else schema
+
+  private def requiredOf(schema: JsObject): Seq[String] =
+    schema.select("required").asOpt[Seq[String]].getOrElse(propertiesOf(schema).keys.toSeq)
+
   private def toolKind(id: String): ToolKind = toolKinds.find(_.id == id).getOrElse(throw notFound(s"unknown tool kind '$id', expected ${toolKinds.map(_.id).mkString(", ")}"))
 
   private def attachedProviders(providers: Seq[JsObject], kind: ToolKind, id: String): Seq[String] =
@@ -1680,7 +1694,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       case "functions" =>
         val backend = tool.select("backend").select("options")
         common ++ Json.obj(
-          "parameters" -> tool.select("parameters").asOpt[JsObject].getOrElse(defaultParameters).as[JsObject],
+          "parameters" -> tool.select("parameters").asOpt[JsObject].map(p => schemaOf(p, stringsOf(tool.select("required")))).getOrElse(defaultParameters),
           "url" -> backend.select("url").asOptString.getOrElse(""),
           "method" -> nonEmptyString(backend.select("method")).getOrElse("GET"),
           "headers" -> objOf(backend.select("headers")),
@@ -1734,8 +1748,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
             "name" -> name,
             "description" -> description,
             "strict" -> false,
-            "parameters" -> parameters,
-            "required" -> stringsOf(parameters.select("required")),
+            "parameters" -> propertiesOf(parameters),
+            "required" -> requiredOf(parameters),
             "backend" -> Json.obj(
               "kind" -> "Http",
               "options" -> (Json.obj("url" -> url, "method" -> text("method", "GET"), "headers" -> headers, "timeout" -> timeout) ++ (if (body.nonEmpty) Json.obj("body" -> body) else Json.obj())),
@@ -1789,13 +1803,93 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     } yield ()
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
+  // mcp server (see lib/mcpserver.js and pages/McpServer.jsx)
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  // The MCP server of a workspace is one virtual server entity, referenced by the unified plugin of the
+  // workspace route, which serves it on `<base url>/mcp`: same endpoint and same api keys as the models.
+
+  private val McpPath = "/mcp"
+  private val MetaMcpServer = "mcp-server"
+
+  private def mcpServerIdOf(wsId: String): String = s"mcp-virtual-server_ais_$wsId"
+
+  private def mcpServerRefOf(route: JsObject): Option[String] =
+    nonEmptyString(compatConfigOf(route).select("mcp_server_ref"))
+
+  private def mcpServer(ws: Workspace): Future[Option[JsObject]] = mcpServerRefOf(ws.route) match {
+    case None      => None.vfuture
+    case Some(ref) => McpVirtualServers.get(ref)
+  }
+
+  private def mcpServerJson(ws: Workspace, server: Option[JsObject]): JsObject = {
+    val config = server.map(s => objOf(s.select("config"))).getOrElse(Json.obj())
+    Json.obj(
+      "served" -> server.isDefined,
+      "url" -> s"${baseUrlOf(ws.route, AiStudioConfig.current(env))}$McpPath",
+      "id" -> optString(server.map(McpVirtualServers.idOf)),
+      "name" -> server.flatMap(s => s.select("name").asOptString).getOrElse(""),
+      "description" -> server.flatMap(s => s.select("description").asOptString).getOrElse(""),
+      "enabled" -> !server.exists(_.select("enabled").asOpt[Boolean].contains(false)),
+      "functions" -> stringsOf(config.select("refs")),
+      "connectors" -> stringsOf(config.select("mcp_refs")),
+    )
+  }
+
+  private def saveMcpServer(ws: Workspace, form: JsObject)(using call: AiStudioApiRequest): Future[JsObject] = {
+    for {
+      existing <- mcpServer(ws)
+      functions <- Functions.list(ws.id)
+      connectors <- McpConnectors.list(ws.id)
+      current = mcpServerJson(ws, existing)
+      base = existing.getOrElse(McpVirtualServers.template())
+      name = (if (has(form, "name")) string(form, "name") else current.select("name").asOptString).getOrElse("")
+      _ = if (name.trim.isEmpty) throw badRequest("'name' is required")
+      selectedFunctions = strings(form, "functions").getOrElse(stringsOf(current.select("functions")))
+      selectedConnectors = strings(form, "connectors").getOrElse(stringsOf(current.select("connectors")))
+      _ = selectedFunctions.filterNot(functions.map(Functions.idOf).contains).headOption
+        .foreach(f => throw badRequest(s"the tool function '$f' does not belong to this workspace"))
+      _ = selectedConnectors.filterNot(connectors.map(McpConnectors.idOf).contains).headOption
+        .foreach(c => throw badRequest(s"the mcp connector '$c' does not belong to this workspace"))
+      entity = base ++ Json.obj(
+        "_loc" -> existing.flatMap(_.select("_loc").asOpt[JsObject]).getOrElse(ws.location).as[JsValue],
+        "id" -> existing.map(McpVirtualServers.idOf).getOrElse(mcpServerIdOf(ws.id)),
+        "name" -> name,
+        "description" -> (if (has(form, "description")) string(form, "description").getOrElse("") else current.select("description").asOptString.getOrElse("")),
+        "enabled" -> boolean(form, "enabled").getOrElse(current.select("enabled").asOpt[Boolean].getOrElse(true)),
+        "tags" -> existing.flatMap(_.select("tags").asOpt[JsArray]).getOrElse(Json.arr()).as[JsValue],
+        "metadata" -> (existing.map(e => objOf(e.select("metadata"))).getOrElse(Json.obj()) ++ workspaceMetadata(ws.id, MetaMcpServer)),
+        // only the fields the studio owns are rewritten: anything else set on the entity from the otoroshi
+        // console (oauth, scopes, zero-trust, overlays, registry publication…) is left as it is
+        "config" -> (objOf(base.select("config")) ++ Json.obj(
+          "name" -> name,
+          "refs" -> selectedFunctions,
+          "mcp_refs" -> selectedConnectors,
+          // what the activity of the workspace reads
+          "emit_audit_events" -> true,
+        )),
+      )
+      saved <- if (existing.isDefined) McpVirtualServers.update(entity) else McpVirtualServers.create(entity)
+      _ <- updateWorkspaceRoute(ws.id)(route => setOpenAiConfig(route, Json.obj("mcp_server_ref" -> McpVirtualServers.idOf(saved))))
+      route <- workspace(ws.id)
+    } yield mcpServerJson(route, Some(saved))
+  }
+
+  private def deleteMcpServer(ws: Workspace)(using call: AiStudioApiRequest): Future[Unit] =
+    for {
+      existing <- mcpServer(ws)
+      _ <- updateWorkspaceRoute(ws.id)(route => setOpenAiConfig(route, Json.obj("mcp_server_ref" -> JsNull)))
+      _ <- existing.map(s => McpVirtualServers.delete(McpVirtualServers.idOf(s))).getOrElse(().vfuture)
+    } yield ()
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////
   // analytics (see lib/analytics.js)
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
   // the llm queries of the extension, always narrowed to the route and the tenant of the workspace
   private def runAnalyticsQuery(ws: Workspace, form: JsObject): Future[Result] = {
     val queryId = string(form, "query").getOrElse(throw badRequest("'query' is required"))
-    if (!queryId.startsWith("cloudapim_llm_")) throw badRequest("only the llm queries of the extension (cloudapim_llm_*) can be run on a workspace")
+    if (!queryId.startsWith("cloudapim_llm_") && !queryId.startsWith("cloudapim_mcp_")) throw badRequest("only the llm and mcp queries of the extension (cloudapim_llm_*, cloudapim_mcp_*) can be run on a workspace")
     if (!(env.clusterConfig.mode.isOff || env.clusterConfig.mode.isLeader)) throw notFound("leader-only endpoint")
     val filters = Filters.fromJson(obj(form, "filters").getOrElse(Json.obj()) ++ Json.obj("route_id" -> routeIdOf(ws.id))).copy(tenant = Some(ws.tenant))
     AnalyticsRuntime.executor match {
@@ -2109,6 +2203,18 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     },
     route("DELETE", "/workspaces/:id/tools/:kind/:tid") {
       withWorkspace(ws => deleteTool(ws, toolKind(call.param("kind")), call.param("tid")).map(_ => Results.NoContent))
+    },
+
+    // mcp server
+
+    route("GET", "/workspaces/:id/mcp-server") {
+      withWorkspace(ws => mcpServer(ws).map(server => ok(mcpServerJson(ws, server))))
+    },
+    route("PUT", "/workspaces/:id/mcp-server", wantsBody = true) {
+      withWorkspace(ws => saveMcpServer(ws, call.form).map(ok))
+    },
+    route("DELETE", "/workspaces/:id/mcp-server") {
+      withWorkspace(ws => deleteMcpServer(ws).map(_ => Results.NoContent))
     },
 
     // analytics

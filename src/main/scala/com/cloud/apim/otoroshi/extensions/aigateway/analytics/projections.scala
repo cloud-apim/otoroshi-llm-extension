@@ -380,6 +380,7 @@ object McpCallsProjection extends AnalyticsProjection {
        |  connector_id      TEXT,
        |  connector_name    TEXT,
        |  apikey_name       TEXT,
+       |  apikey_owner      TEXT,
        |  err               BOOLEAN     NOT NULL DEFAULT false,
        |  tool_error        BOOLEAN     NOT NULL DEFAULT false,
        |  error_message     TEXT,
@@ -391,6 +392,7 @@ object McpCallsProjection extends AnalyticsProjection {
   override def indexStatements(s: UserAnalyticsExporterSettings): Seq[String] =
     AnalyticsProjection.commonIndexes(table(s), indexPrefix(s)) ++ Seq(
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_tool_ts      ON ${table(s)} (tool, ts DESC) WHERE tool IS NOT NULL;",
+      s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_side_ts      ON ${table(s)} (side, ts DESC);",
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_method_ts    ON ${table(s)} (method, ts DESC);",
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_connector_ts ON ${table(s)} (connector_id, ts DESC) WHERE connector_id IS NOT NULL;",
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_request      ON ${table(s)} (request_id) WHERE request_id IS NOT NULL;"
@@ -398,7 +400,8 @@ object McpCallsProjection extends AnalyticsProjection {
 
   private val columns = Seq(
     "request_id", "side", "method", "tool", "target", "transport", "protocol_version", "connector_id",
-    "connector_name", "apikey_name", "err", "tool_error", "error_message", "http_status", "duration_ms", "raw"
+    "connector_name", "apikey_name", "apikey_owner", "err", "tool_error", "error_message", "http_status",
+    "duration_ms", "raw"
   )
 
   override def insertSql(s: UserAnalyticsExporterSettings): String = insert(table(s), columns)
@@ -456,6 +459,8 @@ object McpCallsProjection extends AnalyticsProjection {
       str(event, "mcp_connector_id").orNull,
       str(event, "mcp_connector_name").orNull,
       str(event, "apikey.clientName").orNull,
+      // a tool call counts for the person the calling key belongs to, like a model call does
+      apikeyOwner(event).orNull,
       boxBool(err),
       boxBool((event \ "mcp_response" \ "isError").asOpt[Boolean].contains(true)),
       str(event, "error", "mcp_response.error.message").map(truncate(_)).orNull,

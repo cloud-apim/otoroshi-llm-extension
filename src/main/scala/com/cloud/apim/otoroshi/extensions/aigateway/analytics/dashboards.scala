@@ -247,7 +247,15 @@ object AiGatewayDashboards {
       widget("servers", "Top MCP servers", "cloudapim_mcp_top_servers", "bar", 2, 2, params = Top10),
       widget("connectors", "Top MCP connectors", "cloudapim_mcp_top_connectors", "bar", 2, 2, params = Top10),
       widget("transports", "Requests by transport", "cloudapim_mcp_by_transport", "donut", 2, 2),
-      widget("protocols", "Clients by protocol version", "cloudapim_mcp_by_protocol_version", "donut", 2, 2)
+      widget("protocols", "Clients by protocol version", "cloudapim_mcp_by_protocol_version", "donut", 2, 2),
+      m("users", "MCP users", "cloudapim_mcp_distinct_users"),
+      m("keys", "MCP API keys", "cloudapim_mcp_distinct_apikeys"),
+      m("tool-count", "Tools used", "cloudapim_mcp_distinct_tools"),
+      m("failures", "MCP failures", "cloudapim_mcp_errors_total"),
+      widget("users-table", "MCP users", "cloudapim_mcp_users_table", "table", 2, 3, params = Top10),
+      widget("apikeys-table", "MCP API keys", "cloudapim_mcp_apikeys_table", "table", 2, 3, params = Top10),
+      widget("users-ts", "MCP calls by user over time", "cloudapim_mcp_calls_by_user_over_time", "line", 4, 2),
+      widget("recent", "Recent MCP calls", "cloudapim_mcp_recent_calls", "table", 4, 3)
     )
   )
 
