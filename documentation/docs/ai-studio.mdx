@@ -58,7 +58,8 @@ you only see and change what your rights allow. The **Back to Otoroshi** button 
 you back to the backoffice.
 
 The studio comes with a light and a dark theme, and can follow your system setting. The choice is saved
-in your backoffice user preferences.
+in your backoffice user preferences. Press **⌘K** (or `Ctrl+K`) anywhere to jump to a workspace, a page
+of the current workspace, its models or its chat without leaving the keyboard.
 
 ![The list of AI Studio workspaces](/img/ai-studio-workspaces.png)
 
@@ -141,12 +142,6 @@ keys. Workspace keys belong to no one in particular, which suits shared applicat
   leakage, and more) and restrict the models a workspace may call.
 - **Routing** sets fallbacks between providers, load balancers, [Otoroshi routers](/docs/llm-gateway/otoroshi-router)
   and the default provider used when a request does not name one.
-- **Presets** are reusable system prompts, selectable in the chat or with the `context` field of a request.
-- **Tools** give models server-side functions, MCP servers and web search. **Ready-made functions** adds
-  `web_fetch` in one click: give the model a URL and the gateway returns the page as markdown, pdf and images
-  included. Any HTTP function can do the same with its **Response as markdown** option. MCP connectors are
-  created on the stateless revision of the protocol ([2026-07-28](/docs/mcp/mcp-connectors)), where every
-  request is self-contained: no session to keep alive, and any instance of the cluster can serve the next call.
 
 ![The guardrails page: model access and content policies](/img/ai-studio-guardrails.png)
 
@@ -155,6 +150,32 @@ keys. Workspace keys belong to no one in particular, which suits shared applicat
 ![The routing page: provider fallbacks, load balancers, smart routing and default provider](/img/ai-studio-routing.png)
 
 *Fallback chains, load balancers, Otoroshi routers and the default provider of the workspace.*
+
+### Give models tools and prompts
+
+**Presets** are reusable system prompts. Pick one in the chat, or name it in the `context` field of a
+request, and every call of the workspace starts from the same instructions.
+
+**Tools** are what a model can call while it answers. Each tool is attached to the providers allowed to
+use it, so one workspace can offer different tools to different models:
+
+- **HTTP functions** — the model chooses the arguments, the gateway performs the request and feeds the
+  result back. **Ready-made functions** adds `web_fetch` in one click: give the model a URL and it gets the
+  page as markdown, pdf and images included. Any HTTP function can do the same with its
+  **Response as markdown** option (see [HTTP functions](/docs/function-calling/http-functions)).
+- **MCP connectors** — remote [MCP](/docs/mcp/overview) servers whose tools are exposed to the model.
+  They are created on the stateless revision of the protocol
+  ([2026-07-28](/docs/mcp/mcp-connectors)), where every request is self-contained: no session to keep
+  alive, and any instance of the cluster can serve the next call.
+- **Web search** — a search engine the model can query to ground its answers.
+
+![The tools page of a workspace: ready-made functions and the HTTP functions of the workspace](/img/ai-studio-tools.png)
+
+*The tools the models of this workspace can call, and the ready-made ones a click away.*
+
+![The presets page of a workspace](/img/ai-studio-presets.png)
+
+*Reusable system prompts, selectable in the chat or with the `context` field of a request.*
 
 ### Serve your tools over MCP
 
@@ -180,6 +201,14 @@ over Streamable HTTP with a key of the workspace:
 
 Because a tool call carries an API key, it counts for the owner of that key exactly like a model call: the
 **MCP** tab of Activity shows what was served, tool by tool, user by user and key by key.
+
+![The MCP server page of a workspace: exposed tools and the configuration to paste in a client](/img/ai-studio-mcp-server.png)
+
+*What the workspace exposes over MCP, and the client configuration to paste.*
+
+![The MCP tab of the activity page: requests served, tools called, users and recent calls](/img/ai-studio-activity-mcp.png)
+
+*What the workspace served to MCP clients: tools, users, API keys and the latest calls.*
 
 :::info
 MCP clients look for an OAuth authorization server (RFC 9728) and will not send an API key on their own,
@@ -231,6 +260,18 @@ energy and water, their evolution, and the footprint of each model for the same 
 
 *Spend, requests and tokens compared to the previous period, the usage by API key, by user and by model, and the live consumption of the budgets.*
 
+![The environmental impact section: emissions, energy, water and the footprint of each model](/img/ai-studio-activity-impact.png)
+
+*What the calls of the period drew and emitted, and which models cost the most for the same amount of generated text.*
+
+![The trends tab: how spend, tokens and requests move against the previous period](/img/ai-studio-activity-trends.png)
+
+*Who and what moved since the previous period, new comers included.*
+
+![The explore tab: any metric broken down by any dimension, as a ranking or over time](/img/ai-studio-activity-explore.png)
+
+*One metric, one or two dimensions, as a ranking or over time — the questions the dashboards don't answer.*
+
 Calls made from the studio chat are attributed to the person chatting. Calls made by your applications
 are attributed to their API key, and to the owner of that key. Filter on a user to see everything they
 consume, and on one of their keys to narrow it further.
@@ -239,6 +280,10 @@ consume, and on one of their keys to narrow it further.
 the API keys they own. The profile of a user gathers their spend, tokens and requests by model, a year of
 daily activity, the keys they own and the budgets that apply to them. Your own profile is one click away
 from your name in the top bar.
+
+![The profile of a user: spend, tokens, a year of activity, the keys they own and their budgets](/img/ai-studio-user-profile.png)
+
+*Everything one person consumes, their own chats and the applications running with their keys.*
 
 **Logs** lists every call, newest first, with its model, user, API key, tokens, cost, speed, latency, finish
 reason and status. Pick the columns you care about, filter by model, key, user, status or finish reason, and
@@ -257,6 +302,10 @@ conversation. The end user comes from the standard `user` field of the request.
 ![The logs of a workspace: every call with its model, consumer, tokens, cost, latency and status](/img/ai-studio-logs.png)
 
 *Every call, filterable by model, API key, status and text. Click a call to see all its details.*
+
+![The details of a call: timings, finish reason, who it counts for, cost breakdown and the timeline of the request](/img/ai-studio-log-details.png)
+
+*A single call: how long it took, why it ended, who it counts for, and the model calls behind the request.*
 
 :::info
 Activity and logs read the Otoroshi user analytics database: they need an active **User Analytics
@@ -356,3 +405,7 @@ Because a workspace is only made of Otoroshi entities, you can open any of them 
 use the options the studio does not show: advanced provider options, other plugins on the route of the
 workspace, alerts on its [dashboards](/docs/reporting/dashboards), and so on. The studio keeps working
 with the entities you edit there.
+
+In the backoffice, the entities a workspace is made of carry an **AI Studio** marker — a column in the
+listings and a line at the top of the entity — with a link back to the workspace they belong to. Editing
+them there is fine: a save from the studio only rewrites the fields its own forms manage.

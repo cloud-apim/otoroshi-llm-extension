@@ -12,6 +12,11 @@ lazy val langchain4jVersion = "1.15.0" //"0.34.0"
 lazy val jacksonVersion = "2.22.2"
 lazy val jacksonAnnotationVersion = "2.22" // jackson-annotations is versioned at the minor level only
 lazy val nettyVersion = "4.2.17.Final"
+// diffson-play-json 4.7.0 drags play-json 3.1.0-M9 in, where the JsValue companions have different
+// `unapply` signatures. Otoroshi pins 3.0.6 for the same reason, so compiling against anything else
+// turns every `case JsString(s)` of this codebase into a NoSuchMethodError at runtime — which kills
+// the actor system of the host. Keep it equal to `playJsonVersion` in otoroshi/build.sbt.
+lazy val playJsonVersion = "3.0.6"
 lazy val luceneVersion = "9.11.1"
 lazy val jlamaVersion = "0.8.4"
 lazy val jackson = Seq(
@@ -65,6 +70,7 @@ lazy val root = (project in file("."))
       "io.netty" % "netty-handler"   % nettyVersion,
       "io.netty" % "netty-resolver"  % nettyVersion,
       "io.netty" % "netty-transport" % nettyVersion,
+      "org.playframework" %% "play-json" % playJsonVersion,
     ),
     libraryDependencies ++= Seq(
       "fr.maif" %% "otoroshi" % "18.0.0-preview7" % "provided" excludeAll (netty *),

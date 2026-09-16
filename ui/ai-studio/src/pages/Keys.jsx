@@ -283,18 +283,16 @@ export function KeysPage() {
                       <td>
                         <Toggle value={k.enabled} onChange={() => toggle(k)} title={k.enabled ? 'Enabled' : 'Disabled'} />
                       </td>
+                      {/* the secondary actions are icons: with an owner column, labels push Delete out of a laptop screen */}
                       <td className="actions">
-                        <Link className="btn sm" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.clientId)}`} title="Usage of this key">
+                        <Link className="btn sm icon" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.clientId)}`} title="Usage of this key">
                           <Icon name="chart" />
-                          Activity
                         </Link>
-                        <button className="btn sm" onClick={() => setRevealing(k)}>
+                        <button className="btn sm icon" onClick={() => setRevealing(k)} title="Show the key">
                           <Icon name="key" />
-                          Key
                         </button>
-                        <button className="btn sm" onClick={() => setBudgeting(k.clientId)} title="Create a budget for this key">
+                        <button className="btn sm icon" onClick={() => setBudgeting(k.clientId)} title="Create a budget for this key">
                           <Icon name="wallet" />
-                          Budget
                         </button>
                         <button className="btn sm" onClick={() => setEditing({ apikey: k, budget: b })}>
                           Edit
