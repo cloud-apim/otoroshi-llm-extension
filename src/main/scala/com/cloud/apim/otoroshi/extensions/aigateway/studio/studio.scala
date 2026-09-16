@@ -391,8 +391,10 @@ class AiStudio(env: Env, ext: AiExtension) {
     val textRefs = refs("language_model_refs")
     val now = System.currentTimeMillis() / 1000
     val fuText: Future[Seq[(JsObject, Seq[JsObject])]] = Future.sequence(textRefs.map { ref =>
-      //ext.datastores.providersDatastore.findById(ref).flatMap {
-      ext.states.provider(ref).vfuture.flatMap { // by using state instance, fillSecrets has already been made ;)
+      // the datastore rather than the state, so a provider connected a second ago is already listed (the
+      // state is only refreshed every `otoroshi.next.state-sync-interval`), and *and fill secrets* because
+      // the token is about to be used to call the provider — a raw `${vault://…}` gets a 401
+      ext.datastores.providersDatastore.findByIdAndFillSecrets(ref).flatMap {
         case None => (Json.obj("id" -> ref, "error" -> "provider not found"), Seq.empty[JsObject]).vfuture
         case Some(provider) =>
           val info = Json.obj(

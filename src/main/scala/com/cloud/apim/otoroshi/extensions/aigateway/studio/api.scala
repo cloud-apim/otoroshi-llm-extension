@@ -903,7 +903,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
                 case None => Results.BadRequest(Json.obj("error" -> "bad_request", "error_description" -> "no client for this provider")).vfuture
                 case Some(client) =>
                   client.listModels(false, TypedMap.empty).map {
-                    case Left(err) => Results.BadGateway(Json.obj("error" -> "bad_gateway", "error_description" -> "error fetching models", "error_details" -> err))
+                    case Left(err) =>
+                      val explained = ext.studio.modelsListingError(err)
+                      Results.BadGateway(Json.obj("error" -> "bad_gateway", "error_description" -> explained.select("error").asString, "error_details" -> err))
                     case Right(models) =>
                       ext.modelsCache.put(key, models)
                       Results.Ok(Json.obj("from_cache" -> false, "models" -> JsArray(models.map(JsString.apply))))
