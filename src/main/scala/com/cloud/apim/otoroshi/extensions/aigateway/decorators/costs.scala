@@ -12,7 +12,7 @@ import otoroshi.utils.TypedMap
 import play.api.Configuration
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsObject, JsValue, Json}
+import play.api.libs.json.{JsNumber, JsObject, JsValue, Json}
 import play.api.libs.ws.WSResponse
 import play.api.libs.ws.WSBodyReadables.readableAsString
 import play.api.libs.typedmap.TypedKey
@@ -37,12 +37,49 @@ case class CostsTrackingSettings(configuration: Configuration) {
   // the bundled models.dev catalog prices what the price table misses, as long as it knows the model for the
   // provider serving it
   val modelsCatalogEnabled = configuration.getOptional[Boolean]("models-catalog.enabled").getOrElse(true)
+
+  private def mapOf(path: String): Map[String, String] = configuration.getOptional[Configuration](path).map { c =>
+    c.subKeys.toSeq.flatMap(k => c.getOptional[String](k).map(v => k.toLowerCase -> v.trim.toLowerCase)).toMap
+  }.getOrElse(Map.empty)
+
+  // costs are in dollars: prices in another currency are converted with these rates (dollars for one unit)
+  val exchangeRates: Map[String, BigDecimal] = Map("eur" -> BigDecimal("1.17")) ++
+    mapOf("exchange-rates").flatMap { case (currency, rate) => scala.util.Try(BigDecimal(rate)).toOption.filter(_ > 0).map(currency -> _) }
+  // the currency of the price table prices of a provider (custom prices included), when not dollars. The
+  // price tables copy the euro prices of Scaleway and OVHcloud as they are
+  val priceCurrencies: Map[String, String] = Map("scaleway" -> "eur", "ovhcloud" -> "eur") ++ mapOf("price-currencies")
+  // the same for the models.dev catalog, keyed by its provider ids: its OVHcloud prices are already in dollars
+  val catalogPriceCurrencies: Map[String, String] = Map("scaleway" -> "eur") ++ mapOf("models-catalog.price-currencies")
 }
 
 case class SearchContextCostPerQuery(raw: JsValue) {
   lazy val search_context_size_low = raw.select("search_context_size_low").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val search_context_size_medium = raw.select("search_context_size_medium").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val search_context_size_high = raw.select("search_context_size_high").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+}
+
+object CostModel {
+
+  val currencyField = "cloud_apim_price_currency"
+  val exchangeRateField = "cloud_apim_exchange_rate"
+
+  // every price of the entry (the `*cost*` fields, numbers or objects of numbers) converted to dollars
+  def converted(model: CostModel, currency: String, rate: BigDecimal): CostModel = {
+    def scale(value: JsValue): JsValue = value match {
+      case JsNumber(n) => JsNumber(n * rate)
+      case JsObject(fields) => JsObject(fields.map { case (k, v) => k -> scale(v) })
+      case other => other
+    }
+    model.raw match {
+      case obj: JsObject =>
+        val prices = obj.fields.map {
+          case (key, value) if key.contains("cost") => key -> scale(value)
+          case field => field
+        }
+        CostModel(model.name, JsObject(prices) ++ Json.obj(currencyField -> currency, exchangeRateField -> rate))
+      case _ => model
+    }
+  }
 }
 
 case class CostModel(name: String, raw: JsValue) {
@@ -253,21 +290,43 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
 
   // OpenRouter exposes variants of a model (`:free`, `:batch`, `:nitro`, ...) and floating aliases
   // (`~vendor/model-latest`) that are absent from the price table under that exact name while their base
-  // model is present. Restricted to openrouter on purpose: Bedrock model names legitimately end with `:0`.
-  private def fallbackModelNames(provider: String, modelName: String): Seq[String] = {
-    if (provider != "openrouter") Seq.empty else {
+  // model is present. The Hugging Face router takes the inference provider or policy after a colon
+  // (`:together`, `:fastest`), priced as the model itself. Restricted to them on purpose: Bedrock model names
+  // legitimately end with `:0`.
+  private def fallbackModelNames(provider: String, modelName: String): Seq[String] = provider match {
+    case "openrouter" =>
       val withoutAlias = modelName.stripPrefix("~")
       val withoutVariant = withoutAlias.takeWhile(_ != ':')
       Seq(withoutAlias, withoutVariant).filter(name => name.nonEmpty && name != modelName).distinct
-    }
+    case "huggingface" =>
+      Seq(modelName.takeWhile(_ != ':')).filter(name => name.nonEmpty && name != modelName)
+    case _ => Seq.empty
   }
 
   def lookupModel(provider: String, modelName: String): Option[CostModel] = {
     val all = models
-    all.get(s"${provider}-${modelName}").orElse {
-      fallbackModelNames(provider, modelName).iterator.flatMap(name => all.get(s"${provider}-${name}")).nextOption()
-    }.orElse {
-      if (settings.modelsCatalogEnabled) catalog.lookupCost(provider, modelName) else None
+    val names = modelName +: fallbackModelNames(provider, modelName)
+    names.iterator.flatMap(name => all.get(s"${provider}-${name}")).nextOption() match {
+      case Some(model) => inDollars(model, settings.priceCurrencies.get(provider))
+      case None if settings.modelsCatalogEnabled =>
+        names.iterator.flatMap(name => catalog.lookupCost(provider, name)).nextOption()
+          .flatMap(model => inDollars(model, settings.catalogPriceCurrencies.get(model.litellm_provider)))
+      case None => None
+    }
+  }
+
+  private val missingRates = java.util.concurrent.ConcurrentHashMap.newKeySet[String]()
+
+  // a price with no known exchange rate is no price: billing it as dollars would be wrong
+  private def inDollars(model: CostModel, currency: Option[String]): Option[CostModel] = currency.filterNot(_ == "usd") match {
+    case None => Some(model)
+    case Some(code) => settings.exchangeRates.get(code) match {
+      case Some(rate) => Some(CostModel.converted(model, code, rate))
+      case None =>
+        if (missingRates.add(code)) {
+          extension.logger.warn(s"no exchange rate for '$code' in costs-tracking.exchange-rates, the prices in '$code' are ignored")
+        }
+        None
     }
   }
 
@@ -374,7 +433,8 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
     provider.toLowerCase() match {
       case "openai" => "openai".some
       case "openai-compatible" => None
-      case "scaleway" => None
+      // its prices are in euros, converted with `exchange-rates` (see `price-currencies`)
+      case "scaleway" => "scaleway".some
       case "deepseek" => "deepseek".some
       case "x-ai" => "xai".some
       case "ovh-ai-endpoints" => "ovhcloud".some
@@ -383,7 +443,8 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
       case "azure-ai-foundry" => "azure".some
       case "cloudflare" => "cloudflare".some
       case "gemini" => "gemini".some
-      case "huggingface" => None
+      // the router bills the rate of the inference provider it picks: the models.dev price is an estimate of it
+      case "huggingface" => "huggingface".some
       case "mistral" => "mistral".some
       case "ollama" => "ollama".some
       case "ollama-openai" => "ollama".some

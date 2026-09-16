@@ -2,6 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
 import com.cloud.apim.otoroshi.extensions.aigateway.catalog.{CatalogMatch, ModelIds, ModelKinds, ModelsCatalog, ModelsCatalogIndex, ModelsMetadata}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostModel, CostsTracking, CostsTrackingSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
 import otoroshi.models.EntityLocation
@@ -9,6 +10,7 @@ import otoroshi.next.models.*
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{OpenAiCompatApi, OpenAiCompatModels}
+import play.api.Configuration
 import play.api.libs.json.{JsObject, JsValue, Json}
 import reactor.core.publisher.Mono
 
@@ -194,6 +196,50 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(billedAs.metadata.select("pricing").asOpt[JsObject], ModelsMetadata.describe(openai, "gpt-4o").metadata.select("pricing").asOpt[JsObject])
     assert(billedAs.metadata.select("mode").isEmpty, "the billed model's mode is not this model's")
     assert(!ModelsMetadata.describe(provider("openai", Map("costs-tracking-provider" -> "nowhere")), "gpt-4o").hasCost)
+  }
+
+  test("prices published in euros are billed in dollars") {
+    given env: Env = otoroshi.env
+    ext.modelsCatalog.load().awaitf(30.seconds)
+    val rate = ext.costsTrackingSettings.exchangeRates("eur")
+    // the models.dev prices of Scaleway are in euros
+    val scaleway = ext.costsTracking.lookupModel("scaleway", "gpt-oss-120b").get
+    val scalewayEuros = ext.modelsCatalog.lookup("scaleway", "gpt-oss-120b").flatMap(_.model.cost).get
+    assertEquals(scaleway.input_cost_per_token, scalewayEuros.input / BigDecimal(1000000) * rate)
+    assertEquals(scaleway.output_cost_per_token, scalewayEuros.output / BigDecimal(1000000) * rate)
+    // the price table prices of OVHcloud too
+    val ovh = ext.costsTracking.lookupModel("ovhcloud", "gpt-oss-120b").get
+    assertEquals(ovh.raw.select(CostModel.currencyField).asOptString, Some("eur"))
+    assertEquals(ovh.input_cost_per_token, ext.costsTracking.models("ovhcloud-gpt-oss-120b").input_cost_per_token * rate)
+    // the models.dev prices of OVHcloud are already in dollars
+    val ovhCatalog = ext.costsTracking.lookupModel("ovhcloud", "qwen3-32b").get
+    assertEquals(ovhCatalog.raw.select(CostModel.currencyField).asOptString, None)
+    assertEquals(ovhCatalog.input_cost_per_token, ext.modelsCatalog.lookup("ovhcloud", "qwen3-32b").flatMap(_.model.cost).get.input / BigDecimal(1000000))
+    // what the listings show is what is billed, and they say so
+    val listed = ModelsMetadata.describe(AiProvider(id = "scw", name = "scw", provider = "scaleway", connection = Json.obj(), options = Json.obj()), "gpt-oss-120b")
+    assert(listed.hasCost)
+    assertEquals(listed.metadata.select("pricing").select("prompt").asOpt[String], Some(ModelsMetadata.price(scaleway.input_cost_per_token).value))
+    assertEquals(listed.metadata.select("sources").select("pricing").select("currency").asOpt[String], Some("eur"))
+    assertEquals(listed.metadata.select("sources").select("pricing").select("exchange_rate").asOpt[BigDecimal], Some(rate))
+    // rates and currencies come from the configuration, a currency with no rate is no price
+    val custom = CostsTrackingSettings(Configuration("exchange-rates.eur" -> "1.5", "price-currencies.ovhcloud" -> "usd", "price-currencies.openai" -> "gbp"))
+    assertEquals(custom.exchangeRates("eur"), BigDecimal("1.5"))
+    val tracking = new CostsTracking(custom, otoroshi.env, ext.modelsCatalog)
+    assertEquals(tracking.lookupModel("ovhcloud", "gpt-oss-120b").map(_.input_cost_per_token), Some(ext.costsTracking.models("ovhcloud-gpt-oss-120b").input_cost_per_token))
+    assertEquals(tracking.lookupModel("scaleway", "gpt-oss-120b").map(_.input_cost_per_token), Some(scalewayEuros.input / BigDecimal(1000000) * BigDecimal("1.5")))
+    assertEquals(tracking.lookupModel("openai", "gpt-4o"), None)
+  }
+
+  test("hugging face models are billed at their models.dev price, whatever inference provider serves them") {
+    given env: Env = otoroshi.env
+    ext.modelsCatalog.load().awaitf(30.seconds)
+    val hf = ext.costsTracking.lookupModel("huggingface", "deepseek-ai/DeepSeek-V3").get
+    assertEquals(hf.raw.select(ModelsCatalog.sourceField).asOptString, Some("models.dev"))
+    assertEquals(ext.costsTracking.lookupModel("huggingface", "deepseek-ai/DeepSeek-V3:together").map(_.input_cost_per_token), Some(hf.input_cost_per_token))
+    assertEquals(ext.costsTracking.lookupModel("huggingface", "deepseek-ai/DeepSeek-V3:fastest").map(_.input_cost_per_token), Some(hf.input_cost_per_token))
+    val provider = AiProvider(id = "hf", name = "hf", provider = "huggingface", connection = Json.obj(), options = Json.obj())
+    assert(ModelsMetadata.describe(provider, "deepseek-ai/DeepSeek-V3:cheapest").hasCost)
+    assert(!ModelsMetadata.describe(provider, "acme/unknown-model").hasCost)
   }
 
   test("the api a model is served with is described in OpenAI terms") {

@@ -230,14 +230,14 @@ The metadata combines the [models.dev](https://models.dev) catalog, bundled with
 | `capabilities.prompt_caching`, `capabilities.web_search` | Prompt caching and built-in web search support |
 | `modalities.input`, `modalities.output` | Accepted and produced content: `text`, `image`, `pdf`, `audio`, `video` |
 | `limits.context`, `limits.input`, `limits.output` | Context window, maximum input and maximum output, in tokens |
-| `pricing` | Prices in dollars per token, as strings, in the OpenRouter format: `prompt`, `completion`, `input_cache_read`, `input_cache_write`, `internal_reasoning`, `audio`, `audio_output`, `image`, `image_output` |
+| `pricing` | The prices cost tracking bills the model with, in dollars per token, as strings, in the OpenRouter format: `prompt`, `completion`, `input_cache_read`, `input_cache_write`, `internal_reasoning`, `audio`, `audio_output`, `image`, `image_output` |
 | `knowledge` | Knowledge cutoff |
 | `status`, `deprecation_date` | `beta` or `deprecated` status, and the announced deprecation date |
 | `sources` | Where the metadata comes from (see below) |
 
 Fields the sources know nothing about are left out: a model nobody knows only comes with its `kinds`, guessed from its name, and `has_cost`.
 
-The prices are exactly the ones your budgets are charged with: `sources.pricing.source` is `price-table` when they come from the price table (including your own `custom-prices`), and `models.dev` when the catalog fills the gap.
+The prices are exactly the ones your budgets are charged with, in dollars: `sources.pricing.source` is `price-table` when they come from the price table (including your own `custom-prices`), and `models.dev` when the catalog fills the gap. Prices published in another currency, like the euros of Scaleway and OVHcloud, are converted, and `sources.pricing` gives their `currency` and the `exchange_rate` applied.
 
 Providers rarely spell a model id the same way, so each listed model is matched against what its own provider serves first, then against the rest of the catalog. `sources.catalog.match` tells how the model was recognized:
 

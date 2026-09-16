@@ -432,8 +432,10 @@ object ProviderInsights {
         val ids = idx.providersFor(lower)
         val models = ids.flatMap(idx.models).distinctBy(m => ModelIds.base(m.id))
         Option.when(models.nonEmpty) {
-          val kinds = models.flatMap(m => ModelKinds.of(lower, Seq(m.id) ++ m.family, None, m.inputModalities, m.outputModalities)).groupBy(identity)
-          val prices = models.flatMap { m =>
+          val kindsOf = models.map(m => m -> ModelKinds.of(lower, Seq(m.id) ++ m.family, None, m.inputModalities, m.outputModalities))
+          val kinds = kindsOf.flatMap(_._2).groupBy(identity)
+          // the token prices of the text models: speech, image or embedding models are priced by other units
+          val prices = kindsOf.collect { case (m, k) if k.contains(AiProvidersCatalog.Text) => m }.flatMap { m =>
             ext.costsTracking.billedAs(provider, m.id).flatMap { case (p, billed) => ext.costsTracking.lookupModel(p, billed) }
           }
           val prompts = prices.map(_.input_cost_per_token).filter(_ > 0)
@@ -656,7 +658,8 @@ object ModelsMetadata {
       (pricingProvider, billedModel) <- billed
       cost <- e.costsTracking.lookupModel(pricingProvider, billedModel)
     } yield cost
-    val prices = priceTable.orElse(found.filter(_.priced).flatMap(_.model.costModel))
+    // only what is billed, in dollars: the catalog prices of a provider costs tracking does not bill are not shown
+    val prices = priceTable
     // a provider can be billed as another model (`costs-tracking-model`): its price entry says nothing of this one
     val priced = prices.filter(_ => billed.forall(_._2 == model))
     val raw = priced.map(_.raw).getOrElse(JsObject.empty)
@@ -739,9 +742,12 @@ object ModelsMetadata {
           "model" -> JsString(m.model.id).some,
           "match" -> JsString(m.kind).some,
         )),
-        "pricing" -> prices.map(c => Json.obj(
-          "source" -> c.raw.select(ModelsCatalog.sourceField).asOptString.getOrElse(CostsOutput.sourcePriceTable).json,
-          "model" -> c.name,
+        "pricing" -> prices.map(c => obj(
+          "source" -> JsString(c.raw.select(ModelsCatalog.sourceField).asOptString.getOrElse(CostsOutput.sourcePriceTable)).some,
+          "model" -> JsString(c.name).some,
+          // prices published in another currency, converted to dollars
+          "currency" -> c.raw.select(CostModel.currencyField).asOptString.map(JsString.apply),
+          "exchange_rate" -> c.raw.select(CostModel.exchangeRateField).asOpt[BigDecimal].map(JsNumber.apply),
         )),
       )).filter(_.value.nonEmpty),
     ))

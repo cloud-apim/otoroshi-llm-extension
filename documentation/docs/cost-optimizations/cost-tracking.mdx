@@ -33,6 +33,17 @@ costs-tracking {
   models-catalog {
     enabled = true
     enabled = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_MODELS_CATALOG_ENABLED}
+    price-currencies {
+      scaleway = eur
+    }
+  }
+  exchange-rates {
+    eur = 1.17
+    eur = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_COSTS_TRACKING_EXCHANGE_RATES_EUR}
+  }
+  price-currencies {
+    scaleway = eur
+    ovhcloud = eur
   }
 }
 ```
@@ -45,6 +56,9 @@ costs-tracking {
 | `openrouter-catalog.enabled` | boolean | `false` | Keep OpenRouter model prices in sync with its public catalog. Opt-in: it is the only outbound call the extension makes on its own |
 | `openrouter-catalog.refresh-every` | duration | `6 hours` | How often the OpenRouter catalog is refreshed |
 | `models-catalog.enabled` | boolean | `true` | Price the models the price table does not know with the bundled [models.dev](https://models.dev) catalog |
+| `models-catalog.price-currencies` | object | `{ scaleway = eur }` | The currency of the models.dev prices of a provider, when not dollars |
+| `exchange-rates` | object | `{ eur = 1.17 }` | How many dollars one unit of a currency is worth, to convert the prices published in that currency |
+| `price-currencies` | object | `{ scaleway = eur, ovhcloud = eur }` | The currency of the price table prices of a provider (your `custom-prices` included), when not dollars |
 
 Once it's enabled, audit events of kind `LLMUsageAudit` will have a `costs` object.
 
@@ -94,6 +108,19 @@ Cost tracking natively supports the following providers, and every other provide
 - anthropic
 - groq
 - openrouter (billed on the exact amount OpenRouter reports for each call)
+- scaleway 🇫🇷 🇪🇺 and ovh-ai-endpoints 🇫🇷 🇪🇺 (priced in euros, see below)
+- huggingface (billed at the models.dev price of the model, whatever inference provider the router picks for it, `:together` or `:fastest` included)
+
+### Prices in euros
+
+Costs and budgets are in dollars. Scaleway and OVHcloud publish their prices in euros, so their prices are converted
+with the `exchange-rates.eur` rate before a call is billed or a price is shown: set it to the rate your finance team
+works with. The [enriched models](/docs/llm-gateway/openai-compat-api#enriched-models) of these providers tell which
+currency their prices come from and the rate applied, in `sources.pricing`.
+
+`price-currencies` tells which providers publish their prices in another currency, `models-catalog.price-currencies`
+does the same for the models.dev catalog. Add a currency and its rate to price any other provider the same way: a
+price in a currency with no rate is never billed.
 
 For unsupported providers, you can set metadata on the provider entity to map it to a supported provider/model:
 
