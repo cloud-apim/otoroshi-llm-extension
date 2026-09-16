@@ -99,6 +99,16 @@ Pick a provider from the catalog, paste your provider key, and choose the capabi
 studio only shows the capabilities each provider really supports, and fetches the list of available
 models from the provider. Local Ollama models work without any key.
 
+The catalog tells you what to expect before you even connect a provider: whether the gateway talks to it
+through an OpenAI compatible API, how many models it offers and of which types, its starting price and
+its largest context window, with a link to its documentation. Filter it by capability, by OpenAI
+compatibility or to the providers whose prices are known.
+
+When you pick the default model of each capability, the suggestions only list the models fitting it
+(embedding models for embeddings, speech models for text to speech, and so on), with their context window
+and price. Turn on **Require known costs** to refuse, and hide, the models whose price cost tracking does
+not know: every call of the provider then counts against your dollar budgets.
+
 ![The providers page: connected providers and the catalog of available providers with their capabilities](/img/ai-studio-providers.png)
 
 *Connected providers on top, and the catalog below with the capabilities of each provider.*
@@ -106,12 +116,16 @@ models from the provider. Local Ollama models work without any key.
 ### Browse models and chat
 
 **Models** lists every model reachable through the workspace endpoint, with the exact id to put in the
-`model` field of your requests. **Chat** is a playground to try any of them, with streaming, reasoning
+`model` field of your requests. Each model shows its types, capabilities (reasoning, tools, structured
+output, vision, PDF, audio, prompt caching, web search), context window and price per million tokens.
+Filter them by type, capability, API endpoint, known price, context window and provider, sort them by
+price or context, switch to a comparison table, and open any model for its full details and a ready to
+paste request. **Chat** is a playground to try any of them, with streaming, reasoning
 display, presets and generation settings. Conversations are saved per user and per workspace.
 
 ![The models page listing every model reachable through the workspace](/img/ai-studio-models.png)
 
-*Every model of the workspace, with the id to use in your requests, filterable by modality and provider.*
+*Every model of the workspace, with the id to use in your requests, its capabilities and its price.*
 
 ![The AI Studio chat with its conversations, model picker and request settings](/img/ai-studio-chat.png)
 
@@ -361,13 +375,13 @@ models from the catalog, workspace quotas, every provider selected for a preset 
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /catalog` | The providers you can connect, with their capabilities, suggested models and connection fields. |
+| `GET /catalog` | The providers you can connect, with their capabilities, suggested models, connection fields and `insights`: OpenAI compatibility, and the number of known models by type, with reasoning, tools, vision or a known price, the price range and the largest context. |
 | `GET` `POST /workspaces` | List or create workspaces (`name`, `description`, `slug`). The `Otoroshi-Tenant` header sets the tenant of a new workspace. |
 | `GET` `PUT` `PATCH` `DELETE /workspaces/:id` | Read, update or delete a workspace: `name`, `description`, `enabled`, `slug`, `call_timeout`, `global_timeout`, `max_size_upload`, `decode_images`, `allowed_ip_addresses`, `blocked_ip_addresses`. Deleting a workspace deletes all of its entities. |
-| `GET /workspaces/:id/models` | Every model reachable through the workspace endpoint, with the id to use in requests (`?force=true` refreshes the lists of models). |
-| `GET` `POST /workspaces/:id/providers` | List or connect providers: `kind`, `name`, `token`, `base_url`, `timeout`, `enabled`, `fields` and `modalities` (`text`, `embedding`, `image`, `audio`, `moderation`, `ocr`, `video`, each with `enabled`, `model`, and `stt_model` for audio). |
+| `GET /workspaces/:id/models` | Every model reachable through the workspace endpoint, with the id to use in requests and its `metadata`: the same types, cost, API, capabilities, limits and prices as the [enriched models](/docs/llm-gateway/openai-compat-api#enriched-models) of the unified API (`?force=true` refreshes the lists of models). |
+| `GET` `POST /workspaces/:id/providers` | List or connect providers: `kind`, `name`, `token`, `base_url`, `timeout`, `enabled`, `require_known_costs` (refuse and hide the models with no known price), `fields` and `modalities` (`text`, `embedding`, `image`, `audio`, `moderation`, `ocr`, `video`, each with `enabled`, `model`, and `stt_model` for audio). |
 | `GET` `PUT` `DELETE /workspaces/:id/providers/:provider` | Read, update or remove a provider and all of its capabilities. |
-| `GET /workspaces/:id/providers/:provider/models`, `POST /workspaces/:id/providers/_models` | The models offered by a connected provider, or by a provider before connecting it. |
+| `GET /workspaces/:id/providers/:provider/models`, `POST /workspaces/:id/providers/_models` | The models offered by a connected provider, or by a provider before connecting it. `?enriched=true` adds the `details` of each model. |
 | `GET` `POST /workspaces/:id/apikeys`, `GET` `PUT` `DELETE /workspaces/:id/apikeys/:clientId` | API keys: `name`, `description`, `enabled`, `owner` (the email the usage of the key counts for, `null` for a workspace key), `quotas` (`null` for the workspace defaults) and `credit_limit` (`{ usd, period }`, `null` to remove it). |
 | `GET` `POST /workspaces/:id/budgets`, `GET` `PUT` `DELETE /workspaces/:id/budgets/:budget` | Credits: `name`, `usd`, `tokens`, `period` (`lifetime`, `daily`, `weekly`, `monthly`, `yearly`), `mode` (`block` or `soft`), `alert`, `scope` (`workspace`, `apikey` or `custom`) with `apikeys`, `users`, `models` and `rules`. `?consumption=true` adds the live consumption to the list. |
 | `GET /workspaces/:id/budgets/:budget/consumption`, `POST .../consumption/_reset` | Live consumption of a budget, and reset of its current window (`?all=true` resets everything). |

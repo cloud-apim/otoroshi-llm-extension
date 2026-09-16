@@ -864,3 +864,6 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .model-hint .meta { display: flex; flex-wrap: wrap; gap: 10px; color: var(--muted); font-size: 12.5px; margin-top: 4px; }
 .model-hint .meta span + span::before { content: '·'; color: var(--faint); margin-right: 10px; }
 .nowrap { white-space: nowrap; }
+.setting-toggle { display: flex; align-items: flex-start; gap: 12px; border-top: 1px solid var(--border); padding-top: 14px; }
+.setting-toggle .title { font-weight: 500; margin-bottom: 2px; }
+.setting-toggle .toggle { flex-shrink: 0; margin-top: 2px; }

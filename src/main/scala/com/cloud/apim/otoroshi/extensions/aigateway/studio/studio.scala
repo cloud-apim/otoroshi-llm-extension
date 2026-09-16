@@ -424,7 +424,8 @@ class AiStudio(env: Env, ext: AiExtension) {
             described(Json.obj("id" -> id, "model" -> model, "provider" -> provider.slugName, "provider_id" -> provider.id, "provider_kind" -> provider.provider, "modality" -> "text", "created" -> now), provider, "text")
           }
           val token = provider.connection.select("token").asOptString.getOrElse("--")
-          val key = s"${provider.id}-$token".sha256
+          // the listing is filtered by the model settings of the provider (access, known costs)
+          val key = s"${provider.id}-$token-${provider.models.json.stringify}".sha256
           ext.modelsCache.getIfPresent(key).filterNot(_ => force) match {
             case Some(models) => (info, toModels(models)).vfuture
             case None =>

@@ -74,6 +74,7 @@ export async function listConnections(wsId) {
         conn.token = c.token || c.api_key || '';
         conn.timeout = c.timeout || 180000;
         conn.enabled = !(entity.metadata && entity.metadata[DISABLED_META] === 'true');
+        conn.require_known_costs = !!(entity.models && entity.models.require_known_costs);
       }
     });
   });
@@ -149,15 +150,17 @@ export function buildEntity(modality, wsId, conn, catalogEntry, existing) {
     metadata,
     provider: kind,
   };
+  // the model access of the workspace (include / exclude) is kept, the known costs requirement is the connection's
+  const models = { include: [], exclude: [], ...((existing && existing.models) || {}), require_known_costs: !!conn.require_known_costs };
   if (modality === 'text') {
     const options = { ...((existing && existing.options) || {}) };
     if (model) options.model = model;
     else delete options.model;
     return {
-      models: { include: [], exclude: [] },
       guardrails: [],
       guardrails_fail_on_deny: false,
       ...base,
+      models,
       connection: { ...((existing && existing.connection) || {}), ...connection },
       options,
     };
@@ -204,7 +207,7 @@ export function buildEntity(modality, wsId, conn, catalogEntry, existing) {
   } else {
     config = { ...prevConfig, connection, options: { ...prevOptions, model } };
   }
-  return { models: { include: [], exclude: [] }, ...base, config };
+  return { ...base, models, config };
 }
 
 export async function saveConnection(wsId, conn, catalogEntry) {
@@ -232,10 +235,16 @@ export async function deleteConnection(wsId, conn) {
   await syncWorkspaceRefs(wsId);
 }
 
-// asks the provider for its models, using the draft text provider built from the form
 // the models of a connection, each with what the gateway knows of it (`details`, see lib/modelmeta.js)
 export async function fetchProviderModels(wsId, conn, catalogEntry, force = false) {
-  const draft = buildEntity('text', wsId, { ...conn, modalities: { ...conn.modalities, text: { enabled: true, model: 'x' } } }, catalogEntry, conn.entities && conn.entities.text);
+  // every model, the ones with no known price included: the form tells which ones a strict provider refuses
+  const draft = buildEntity(
+    'text',
+    wsId,
+    { ...conn, require_known_costs: false, modalities: { ...conn.modalities, text: { enabled: true, model: 'x' } } },
+    catalogEntry,
+    conn.entities && conn.entities.text
+  );
   const res = await api.post(`${EXT_BO_API}/providers/_models?enriched=true${force ? '&force=true' : ''}`, draft);
   if (!res || !res.done) throw new Error((res && (typeof res.error === 'string' ? res.error : JSON.stringify(res.error))) || 'unable to fetch models');
   const details = res.details || {};
@@ -269,6 +278,7 @@ export function newConnection(catalogEntry, existingNames = []) {
     token: '',
     timeout: 180000,
     enabled: true,
+    require_known_costs: false,
     fields: Object.fromEntries((catalogEntry.fields || []).map((f) => [f.name, f.default || ''])),
     modalities,
     entities: {},

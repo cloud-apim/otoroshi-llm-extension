@@ -10,7 +10,8 @@ extension at `/extensions/cloud-apim/ai-studio` (backoffice session required) an
   (`/bo/api/proxy/apis/...`), tagged with `metadata.ai_studio_workspace = <workspace id>` and read
   back with the in-memory filters of the admin api
 - the few things the admin api cannot do live in `src/main/scala/.../studio/studio.scala`: the html
-  page, the provider catalog, the models listing, the chat (the OpenAI compatible plugin of the
+  page, the provider catalog (with what the gateway knows of each provider), the models listing (each model
+  with its `metadata`, read through `src/lib/modelmeta.js`), the chat (the OpenAI compatible plugin of the
   workspace route invoked in process for the backoffice user, without api key) and the chat conversations storage
 - usage and logs come from the otoroshi user analytics (LLM usage projection of the extension)
 - `src/main/scala/.../studio/api.scala` offers the same operations as a workspace scoped admin api
@@ -24,7 +25,7 @@ extension at `/extensions/cloud-apim/ai-studio` (backoffice session required) an
 |---|---|
 | workspace | a team `team_ai_studio_<id>` (owner of every entity) + a route `route_ai_studio_<id>` with `IpAddressAllowedList` / `IpAddressBlockList` (enabled when they have addresses), `MandatoryConsumerPreset` and `OpenAiCompatApi` |
 | api key | an apikey authorized on the route, tagged `ai_studio_ws_<id>` |
-| provider (BYOK) | one entity per enabled capability (`providers`, `embedding-models`, `image-models`, `audio-models`, `moderation-models`, `ocr-models`, `video-models`) sharing `metadata.ai_studio_connection` |
+| provider (BYOK) | one entity per enabled capability (`providers`, `embedding-models`, `image-models`, `audio-models`, `moderation-models`, `ocr-models`, `video-models`) sharing `metadata.ai_studio_connection` and `models.require_known_costs` |
 | guardrails, model access | `guardrails` / `models` of every provider of the workspace |
 | routing | `provider_fallback`, `loadbalancer` and `otoroshi` (router) providers, order of the route `language_model_refs` |
 | presets | `prompt-contexts` attached to providers `context.contexts` |

@@ -598,7 +598,8 @@ class AiExtension(val env: Env) extends AdminExtension {
                 case JsError(errors) => Results.Ok(Json.obj("done" -> false, "error" -> "bad provider format")).vfuture
                 case JsSuccess(provider, _) => {
                   val token = provider.connection.select("token").asOptString.getOrElse("--")
-                  val key = s"${provider.id}-${token}".sha256
+                  // the listing is filtered by the model settings of the provider (access, known costs)
+                  val key = s"${provider.id}-${token}-${provider.models.json.stringify}".sha256
                   val forceUpdate: Boolean = req.getQueryString("force").contains("true")
                   if (forceUpdate) {
                     logger.info(s"forcing models reload for ${provider.name} / ${provider.id}")

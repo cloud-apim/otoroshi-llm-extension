@@ -567,6 +567,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     token: String,
     timeout: BigDecimal,
     enabled: Boolean,
+    // `models.require_known_costs` of every entity: models with no known price are refused and not listed
+    requireKnownCosts: Boolean,
     fields: Map[String, JsValue],
     modalities: Map[String, ModalityConf],
     entities: Map[String, JsObject],
@@ -617,6 +619,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
             token = "",
             timeout = BigDecimal(180000),
             enabled = true,
+            requireKnownCosts = false,
             fields = Map.empty,
             modalities = Map.empty,
             entities = Map.empty,
@@ -632,6 +635,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
               token = nonEmptyString(c.select("token")).orElse(nonEmptyString(c.select("api_key"))).getOrElse(""),
               timeout = c.select("timeout").asOpt[BigDecimal].filter(_ != 0).getOrElse(BigDecimal(180000)),
               enabled = !metaOf(entity, MetaDisabled).contains("true"),
+              requireKnownCosts = entity.select("models").select("require_known_costs").asOptBoolean.getOrElse(false),
             )
           } else withModality
           byId.put(id, conn)
@@ -652,6 +656,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     "kind" -> conn.kind,
     "description" -> conn.description,
     "enabled" -> conn.enabled,
+    "require_known_costs" -> conn.requireKnownCosts,
     "base_url" -> conn.baseUrl,
     "token" -> conn.token,
     "timeout" -> conn.timeout,
@@ -717,10 +722,13 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       "metadata" -> metadata,
       "provider" -> kind,
     )
-    val noConstraints = Json.obj("models" -> Json.obj("include" -> Json.arr(), "exclude" -> Json.arr()))
+    // the model access of the workspace (include / exclude) is kept, the known costs requirement is the connection's
+    val models = Json.obj("models" -> (
+      Json.obj("include" -> Json.arr(), "exclude" -> Json.arr()) ++ objOf(prev.select("models")) ++ Json.obj("require_known_costs" -> conn.requireKnownCosts)
+    ))
     if (modality == "text") {
       val options = if (model.nonEmpty) objOf(prev.select("options")) ++ Json.obj("model" -> model) else objOf(prev.select("options")) - "model"
-      noConstraints ++ Json.obj("guardrails" -> Json.arr(), "guardrails_fail_on_deny" -> false) ++ base ++ Json.obj(
+      Json.obj("guardrails" -> Json.arr(), "guardrails_fail_on_deny" -> false) ++ base ++ models ++ Json.obj(
         "connection" -> (objOf(prev.select("connection")) ++ connection),
         "options" -> options,
       )
@@ -761,7 +769,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         case _ =>
           prevConfig ++ Json.obj("connection" -> connection, "options" -> (prevOptions ++ Json.obj("model" -> model)))
       }
-      noConstraints ++ base ++ Json.obj("config" -> config)
+      base ++ models ++ Json.obj("config" -> config)
     }
   }
 
@@ -808,6 +816,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       token = "",
       timeout = BigDecimal(180000),
       enabled = true,
+      requireKnownCosts = false,
       fields = catalogFields(Some(entry)).map(f => f.select("name").asString -> JsString(f.select("default").asOptString.getOrElse(""))).toMap,
       modalities = withDefault,
       entities = Map.empty,
@@ -841,6 +850,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       token = if (has(form, "token")) string(form, "token").getOrElse("") else base.token,
       timeout = number(form, "timeout").getOrElse(base.timeout),
       enabled = boolean(form, "enabled").getOrElse(base.enabled),
+      requireKnownCosts = boolean(form, "require_known_costs").getOrElse(base.requireKnownCosts),
       fields = base.fields ++ obj(form, "fields").map(_.value.toMap).getOrElse(Map.empty),
       modalities = mods,
     )
@@ -896,7 +906,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         case JsError(_) => Results.BadRequest(Json.obj("error" -> "bad_request", "error_description" -> "bad provider format")).vfuture
         case JsSuccess(provider, _) =>
           val token = provider.connection.select("token").asOptString.getOrElse("--")
-          val key = s"${provider.id}-$token".sha256
+          // the listing is filtered by the model settings of the provider (access, known costs)
+          val key = s"${provider.id}-$token-${provider.models.json.stringify}".sha256
           // the same details as the extension route the studio front calls
           def details(models: Seq[String]): JsObject = {
             if (!enriched) Json.obj()

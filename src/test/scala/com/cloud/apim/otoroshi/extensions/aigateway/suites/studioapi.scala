@@ -87,6 +87,25 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(compat(wsId).select("language_model_refs").as[Seq[String]], Seq(ollamaText))
     assertEquals(expect(studio("GET", s"/workspaces/$wsId/providers/${ollama.select("id").asString}/models"), 200).select("models").as[Seq[String]], Seq("llama3.2", "qwen3"))
     assertEquals(expect(studio("GET", s"/workspaces/$wsId/models"), 200).select("models").as[Seq[JsObject]].map(_.select("id").asString), Seq("llama3.2", "qwen3"))
+    // what the gateway knows of the models and of the providers
+    assert(expect(studio("GET", s"/workspaces/$wsId/models"), 200).select("models").as[Seq[JsObject]].forall(_.select("metadata").select("kinds").asOpt[Seq[String]].contains(Seq("text"))))
+    assertEquals(expect(studio("GET", s"/workspaces/$wsId/providers/${ollama.select("id").asString}/models?enriched=true"), 200).select("details").select("qwen3").select("has_cost").asOpt[Boolean], Some(false))
+    val openaiInsights = expect(studio("GET", "/catalog"), 200).select("providers").as[Seq[JsObject]].find(_.select("id").asString == "openai").get.select("insights")
+    assertEquals(openaiInsights.select("openai_compatible").asOpt[Boolean], Some(true))
+    assert(openaiInsights.select("catalog").select("priced").asOpt[Int].exists(_ > 0))
+
+    // a provider can refuse, and stop listing, the models it cannot price
+    assertEquals(ollama.select("require_known_costs").asBoolean, false)
+    assertEquals(ollamaEntity.select("models").select("require_known_costs").asOpt[Boolean], Some(false))
+    val strict = expect(studio("PUT", s"/workspaces/$wsId/providers/${ollama.select("id").asString}", Json.obj("require_known_costs" -> true)), 200)
+    assertEquals(strict.select("require_known_costs").asBoolean, true)
+    assertEquals(strict.select("modalities").select("text").select("model").asString, "llama3.2")
+    assertEquals(aiEntity("providers", ollamaText).get.select("models").select("require_known_costs").asOpt[Boolean], Some(true))
+    await(2.seconds)
+    assertEquals(expect(studio("GET", s"/workspaces/$wsId/models?force=true"), 200).select("models").as[Seq[JsObject]], Seq.empty[JsObject])
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/providers/${ollama.select("id").asString}", Json.obj("require_known_costs" -> false)), 200).select("require_known_costs").asBoolean, false)
+    await(2.seconds)
+    assertEquals(expect(studio("GET", s"/workspaces/$wsId/models?force=true"), 200).select("models").as[Seq[JsObject]].map(_.select("id").asString), Seq("llama3.2", "qwen3"))
 
     // a provider that rejects the key says so, instead of a bare status code nobody can act on
     val refused = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj(
