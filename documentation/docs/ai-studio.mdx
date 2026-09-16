@@ -20,6 +20,13 @@ AI Studio does not store anything of its own. Every workspace is made of **regul
 the admin API. What you do in the studio is visible in the Otoroshi backoffice, and what you change in
 the backoffice shows up in the studio.
 
+It is an **opinionated** way to use the LLM extension. The extension leaves every door open; the studio
+picks one answer per question — a workspace is one route and one team, an API key belongs to someone,
+credits are budgets scoped to the workspace, MCP connectors speak the stateless revision of the protocol.
+That is what turns a page of settings into a few clicks. Nothing is closed off: because the entities
+behind a workspace are ordinary ones, whatever the studio does not show is one click away in the
+backoffice, on the very same entity.
+
 :::caution Experimental
 AI Studio is **experimental**. It covers the most common needs of a workspace, but not everything the
 LLM extension can do: some settings of the entities it creates are only available from the Otoroshi

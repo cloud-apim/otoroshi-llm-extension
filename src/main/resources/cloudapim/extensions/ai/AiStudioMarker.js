@@ -13,7 +13,7 @@ function aiStudioWorkspaceOf(item) {
 
 function aiStudioTitle(workspaceId) {
   const where = workspaceId ? ` (workspace ${workspaceId})` : '';
-  return `Created from AI Studio${where}. Changes made here can be overwritten by the studio.`;
+  return `Created from AI Studio${where}`;
 }
 
 function aiStudioBadge(item, style) {
@@ -56,7 +56,11 @@ class AiStudioOrigin extends Component {
         { className: 'col-sm-10', style: { display: 'flex', alignItems: 'center', gap: 10 } },
         badge,
         // the theme variable, not bootstrap's `.text-muted`: that one is unreadable on the dark theme
-        React.createElement('span', { style: { color: 'var(--text-muted)' } }, 'Managed by AI Studio. What the studio owns is rewritten on its next save.')
+        React.createElement(
+          'span',
+          { style: { color: 'var(--text-muted)' } },
+          'Editing it here is fine: a save from the studio only rewrites the fields its own forms manage.'
+        )
       )
     );
   }
