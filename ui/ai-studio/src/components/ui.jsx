@@ -279,17 +279,27 @@ export function Checks({ options, value = [], onChange }) {
   );
 }
 
-export function copyToClipboard(text) {
+// `anchor` is the element that asked for the copy
+export function copyToClipboard(text, anchor) {
   if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);
+  // plain http has no clipboard api: copy the selection of a hidden textarea. An open modal <dialog>
+  // makes the rest of the page inert, so the textarea must live in the dialog of the button to be
+  // focused and selected — outside it, the copy silently takes whatever else is selected
+  const host = (anchor && anchor.closest && anchor.closest('dialog[open]')) || document.body;
+  const previous = document.activeElement;
   const ta = document.createElement('textarea');
   ta.value = text;
+  ta.setAttribute('readonly', '');
   ta.style.position = 'fixed';
+  ta.style.top = '0';
   ta.style.opacity = '0';
-  document.body.appendChild(ta);
+  host.appendChild(ta);
+  ta.focus();
   ta.select();
-  document.execCommand('copy');
-  document.body.removeChild(ta);
-  return Promise.resolve();
+  const copied = document.execCommand('copy');
+  host.removeChild(ta);
+  if (previous && previous.focus) previous.focus();
+  return copied ? Promise.resolve() : Promise.reject(new Error('unable to copy'));
 }
 
 export function CopyButton({ text, className = 'copy-btn', label }) {
@@ -301,10 +311,13 @@ export function CopyButton({ text, className = 'copy-btn', label }) {
       title="Copy"
       onClick={(e) => {
         e.stopPropagation();
-        copyToClipboard(typeof text === 'function' ? text() : text).then(() => {
-          setDone(true);
-          setTimeout(() => setDone(false), 1200);
-        });
+        copyToClipboard(typeof text === 'function' ? text() : text, e.currentTarget)
+          .then(() => {
+            setDone(true);
+            setTimeout(() => setDone(false), 1200);
+          })
+          // no check mark when nothing was copied
+          .catch(() => {});
       }}
     >
       <Icon name={done ? 'check' : 'copy'} />
