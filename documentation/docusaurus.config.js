@@ -24,7 +24,6 @@ const config = {
   projectName: 'Otoroshi LLM Extension', // Usually your repo name.
 
   onBrokenLinks: 'warn',
-  onBrokenMarkdownLinks: 'warn',
 
   markdown: {
     format: 'detect',

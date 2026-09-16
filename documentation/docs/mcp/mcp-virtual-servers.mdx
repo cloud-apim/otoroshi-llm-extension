@@ -247,7 +247,7 @@ The shape is keyed by category, then by item key (tool/prompt name, resource nam
 
 ## Zero-Trust controls
 
-The `zero_trust` block adds three independent, **opt-in** security controls on top of an exposed server. Each defaults to OFF, and **blocking is itself opt-in**: by default a control runs in *monitor* mode (it emits a correlated `McpZeroTrustAlert` audit event + metrics, but lets traffic through). Flip the matching `*_enforce` flag to switch to *block*. Alerts route through the usual [data exporters](/docs/observability/observability-reporting) (Kafka/ES/S3/SIEM…), correlated with `McpAudit`/`McpClientAudit` by `request_id`.
+The `zero_trust` block adds three independent, **opt-in** security controls on top of an exposed server. Each defaults to OFF, and **blocking is itself opt-in**: by default a control runs in *monitor* mode (it emits a correlated `McpZeroTrustAlert` audit event + metrics, but lets traffic through). Flip the matching `*_enforce` flag to switch to *block*. Alerts route through the usual [data exporters](/docs/llm-gateway/observability-reporting#using-data-exporters) (Kafka/ES/S3/SIEM…), correlated with `McpAudit`/`McpClientAudit` by `request_id`.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -255,7 +255,7 @@ The `zero_trust` block adds three independent, **opt-in** security controls on t
 | `pinning_enforce` | boolean | `false` | When a mutation is detected: `false` = alert only (tool still served), `true` = drop the tool from `tools/list` and deny `tools/call`. |
 | `pinned_hashes` | object | `{}` | Optional explicit map `tool name → expected fingerprint`. An entry is authoritative (overrides TOFU) — useful to pin a known-good hash declaratively. |
 | `pinning_epoch` | number | `0` | Bump this to **re-pin everything** after a legitimate description change (it namespaces the stored pins). |
-| `description_guardrails` | array | `[]` | **B. Tool-poisoning / prompt-injection scanning** of tool **descriptions** at `tools/list`. Reuses the [guardrails](/docs/guardrails) engine — each item is `{ "enabled": true, "id": "<guardrail>", "config": {...} }` (e.g. `prompt_injection`, `pif`, `secrets_leakage`, `regex`, `contains`, `wasm`). |
+| `description_guardrails` | array | `[]` | **B. Tool-poisoning / prompt-injection scanning** of tool **descriptions** at `tools/list`. Reuses the [guardrails](/docs/guardrails/overview) engine — each item is `{ "enabled": true, "id": "<guardrail>", "config": {...} }` (e.g. `prompt_injection`, `pif`, `secrets_leakage`, `regex`, `contains`, `wasm`). |
 | `result_guardrails` | array | `[]` | Same, applied to tool **results** at `tools/call`. |
 | `guardrails_enforce` | boolean | `false` | When a guardrail denies: `false` = alert only, `true` = drop the offending tool (description scan) / block the result (result scan). |
 | `redact_arguments` | boolean | `false` | **C. Redaction.** Mask PII/secrets in tool **arguments** before forwarding them upstream. |
