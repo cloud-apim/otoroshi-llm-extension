@@ -1,6 +1,11 @@
 import { Resources, randomId } from './entities';
 import { workspaceLocation, workspaceMetadata } from './workspaces';
 
+// The studio only creates MCP connectors speaking the stateless Streamable HTTP revision: every request is
+// self-contained, so no session survives a restart or hops to another Otoroshi instance. A connector created
+// elsewhere keeps the transport it was given.
+export const MCP_TRANSPORT = 'http_2026_07_28';
+
 export const TOOL_KINDS = {
   functions: { resource: 'functions', option: 'tool_functions', kind: 'tool-function', prefix: 'tool-function' },
   mcp: { resource: 'mcpConnectors', option: 'mcp_connectors', kind: 'mcp-connector', prefix: 'mcp-connector' },

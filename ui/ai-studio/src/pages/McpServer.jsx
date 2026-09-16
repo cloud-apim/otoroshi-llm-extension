@@ -34,12 +34,14 @@ function ConnectCard({ workspace }) {
         <span className="mono">$API_KEY</span> with a key from the API Keys page: its owner is who the tool
         calls will count for.
       </p>
-      <Field label="Endpoint">
-        <Readonly value={mcpUrlOf(workspace)} />
-      </Field>
-      <pre>
-        <code>{config}</code>
-      </pre>
+      <div className="stack">
+        <Field label="Endpoint">
+          <Readonly value={mcpUrlOf(workspace)} />
+        </Field>
+        <pre>
+          <code>{config}</code>
+        </pre>
+      </div>
     </div>
   );
 }

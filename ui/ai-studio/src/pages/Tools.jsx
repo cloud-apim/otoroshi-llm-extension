@@ -2,11 +2,11 @@ import { useState } from 'react';
 import { useWorkspace } from '../App';
 import { Badge, Checks, Empty, ErrorAlert, Field, JsonInput, Loading, Modal, NumberInput, PageHeader, SecretInput, Select, StatusBadge, Tabs, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Resources, workspaceFilter } from '../lib/entities';
-import { attachedProviders, deleteTool, propertiesOf, requiredOf, saveTool, schemaOf, SEARCH_PROVIDERS } from '../lib/tools';
+import { attachedProviders, deleteTool, MCP_TRANSPORT, propertiesOf, requiredOf, saveTool, schemaOf, SEARCH_PROVIDERS } from '../lib/tools';
 
 const TABS = {
   functions: { title: 'HTTP functions', add: 'Add function', description: 'Tools the model can call; the gateway performs the HTTP request and feeds the result back.' },
-  mcp: { title: 'MCP connectors', add: 'Add MCP connector', description: 'Remote MCP servers (HTTP transport) whose tools are exposed to the model.' },
+  mcp: { title: 'MCP connectors', add: 'Add MCP connector', description: 'Remote MCP servers whose tools are exposed to the model. Connectors are created on the stateless Streamable HTTP revision of the protocol (2026-07-28).' },
   search: { title: 'Web search', add: 'Add search engine', description: 'Search engines the model can query to ground its answers.' },
 };
 
@@ -60,7 +60,11 @@ function ToolModal({ workspace, kind, tool, providers, onClose, onSaved }) {
           name: form.name,
           description: form.description,
           enabled: form.enabled,
-          transport: { kind: 'http', options: { url: form.url, headers: form.headers, timeout: Number(form.timeout) } },
+          // an existing connector keeps the transport it was given, whoever created it
+          transport: {
+            kind: (tool && tool.transport && tool.transport.kind) || MCP_TRANSPORT,
+            options: { url: form.url, headers: form.headers, timeout: Number(form.timeout) },
+          },
         };
       } else {
         base = tool && tool.provider === form.search_provider ? tool : await Resources.searchEngines.template({ kind: form.search_provider });
@@ -118,7 +122,7 @@ function ToolModal({ workspace, kind, tool, providers, onClose, onSaved }) {
           <TextInput value={form.description} onChange={(v) => set({ description: v })} placeholder={kind === 'functions' ? 'Get the current weather of a city' : ''} />
         </Field>
         {kind !== 'search' && (
-          <Field className="full" label="URL" hint={kind === 'functions' ? 'Use ${param} to inject the arguments chosen by the model, e.g. https://wttr.in/${city}?format=3' : 'Streamable HTTP endpoint of the MCP server.'}>
+          <Field className="full" label="URL" hint={kind === 'functions' ? 'Use ${param} to inject the arguments chosen by the model, e.g. https://wttr.in/${city}?format=3' : 'Streamable HTTP endpoint of the MCP server. It must speak the stateless 2026-07-28 revision.'}>
             <TextInput value={form.url} onChange={(v) => set({ url: v })} placeholder={kind === 'functions' ? 'https://api.example.com/weather?city=${city}' : 'https://mcp.example.com/mcp'} />
           </Field>
         )}
@@ -239,6 +243,7 @@ export function ToolsPage() {
                   <th>Name</th>
                   <th>{tab === 'search' ? 'Engine' : 'Endpoint'}</th>
                   <th>Providers</th>
+                  {tab === 'mcp' && <th>Transport</th>}
                   {tab === 'mcp' && <th>Status</th>}
                   <th />
                 </tr>
@@ -262,6 +267,15 @@ export function ToolsPage() {
                         ))}
                       </div>
                     </td>
+                    {tab === 'mcp' && (
+                      <td>
+                        {(t.transport && t.transport.kind) === MCP_TRANSPORT ? (
+                          <Badge kind="accent" title="Stateless Streamable HTTP">stateless http</Badge>
+                        ) : (
+                          <Badge title="Created outside the studio: the studio keeps the transport it was given">{(t.transport && t.transport.kind) || '—'}</Badge>
+                        )}
+                      </td>
+                    )}
                     {tab === 'mcp' && (
                       <td>
                         <StatusBadge enabled={t.enabled !== false} />

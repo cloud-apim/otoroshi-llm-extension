@@ -1653,6 +1653,10 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
   private val searchProviders = Seq("tavily", "brave", "exa", "searchapi", "google", "staan", "searxng", "duckduckgo")
 
+  // The studio only creates MCP connectors speaking the stateless Streamable HTTP revision: every request is
+  // self-contained, so no session survives a restart or hops to another Otoroshi instance.
+  private val McpTransportKind = "http_2026_07_28"
+
   private val defaultParameters = Json.obj("type" -> "object", "properties" -> Json.obj("city" -> Json.obj("type" -> "string", "description" -> "The city name")), "required" -> Json.arr("city"))
 
   // A tool function entity stores the *properties* of its json schema, and the required ones next to them
@@ -1704,6 +1708,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       case "mcp" =>
         val transport = tool.select("transport").select("options")
         common ++ Json.obj(
+          "transport" -> nonEmptyString(tool.select("transport").select("kind")).getOrElse(McpTransportKind),
           "enabled" -> !tool.select("enabled").asOpt[Boolean].contains(false),
           "url" -> transport.select("url").asOptString.getOrElse(""),
           "headers" -> objOf(transport.select("headers")),
@@ -1762,7 +1767,11 @@ class AiStudioApi(env: Env, ext: AiExtension) {
             "name" -> name,
             "description" -> description,
             "enabled" -> boolean(form, "enabled").orElse(current.flatMap(_.select("enabled").asOpt[Boolean])).getOrElse(true),
-            "transport" -> Json.obj("kind" -> "http", "options" -> Json.obj("url" -> url, "headers" -> headers, "timeout" -> timeout)),
+            // an existing connector keeps the transport it was given, whoever created it
+            "transport" -> Json.obj(
+              "kind" -> existing.flatMap(t => nonEmptyString(t.select("transport").select("kind"))).getOrElse(McpTransportKind),
+              "options" -> Json.obj("url" -> url, "headers" -> headers, "timeout" -> timeout),
+            ),
           ))
         case _ =>
           val provider = text("search_provider", "tavily")

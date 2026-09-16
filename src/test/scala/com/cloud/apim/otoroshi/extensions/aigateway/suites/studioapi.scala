@@ -212,6 +212,15 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(function.select("parameters").select("properties").select("city").select("type").asString, "string")
     expect(studio("POST", s"/workspaces/$wsId/tools/mcp", Json.obj("name" -> "no url")), 400)
     expect(studio("GET", s"/workspaces/$wsId/tools/nope"), 404)
+    // mcp connectors are created on the stateless revision of the protocol
+    val connector = expect(studio("POST", s"/workspaces/$wsId/tools/mcp", Json.obj("name" -> "github", "url" -> "https://mcp.oto.tools/mcp")), 201)
+    assertEquals(connector.select("transport").asString, "http_2026_07_28")
+    val connectorId = connector.select("id").asString
+    assertEquals(aiEntity("mcp-connectors", connectorId).get.select("transport").select("kind").asString, "http_2026_07_28")
+    // and an update does not change the transport of a connector created elsewhere
+    expect(studio("PUT", s"/workspaces/$wsId/tools/mcp/$connectorId", Json.obj("name" -> "github renamed")), 200)
+    assertEquals(aiEntity("mcp-connectors", connectorId).get.select("transport").select("kind").asString, "http_2026_07_28")
+    expect(studio("DELETE", s"/workspaces/$wsId/tools/mcp/$connectorId"), 204)
 
     // mcp server: a virtual server exposed on /mcp of the workspace route
     val noServer = expect(studio("GET", s"/workspaces/$wsId/mcp-server"), 200)
