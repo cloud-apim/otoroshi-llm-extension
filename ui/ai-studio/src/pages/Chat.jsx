@@ -9,6 +9,7 @@ import { fmtInt, fmtMs } from '../lib/format';
 import { deleteConversation, getConversation, listConversations, listWorkspaceModels, saveConversation } from '../lib/models';
 import { bootstrap } from '../lib/bootstrap';
 import { useRouter } from '../lib/router';
+import { capabilitiesOf, chatUsable, contextOf, fmtPrice, fmtTokens, promptPrice } from '../lib/modelmeta';
 
 const SUGGESTIONS = [
   { title: 'Strawberry Test', prompt: "How many r's are in the word strawberry?" },
@@ -34,12 +35,23 @@ function storageSet(key, value) {
   } catch (e) {}
 }
 
+// what tells two chat models apart at a glance
+function pickerFacts(model) {
+  const facts = [];
+  if (capabilitiesOf(model).some((c) => c.id === 'reasoning')) facts.push('reasoning');
+  if (capabilitiesOf(model).some((c) => c.id === 'vision')) facts.push('vision');
+  if (contextOf(model)) facts.push(fmtTokens(contextOf(model)));
+  if (promptPrice(model) !== null) facts.push(`${fmtPrice(promptPrice(model))}/1M`);
+  facts.push(model.provider);
+  return facts.join(' · ');
+}
+
 function ModelPicker({ value, onChange, models }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const filtered = models.filter((m) => !q || m.id.toLowerCase().includes(q.toLowerCase())).slice(0, 80);
   return (
-    <div style={{ position: 'relative', width: 420, maxWidth: '50vw' }}>
+    <div style={{ position: 'relative', width: 520, maxWidth: '60vw' }}>
       <input
         className="input"
         value={open ? q : value}
@@ -63,7 +75,7 @@ function ModelPicker({ value, onChange, models }) {
           {filtered.map((m) => (
             <div key={m.id} className={`item ${m.id === value ? 'active' : ''}`} onMouseDown={() => onChange(m.id)}>
               <span className="grow truncate">{m.id}</span>
-              <span className="faint small">{m.provider}</span>
+              <span className="faint small nowrap">{pickerFacts(m)}</span>
             </div>
           ))}
         </div>
@@ -83,7 +95,8 @@ export function ChatPage() {
   const presets = useAsync(() => Resources.contexts.list(workspaceFilter(workspace.id)), [workspace.id]);
   const rooms = useAsync(() => listConversations(workspace), [workspace.id]);
 
-  const textModels = ((models.data && models.data.models) || []).filter((m) => m.modality === 'text');
+  // the chat talks the chat completions api: image, realtime or responses only models would fail there
+  const textModels = ((models.data && models.data.models) || []).filter(chatUsable);
 
   const [prefs, setPrefs] = useState(() => storageGet(prefKey, { model: '', settings: DEFAULT_SETTINGS, showSettings: true }));
   const settings = { ...DEFAULT_SETTINGS, ...(prefs.settings || {}) };

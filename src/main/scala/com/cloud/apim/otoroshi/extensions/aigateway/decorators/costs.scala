@@ -317,6 +317,11 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
     }
   }
 
+  // embeddings and moderations are billed per token by their own decorators, which honour no provider metadata
+  def hasTokenCost(providerKind: String, model: String): Boolean = {
+    settings.enabled && getProvider(providerKind).exists(pricingProvider => canHandle(pricingProvider, model))
+  }
+
   // whether the costs decorator gets a cost for a call on this model
   def hasCost(provider: AiProvider, model: String): Boolean = {
     (settings.enabled || provider.models.requireKnownCosts) && billedAs(provider, model).exists {

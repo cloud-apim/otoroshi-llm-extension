@@ -1,9 +1,14 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.studio
 
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ProviderInsights
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvidersCatalog
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
+import otoroshi.env.Env
 import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.*
+
+import scala.concurrent.{ExecutionContext, Future}
 
 /**
  * Provider catalog used by the AI Studio "bring your own key" form. It is derived from
@@ -122,4 +127,11 @@ object AiStudioCatalog {
       "openai_like" -> OpenAiLikeProviders.find(entry.id).isDefined,
     )
   }.sortBy(_.select("label").asOptString.getOrElse("").toLowerCase))
+
+  // the catalog with what the gateway knows of each provider: api, models of the models.dev catalog, prices
+  def enrichedJson(using env: Env, ec: ExecutionContext): Future[JsArray] = {
+    env.adminExtensions.extension[AiExtension].map(_.modelsCatalog.load()).getOrElse(None.vfuture).map { _ =>
+      JsArray(json.value.map(entry => entry.asObject ++ Json.obj("insights" -> ProviderInsights.of(entry.select("id").asString))))
+    }
+  }
 }

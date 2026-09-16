@@ -233,11 +233,13 @@ export async function deleteConnection(wsId, conn) {
 }
 
 // asks the provider for its models, using the draft text provider built from the form
+// the models of a connection, each with what the gateway knows of it (`details`, see lib/modelmeta.js)
 export async function fetchProviderModels(wsId, conn, catalogEntry, force = false) {
   const draft = buildEntity('text', wsId, { ...conn, modalities: { ...conn.modalities, text: { enabled: true, model: 'x' } } }, catalogEntry, conn.entities && conn.entities.text);
-  const res = await api.post(`${EXT_BO_API}/providers/_models${force ? '?force=true' : ''}`, draft);
+  const res = await api.post(`${EXT_BO_API}/providers/_models?enriched=true${force ? '&force=true' : ''}`, draft);
   if (!res || !res.done) throw new Error((res && (typeof res.error === 'string' ? res.error : JSON.stringify(res.error))) || 'unable to fetch models');
-  return (res.models || []).map(String);
+  const details = res.details || {};
+  return (res.models || []).map((id) => ({ id: String(id), model: String(id), provider: conn.name, modality: 'text', details: details[id] }));
 }
 
 export function newConnection(catalogEntry, existingNames = []) {

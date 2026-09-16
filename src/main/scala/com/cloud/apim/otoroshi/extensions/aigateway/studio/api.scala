@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.studio
 
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsMetadata
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ApikeyOwner}
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.Source
@@ -885,7 +886,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     }.flatMap(_ => syncWorkspaceRefs(ws.id)).map(_ => ())
 
   // asks the provider for its models, using the draft text provider built from the connection
-  private def fetchProviderModels(ws: Workspace, conn: Connection, force: Boolean): Future[Result] = {
+  private def fetchProviderModels(ws: Workspace, conn: Connection, force: Boolean, enriched: Boolean): Future[Result] = {
     val entry = catalogEntry(conn.kind)
     val draftConn = conn.copy(modalities = conn.modalities + ("text" -> ModalityConf(true, "x", None)))
     val draft = buildEntity("text", ws, draftConn, entry, conn.entities.get("text"))
@@ -896,8 +897,13 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         case JsSuccess(provider, _) =>
           val token = provider.connection.select("token").asOptString.getOrElse("--")
           val key = s"${provider.id}-$token".sha256
-          ext.modelsCache.getIfPresent(key).filterNot(_ => force) match {
-            case Some(models) => Results.Ok(Json.obj("from_cache" -> true, "models" -> JsArray(models.map(JsString.apply)))).vfuture
+          // the same details as the extension route the studio front calls
+          def details(models: Seq[String]): JsObject = {
+            if (!enriched) Json.obj()
+            else Json.obj("details" -> JsObject(models.map(m => m -> ModelsMetadata.describe(provider, m).metadata)))
+          }
+          (if (enriched) ext.modelsCatalog.load() else None.vfuture).flatMap(_ => ext.modelsCache.getIfPresent(key).filterNot(_ => force) match {
+            case Some(models) => Results.Ok(Json.obj("from_cache" -> true, "models" -> JsArray(models.map(JsString.apply))) ++ details(models)).vfuture
             case None =>
               provider.getChatClient() match {
                 case None => Results.BadRequest(Json.obj("error" -> "bad_request", "error_description" -> "no client for this provider")).vfuture
@@ -908,10 +914,10 @@ class AiStudioApi(env: Env, ext: AiExtension) {
                       Results.BadGateway(Json.obj("error" -> "bad_gateway", "error_description" -> explained.select("error").asString, "error_details" -> err))
                     case Right(models) =>
                       ext.modelsCache.put(key, models)
-                      Results.Ok(Json.obj("from_cache" -> false, "models" -> JsArray(models.map(JsString.apply))))
+                      Results.Ok(Json.obj("from_cache" -> false, "models" -> JsArray(models.map(JsString.apply))) ++ details(models))
                   }
               }
-          }
+          })
       }
     }
   }
@@ -1983,7 +1989,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   val routes: Seq[AdminExtensionAdminApiRoute] = Seq(
 
     route("GET", "/catalog") {
-      ok(Json.obj("providers" -> AiStudioCatalog.json)).vfuture
+      AiStudioCatalog.enrichedJson.map(providers => ok(Json.obj("providers" -> providers)))
     },
 
     // workspaces
@@ -2030,7 +2036,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
           token = string(form, "token").getOrElse(""),
           fields = fresh.fields ++ obj(form, "fields").map(_.value.toMap).getOrElse(Map.empty),
         )
-        fetchProviderModels(ws, conn, call.flag("force"))
+        fetchProviderModels(ws, conn, call.flag("force"), call.flag("enriched"))
       }
     },
     route("GET", "/workspaces/:id/providers/:cid") {
@@ -2043,7 +2049,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       withWorkspace(ws => deleteConnection(ws, call.param("cid")).map(_ => Results.NoContent))
     },
     route("GET", "/workspaces/:id/providers/:cid/models") {
-      withWorkspace(ws => connection(ws.id, call.param("cid")).flatMap(c => fetchProviderModels(ws, c, call.flag("force"))))
+      withWorkspace(ws => connection(ws.id, call.param("cid")).flatMap(c => fetchProviderModels(ws, c, call.flag("force"), call.flag("enriched"))))
     },
 
     // api keys

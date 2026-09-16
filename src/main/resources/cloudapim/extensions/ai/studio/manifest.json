@@ -16,7 +16,7 @@
     "src": "node_modules/@fontsource-variable/plus-jakarta-sans/files/plus-jakarta-sans-vietnamese-wght-normal.woff2"
   },
   "src/App.jsx": {
-    "file": "assets/App-Kn9htCDf.js",
+    "file": "assets/App-Dv2a7mte.js",
     "name": "App",
     "src": "src/App.jsx",
     "isDynamicEntry": true,
@@ -25,7 +25,7 @@
     ]
   },
   "src/main.jsx": {
-    "file": "assets/main-BvD9TfL1.js",
+    "file": "assets/main-fXJeu8dU.js",
     "name": "main",
     "src": "src/main.jsx",
     "isEntry": true,
@@ -33,7 +33,7 @@
       "src/App.jsx"
     ],
     "css": [
-      "assets/main-Dx_6M3Zx.css"
+      "assets/main-w1ngKu8O.css"
     ],
     "assets": [
       "assets/plus-jakarta-sans-cyrillic-ext-wght-normal-lLTsRRxN.woff2",

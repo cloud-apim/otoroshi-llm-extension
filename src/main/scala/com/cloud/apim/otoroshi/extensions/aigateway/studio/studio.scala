@@ -3,6 +3,8 @@ package com.cloud.apim.otoroshi.extensions.aigateway.studio
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
 import org.apache.pekko.util.ByteString
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsMetadata
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
 import otoroshi.models.{BackOfficeUser, EntityLocation, PrivateAppsUser}
 import otoroshi.next.models.NgTarget
@@ -222,7 +224,7 @@ class AiStudio(env: Env, ext: AiExtension) {
   def handleCatalog(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
     user match {
       case None => unauthorized
-      case Some(_) => Results.Ok(Json.obj("providers" -> AiStudioCatalog.json)).vfuture
+      case Some(_) => AiStudioCatalog.enrichedJson.map(providers => Results.Ok(Json.obj("providers" -> providers)))
     }
   }
 
@@ -387,6 +389,15 @@ class AiStudio(env: Env, ext: AiExtension) {
   }
 
   def workspaceModels(config: JsValue, force: Boolean): Future[JsObject] = {
+    ext.modelsCatalog.load().flatMap(_ => listWorkspaceModels(config, force))
+  }
+
+  // a model of the listing with what the gateway knows of it: types, cost, api, capabilities, limits, prices
+  private def described(model: JsObject, provider: AiProvider, modality: String): JsObject = {
+    model ++ Json.obj("metadata" -> ModelsMetadata.describe(provider, model.select("model").asString, modality).metadata)
+  }
+
+  private def listWorkspaceModels(config: JsValue, force: Boolean): Future[JsObject] = {
     def refs(key: String): Seq[String] = config.select(key).asOpt[Seq[String]].getOrElse(Seq.empty)
     val textRefs = refs("language_model_refs")
     val now = System.currentTimeMillis() / 1000
@@ -410,7 +421,7 @@ class AiStudio(env: Env, ext: AiExtension) {
             provider.options.select(s"${model.replace("-", "_")}_refs").asOpt[JsArray].exists(_.value.nonEmpty)
           def toModels(models: Seq[String]): Seq[JsObject] = models.filter(usable).map { model =>
             val id = if (textRefs.size == 1) model else if (model.contains("/")) s"${provider.slugName}###$model" else s"${provider.slugName}/$model"
-            Json.obj("id" -> id, "model" -> model, "provider" -> provider.slugName, "provider_id" -> provider.id, "provider_kind" -> provider.provider, "modality" -> "text", "created" -> now)
+            described(Json.obj("id" -> id, "model" -> model, "provider" -> provider.slugName, "provider_id" -> provider.id, "provider_kind" -> provider.provider, "modality" -> "text", "created" -> now), provider, "text")
           }
           val token = provider.connection.select("token").asOptString.getOrElse("--")
           val key = s"${provider.id}-$token".sha256
@@ -453,9 +464,12 @@ class AiStudio(env: Env, ext: AiExtension) {
               .getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
             val model = modelOf(entity.select("config").asOpt[JsValue].getOrElse(Json.obj()), modality)
             val info = Json.obj("id" -> ref, "name" -> name, "slug" -> slug, "kind" -> entity.select("provider").asOptString.getOrElse("--").json, "modality" -> modality, "default_model" -> model.map(JsString.apply).getOrElse(JsNull).as[JsValue])
+            val kind = entity.select("provider").asOptString.getOrElse("--")
+            // enough of a provider to describe the model: its kind and the metadata costs tracking reads
+            val provider = AiProvider(id = ref, name = name, provider = kind, metadata = entity.select("metadata").asOpt[Map[String, String]].getOrElse(Map.empty), connection = Json.obj(), options = Json.obj())
             val models = model.toSeq.map { m =>
               val id = if (all.size == 1) m else if (m.contains("/")) s"$slug###$m" else s"$slug/$m"
-              Json.obj("id" -> id, "model" -> m, "provider" -> slug, "provider_id" -> ref, "provider_kind" -> entity.select("provider").asOptString.getOrElse("--").json, "modality" -> modality, "created" -> now)
+              described(Json.obj("id" -> id, "model" -> m, "provider" -> slug, "provider_id" -> ref, "provider_kind" -> kind, "modality" -> modality, "created" -> now), provider, modality)
             }
             (info, models)
         }

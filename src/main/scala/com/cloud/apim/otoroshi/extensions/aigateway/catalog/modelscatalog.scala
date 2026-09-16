@@ -97,6 +97,9 @@ object CatalogMatch {
   val GlobalApproximate = "global-approximate"
 }
 
+// a provider of the models.dev catalog
+final case class CatalogProvider(id: String, name: Option[String], doc: Option[String])
+
 final case class CatalogMatch(model: CatalogModel, kind: String) {
   // a price is only trusted when it comes from the provider serving this very model
   def priced: Boolean = kind == CatalogMatch.Exact || kind == CatalogMatch.Normalized
@@ -156,6 +159,7 @@ object ModelIds {
 }
 
 final class ModelsCatalogIndex(
+  providers: Map[String, CatalogProvider],
   exact: Map[String, Map[String, CatalogModel]],
   normalized: Map[String, Map[String, CatalogModel]],
   approximate: Map[String, Map[String, CatalogModel]],
@@ -166,6 +170,10 @@ final class ModelsCatalogIndex(
   val size: Int = exact.valuesIterator.map(_.size).sum
 
   def hasProvider(id: String): Boolean = exact.contains(id)
+
+  def provider(id: String): Option[CatalogProvider] = providers.get(id)
+
+  def models(provider: String): Seq[CatalogModel] = exact.get(provider).map(_.values.toSeq).getOrElse(Seq.empty)
 
   // models.dev providers matching an entity provider kind ("x-ai") or a price table provider name ("xai")
   def providersFor(name: String): Seq[String] = {
@@ -274,7 +282,15 @@ object ModelsCatalogIndex {
       keyed(models, ModelIds.name).foreach { case (k, m) => if (!global.contains(k)) global.put(k, m) }
       keyed(models, ModelIds.approximate).foreach { case (k, m) => if (!globalApproximate.contains(k)) globalApproximate.put(k, m) }
     }
+    val infos = json.select("providers").asOpt[JsObject].map(_.value.toSeq).getOrElse(Seq.empty).map {
+      case (providerId, provider) => (providerId, CatalogProvider(
+        id = providerId,
+        name = provider.select("name").asOptString.filter(_.nonEmpty),
+        doc = provider.select("doc").asOptString.filter(_.startsWith("http")),
+      ))
+    }.toMap
     new ModelsCatalogIndex(
+      providers = infos,
       exact = providers.map { case (id, models) => (id, models.map(m => (ModelIds.base(m.id), m)).toMap) }.toMap,
       normalized = providers.map { case (id, models) => (id, keyed(models, ModelIds.normalized)) }.toMap,
       approximate = providers.map { case (id, models) => (id, keyed(models, ModelIds.approximate)) }.toMap,
@@ -348,6 +364,7 @@ class ModelsCatalog(env: Env) {
   private val loadingRef = new AtomicReference[Future[Option[ModelsCatalogIndex]]]()
   // lookups are made on every call billed from the catalog, with model names coming from the requests
   private val matches = Scaffeine().maximumSize(20000).build[String, Option[CatalogMatch]]()
+  private val insights = Scaffeine().maximumSize(1000).expireAfterWrite(scala.concurrent.duration.Duration(10, "minutes")).build[String, JsObject]()
 
   def index: Option[ModelsCatalogIndex] = indexRef.get()
 
@@ -391,6 +408,58 @@ class ModelsCatalog(env: Env) {
   def lookupCost(provider: String, model: String): Option[CostModel] = {
     lookup(provider, model).filter(_.priced).flatMap(_.model.costModel)
   }
+
+  // the insights of a provider kind only change with the price table, they are kept a few minutes
+  def insightsOf(kind: String)(compute: => JsObject): JsObject = {
+    if (index.isEmpty) compute else insights.get(kind, _ => compute)
+  }
+}
+
+/**
+ * What the gateway knows of a provider kind before it is even connected: whether it talks to it in the OpenAI
+ * format, and how many of the models the catalog knows for it are of each type, reason, call tools, see images
+ * or have a price costs tracking bills with.
+ */
+object ProviderInsights {
+
+  import ModelsCatalog.obj
+
+  def of(kind: String)(using env: Env): JsObject = env.adminExtensions.extension[AiExtension].map { ext =>
+    val lower = kind.toLowerCase(Locale.ROOT)
+    ext.modelsCatalog.insightsOf(lower) {
+      val provider = AiProvider(id = s"insights-$lower", name = lower, provider = lower, connection = Json.obj(), options = Json.obj())
+      val catalog = ext.modelsCatalog.index.flatMap { idx =>
+        val ids = idx.providersFor(lower)
+        val models = ids.flatMap(idx.models).distinctBy(m => ModelIds.base(m.id))
+        Option.when(models.nonEmpty) {
+          val kinds = models.flatMap(m => ModelKinds.of(lower, Seq(m.id) ++ m.family, None, m.inputModalities, m.outputModalities)).groupBy(identity)
+          val prices = models.flatMap { m =>
+            ext.costsTracking.billedAs(provider, m.id).flatMap { case (p, billed) => ext.costsTracking.lookupModel(p, billed) }
+          }
+          val prompts = prices.map(_.input_cost_per_token).filter(_ > 0)
+          val info = ids.headOption.flatMap(idx.provider)
+          obj(
+            "provider" -> ids.headOption.map(JsString.apply),
+            "name" -> info.flatMap(_.name).map(JsString.apply),
+            "doc" -> info.flatMap(_.doc).map(JsString.apply),
+            "models" -> JsNumber(models.size).some,
+            "kinds" -> JsObject(AiProvidersCatalog.allCapabilities.flatMap(k => kinds.get(k).map(list => k -> JsNumber(list.size)))).some,
+            "reasoning" -> JsNumber(models.count(_.reasoning.contains(true))).some,
+            "tool_call" -> JsNumber(models.count(_.toolCall.contains(true))).some,
+            "vision" -> JsNumber(models.count(_.inputModalities.contains("image"))).some,
+            "priced" -> JsNumber(models.count(m => ext.costsTracking.hasCost(provider, m.id))).some,
+            "prompt_from" -> prompts.minOption.map(ModelsMetadata.price),
+            "prompt_to" -> prompts.maxOption.map(ModelsMetadata.price),
+            "max_context" -> models.flatMap(_.limitContext).maxOption.map(v => JsNumber(BigDecimal(v))),
+          )
+        }
+      }
+      obj(
+        "openai_compatible" -> Option.when(!AiProvider.routingProviders.contains(lower))(JsBoolean(AiProvider.openAiCompatibleProviders.contains(lower))),
+        "catalog" -> catalog,
+      )
+    }
+  }.getOrElse(Json.obj())
 }
 
 /**
@@ -555,7 +624,7 @@ object ModelsMetadata {
 
   import ModelsCatalog.obj
 
-  private def price(value: BigDecimal): JsString = JsString(value.bigDecimal.stripTrailingZeros().toPlainString)
+  def price(value: BigDecimal): JsString = JsString(value.bigDecimal.stripTrailingZeros().toPlainString)
 
   private def nonZero(value: BigDecimal): Option[JsString] = Option.when(value > 0)(price(value))
 
@@ -572,7 +641,11 @@ object ModelsMetadata {
     "image_output" -> nonZero(cost.output_cost_per_image),
   )
 
-  def describe(provider: AiProvider, model: String)(using env: Env): ModelDescription = {
+  /**
+   * `modality` is the entity type serving the model: an embedding, image, audio, moderation, ocr or video model
+   * entity is of that type whatever the catalog says, and is billed on its own terms.
+   */
+  def describe(provider: AiProvider, model: String, modality: String = AiProvidersCatalog.Text)(using env: Env): ModelDescription = {
     val ext = env.adminExtensions.extension[AiExtension]
     val found = ext.flatMap(_.modelsCatalog.lookup(provider.provider, model))
     val catalog = found.map(_.model)
@@ -603,7 +676,7 @@ object ModelsMetadata {
     val served = found.filter(_.onServingProvider).map(_.model)
     val names = Seq(model) ++ catalog.map(_.id) ++ catalog.flatMap(_.family) ++ priced.map(_.name)
     val knownEndpoints = ModelEndpoints.known(raw.select("supported_endpoints").asOpt[Seq[String]].getOrElse(Seq.empty), mode, served.flatMap(_.shape))
-    val kinds = ModelKinds.of(
+    val kinds = if (modality != AiProvidersCatalog.Text) Seq(modality) else ModelKinds.of(
       providerKind = provider.provider,
       names = names,
       mode = mode,
@@ -623,7 +696,14 @@ object ModelsMetadata {
       else if (knownEndpoints.nonEmpty) knownEndpoints.filterNot(_ == ModelEndpoints.Messages)
       else ModelEndpoints.ofKinds(kinds, names, input.getOrElse(Seq.empty))
     val cacheRead = catalog.flatMap(_.cost).map(_.cacheRead.isDefined).filter(identity)
-    val hasCost = ext.exists(_.costsTracking.hasCost(provider, model))
+    val hasCost = ext.exists { e =>
+      modality match {
+        case AiProvidersCatalog.Text => e.costsTracking.hasCost(provider, model)
+        case AiProvidersCatalog.Embedding | AiProvidersCatalog.Moderation => e.costsTracking.hasTokenCost(provider.provider, model)
+        // images, sounds, videos and pages are not billed per token
+        case _ => false
+      }
+    }
     ModelDescription(kinds, hasCost, endpoints, obj(
       "kinds" -> JsArray(kinds.map(JsString.apply)).some,
       "has_cost" -> JsBoolean(hasCost).some,

@@ -3,7 +3,7 @@ package otoroshi_plugins.com.cloud.apim.extensions.aigateway
 import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.assistant.OtoroshiAssistant
-import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsCatalog
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.{ModelsCatalog, ModelsMetadata}
 import com.cloud.apim.otoroshi.extensions.aigateway.studio.{AiStudio, AiStudioApi}
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsTracking, CostsTrackingSettings, LLMImpacts, LLMImpactsSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.*
@@ -603,8 +603,14 @@ class AiExtension(val env: Env) extends AdminExtension {
                   if (forceUpdate) {
                     logger.info(s"forcing models reload for ${provider.name} / ${provider.id}")
                   }
-                  modelsCache.getIfPresent(key).filterNot(_ => forceUpdate) match {
-                    case Some(models) => Results.Ok(Json.obj("done" -> true, "from_cache" -> true, "models" -> JsArray(models.map(_.json)))).vfuture
+                  // `?enriched=true` adds what the gateway knows of each model (types, cost, api, capabilities)
+                  val enriched = req.getQueryString("enriched").contains("true")
+                  def details(models: Seq[String]): JsObject = {
+                    if (!enriched) Json.obj()
+                    else Json.obj("details" -> JsObject(models.map(m => m -> ModelsMetadata.describe(provider, m).metadata)))
+                  }
+                  (if (enriched) modelsCatalog.load() else None.vfuture).flatMap(_ => modelsCache.getIfPresent(key).filterNot(_ => forceUpdate) match {
+                    case Some(models) => Results.Ok(Json.obj("done" -> true, "from_cache" -> true, "models" -> JsArray(models.map(_.json))) ++ details(models)).vfuture
                     case None => {
                       provider.getChatClient() match {
                         case None => Results.Ok(Json.obj("done" -> false, "error" -> "no client")).vfuture
@@ -613,13 +619,13 @@ class AiExtension(val env: Env) extends AdminExtension {
                             case Left(err) => Results.Ok(Json.obj("done" -> false, "error" -> "error fetching models", "error_details" -> err))
                             case Right(models) => {
                               modelsCache.put(key, models)
-                              Results.Ok(Json.obj("done" -> true, "from_cache" -> false, "models" -> JsArray(models.map(_.json))))
+                              Results.Ok(Json.obj("done" -> true, "from_cache" -> false, "models" -> JsArray(models.map(_.json))) ++ details(models))
                             }
                           }
                         }
                       }
                     }
-                  }
+                  })
                 }
               }
             }

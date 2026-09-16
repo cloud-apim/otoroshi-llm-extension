@@ -20,6 +20,7 @@ import {
   useToast,
 } from '../components/ui';
 import { Icon } from '../components/icons';
+import { Link } from '../lib/router';
 import {
   connectionName,
   deleteConnection,
@@ -30,21 +31,87 @@ import {
   newConnection,
   saveConnection,
 } from '../lib/connections';
-import { loadCatalog } from '../lib/models';
+import { listWorkspaceModels, loadCatalog } from '../lib/models';
 import { initials } from '../lib/format';
+import { ModelLabels, PriceSummary } from '../components/modelinfo';
+import { contextOf, fitsCapability, fmtPrice, fmtTokens, hasCost, KIND_LABELS, KIND_ORDER, kindsSummary, metaOf, perMillion } from '../lib/modelmeta';
+
+// a short description of a model, next to its id in the suggestions
+function suggestionLabel(model) {
+  const parts = [];
+  const context = contextOf(model);
+  if (context) parts.push(`${fmtTokens(context)} context`);
+  const pricing = metaOf(model).pricing;
+  if (pricing) parts.push(`${fmtPrice(perMillion(pricing.prompt))} in / ${fmtPrice(perMillion(pricing.completion))} out`);
+  return parts.join(' · ');
+}
 
 function ModelInput({ value, onChange, models, placeholder, listId }) {
+  const known = models && value ? models.find((m) => m.id === value) : null;
   return (
     <>
       <input className="input mono" list={listId} value={value || ''} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
       {models && models.length > 0 && (
         <datalist id={listId}>
           {models.map((m) => (
-            <option key={m} value={m} />
+            <option key={m.id} value={m.id} label={suggestionLabel(m)} />
           ))}
         </datalist>
       )}
+      {known && known.details && (
+        <div className="model-hint">
+          <ModelLabels model={known} compact />
+          <div className="meta">
+            {contextOf(known) && <span>{fmtTokens(contextOf(known))} context</span>}
+            {metaOf(known).pricing && <PriceSummary model={known} />}
+          </div>
+        </div>
+      )}
     </>
+  );
+}
+
+// what the gateway knows of a provider kind (see ProviderInsights in catalog/modelscatalog.scala)
+function insightsFacts(entry) {
+  const insights = entry.insights || {};
+  const catalog = insights.catalog;
+  const facts = [];
+  if (catalog) {
+    facts.push(`${catalog.models} model${catalog.models > 1 ? 's' : ''}`);
+    if (catalog.prompt_from) facts.push(`from ${fmtPrice(perMillion(catalog.prompt_from))} / 1M`);
+    if (catalog.max_context) facts.push(`up to ${fmtTokens(catalog.max_context)} context`);
+  }
+  return facts;
+}
+
+function ProviderFacts({ entry }) {
+  const insights = entry.insights || {};
+  const catalog = insights.catalog;
+  if (!catalog && insights.openai_compatible === undefined) return null;
+  return (
+    <div className="provider-facts">
+      {insights.openai_compatible === true && <Badge kind="accent">OpenAI compatible API</Badge>}
+      {insights.openai_compatible === false && <Badge title="The gateway translates the OpenAI requests for this provider">Native API</Badge>}
+      {catalog && (
+        <>
+          <span>
+            {catalog.models} known model{catalog.models > 1 ? 's' : ''}
+            {catalog.kinds &&
+              ` (${KIND_ORDER.filter((k) => catalog.kinds[k])
+                .map((k) => `${catalog.kinds[k]} ${KIND_LABELS[k].toLowerCase()}`)
+                .join(', ')})`}
+          </span>
+          <span>{catalog.priced} with a known price</span>
+          {catalog.reasoning > 0 && <span>{catalog.reasoning} reasoning</span>}
+          {catalog.max_context && <span>up to {fmtTokens(catalog.max_context)} tokens of context</span>}
+          {catalog.doc && (
+            <a className="link" href={catalog.doc} target="_blank" rel="noreferrer">
+              Documentation
+            </a>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -95,6 +162,13 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
 
   const textEntity = conn.entities && conn.entities.text;
 
+  // without details (an older gateway), every model is a text model suggestion
+  const suggestions = (cap, audioMode) => {
+    if (!models.length) return null;
+    if (!models.some((m) => m.details)) return cap === 'text' ? models : null;
+    return models.filter((m) => fitsCapability(m, cap, audioMode));
+  };
+
   return (
     <Modal
       open
@@ -121,6 +195,7 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
           ...(textEntity || conn.modalities.text ? [{ value: 'advanced', label: 'Advanced' }] : []),
         ]}
       />
+      {tab === 'connection' && <ProviderFacts entry={entry} />}
       {tab === 'connection' && (
         <div className="form-grid">
           <Field label="Provider">
@@ -162,6 +237,12 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
               </button>
             )}
           </div>
+          {models.length > 0 && (
+            <div className="alert info">
+              {models.length} models found: {kindsSummary(models).join(', ')}. {models.filter(hasCost).length} with a known price. The suggestions of each capability
+              only list the models fitting it.
+            </div>
+          )}
           <div className="table-wrap">
             <table className="table">
               <thead>
@@ -185,12 +266,24 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
                           <div className="grid cols-2">
                             {(entry.audio_modes || ['tts', 'stt']).includes('tts') && (
                               <Field hint="Text to speech">
-                                <ModelInput value={mod.model} onChange={(v) => setModality(cap, { model: v })} placeholder={entry.models.audio_tts || 'tts model'} listId={`${cap}-tts`} />
+                                <ModelInput
+                                  value={mod.model}
+                                  onChange={(v) => setModality(cap, { model: v })}
+                                  placeholder={entry.models.audio_tts || 'tts model'}
+                                  models={suggestions(cap, 'tts')}
+                                  listId={`${cap}-tts`}
+                                />
                               </Field>
                             )}
                             {(entry.audio_modes || ['tts', 'stt']).includes('stt') && (
                               <Field hint="Speech to text">
-                                <ModelInput value={mod.stt_model} onChange={(v) => setModality(cap, { stt_model: v })} placeholder={entry.models.audio_stt || 'stt model'} listId={`${cap}-stt`} />
+                                <ModelInput
+                                  value={mod.stt_model}
+                                  onChange={(v) => setModality(cap, { stt_model: v })}
+                                  placeholder={entry.models.audio_stt || 'stt model'}
+                                  models={suggestions(cap, 'stt')}
+                                  listId={`${cap}-stt`}
+                                />
                               </Field>
                             )}
                           </div>
@@ -199,7 +292,7 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
                             value={mod.model}
                             onChange={(v) => setModality(cap, { model: v })}
                             placeholder={entry.models[cap] || 'model id'}
-                            models={cap === 'text' ? models : null}
+                            models={suggestions(cap)}
                             listId={`${cap}-models`}
                           />
                         )}
@@ -237,9 +330,14 @@ export function ProvidersPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const [filter, setFilter] = useState('');
+  const [capabilities, setCapabilities] = useState([]);
+  const [openAiOnly, setOpenAiOnly] = useState(false);
+  const [pricedOnly, setPricedOnly] = useState(false);
   const [editing, setEditing] = useState(null);
   const catalog = useAsync(() => loadCatalog(), []);
   const connections = useAsync(() => listConnections(workspace.id), [workspace.id]);
+  // the models each connection serves, refreshed with the connections
+  const models = useAsync(() => (connections.data ? listWorkspaceModels(workspace) : Promise.resolve(null)), [workspace.id, connections.data]);
 
   // load balancers and routers are managed in the routing page
   const list = (connections.data || []).filter((c) => !['loadbalancer', 'otoroshi'].includes(c.kind));
@@ -252,7 +350,20 @@ export function ProvidersPage() {
     return r;
   }, [list]);
 
-  const available = cat.filter((c) => !filter || c.label.toLowerCase().includes(filter.toLowerCase()) || c.id.includes(filter.toLowerCase()));
+  const available = cat.filter((c) => {
+    const insights = c.insights || {};
+    if (filter && !c.label.toLowerCase().includes(filter.toLowerCase()) && !c.id.includes(filter.toLowerCase())) return false;
+    if (capabilities.length && !capabilities.every((cap) => c.capabilities.includes(cap))) return false;
+    if (openAiOnly && insights.openai_compatible !== true) return false;
+    if (pricedOnly && !(insights.catalog && insights.catalog.priced > 0)) return false;
+    return true;
+  });
+  const capabilityOptions = KIND_ORDER.filter((k) => cat.some((c) => c.capabilities.includes(k)));
+
+  const modelsOf = (conn) => {
+    const ids = Object.values(conn.entities || {}).map((e) => e.id);
+    return ((models.data && models.data.models) || []).filter((m) => ids.includes(m.provider_id));
+  };
 
   const openNew = (entry) => setEditing(newConnection(entry, names));
   const openEdit = (conn) => {
@@ -296,6 +407,7 @@ export function ProvidersPage() {
                   <th>Provider</th>
                   <th>Capabilities</th>
                   <th>Default model</th>
+                  <th>Models</th>
                   <th>Key</th>
                   <th>Status</th>
                   <th />
@@ -317,6 +429,9 @@ export function ProvidersPage() {
                     </td>
                     <td className="mono truncate" style={{ maxWidth: 240 }}>
                       {(conn.modalities.text && conn.modalities.text.model) || Object.values(conn.modalities)[0].model || '—'}
+                    </td>
+                    <td>
+                      <ConnectionModels models={modelsOf(conn)} loading={models.loading && !models.data} workspace={workspace} />
                     </td>
                     <td>
                       {conn.token ? (
@@ -347,24 +462,73 @@ export function ProvidersPage() {
       <div className="card">
         <div className="row between" style={{ marginBottom: 14 }}>
           <h2>Available</h2>
-          <input className="input search" style={{ maxWidth: 240 }} placeholder="Filter providers" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <span className="muted small">
+            {available.length} of {cat.length} providers
+          </span>
+        </div>
+        <div className="provider-toolbar">
+          <input className="input search" placeholder="Filter providers" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <div className="picks">
+            {capabilityOptions.map((k) => (
+              <button
+                key={k}
+                className={`pick ${capabilities.includes(k) ? 'active' : ''}`}
+                title={`Providers serving ${KIND_LABELS[k].toLowerCase()} models`}
+                onClick={() => setCapabilities(capabilities.includes(k) ? capabilities.filter((c) => c !== k) : [...capabilities, k])}
+              >
+                {KIND_LABELS[k]}
+              </button>
+            ))}
+            <button className={`pick ${openAiOnly ? 'active' : ''}`} title="The gateway talks to the provider in the OpenAI format" onClick={() => setOpenAiOnly(!openAiOnly)}>
+              OpenAI compatible
+            </button>
+            <button className={`pick ${pricedOnly ? 'active' : ''}`} title="Cost tracking knows the price of its models" onClick={() => setPricedOnly(!pricedOnly)}>
+              Known prices
+            </button>
+          </div>
         </div>
         {catalog.loading && <Loading />}
+        {catalog.data && available.length === 0 && <Empty title="No provider matches these filters" />}
         <div className="provider-grid">
-          {available.map((entry) => (
-            <div key={entry.id} className="card tight clickable provider" onClick={() => openNew(entry)}>
-              <span className="logo-chip">{initials(entry.label)}</span>
-              <div className="grow">
-                <div className="truncate" style={{ fontWeight: 500 }}>
-                  {entry.label}
+          {available.map((entry) => {
+            const facts = insightsFacts(entry);
+            const insights = entry.insights || {};
+            const doc = insights.catalog && insights.catalog.doc;
+            return (
+              <div key={entry.id} className="card tight clickable provider" onClick={() => openNew(entry)}>
+                <div className="head">
+                  <span className="logo-chip">{initials(entry.label)}</span>
+                  <div className="grow">
+                    <div className="truncate" style={{ fontWeight: 500 }}>
+                      {entry.label}
+                    </div>
+                    <div className="muted small truncate">{counts[entry.id] ? `${counts[entry.id]} connection${counts[entry.id] > 1 ? 's' : ''}` : 'Not configured'}</div>
+                  </div>
+                  {doc && (
+                    <a className="doc-link" href={doc} target="_blank" rel="noreferrer" title="Provider documentation" onClick={(e) => e.stopPropagation()}>
+                      <Icon name="external" size={14} />
+                    </a>
+                  )}
                 </div>
-                <div className="muted small truncate">
-                  {counts[entry.id] ? `${counts[entry.id]} connection${counts[entry.id] > 1 ? 's' : ''}` : 'Not configured'}
-                  {entry.capabilities.filter((c) => c !== 'text').length > 0 && ` · ${entry.capabilities.filter((c) => c !== 'text').join(', ')}`}
+                <div className="facts truncate" title={facts.join(' · ')}>
+                  {facts.length ? facts.join(' · ') : <span className="faint">No catalog information</span>}
+                </div>
+                <div className="badges">
+                  {KIND_ORDER.filter((k) => entry.capabilities.includes(k)).map((k) => (
+                    <Badge key={k} kind="accent">
+                      {KIND_LABELS[k]}
+                    </Badge>
+                  ))}
+                  {insights.openai_compatible === true && <Badge title="The gateway talks to the provider in the OpenAI format">OpenAI API</Badge>}
+                  {insights.catalog && insights.catalog.priced > 0 && (
+                    <Badge kind="positive" title={`${insights.catalog.priced} of its known models have a price`}>
+                      Priced
+                    </Badge>
+                  )}
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -382,5 +546,18 @@ export function ProvidersPage() {
         />
       )}
     </div>
+  );
+}
+
+// the models a connection serves on the workspace endpoint
+function ConnectionModels({ models, loading, workspace }) {
+  if (loading) return <span className="faint">…</span>;
+  if (!models.length) return <span className="faint">—</span>;
+  const priced = models.filter(hasCost).length;
+  return (
+    <Link className="link" to={`/workspaces/${workspace.id}/models`} title={kindsSummary(models).join(', ')}>
+      {models.length} model{models.length > 1 ? 's' : ''}
+      <span className="faint small"> · {priced} priced</span>
+    </Link>
   );
 }
