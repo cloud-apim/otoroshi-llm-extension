@@ -18,6 +18,7 @@ class SearchEnginesPage extends Component {
       filterId: 'description',
       content: (item) => item.description,
     },
+    aiStudioColumn,
   ];
 
   providerDefaults = (provider) => {
@@ -86,6 +87,8 @@ class SearchEnginesPage extends Component {
   };
 
   formSchema = (state) => ({
+
+    ...aiStudioOriginField,
     _loc: {
       type: 'location',
       props: {},
@@ -293,11 +296,11 @@ class SearchEnginesPage extends Component {
 
   formFlow = (state) => {
     if (!state.provider) {
-      return ['_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider'];
+      return ['ai_studio_origin', '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider'];
     }
     if (state.provider === 'rag') {
       return [
-        '_loc', 'id', 'name', 'description', 'tags', 'metadata',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description', 'tags', 'metadata',
         '<<<Provider',
         'provider',
         '<<<Knowledge base',
@@ -310,7 +313,7 @@ class SearchEnginesPage extends Component {
       ];
     }
     return [
-      '_loc', 'id', 'name', 'description', 'tags', 'metadata',
+      'ai_studio_origin', '_loc', 'id', 'name', 'description', 'tags', 'metadata',
       '<<<Provider',
       'provider',
       '<<<API Connection',

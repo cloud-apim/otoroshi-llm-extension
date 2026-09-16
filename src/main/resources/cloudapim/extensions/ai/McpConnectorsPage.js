@@ -2,6 +2,8 @@
 class McpConnectorsPage extends Component {
 
   formSchema = {
+
+    ...aiStudioOriginField,
     _loc: {
       type: 'location',
       props: {},
@@ -286,7 +288,8 @@ class McpConnectorsPage extends Component {
         })[kind] ?? 'bg-secondary';
         return React.createElement('span', { className: `badge ${cls}` }, kind);
       },
-    }
+    },
+    aiStudioColumn,
   ];
 
   commonFlowTail = [
@@ -327,7 +330,7 @@ class McpConnectorsPage extends Component {
   }
 
   formFlow = (state) => {
-    const head = ['_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind'];
+    const head = ['ai_studio_origin', '_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata', '---', 'pool.size', '---', 'transport.kind'];
     const transportFields = this.transportFieldsFor(state?.transport?.kind);
     return [...head, ...transportFields, ...this.commonFlowTail];
   }

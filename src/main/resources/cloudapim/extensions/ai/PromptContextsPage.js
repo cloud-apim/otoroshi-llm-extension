@@ -151,6 +151,8 @@ class ContextMessage extends Component {
 class PromptContextsPage extends Component {
 
   formSchema = {
+
+    ...aiStudioOriginField,
     _loc: {
       type: 'location',
       props: {},
@@ -198,10 +200,11 @@ class PromptContextsPage extends Component {
       filterId: 'description',
       content: (item) => item.description,
     },
+    aiStudioColumn,
   ];
 
   formFlow = [
-    '_loc',
+    'ai_studio_origin', '_loc',
     'id',
     'name',
     'description',

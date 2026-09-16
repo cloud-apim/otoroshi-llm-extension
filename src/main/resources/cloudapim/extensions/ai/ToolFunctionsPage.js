@@ -111,6 +111,8 @@ class FunctionTester extends Component {
 class ToolFunctionsPage extends Component {
 
   formSchema = {
+
+    ...aiStudioOriginField,
     _loc: {
       type: 'location',
       props: {},
@@ -279,10 +281,11 @@ class ToolFunctionsPage extends Component {
       filterId: 'description',
       content: (item) => item.description,
     },
+    aiStudioColumn,
   ];
 
   formFlow = (item) => [
-    '_loc', 'id', 'name', 'description', 'tags', 'metadata',
+    'ai_studio_origin', '_loc', 'id', 'name', 'description', 'tags', 'metadata',
     '<<<Backend',
     'backend.kind',
     (item.backend.kind === 'Workflow') ? 'backend.options.workflow_id' : null,

@@ -3,6 +3,7 @@ class AudioModelsPage extends Component {
     dynamicVoices: null
   }
   formSchema = (state) => ({
+    ...aiStudioOriginField,
     _loc: {
       type: 'location',
       props: {},
@@ -157,16 +158,17 @@ class AudioModelsPage extends Component {
       filterId: 'provider',
       content: (item) => item.provider,
     },
+    aiStudioColumn,
   ];
 
 
   formFlow = (state) => {
     if (!state.provider) {
       return [
-        '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider']
+        'ai_studio_origin', '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider']
     }
     return [
-      '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config', '>>>Models restriction settings',
+      'ai_studio_origin', '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config', '>>>Models restriction settings',
         'models.include',
         'models.exclude',
         'models.require_known_costs',]

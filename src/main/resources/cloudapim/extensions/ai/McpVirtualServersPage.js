@@ -84,6 +84,8 @@ class McpRegistryUrlAssistant extends Component {
 class McpVirtualServersPage extends Component {
 
   formSchema = {
+
+    ...aiStudioOriginField,
     _loc: {
       type: 'location',
       props: {},
@@ -437,10 +439,11 @@ class McpVirtualServersPage extends Component {
       filterId: 'config.name',
       content: (item) => item?.config?.name ?? '',
     },
+    aiStudioColumn,
   ];
 
   formFlow = [
-    '_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata',
+    'ai_studio_origin', '_loc', 'id', 'enabled', 'name', 'description', 'tags', 'metadata',
     '---',
     'config.name', 'config.version',
     'config.protocol_version', 'config.cache_ttl_ms',

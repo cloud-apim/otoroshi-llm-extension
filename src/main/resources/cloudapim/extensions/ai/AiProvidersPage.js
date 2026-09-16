@@ -626,6 +626,8 @@ class AiProvidersPage extends Component {
   ], a => a.label)
 
   formSchema = (state) => ({
+
+    ...aiStudioOriginField,
     _loc: {
       type: 'location',
       props: {},
@@ -1235,13 +1237,14 @@ class AiProvidersPage extends Component {
       content: (item) => item.name,
     },
     { title: 'Provider', filterId: 'provider', content: (item) => item.provider },
+    aiStudioColumn,
   ];
 
   formFlow = (state) => {
     state.cache = state.cache || 'none'
     if (!state.provider) {
       return [
-        '_loc',
+        'ai_studio_origin', '_loc',
         'id',
         'name',
         'description',
@@ -1279,7 +1282,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "loadbalancer") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<Providers',
@@ -1295,7 +1298,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "otoroshi") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<code-router (candidates + routing)',
@@ -1322,7 +1325,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "ollama") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
@@ -1389,7 +1392,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "jlama") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         canExecuteJlama ? null : 'provider_error',
@@ -1435,7 +1438,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "alphaedge") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
@@ -1482,7 +1485,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "mistral") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
@@ -1542,7 +1545,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "cohere") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
@@ -1603,7 +1606,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "anthropic") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
@@ -1664,7 +1667,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "groq") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
@@ -1724,7 +1727,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "gemini") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
@@ -1780,7 +1783,7 @@ class AiProvidersPage extends Component {
         'metadata',
       ];
       // return [
-      //   '_loc', 'id', 'name', 'description',
+      //   'ai_studio_origin', '_loc', 'id', 'name', 'description',
       //   '<<<Provider',
       //   'provider',
       //   '<<<API Connection',
@@ -1828,7 +1831,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "azure-openai") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
@@ -1890,7 +1893,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "ovh-ai-endpoints") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
@@ -1944,7 +1947,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "cloudflare") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
@@ -1998,7 +2001,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "huggingface") {
       return [
-        '_loc', 'id', 'name', 'description',
+        'ai_studio_origin', '_loc', 'id', 'name', 'description',
         '<<<Provider',
         'provider',
         '<<<API Connection',
@@ -2050,7 +2053,7 @@ class AiProvidersPage extends Component {
     }
     if (state.provider === "openai-compatible" || OpenAiLikeProviders.some(p => p.id === state.provider)) {
       return [
-      '_loc', 'id', 'name', 'description',
+      'ai_studio_origin', '_loc', 'id', 'name', 'description',
       '<<<Provider',
       'provider',
       '<<<API Connection',
@@ -2114,7 +2117,7 @@ class AiProvidersPage extends Component {
       ];
     }
     return [
-      '_loc', 'id', 'name', 'description',
+      'ai_studio_origin', '_loc', 'id', 'name', 'description',
       '<<<Provider',
       'provider',
       '<<<API Connection',

@@ -2,6 +2,8 @@
 class EmbeddingModelsPage extends Component {
 
   formSchema = {
+
+    ...aiStudioOriginField,
     _loc: {
       type: 'location',
       props: {},
@@ -78,10 +80,11 @@ class EmbeddingModelsPage extends Component {
       filterId: 'description',
       content: (item) => item.description,
     },
+    aiStudioColumn,
   ];
 
   formFlow = [
-    '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config', '>>>Models restriction settings',
+    'ai_studio_origin', '_loc', 'id', 'name', 'description', 'tags', 'metadata', '---', 'provider', 'config', '>>>Models restriction settings',
         'models.include',
         'models.exclude',
         'models.require_known_costs',

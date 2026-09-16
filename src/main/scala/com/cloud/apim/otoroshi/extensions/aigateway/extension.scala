@@ -303,6 +303,8 @@ class AiExtension(val env: Env) extends AdminExtension {
   }
 
   lazy val promptPageCode = getResourceCode("cloudapim/extensions/ai/PromptPage.js")
+  // shared by every entity page, so it has to be loaded before them
+  lazy val aiStudioMarkerCode = getResourceCode("cloudapim/extensions/ai/AiStudioMarker.js")
   lazy val mcpConnectorsPageCode = getResourceCode("cloudapim/extensions/ai/McpConnectorsPage.js")
   lazy val a2aServersPageCode = getResourceCode("cloudapim/extensions/ai/A2AServersPage.js")
   lazy val a2aConnectorsPageCode = getResourceCode("cloudapim/extensions/ai/A2AConnectorsPage.js")
@@ -1029,6 +1031,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    const canExecuteJlama = ${JlamaChatClient.canExecuteJlama.toString};
             |    const canExecuteJlamaMsg = "${JlamaChatClient.errorMsg}";
             |
+            |    ${aiStudioMarkerCode}
             |    ${mcpConnectorsPageCode}
             |    ${a2aServersPageCode}
             |    ${a2aConnectorsPageCode}

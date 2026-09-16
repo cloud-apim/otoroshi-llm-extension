@@ -160,6 +160,7 @@ class BudgetsPage extends Component {
     dynamicVoices: null
   }
   formSchema = (state) => ({
+    ...aiStudioOriginField,
     _loc: {
       type: 'location',
       props: {},
@@ -394,12 +395,13 @@ class BudgetsPage extends Component {
       filterId: 'end_at',
       content: (item) => item.end_at,
     },
+    aiStudioColumn,
   ];
 
 
   formFlow = (state) => {
     return [
-      '_loc', 
+      'ai_studio_origin', '_loc', 
       'id', 
       'name', 
       'description', 
