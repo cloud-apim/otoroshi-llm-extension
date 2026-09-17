@@ -878,3 +878,13 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .estimate-grid .field { margin: 0; }
 .estimate-line { margin-top: 8px; color: var(--ink); }
 .btn.active-toggle { background: var(--accent-subtle); border-color: transparent; color: var(--accent-text); }
+.chat-msgs .inner.wide { max-width: 1480px; }
+.compare-models { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.compare-grid { display: grid; align-items: start; gap: 12px; }
+.compare-grid .msg .bubble { max-width: 100%; }
+.compare-title { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+.answer-foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; }
+.answer-actions { display: flex; align-items: center; gap: 2px; }
+.answer-actions .menu { display: inline-flex; }
+.versions { display: inline-flex; align-items: center; color: var(--faint); gap: 2px; font-size: 12px; margin-right: 4px; }
+.versions .copy-btn { font-size: 15px; line-height: 1; }

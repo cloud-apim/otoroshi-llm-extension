@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useWorkspace } from '../App';
-import { Badge, Field, MenuButton, NumberInput, Select, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
+import { Badge, CopyButton, Field, MenuButton, Modal, NumberInput, Select, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
 import { Markdown } from '../components/Markdown';
 import { chatCompletion } from '../lib/chat';
@@ -10,7 +10,22 @@ import { deleteConversation, getConversation, listConversations, listWorkspaceMo
 import { bootstrap } from '../lib/bootstrap';
 import { useRouter } from '../lib/router';
 import { capabilitiesOf, chatUsable, contextOf, fmtPrice, fmtTokens, promptPrice } from '../lib/modelmeta';
-import { copyOf, costOf, fileNameOf, MAX_IMPORT_BYTES, parseImport, persisted, toExport, toMarkdown, totalsOf } from '../lib/conversations';
+import {
+  answerSlot,
+  columnThread,
+  copyOf,
+  costOf,
+  fileNameOf,
+  historyFor,
+  MAX_COMPARED,
+  MAX_IMPORT_BYTES,
+  parseImport,
+  persisted,
+  showVersion,
+  toExport,
+  toMarkdown,
+  totalsOf,
+} from '../lib/conversations';
 import { download } from '../lib/files';
 
 const SUGGESTIONS = [
@@ -48,12 +63,12 @@ function pickerFacts(model) {
   return facts.join(' · ');
 }
 
-function ModelPicker({ value, onChange, models }) {
+function ModelPicker({ value, onChange, models, width = 520 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const filtered = models.filter((m) => !q || m.id.toLowerCase().includes(q.toLowerCase())).slice(0, 80);
   return (
-    <div style={{ position: 'relative', width: 520, maxWidth: '60vw' }}>
+    <div style={{ position: 'relative', width, maxWidth: width === '100%' ? undefined : '60vw' }}>
       <input
         className="input"
         value={open ? q : value}
@@ -91,6 +106,125 @@ function costTitle(costs) {
   return [part('input', costs.input_cost), part('output', costs.output_cost), part('reasoning', costs.reasoning_cost)].filter(Boolean).join(' · ');
 }
 
+// the model the gateway answered with, when it says more than the model that was asked for
+function servedModel(answer) {
+  if (!answer.model) return null;
+  return answer.requested && (answer.requested === answer.model || answer.requested.endsWith(`/${answer.model}`) || answer.requested.endsWith(`###${answer.model}`)) ? null : answer.model;
+}
+
+function AnswerMeta({ answer, compact }) {
+  const model = compact ? servedModel(answer) : answer.model;
+  return (
+    <div className="meta">
+      {model && <span title={compact ? 'The model that answered' : undefined}>{model}</span>}
+      {answer.usage && <span>{fmtInt((answer.usage.prompt_tokens || 0) + (answer.usage.completion_tokens || 0))} tokens</span>}
+      {costOf(answer) !== null && <span title={costTitle(answer.costs)}>{fmtCost(costOf(answer))}</span>}
+      {answer.duration && <span>{fmtMs(answer.duration)}</span>}
+      {answer.ttft && <span title="Time to the first token">ttft {fmtMs(answer.ttft)}</span>}
+      {answer.stopped && <span>stopped</span>}
+    </div>
+  );
+}
+
+// the answers a message had, the displayed one first; `onPick` is missing when the version cannot change anymore
+function Versions({ answer, onPick }) {
+  if (!answer.versions || answer.versions.length < 2 || answer.pending) return null;
+  const count = answer.versions.length;
+  const current = answer.version ?? count - 1;
+  return (
+    <span className="versions" title={onPick ? 'Answers generated for this message' : 'Answers generated for this message, the later messages follow this one'}>
+      {onPick && (
+        <button className="copy-btn" disabled={current === 0} onClick={() => onPick(current - 1)} title="Previous answer">
+          ‹
+        </button>
+      )}
+      {current + 1}/{count}
+      {onPick && (
+        <button className="copy-btn" disabled={current === count - 1} onClick={() => onPick(current + 1)} title="Next answer">
+          ›
+        </button>
+      )}
+    </span>
+  );
+}
+
+// an answer of the assistant: its text, what it cost, and what can be done with it
+function Answer({ answer, busy, compact, onRegenerate, onRegenerateWith, onVersion, onContinue }) {
+  return (
+    <>
+      <div className="bubble">
+        {answer.reasoning && (
+          <details className="thinking" open={answer.pending && !answer.content}>
+            <summary>{answer.pending && !answer.content ? 'Thinking…' : 'Thought process'}</summary>
+            <div className="thinking-body">
+              <Markdown text={answer.reasoning} />
+            </div>
+          </details>
+        )}
+        {answer.error ? answer.content : <Markdown text={answer.content || (answer.pending && !answer.reasoning ? '…' : '')} />}
+      </div>
+      {!answer.pending && (
+        <div className="answer-foot">
+          {answer.error ? <span /> : <AnswerMeta answer={answer} compact={compact} />}
+          <div className="answer-actions">
+            <Versions answer={answer} onPick={onVersion} />
+            {!answer.error && <CopyButton text={answer.content || ''} />}
+            {onRegenerate &&
+              (onRegenerateWith ? (
+                <MenuButton
+                  className="copy-btn"
+                  icon="refresh"
+                  title="Regenerate this answer"
+                  disabled={busy}
+                  minWidth={280}
+                  items={[
+                    { label: 'Regenerate', onClick: onRegenerate },
+                    { label: 'Regenerate with another model…', onClick: onRegenerateWith },
+                  ]}
+                />
+              ) : (
+                <button className="copy-btn" disabled={busy} onClick={onRegenerate} title="Regenerate this answer">
+                  <Icon name="refresh" size={14} />
+                </button>
+              ))}
+            {onContinue && (
+              <button className="btn sm ghost" disabled={busy} onClick={onContinue} title="Go on with this model only, in a new conversation">
+                Continue with this model
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function RegenerateModal({ models, initial, onClose, onPick }) {
+  const [value, setValue] = useState(initial || '');
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Regenerate with another model"
+      footer={
+        <>
+          <button className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" disabled={!value} onClick={() => onPick(value)}>
+            Regenerate
+          </button>
+        </>
+      }
+    >
+      <p className="muted">The answer is generated again, from the same messages, by the model you pick. The current answer stays one click away.</p>
+      <div style={{ minHeight: 300 }}>
+        <ModelPicker value={value} onChange={setValue} models={models} width="100%" />
+      </div>
+    </Modal>
+  );
+}
+
 export function ChatPage() {
   const { workspace } = useWorkspace();
   const toast = useToast();
@@ -115,9 +249,18 @@ export function ChatPage() {
     });
   const setSettings = (patch) => updatePrefs({ settings: { ...settings, ...patch } });
 
+  // the displayed conversation, also kept in a ref so the answers coming in find it
   const [conversation, setConversation] = useState(null);
+  const conversationRef = useRef(null);
+  const commit = (next) => {
+    conversationRef.current = next;
+    setConversation(next);
+  };
   // a temporary chat is never stored: it lives in this page only
   const [temporary, setTemporary] = useState(false);
+  // the models of a comparison about to start
+  const [draft, setDraft] = useState(null);
+  const [regenerateAt, setRegenerateAt] = useState(null);
   const [input, setInput] = useState('');
   const fileRef = useRef(null);
   const [busy, setBusy] = useState(false);
@@ -137,6 +280,9 @@ export function ChatPage() {
 
   const messages = (conversation && conversation.messages) || [];
   const totals = totalsOf(conversation);
+  // the columns of a comparison, set once it has started
+  const columns = (conversation && conversation.compare) || (messages.length === 0 ? draft : null);
+  const locked = messages.length > 0;
 
   const persist = (conv) => saveConversation(workspace, persisted(conv)).then(() => rooms.reload());
 
@@ -151,17 +297,41 @@ export function ChatPage() {
     getConversation(workspace, id)
       .then((c) => {
         setTemporary(false);
-        setConversation(c);
+        setDraft(null);
+        commit(c);
       })
       .catch(toast.error);
   };
 
   const newChat = async (temp) => {
-    if (!(await leaveTemporary())) return;
+    if (!(await leaveTemporary())) return false;
     if (busy) abortRef.current && abortRef.current.abort();
-    setConversation(null);
+    commit(null);
+    setDraft(null);
     setTemporary(!!temp);
     setInput('');
+    return true;
+  };
+
+  const setColumns = (next) => {
+    if (conversation && conversation.compare) commit({ ...conversation, compare: next, model: next[0] });
+    else setDraft(next);
+  };
+
+  const toggleCompare = async () => {
+    if (columns) {
+      if (locked) await newChat(temporary);
+      else if (conversation && conversation.compare) {
+        const { compare: _c, ...plain } = conversation;
+        commit(plain);
+      }
+      setDraft(null);
+      return;
+    }
+    // a comparison starts in a new conversation
+    if (locked && !(await newChat(temporary))) return;
+    const others = textModels.map((m) => m.id).filter((id) => id !== model);
+    setDraft([model || '', others[0] || '']);
   };
 
   const clearChat = () => {
@@ -173,7 +343,7 @@ export function ChatPage() {
     }).then((ok) => {
       if (!ok) return;
       const cleared = { ...conversation, messages: [] };
-      setConversation(cleared);
+      commit(cleared);
       if (!temporary) persist(cleared).catch(toast.error);
     });
   };
@@ -182,7 +352,7 @@ export function ChatPage() {
     const copy = copyOf(conversation, `conv_${randomId(16)}`, `Copy of ${conversation.title || 'Untitled'}`);
     try {
       await persist(copy);
-      setConversation(copy);
+      commit(copy);
       toast.success('Conversation duplicated');
     } catch (e) {
       toast.error(e);
@@ -216,7 +386,8 @@ export function ChatPage() {
       const imported = { id: `conv_${randomId(16)}`, created_at: Date.now(), imported_at: Date.now(), ...parsed };
       await persist(imported);
       setTemporary(false);
-      setConversation(imported);
+      setDraft(null);
+      commit(imported);
       toast.success(`${parsed.messages.length} message${parsed.messages.length === 1 ? '' : 's'} imported`);
     } catch (e) {
       toast.error(`Import failed: ${e.message}`);
@@ -228,75 +399,145 @@ export function ChatPage() {
       if (!ok) return;
       deleteConversation(workspace, id)
         .then(() => {
-          if (conversation && conversation.id === id) setConversation(null);
+          if (conversation && conversation.id === id) commit(null);
           rooms.reload();
         })
         .catch(toast.error);
     });
   };
 
-  const send = async (text) => {
-    const content = (text ?? input).trim();
-    if (!content || busy) return;
-    if (!model) {
-      toast.error('Select a model');
-      return;
-    }
-    const base = conversation || { id: `conv_${randomId(16)}`, title: content.substring(0, 60), created_at: Date.now(), messages: [] };
+  const requestBody = (requested, history) => ({
+    model: requested,
+    messages: settings.system ? [{ role: 'system', content: settings.system }, ...history] : history,
+    temperature: Number(settings.temperature),
+    top_p: Number(settings.top_p),
+    ...(settings.max_tokens ? { max_tokens: Number(settings.max_tokens) } : {}),
+    ...(settings.preset ? { context: settings.preset } : {}),
+  });
+
+  // Streams the answers of `jobs` ({ index, column, requested, history, previous }) into `start`, all at once, then
+  // saves the conversation. The conversation is followed by id: the page may have moved to another one meanwhile.
+  const run = async (start, jobs) => {
     const keep = !temporary;
-    const userMsg = { role: 'user', content, at: Date.now() };
-    const pending = { role: 'assistant', content: '', model, pending: true, at: Date.now() };
-    let current = { ...base, model, messages: [...base.messages, userMsg, pending] };
-    setConversation(current);
-    setInput('');
+    let current = start;
+    commit(current);
+    const place = (index, column, slot) => {
+      current = {
+        ...current,
+        messages: current.messages.map((m, i) => {
+          if (i !== index) return m;
+          if (column === null) return { role: 'assistant', ...slot };
+          return { ...m, answers: m.answers.map((a, c) => (c === column ? slot : a)) };
+        }),
+      };
+      if (conversationRef.current && conversationRef.current.id === current.id) commit(current);
+    };
+    const answer = async ({ index, column, requested, history, previous }, signal) => {
+      let partial = { model: requested, requested, content: '', at: Date.now() };
+      place(index, column, answerSlot(previous, partial, true));
+      let complete;
+      try {
+        const res = await chatCompletion({
+          workspace,
+          body: requestBody(requested, history),
+          stream: settings.stream,
+          signal,
+          sessionId: start.id,
+          onDelta: (content, reasoning) => {
+            partial = { ...partial, content, reasoning };
+            place(index, column, answerSlot(previous, partial, true));
+          },
+        });
+        complete = {
+          content: res.content,
+          reasoning: res.reasoning || '',
+          model: res.model || requested,
+          requested,
+          at: Date.now(),
+          usage: res.usage || null,
+          costs: res.costs || null,
+          duration: res.duration,
+          ttft: res.ttft,
+        };
+      } catch (e) {
+        complete = e.name === 'AbortError' ? { ...partial, stopped: true } : { content: e.message, error: true, model: requested, requested, at: Date.now() };
+      }
+      place(index, column, answerSlot(previous, complete));
+    };
     setBusy(true);
     const controller = new AbortController();
     abortRef.current = controller;
-    const history = [...base.messages.filter((m) => !m.error), userMsg].map((m) => ({ role: m.role, content: m.content }));
-    const messages = settings.system ? [{ role: 'system', content: settings.system }, ...history] : history;
-    const body = {
-      model,
-      messages,
-      temperature: Number(settings.temperature),
-      top_p: Number(settings.top_p),
-      ...(settings.max_tokens ? { max_tokens: Number(settings.max_tokens) } : {}),
-      ...(settings.preset ? { context: settings.preset } : {}),
-    };
-    const replaceLast = (msg) => {
-      current = { ...current, messages: [...current.messages.slice(0, -1), msg] };
-      setConversation(current);
-    };
     try {
-      const res = await chatCompletion({
-        workspace,
-        body,
-        stream: settings.stream,
-        signal: controller.signal,
-        sessionId: base.id,
-        onDelta: (c, r) => replaceLast({ ...pending, content: c, reasoning: r }),
-      });
-      replaceLast({
-        role: 'assistant',
-        content: res.content,
-        reasoning: res.reasoning || '',
-        model: res.model || model,
-        at: Date.now(),
-        usage: res.usage || null,
-        costs: res.costs || null,
-        duration: res.duration,
-        ttft: res.ttft,
-      });
-    } catch (e) {
-      if (e.name === 'AbortError') {
-        const last = current.messages[current.messages.length - 1];
-        replaceLast({ ...last, pending: false, stopped: true });
-      } else {
-        replaceLast({ role: 'assistant', content: e.message, error: true, at: Date.now() });
-      }
+      await Promise.all(jobs.map((job) => answer(job, controller.signal)));
     } finally {
       setBusy(false);
       abortRef.current = null;
       if (keep) persist(current).catch(() => {});
+    }
+  };
+
+  const send = async (text) => {
+    const content = (text ?? input).trim();
+    if (!content || busy) return;
+    if (columns ? columns.some((c) => !c) : !model) {
+      toast.error(columns ? 'Select a model for every column' : 'Select a model');
+      return;
+    }
+    const base = conversation || { id: `conv_${randomId(16)}`, title: content.substring(0, 60), created_at: Date.now(), messages: [] };
+    const asked = [...base.messages, { role: 'user', content, at: Date.now() }];
+    const index = asked.length;
+    const turn = columns ? { role: 'assistant', answers: columns.map((c) => ({ model: c, requested: c, content: '', pending: true })), at: Date.now() } : { role: 'assistant', model, requested: model, content: '', pending: true, at: Date.now() };
+    setInput('');
+    setDraft(null);
+    await run(
+      { ...base, ...(columns ? { compare: columns, model: columns[0] } : { model }), messages: [...asked, turn] },
+      columns
+        ? columns.map((requested, column) => ({ index, column, requested, history: historyFor(asked, column), previous: null }))
+        : [{ index, column: null, requested: model, history: historyFor(asked), previous: null }]
+    );
+  };
+
+  // a new answer for the message at `index`, by `requested` or the model that gave the current one
+  const regenerate = async (index, requested) => {
+    if (busy) return;
+    const conv = conversationRef.current;
+    const previous = conv.messages[index];
+    const later = conv.messages.length - index - 1;
+    if (later > 0 && !(await confirm({ title: 'Regenerate this answer?', message: `The ${later} message${later > 1 ? 's' : ''} after it will be removed.`, confirmLabel: 'Regenerate' }))) return;
+    const target = requested || previous.requested || model;
+    await run({ ...conv, messages: conv.messages.slice(0, index + 1) }, [{ index, column: null, requested: target, history: historyFor(conv.messages.slice(0, index)), previous }]);
+  };
+
+  const regenerateColumn = (index, column) => {
+    const conv = conversationRef.current;
+    run(conv, [{ index, column, requested: conv.compare[column], history: historyFor(conv.messages.slice(0, index), column), previous: conv.messages[index].answers[column] }]);
+  };
+
+  const switchVersion = (index, column, version) => {
+    const conv = conversationRef.current;
+    const next = {
+      ...conv,
+      messages: conv.messages.map((m, i) => {
+        if (i !== index) return m;
+        return column === null ? showVersion(m, version) : { ...m, answers: m.answers.map((a, c) => (c === column ? showVersion(a, version) : a)) };
+      }),
+    };
+    commit(next);
+    if (!temporary) persist(next).catch(() => {});
+  };
+
+  // the winner of a comparison goes on alone, in a new conversation
+  const continueWith = async (column) => {
+    const conv = conversationRef.current;
+    const requested = conv.compare[column];
+    const thread = { ...columnThread(conv, column), id: `conv_${randomId(16)}`, title: `${conv.title || 'Untitled'} · ${requested}`, created_at: Date.now() };
+    try {
+      if (!temporary) await persist(thread);
+      setDraft(null);
+      commit(thread);
+      updatePrefs({ model: requested });
+    } catch (e) {
+      toast.error(e);
     }
   };
 
@@ -349,8 +590,37 @@ export function ChatPage() {
       </div>
       <div className="chat-main">
         <div className="chat-head">
-          <ModelPicker value={model} onChange={(m) => updatePrefs({ model: m })} models={textModels} />
-          <span className="muted small">{models.loading ? 'loading models…' : `${textModels.length} models`}</span>
+          {columns ? (
+            <div className="compare-models">
+              {columns.map((c, i) =>
+                locked ? (
+                  <Badge key={i} kind="accent">
+                    {c}
+                  </Badge>
+                ) : (
+                  <div key={i} className="row" style={{ gap: 2 }}>
+                    <ModelPicker value={c} onChange={(v) => setColumns(columns.map((x, j) => (j === i ? v : x)))} models={textModels} width={240} />
+                    {columns.length > 2 && (
+                      <button className="copy-btn" onClick={() => setColumns(columns.filter((_, j) => j !== i))} title="Remove this model">
+                        <Icon name="x" size={14} />
+                      </button>
+                    )}
+                  </div>
+                )
+              )}
+              {!locked && columns.length < MAX_COMPARED && (
+                <button className="btn sm ghost" onClick={() => setColumns([...columns, textModels.map((m) => m.id).find((id) => !columns.includes(id)) || ''])}>
+                  <Icon name="plus" />
+                  Add a model
+                </button>
+              )}
+            </div>
+          ) : (
+            <>
+              <ModelPicker value={model} onChange={(m) => updatePrefs({ model: m })} models={textModels} />
+              <span className="muted small nowrap">{models.loading ? 'loading models…' : `${textModels.length} models`}</span>
+            </>
+          )}
           <div className="grow" />
           {temporary && (
             <Badge kind="warning" title="Not saved in your chats. Its calls still count in the activity and the budgets.">
@@ -366,6 +636,10 @@ export function ChatPage() {
               {totals.priced > 0 && totals.priced < totals.answers ? '+' : ''} · {fmtInt(totals.tokens)} tokens
             </span>
           )}
+          <button className={`btn sm ${columns ? 'active-toggle' : ''}`} disabled={busy} onClick={toggleCompare} title={columns ? 'Back to a single model' : 'Ask up to 3 models the same questions, side by side'}>
+            <Icon name="columns" />
+            Compare
+          </button>
           {messages.length > 0 && (
             <>
               {temporary ? (
@@ -400,43 +674,64 @@ export function ChatPage() {
         <div className="chat-body">
           <div className="chat-main">
             <div className="chat-msgs">
-              <div className="inner">
+              <div className={`inner ${columns ? 'wide' : ''}`}>
                 {messages.length === 0 && (
-                  <>
-                    <div className="chat-welcome">
-                      <h3>{temporary ? 'Temporary chat' : 'What can I help with?'}</h3>
-                      <p className="muted">
-                        Chat with the models of <code>{workspace.baseUrl.replace(/^https?:\/\//, '')}</code> as {bootstrap.user.email}.
-                        {temporary && ' This chat is not saved, its calls still count in the activity and the budgets.'}
-                      </p>
-                    </div>
-                  </>
-                )}
-                {messages.map((m, idx) => (
-                  <div key={idx} className={`msg ${m.role} ${m.error ? 'error' : ''}`}>
-                    <div className="bubble">
-                      {m.reasoning && (
-                        <details className="thinking" open={m.pending && !m.content}>
-                          <summary>{m.pending && !m.content ? 'Thinking…' : 'Thought process'}</summary>
-                          <div className="thinking-body">
-                            <Markdown text={m.reasoning} />
-                          </div>
-                        </details>
+                  <div className="chat-welcome">
+                    <h3>{columns ? 'Compare models side by side' : temporary ? 'Temporary chat' : 'What can I help with?'}</h3>
+                    <p className="muted">
+                      {columns ? (
+                        'Every question goes to each model at once, and each model keeps its own thread. Compare the answers, their cost and their speed.'
+                      ) : (
+                        <>
+                          Chat with the models of <code>{workspace.baseUrl.replace(/^https?:\/\//, '')}</code> as {bootstrap.user.email}.
+                        </>
                       )}
-                      {m.role === 'assistant' && !m.error ? <Markdown text={m.content || (m.pending && !m.reasoning ? '…' : '')} /> : m.content}
-                    </div>
-                    {m.role === 'assistant' && !m.pending && !m.error && (
-                      <div className="meta">
-                        {m.model && <span>{m.model}</span>}
-                        {m.usage && <span>{fmtInt((m.usage.prompt_tokens || 0) + (m.usage.completion_tokens || 0))} tokens</span>}
-                        {costOf(m) !== null && <span title={costTitle(m.costs)}>{fmtCost(costOf(m))}</span>}
-                        {m.duration && <span>{fmtMs(m.duration)}</span>}
-                        {m.ttft && <span>ttft {fmtMs(m.ttft)}</span>}
-                        {m.stopped && <span>stopped</span>}
-                      </div>
-                    )}
+                      {temporary && ' This chat is not saved, its calls still count in the activity and the budgets.'}
+                    </p>
                   </div>
-                ))}
+                )}
+                {messages.map((m, idx) => {
+                  const last = idx === messages.length - 1;
+                  if (m.role !== 'assistant') {
+                    return (
+                      <div key={idx} className={`msg ${m.role}`}>
+                        <div className="bubble">{m.content}</div>
+                      </div>
+                    );
+                  }
+                  if (m.answers) {
+                    return (
+                      <div key={idx} className="compare-grid" style={{ gridTemplateColumns: `repeat(${m.answers.length}, minmax(0, 1fr))` }}>
+                        {m.answers.map((a, col) => (
+                          <div key={col} className={`msg assistant ${a.error ? 'error' : ''}`}>
+                            <div className="compare-title truncate" title={conversation.compare[col]}>
+                              {conversation.compare[col]}
+                            </div>
+                            <Answer
+                              answer={a}
+                              busy={busy}
+                              compact
+                              onRegenerate={last ? () => regenerateColumn(idx, col) : null}
+                              onVersion={last ? (v) => switchVersion(idx, col, v) : null}
+                              onContinue={last ? () => continueWith(col) : null}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={idx} className={`msg assistant ${m.error ? 'error' : ''}`}>
+                      <Answer
+                        answer={m}
+                        busy={busy}
+                        onRegenerate={() => regenerate(idx)}
+                        onRegenerateWith={() => setRegenerateAt(idx)}
+                        onVersion={last ? (v) => switchVersion(idx, null, v) : null}
+                      />
+                    </div>
+                  );
+                })}
                 <div ref={endRef} />
               </div>
             </div>
@@ -453,7 +748,7 @@ export function ChatPage() {
             <div className="chat-input">
               <div className="box">
                 <textarea
-                  placeholder="Ask anything…"
+                  placeholder={columns ? `Ask ${columns.length} models…` : 'Ask anything…'}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -510,6 +805,18 @@ export function ChatPage() {
           )}
         </div>
       </div>
+      {regenerateAt !== null && (
+        <RegenerateModal
+          models={textModels}
+          initial={(messages[regenerateAt] && messages[regenerateAt].requested) || model}
+          onClose={() => setRegenerateAt(null)}
+          onPick={(picked) => {
+            const index = regenerateAt;
+            setRegenerateAt(null);
+            regenerate(index, picked);
+          }}
+        />
+      )}
     </div>
   );
 }
