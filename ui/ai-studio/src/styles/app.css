@@ -844,6 +844,10 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .pick:hover { background: var(--hover); color: var(--ink); }
 .pick.active { background: var(--accent-subtle); border-color: var(--accent-border); color: var(--accent-text); }
 .list-toolbar { margin-bottom: 10px; }
+/* the actions of a list wrap rather than squeezing a segmented control out of its own box */
+.list-toolbar > .row { flex-wrap: wrap; justify-content: flex-end; }
+.list-toolbar select { width: auto; }
+.segmented { flex-shrink: 0; }
 .model-card .labels { margin-top: 8px; }
 .model-card .meta { margin-top: 8px; }
 .details-section { border-top: 1px solid var(--border); padding-top: 14px; }
@@ -884,11 +888,17 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .compare-grid .msg .bubble { max-width: 100%; }
 .compare-title { color: var(--muted); font-family: var(--mono); font-size: 12px; }
 .answer-foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; }
+/* in a narrow column, the facts of an answer wrap one by one instead of breaking inside */
+.answer-foot .meta { flex-wrap: wrap; gap: 2px 12px; min-width: 0; }
+.answer-foot .meta span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .answer-actions { display: flex; align-items: center; gap: 2px; }
 .answer-actions .menu { display: inline-flex; }
 .versions { display: inline-flex; align-items: center; color: var(--faint); gap: 2px; font-size: 12px; margin-right: 4px; }
 .versions .copy-btn { font-size: 15px; line-height: 1; }
 .health-summary { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; }
+/* one line per figure in the models table, the capabilities take the room left */
+.models-table td.num, .models-table .health-summary { white-space: nowrap; flex-wrap: nowrap; }
+.models-table td.capabilities { min-width: 200px; }
 .health-healthy { color: var(--positive-text); }
 .health-degraded { color: var(--warning-text); }
 .health-failing { color: var(--negative-text); }

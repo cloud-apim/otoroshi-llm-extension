@@ -505,7 +505,7 @@ export function ModelsPage() {
                         {hasHealth && <td className="num nowrap">{attempted(healthOf(m)) > 0 ? fmtSpeed(healthOf(m).tokens_per_second) : '—'}</td>}
                         {estimate.on && <td className="num">{estimates.get(m) ? fmtCost(estimates.get(m).perRequest) : '—'}</td>}
                         {estimate.on && <td className="num">{estimates.get(m) ? <b>{fmtCost(estimates.get(m).total)}</b> : '—'}</td>}
-                        <td className="faint small">{capabilitiesOf(m).map((c) => c.label).join(', ')}</td>
+                        <td className="faint small capabilities">{capabilitiesOf(m).map((c) => c.label).join(', ')}</td>
                       </tr>
                     ))}
                   </tbody>

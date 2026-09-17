@@ -109,52 +109,75 @@ When you pick the default model of each capability, the suggestions only list th
 and price. Turn on **Require known costs** to refuse, and hide, the models whose price cost tracking does
 not know: every call of the provider then counts against your dollar budgets.
 
+Each connected provider also shows its health over the last 24 hours: the share of calls that succeeded,
+median latency and generation speed. A provider that starts failing stands out at a glance.
+
 ![The providers page: connected providers and the catalog of available providers with their capabilities](/img/ai-studio-providers.png)
 
-*Connected providers on top, and the catalog below with the capabilities of each provider.*
+*Connected providers on top, with their health over the last day, and the catalog below with the capabilities of each provider.*
 
-### Browse models and chat
+### Find the right model
 
 **Models** lists every model reachable through the workspace endpoint, with the exact id to put in the
 `model` field of your requests. Each model shows its types, capabilities (reasoning, tools, structured
 output, vision, PDF, audio, prompt caching, web search), context window and price per million tokens.
 Filter them by type, capability, API endpoint, known price, context window and provider, sort them by
 price or context, switch to a comparison table, and open any model for its full details and a ready to
-paste request. **Estimate costs** answers "what would this cost us?" before you commit to a model: describe
-a workload (tokens in and out per request, requests per month, share of the prompt served from cache) or
-start from a typical one (chat message, RAG answer, agent step, summary), and every model shows what it
-would cost per request and per month at its list price, the cheapest first.
+paste request.
+
+![The models page listing every model reachable through the workspace](/img/ai-studio-models.png)
+
+*Every model of the workspace, with the id to use in your requests, its capabilities and its price.*
+
+**Estimate costs** answers "what would this cost us?" before you commit to a model: describe a workload
+(tokens in and out per request, requests per month, share of the prompt served from cache) or start from
+a typical one (chat message, RAG answer, agent step, summary), and every model shows what it would cost
+per request and per month at its list price, the cheapest first.
+
+![The cost estimate of the models page: a workload priced on every model, the cheapest first](/img/ai-studio-models-estimate.png)
+
+*One workload, and what it would cost each month on every model of the workspace.*
 
 The models also show how they actually behave in your workspace: the share of calls that succeeded,
 median latency and generation speed, over the last day, week or month. Filter the healthy, degraded or
 failing ones, sort by usage, latency or speed, and open a model for its p95 latency, time to first token
 and last failure, with a link to its calls. The refusals of the gateway itself (guardrails, budgets, model
 restrictions) never count as failures of a model, and answers served from the cache never skew its latency.
-**Providers** show the same health for each connection over the last 24 hours, so a provider that starts
-failing stands out at a glance. **Chat** is a playground to try any of them, with streaming, reasoning
-display, presets and generation settings. Conversations are saved per user and per workspace.
 
-Each answer shows its model, tokens, latency and what the gateway billed for it, and the conversation
-keeps a running total, so you know what a prompt costs before it ships.
+![The health of the models: success rate, median latency and generation speed of the busiest models](/img/ai-studio-models-health.png)
+
+*The busiest models of the week, with the share of their calls that succeeded, their median latency and their speed.*
+
+### Chat with any model
+
+**Chat** is a playground to try any model of the workspace, with streaming, reasoning display, presets and
+generation settings. Conversations are saved per user and per workspace. Each answer shows its model,
+tokens, latency and what the gateway billed for it, and the conversation keeps a running total, so you
+know what a prompt costs before it ships.
+
+![The AI Studio chat with its conversations, model picker and request settings](/img/ai-studio-chat.png)
+
+*The chat: conversations on the left, the model picker on top, presets, system prompt and generation settings on the right.*
 
 Not convinced by an answer? **Regenerate** it, with the same model or with another one: every answer
 stays one click away, so you can flip between them and keep the best. **Compare** puts up to three models
 side by side: each question goes to all of them at once, each model keeps its own thread, and every column
 shows its answer, cost, latency and time to first token. Once you know which model fits, continue the
-conversation with that one only. Duplicate a conversation to try
-another direction without losing the first one, clear it to start over, or open a **temporary chat**
-that is never saved, for a quick test or a sensitive question (its calls still count in the activity
-and the budgets). Export a conversation as JSON to import it again later, in another workspace or by a
-teammate, or as Markdown to read or share it. Import also accepts the `messages` of an OpenAI chat
-request, to replay a prompt from your code.
+conversation with that one only.
 
-![The models page listing every model reachable through the workspace](/img/ai-studio-models.png)
+![Two models compared side by side in the chat, each with its answer, tokens, latency and time to first token](/img/ai-studio-chat-compare.png)
 
-*Every model of the workspace, with the id to use in your requests, its capabilities and its price.*
+*The same question to two models at once, each answering in its own column with what it cost and how fast it was.*
 
-![The AI Studio chat with its conversations, model picker and request settings](/img/ai-studio-chat.png)
+Conversations are yours to shape:
 
-*The chat: conversations on the left, the model picker on top, presets, system prompt and generation settings on the right.*
+- **Duplicate** a conversation to try another direction without losing the first one, or **clear** it to
+  start over.
+- Open a **temporary chat** that is never saved, for a quick test or a sensitive question. Its calls still
+  count in the activity and the budgets.
+- **Export** a conversation as JSON to import it again later, in another workspace or by a teammate, or as
+  Markdown to read or share it. **Import** also accepts the `messages` of an OpenAI chat request, to replay
+  a prompt from your code.
 
 The chat needs no API key: it runs as the signed-in backoffice user, with the same configuration as the
 workspace endpoint. Guardrails, fallbacks, routers, costs and analytics apply as they do for your
@@ -186,6 +209,10 @@ keys. Workspace keys belong to no one in particular, which suits shared applicat
 ![The API keys page of a workspace](/img/ai-studio-api-keys.png)
 
 *Each key with its credit limit, its budgets, its quotas and its expiration, and shortcuts to its activity and its budget.*
+
+![Editing an API key: owner, expiration, the models it may call, credit limit and quotas](/img/ai-studio-api-key-edit.png)
+
+*A key limited to two models and expiring in 90 days, with its own credit limit.*
 
 ### Route and protect
 
