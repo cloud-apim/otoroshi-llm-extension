@@ -153,7 +153,7 @@ export function GuardrailsPage() {
             <div className="card-head">
               <div>
                 <h2>Model & provider access</h2>
-                <p>Regular expressions on model ids. Empty lists allow everything. Applied to every provider and model of the workspace.</p>
+                <p>Regular expressions on model ids: model, provider/model or provider###model. Empty lists allow everything. Applied to every provider and model of the workspace, and to every key on top of its own models.</p>
               </div>
               <button className="btn sm primary" disabled={saving || allEntities.length === 0} onClick={saveAccess}>
                 Save
@@ -161,10 +161,10 @@ export function GuardrailsPage() {
             </div>
             {accessMixed && <div className="alert warning mb">Providers currently have different lists, saving applies these ones to all of them.</div>}
             <div className="grid cols-2">
-              <Field label="Allowed models" hint="e.g. gpt-4o.* or mistral-.*">
+              <Field label="Allowed models" hint="e.g. gpt-4o.*, mistral-.* or openai/.*">
                 <LinesInput value={access.include} onChange={(v) => setAccess((a) => ({ ...a, include: v }))} rows={4} />
               </Field>
-              <Field label="Blocked models" hint="e.g. .*-preview or o1.*">
+              <Field label="Blocked models" hint="e.g. .*-preview, o1.* or azure###.*">
                 <LinesInput value={access.exclude} onChange={(v) => setAccess((a) => ({ ...a, exclude: v }))} rows={4} />
               </Field>
             </div>

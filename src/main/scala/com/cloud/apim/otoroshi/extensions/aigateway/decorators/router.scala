@@ -250,14 +250,14 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     prompt.messages.map(m => s"${m.role}: ${m.wholeTextContent}").mkString("\n").take(8000)
 
   // a configured aux provider (judge or synthesizer), falling back to the highest-quality panel member
-  private def fusionAuxClient(refKey: String, panel: Seq[RouterCandidate])(using env: Env): Option[ChatClient] = {
-    auxProvider(refKey).flatMap(_.getChatClient())
-      .orElse(panel.sortBy(c => -c.score.getOrElse(0.0)).headOption.flatMap(_.provider.getChatClient()))
+  private def fusionAuxClient(refKey: String, panel: Seq[RouterCandidate])(using env: Env): Option[(AiProvider, ChatClient)] = {
+    auxProvider(refKey).flatMap(p => p.getChatClient().map(c => (p, c)))
+      .orElse(panel.sortBy(c => -c.score.getOrElse(0.0)).headOption.flatMap(c => c.provider.getChatClient().map(cl => (c.provider, cl))))
   }
 
   // run the whole fusion pipeline up to (but excluding) the final synthesis call, returning the
   // synthesizer client + the synthesis prompt + the body to call it with.
-  private def prepareFusion(prompt: ChatPrompt, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (ChatClient, ChatPrompt, JsObject)]] = {
+  private def prepareFusion(prompt: ChatPrompt, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (AiProvider, ChatClient, ChatPrompt, JsObject)]] = {
     val panel = resolveCandidates("fusion_router_refs", "fusion_router_ref").take(8)
     if (panel.isEmpty) {
       Json.obj("error" -> "no panel provider configured for the otoroshi fusion-router (set options.fusion_router_refs)").leftf
@@ -284,7 +284,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
           // 2. judge: structured comparison of the panel responses (best-effort, falls back to raw panel text)
           val judgeAnalysisF: Future[String] = fusionAuxClient("fusion_router_judge_ref", panel) match {
             case None => Future.successful(panelText)
-            case Some(judge) =>
+            case Some((_, judge)) =>
               val jsys = "You are an impartial judge in a multi-model deliberation. Compare the panel responses below — do NOT merge or rewrite them. Identify: (1) consensus points all/most agree on (higher confidence), (2) disagreements, (3) unique insights from individual responses, (4) gaps or blind spots none addressed. Return a concise structured analysis."
               val juser = s"User request:\n${question}\n\nPanel responses:\n${panelText}"
               val jprompt = ChatPrompt(Seq(
@@ -298,16 +298,16 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
           }
           // 3. synthesis: the outer model produces the final answer from the analysis, answering the original request
           judgeAnalysisF.map { analysis =>
-            val result: Either[JsValue, (ChatClient, ChatPrompt, JsObject)] = fusionAuxClient("fusion_router_synthesizer_ref", panel) match {
+            val result: Either[JsValue, (AiProvider, ChatClient, ChatPrompt, JsObject)] = fusionAuxClient("fusion_router_synthesizer_ref", panel) match {
               case None => Left(Json.obj("error" -> "no synthesizer available for the otoroshi fusion-router"))
-              case Some(synth) =>
+              case Some((synthProvider, synth)) =>
                 val ssys =
                   s"""You are the final synthesizer in a multi-model deliberation. Using the structured analysis below (consensus, disagreements, unique insights, gaps) from a panel of expert models, produce the best, most accurate and complete answer to the user's request. Prefer consensus, resolve disagreements with reasoning, incorporate unique insights, and fill the gaps. Do not mention the panel, the judge, or this deliberation process — just give the answer.
                      |
                      |Structured analysis:
                      |${analysis.take(12000)}""".stripMargin
                 val synthMessages = ChatMessage.input("system", ssys, None, Json.obj("role" -> "system", "content" -> ssys)) +: prompt.messages
-                Right((synth, ChatPrompt(synthMessages), cleanBody))
+                Right((synthProvider, synth, ChatPrompt(synthMessages), cleanBody))
             }
             result
           }
@@ -319,14 +319,18 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   private def fusionCall(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     prepareFusion(prompt, originalBody).flatMap {
       case Left(err) => err.leftf
-      case Right((client, synthPrompt, body)) => client.call(synthPrompt, attrs, body)
+      case Right((synth, client, synthPrompt, body)) =>
+        delegate(attrs, originalBody, synth, client, body)
+        client.call(synthPrompt, attrs, body)
     }
   }
 
   private def fusionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     prepareFusion(prompt, originalBody).flatMap {
       case Left(err) => err.leftf
-      case Right((client, synthPrompt, body)) => client.stream(synthPrompt, attrs, body)
+      case Right((synth, client, synthPrompt, body)) =>
+        delegate(attrs, originalBody, synth, client, body)
+        client.stream(synthPrompt, attrs, body)
     }
   }
 
@@ -334,10 +338,14 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   //  dispatch + cascade
   ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+  // the candidate serves the call the consumers made to the router, if they were allowed to
+  private def delegate(attrs: TypedMap, originalBody: JsValue, candidate: AiProvider, client: ChatClient, body: JsValue): Unit =
+    ModelConstraints.delegate(attrs, ModelTarget.of(provider), originalBody.select("model").asOptString, candidate, client, body)
+
   private def isFusion(originalBody: JsValue): Boolean =
     originalBody.select("model").asOptString.exists(_.toLowerCase.contains("fusion"))
 
-  private def execute[T](prompt: ChatPrompt, originalBody: JsValue)(f: (ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
+  private def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: (ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val requestedModel = originalBody.select("model").asOptString.getOrElse("code-router").toLowerCase
     val orderedF: Future[Seq[AiProvider]] =
       if (requestedModel.contains("auto")) autoOrderedCandidates(prompt, originalBody)
@@ -353,12 +361,14 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
           case Seq() => lastErr.leftf
           case p +: tail => p.getChatClient() match {
             case None => attempt(tail, Json.obj("error" -> s"no chat client for provider ${p.id}"))
-            case Some(client) => f(client, cleanBody).flatMap {
-              case Left(err) => attempt(tail, err)
-              case Right(resp) => resp.rightf
-            }.recoverWith {
-              case t: Throwable => attempt(tail, Json.obj("error" -> s"router candidate failed: ${t.getMessage}"))
-            }
+            case Some(client) =>
+              delegate(attrs, originalBody, p, client, cleanBody)
+              f(client, cleanBody).flatMap {
+                case Left(err) => attempt(tail, err)
+                case Right(resp) => resp.rightf
+              }.recoverWith {
+                case t: Throwable => attempt(tail, Json.obj("error" -> s"router candidate failed: ${t.getMessage}"))
+              }
           }
         }
         attempt(ordered, Json.obj("error" -> "no candidate succeeded"))
@@ -368,11 +378,11 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
 
   override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     if (isFusion(originalBody)) fusionCall(prompt, attrs, originalBody)
-    else execute(prompt, originalBody)((client, body) => client.invoke(kind, prompt, attrs, body))
+    else execute(prompt, attrs, originalBody)((client, body) => client.invoke(kind, prompt, attrs, body))
   }
 
   override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     if (isFusion(originalBody)) fusionStream(prompt, attrs, originalBody)
-    else execute(prompt, originalBody)((client, body) => client.invokeStream(kind, prompt, attrs, body))
+    else execute(prompt, attrs, originalBody)((client, body) => client.invokeStream(kind, prompt, attrs, body))
   }
 }

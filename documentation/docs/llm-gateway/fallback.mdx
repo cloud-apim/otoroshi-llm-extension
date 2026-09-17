@@ -51,6 +51,8 @@ The fallback provider is called when:
 
 If the fallback provider also fails, the error is returned to the caller.
 
+A request for a model the primary provider does not allow, through its own [model restrictions](/docs/llm-gateway/setup-provider#model-restrictions) or those of the API key or user, is refused right away: it is not retried on the fallback, and it does not count as a failure of the primary provider. The fallback only serves the requests the primary provider would have accepted.
+
 ## Supported operations
 
 The fallback mechanism works for all LLM operations:

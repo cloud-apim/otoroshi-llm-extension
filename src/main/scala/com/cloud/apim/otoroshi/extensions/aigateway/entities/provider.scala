@@ -183,11 +183,14 @@ case class ModelSettings(
   def json: JsValue = ModelSettings.format.writes(this)
   def isDefined: Boolean = include.nonEmpty || exclude.nonEmpty
   def isEmpty: Boolean = !isDefined
-  def matches(model: String): Boolean = {
+  def matches(model: String): Boolean = matchesAny(Seq(model))
+  // `names`: every name the same model can be called with (`model`, `provider/model`, `provider###model`...).
+  // A pattern allows the model when it matches one of them, and excludes it the same way
+  def matchesAny(names: Seq[String]): Boolean = {
     if (!(include.isEmpty && exclude.isEmpty)) {
-      val canpass    = if (include.isEmpty) true else include.exists(p => otoroshi.utils.RegexPool.regex(p).matches(model))
-      val cannotpass =
-        if (exclude.isEmpty) false else exclude.exists(p => otoroshi.utils.RegexPool.regex(p).matches(model))
+      def hit(patterns: Seq[String]): Boolean = names.exists(name => patterns.exists(p => otoroshi.utils.RegexPool.regex(p).matches(name)))
+      val canpass    = include.isEmpty || hit(include)
+      val cannotpass = exclude.nonEmpty && hit(exclude)
       canpass && !cannotpass
     } else {
       true
@@ -216,8 +219,10 @@ object ModelSettings {
   }
   def fromEntity(ent: Option[Entity]): Option[ModelSettings] = {
     ent.map { entity =>
-      val include = entity.theMetadata.get("ai_models_include").map(meta => meta.split(",").map(_.trim).toSeq).getOrElse(Seq.empty)
-      val exclude = entity.theMetadata.get("ai_models_exclude").map(meta => meta.split(",").map(_.trim).toSeq).getOrElse(Seq.empty)
+      // a blank value restricts nothing, it does not allow only the empty model name
+      def patterns(key: String): Seq[String] = entity.theMetadata.get(key).toSeq.flatMap(_.split(",")).map(_.trim).filter(_.nonEmpty)
+      val include = patterns("ai_models_include")
+      val exclude = patterns("ai_models_exclude")
       ModelSettings(include, exclude)
     }
   }

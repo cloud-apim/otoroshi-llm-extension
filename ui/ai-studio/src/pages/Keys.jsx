@@ -1,13 +1,14 @@
 import { useState } from 'react';
 import { useWorkspace } from '../App';
-import { Badge, CopyButton, Empty, ErrorAlert, Field, Loading, Modal, NumberInput, PageHeader, Segmented, Select, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
+import { Badge, CopyButton, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, NumberInput, PageHeader, Segmented, Select, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { BudgetModal } from '../components/BudgetModal';
 import { Icon } from '../components/icons';
-import { isExpired, listApikeys, OWNER_PATTERN, ownerOf, resetApikeySecret, saveApikey, usesWorkspaceQuotas, validUntilOf } from '../lib/apikeys';
+import { exactModel, isExpired, listApikeys, modelModeOf, modelOfPattern, modelRulesOf, OWNER_PATTERN, ownerOf, patternError, resetApikeySecret, saveApikey, usesWorkspaceQuotas, validUntilOf } from '../lib/apikeys';
 import { bootstrap } from '../lib/bootstrap';
 import { budgetsOfKey, keyBudgetOf, listBudgets, periodLabel, PERIODS, periodOf, saveBudget } from '../lib/budgets';
-import { Resources } from '../lib/entities';
+import { Resources, workspaceFilter } from '../lib/entities';
 import { fmtCost, fmtDate, fmtDay, fmtInt, fmtRelative } from '../lib/format';
+import { listWorkspaceModels } from '../lib/models';
 import { Link } from '../lib/router';
 
 const OWNER_KINDS = [
@@ -71,6 +72,57 @@ function Expiry({ apikey }) {
   return <span title={fmtDate(v)}>{fmtDay(v)}</span>;
 }
 
+const MODEL_MODES = [
+  { value: 'all', label: 'All models' },
+  { value: 'selected', label: 'Selected models' },
+  { value: 'custom', label: 'Custom rules' },
+];
+
+// the model restriction of a key, as a short label for the list
+function ModelsBadge({ apikey }) {
+  const rules = modelRulesOf(apikey);
+  const mode = modelModeOf(rules);
+  if (mode === 'all') return null;
+  const title = [...rules.include.map((p) => `allowed: ${modelOfPattern(p) ?? p}`), ...rules.exclude.map((p) => `blocked: ${p}`)].join('\n');
+  const count = rules.include.length;
+  return (
+    <Badge kind="info" title={title}>
+      {mode === 'selected' ? `${count} model${count === 1 ? '' : 's'}` : 'model rules'}
+    </Badge>
+  );
+}
+
+// the models of the workspace to pick from, with the ids clients send; selected ids no longer listed stay visible
+function ModelChecklist({ models, loading, value, onChange }) {
+  const [q, setQ] = useState('');
+  const byId = new Map(models.map((m) => [m.id, m]));
+  const ids = [...new Set([...models.map((m) => m.id), ...value])];
+  const needle = q.trim().toLowerCase();
+  const shown = ids.filter((id) => !needle || id.toLowerCase().includes(needle));
+  const toggle = (id, checked) => onChange(checked ? [...value, id] : value.filter((v) => v !== id));
+  return (
+    <div className="model-checklist">
+      <TextInput value={q} onChange={setQ} placeholder="Filter models" />
+      <div className="model-checklist-items">
+        {loading && <Loading label="Loading the models of the workspace…" />}
+        {!loading && shown.length === 0 && <div className="muted small">No model matches.</div>}
+        {shown.map((id) => {
+          const model = byId.get(id);
+          return (
+            <label key={id} className="check">
+              <input type="checkbox" checked={value.includes(id)} onChange={(e) => toggle(id, e.target.checked)} />
+              <span className="mono truncate">{id}</span>
+              {model && model.modality !== 'text' && <span className="faint small">{model.modality}</span>}
+              {!loading && !model && <Badge kind="warning">not listed</Badge>}
+            </label>
+          );
+        })}
+      </div>
+      <div className="faint small">{value.length} selected</div>
+    </div>
+  );
+}
+
 function ownerKindOf(apikey) {
   const owner = ownerOf(apikey);
   if (!apikey) return 'me';
@@ -89,6 +141,10 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
     enabled: apikey ? apikey.enabled : true,
     expiry: validUntilOf(apikey) !== null ? 'date' : 'never',
     expiryDate: validUntilOf(apikey) !== null ? localDay(validUntilOf(apikey)) : '',
+    modelMode: modelModeOf(modelRulesOf(apikey)),
+    selectedModels: modelModeOf(modelRulesOf(apikey)) === 'selected' ? modelRulesOf(apikey).include.map(modelOfPattern) : [],
+    includeRules: modelRulesOf(apikey).include,
+    excludeRules: modelRulesOf(apikey).exclude,
     override: apikey ? !usesWorkspaceQuotas(apikey) : false,
     throttlingQuota: apikey ? apikey.throttlingQuota : c.default_throttling_quota,
     dailyQuota: apikey ? apikey.dailyQuota : c.default_daily_quota,
@@ -106,6 +162,21 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
   const staysExpired = wasExpired && validUntil === validUntilOf(apikey);
   const pastDate = validUntil !== null && validUntil !== undefined && validUntil <= Date.now() && !staysExpired;
   const invalidExpiry = validUntil === undefined || pastDate;
+  // the models of the workspace, only needed to pick some, and its load balancers (called `<name>/_default`)
+  const models = useAsync(async () => {
+    if (form.modelMode !== 'selected') return null;
+    const [listing, providers] = await Promise.all([listWorkspaceModels(workspace), Resources.providers.list(workspaceFilter(workspace.id))]);
+    const balancers = providers.filter((p) => p.provider === 'loadbalancer').map((p) => ({ id: `${p.name}/_default`, modality: 'load balancer' }));
+    return [...(listing.models || []), ...balancers];
+  }, [workspace.id, form.modelMode === 'selected']);
+  const modelRules =
+    form.modelMode === 'selected'
+      ? { include: form.selectedModels.map(exactModel), exclude: [] }
+      : form.modelMode === 'custom'
+        ? { include: form.includeRules, exclude: form.excludeRules }
+        : { include: [], exclude: [] };
+  const rulesError = [...modelRules.include, ...modelRules.exclude].map(patternError).find(Boolean) || null;
+  const invalidModels = (form.modelMode === 'selected' && form.selectedModels.length === 0) || !!rulesError;
   // an expired key reads as disabled: giving it a new date enables it again
   const setExpiry = (patch) =>
     setForm((f) => {
@@ -117,7 +188,7 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
   const save = async () => {
     setSaving(true);
     try {
-      const saved = await saveApikey(workspace.id, { ...form, owner, validUntil }, apikey);
+      const saved = await saveApikey(workspace.id, { ...form, owner, validUntil, models: modelRules }, apikey);
       const hasCredit = form.credit !== null && form.credit !== '' && !Number.isNaN(Number(form.credit));
       if (hasCredit) {
         await saveBudget(
@@ -156,7 +227,7 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
           <button className="btn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn primary" disabled={!form.name.trim() || invalidOwner || invalidExpiry || saving} onClick={save}>
+          <button className="btn primary" disabled={!form.name.trim() || invalidOwner || invalidExpiry || invalidModels || saving} onClick={save}>
             {saving ? 'Saving…' : apikey ? 'Save' : 'Create'}
           </button>
         </>
@@ -195,6 +266,36 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
           </Field>
         )}
       </div>
+      <Field
+        label="Models"
+        hint={
+          form.modelMode === 'all'
+            ? 'The key can call every model of the workspace, within the model access of its guardrails.'
+            : form.modelMode === 'selected'
+              ? 'The key can only call these models. Load balancers and routers can still send its calls to any of their targets.'
+              : 'Regular expressions on the model ids: model, provider/model or provider###model. Empty lists allow everything.'
+        }
+        error={form.modelMode === 'selected' && form.selectedModels.length === 0 ? 'Select at least one model.' : rulesError}
+      >
+        <div className="stack tight">
+          <div>
+            <Segmented value={form.modelMode} onChange={(v) => set({ modelMode: v })} options={MODEL_MODES} />
+          </div>
+          {form.modelMode === 'selected' && (
+            <ModelChecklist models={models.data || []} loading={models.loading} value={form.selectedModels} onChange={(v) => set({ selectedModels: v })} />
+          )}
+          {form.modelMode === 'custom' && (
+            <div className="form-grid">
+              <Field label="Allowed models" hint="e.g. gpt-4o.* or openai/.*">
+                <LinesInput value={form.includeRules} onChange={(v) => set({ includeRules: v })} rows={3} />
+              </Field>
+              <Field label="Blocked models" hint="e.g. .*-preview or azure###.*">
+                <LinesInput value={form.excludeRules} onChange={(v) => set({ excludeRules: v })} rows={3} />
+              </Field>
+            </div>
+          )}
+        </div>
+      </Field>
       <div className="form-grid">
         <Field label="Credit limit (USD)" hint="Leave blank for unlimited. Enforced by a budget scoped to this key.">
           <NumberInput value={form.credit} onChange={(v) => set({ credit: v })} placeholder="Leave blank for unlimited" step="0.01" min="0" />
@@ -385,7 +486,12 @@ export function KeysPage() {
                   const b = keyBudgetOf(budgets, k.clientId);
                   return (
                     <tr key={k.clientId}>
-                      <td>{k.clientName}</td>
+                      <td>
+                        <span className="row nowrap" style={{ gap: 8 }}>
+                          {k.clientName}
+                          <ModelsBadge apikey={k} />
+                        </span>
+                      </td>
                       <td className="truncate" style={{ maxWidth: 220 }}>
                         {ownerOf(k) ? (
                           <Link className="link" to={`/workspaces/${workspace.id}/users/${encodeURIComponent(ownerOf(k))}`} title={`Profile of ${ownerOf(k)}`}>

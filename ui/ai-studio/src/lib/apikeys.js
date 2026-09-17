@@ -14,6 +14,51 @@ export function ownerOf(apikey) {
   return (apikey && apikey.metadata && apikey.metadata[META.owner]) || null;
 }
 
+// the models a key may use: regular expressions matched against `model`, `provider/model` and
+// `provider###model`, stored comma separated in the metadata the gateway reads
+export const MODELS_INCLUDE = 'ai_models_include';
+export const MODELS_EXCLUDE = 'ai_models_exclude';
+
+const patternsOf = (value) =>
+  (value || '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+
+export function modelRulesOf(apikey) {
+  const metadata = (apikey && apikey.metadata) || {};
+  return { include: patternsOf(metadata[MODELS_INCLUDE]), exclude: patternsOf(metadata[MODELS_EXCLUDE]) };
+}
+
+const REGEX_SPECIALS = /[.*+?^${}()|[\]\\]/g;
+
+// the expression matching exactly one model id
+export const exactModel = (id) => id.replace(REGEX_SPECIALS, '\\$&');
+
+// the model id an expression stands for, null for a real expression
+export function modelOfPattern(pattern) {
+  if (!/^(?:[^.*+?^${}()|[\]\\]|\\[.*+?^${}()|[\]\\])*$/.test(pattern)) return null;
+  return pattern.replace(/\\(.)/g, '$1');
+}
+
+// `all` when nothing is restricted, `selected` for a list of model ids, `custom` for expressions
+export function modelModeOf(rules) {
+  if (rules.include.length === 0 && rules.exclude.length === 0) return 'all';
+  if (rules.exclude.length === 0 && rules.include.every((p) => modelOfPattern(p) !== null)) return 'selected';
+  return 'custom';
+}
+
+// the metadata is comma separated, and the gateway compiles the expressions
+export function patternError(pattern) {
+  if (pattern.includes(',')) return `commas are not supported: ${pattern}`;
+  try {
+    new RegExp(pattern);
+    return null;
+  } catch (e) {
+    return `invalid regular expression: ${pattern}`;
+  }
+}
+
 // the date the key stops working (epoch millis), null for a key that never expires
 export function validUntilOf(apikey) {
   const v = apikey && apikey.validUntil;
@@ -59,7 +104,12 @@ export async function saveApikey(wsId, form, existing) {
   const c = bootstrap.config;
   const base = existing || (await Resources.apikeys.template());
   const tag = consumerTagOf(wsId);
-  const { [META.owner]: _previousOwner, ...metadata } = (existing && existing.metadata) || {};
+  const { [META.owner]: _previousOwner, [MODELS_INCLUDE]: _include, [MODELS_EXCLUDE]: _exclude, ...metadata } = (existing && existing.metadata) || {};
+  const rules = form.models || modelRulesOf(existing);
+  const modelsMetadata = {
+    ...(rules.include.length ? { [MODELS_INCLUDE]: rules.include.join(',') } : {}),
+    ...(rules.exclude.length ? { [MODELS_EXCLUDE]: rules.exclude.join(',') } : {}),
+  };
   const apikey = {
     ...base,
     _loc: (existing && existing._loc) || workspaceLocation(wsId),
@@ -72,7 +122,7 @@ export async function saveApikey(wsId, form, existing) {
     authorizedEntities: [],
     authorizedGroup: null,
     tags: [...new Set([...((existing && existing.tags) || []), tag])],
-    metadata: { ...metadata, ...workspaceMetadata(wsId, 'apikey'), ...(form.owner ? { [META.owner]: form.owner } : {}) },
+    metadata: { ...metadata, ...workspaceMetadata(wsId, 'apikey'), ...(form.owner ? { [META.owner]: form.owner } : {}), ...modelsMetadata },
     throttlingQuota: form.override ? Number(form.throttlingQuota) : c.default_throttling_quota,
     dailyQuota: form.override ? Number(form.dailyQuota) : c.default_daily_quota,
     monthlyQuota: form.override ? Number(form.monthlyQuota) : c.default_monthly_quota,

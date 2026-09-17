@@ -32,10 +32,11 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
     }
   }
 
-  private def fallbackClient()(using env: Env): Option[ChatClient] = {
+  private def fallbackClient()(using env: Env): Option[(AiProvider, ChatClient)] = {
     env.adminExtensions.extension[AiExtension]
       .flatMap(_.states.provider(originalProvider.providerFallback.get))
-      .flatMap(_.withModel(originalProvider.providerFallbackModel).getChatClient())
+      .map(_.withModel(originalProvider.providerFallbackModel))
+      .flatMap(p => p.getChatClient().map(c => (p, c)))
   }
 
   // a model asked for the primary provider means nothing to the fallback when it has its own model configured
@@ -45,17 +46,26 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
   }
 
   // Runs `op` on the primary client, falling back to the configured fallback provider on error
-  // (Left or exception). When the per-provider circuit breaker is enabled and the primary's circuit
+  // (Left or exception). A model the primary refuses is not a failure: the fallback only serves the calls
+  // the primary provider would have accepted, with the model restrictions of its consumers. When the per-provider circuit breaker is enabled and the primary's circuit
   // is open, the primary is skipped entirely and we go straight to the fallback (fail fast). Primary
   // outcomes feed the breaker (success closes the circuit, failures eventually open it).
-  private def withFallback[T](originalBody: JsValue)(op: (ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
+  private def withFallback[T](originalBody: JsValue, attrs: TypedMap)(op: (ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val settings = CircuitBreakerSettings.fromProvider(originalProvider)
 
     def callFallback(err: JsValue): Future[Either[JsValue, T]] = {
       AiMetrics.markFallback()
       fallbackClient() match {
         case None => err.leftf
-        case Some(client) => op(client, fallbackBody(originalBody))
+        case Some((fallback, client)) =>
+          val body = fallbackBody(originalBody)
+          val target = ModelTarget.of(originalProvider)
+          val requested = ModelConstraints.requestedModel(chatClient, originalBody)
+          // the primary may have been skipped (open circuit): its model restrictions still decide
+          ModelConstraints.check(target, requested, attrs) {
+            ModelConstraints.delegate(attrs, target, requested, fallback, client, body)
+            op(client, body)
+          }
       }
     }
 
@@ -74,6 +84,7 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
       callFallback(Json.obj("error" -> "primary provider circuit is open"))
     } else {
       op(chatClient, originalBody).flatMap {
+        case Left(err) if ModelConstraints.isDenied(err) => err.leftf
         case Left(err) =>
           recordFailure()
           callFallback(err)
@@ -89,10 +100,10 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
   }
 
   override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    withFallback(originalBody)((client, body) => client.invoke(kind, originalPrompt, attrs, body))
+    withFallback(originalBody, attrs)((client, body) => client.invoke(kind, originalPrompt, attrs, body))
   }
 
   override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
-    withFallback(originalBody)((client, body) => client.invokeStream(kind, originalPrompt, attrs, body))
+    withFallback(originalBody, attrs)((client, body) => client.invokeStream(kind, originalPrompt, attrs, body))
   }
 }

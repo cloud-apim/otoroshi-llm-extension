@@ -182,6 +182,7 @@ trait DecoratorOcrModelClient extends OcrModelClient {
 
 object OcrModelClientDecorators {
   val possibleDecorators: Seq[Function[(OcrModel, OcrModelClient, Env), OcrModelClient]] = Seq(
+    OcrModelClientWithModels.applyIfPossible,
     OcrModelClientWithRequiredCosts.applyIfPossible,
     OcrModelClientWithAuditing.applyIfPossible,
   )

@@ -162,6 +162,21 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(revived.select("expired").asBoolean, false)
     assertEquals(revived.select("enabled").asBoolean, true)
     assertEquals(entity("apim.otoroshi.io", "apikeys", clientId).get.select("validUntil").asOpt[Long], None)
+    // the models of a key: kept when absent, removed by null, and valid regular expressions only
+    assertEquals(revived.select("models").as[JsObject], Json.obj("include" -> Json.arr(), "exclude" -> Json.arr()))
+    val restricted = expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("models" -> Json.obj("include" -> Json.arr("llama3\\.2", " ollama/qwen.* ", "")))), 200)
+    assertEquals(restricted.select("models").as[JsObject], Json.obj("include" -> Json.arr("llama3\\.2", "ollama/qwen.*"), "exclude" -> Json.arr()))
+    assertEquals(entity("apim.otoroshi.io", "apikeys", clientId).get.select("metadata").select("ai_models_include").asString, "llama3\\.2,ollama/qwen.*")
+    assertEquals(entity("apim.otoroshi.io", "apikeys", clientId).get.select("metadata").select("ai_models_exclude").asOpt[String], None)
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("models" -> Json.obj("exclude" -> Json.arr("ollama###.*preview")))), 200).select("models").as[JsObject],
+      Json.obj("include" -> Json.arr("llama3\\.2", "ollama/qwen.*"), "exclude" -> Json.arr("ollama###.*preview")))
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("name" -> "my app")), 200).select("models").select("exclude").as[Seq[String]], Seq("ollama###.*preview"))
+    expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("models" -> Json.obj("include" -> Json.arr("a{1,2}")))), 400)
+    expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("models" -> Json.obj("include" -> Json.arr("gpt-(4")))), 400)
+    expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("models" -> "gpt-4o")), 400)
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("models" -> JsNull)), 200).select("models").as[JsObject], Json.obj("include" -> Json.arr(), "exclude" -> Json.arr()))
+    assert(entity("apim.otoroshi.io", "apikeys", clientId).get.select("metadata").select("ai_models_include").asOpt[String].isEmpty)
+    assertEquals(entity("apim.otoroshi.io", "apikeys", clientId).get.select("metadata").select("ai_studio_workspace").asString, wsId)
     // a new secret, which also drops a pending rotation secret
     val pending = entity("apim.otoroshi.io", "apikeys", clientId).get
     val previousSecret = pending.select("clientSecret").asString

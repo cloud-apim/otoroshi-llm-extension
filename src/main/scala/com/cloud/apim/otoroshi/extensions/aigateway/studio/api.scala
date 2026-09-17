@@ -239,6 +239,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   // the person the usage of an api key counts for, in the analytics and the budgets scoped to users
   private val MetaOwner = ApikeyOwner.MetadataKey
   private val OwnerPattern = "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$".r
+  // the models an api key may use, comma separated regular expressions (see decorators/models.scala)
+  private val MetaModelsInclude = "ai_models_include"
+  private val MetaModelsExclude = "ai_models_exclude"
 
   private val OpenAiCompatPlugin = "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatApi"
   private val ConsumerPresetPlugin = "cp:otoroshi.next.plugins.MandatoryConsumerPreset"
@@ -1160,6 +1163,17 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     case Some(_) => throw badRequest("'valid_until' must be an ISO-8601 date or null")
   }
 
+  private def modelPatternsOf(apikey: JsValue, key: String): Seq[String] =
+    metaOf(apikey, key).toSeq.flatMap(_.split(",")).map(_.trim).filter(_.nonEmpty)
+
+  private def modelPatternsFrom(o: JsObject, key: String): Option[Seq[String]] = strings(o, key).map { patterns =>
+    patterns.map(_.trim).filter(_.nonEmpty).map { p =>
+      if (p.contains(",")) throw badRequest(s"'models.$key' patterns cannot contain commas: '$p'")
+      Try(java.util.regex.Pattern.compile(p)).getOrElse(throw badRequest(s"'models.$key' contains an invalid regular expression: '$p'"))
+      p
+    }
+  }
+
   private def apikeyJson(apikey: JsObject, budgets: Seq[JsObject], config: AiStudioConfig): JsObject = {
     val clientId = apikey.select("clientId").asString
     Json.obj(
@@ -1172,6 +1186,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       "valid_until" -> validUntilOf(apikey).map(v => JsString(Instant.ofEpochMilli(v).toString)).getOrElse(JsNull).as[JsValue],
       "expired" -> expired(apikey),
       "owner" -> optString(metaOf(apikey, MetaOwner)),
+      "models" -> Json.obj("include" -> modelPatternsOf(apikey, MetaModelsInclude), "exclude" -> modelPatternsOf(apikey, MetaModelsExclude)),
       "uses_workspace_quotas" -> usesWorkspaceQuotas(apikey, config),
       "quotas" -> Json.obj(
         "throttling_quota" -> apikey.select("throttlingQuota").asOpt[JsValue].getOrElse(JsNull).as[JsValue],
@@ -1218,6 +1233,18 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     // an expired key reads as disabled: a new date enables it again, unless `enabled` says otherwise
     val revived = existing.exists(expired) && has(form, "valid_until") && !validUntil.exists(_ <= System.currentTimeMillis())
     val enabled = boolean(form, "enabled").getOrElse(revived || prev.select("enabled").asOptBoolean.getOrElse(true))
+    // `models`: { include, exclude } regular expressions on `model`, `provider/model` or `provider###model`,
+    // null for every model, absent keeps the current ones (and so does an absent list)
+    val currentModels = (modelPatternsOf(prev, MetaModelsInclude), modelPatternsOf(prev, MetaModelsExclude))
+    val (modelsInclude, modelsExclude) = form.value.get("models") match {
+      case None => currentModels
+      case Some(JsNull) => (Seq.empty, Seq.empty)
+      case Some(m: JsObject) => (modelPatternsFrom(m, "include").getOrElse(currentModels._1), modelPatternsFrom(m, "exclude").getOrElse(currentModels._2))
+      case Some(_) => throw badRequest("'models' must be an object or null")
+    }
+    val modelsMetadata = Seq(MetaModelsInclude -> modelsInclude, MetaModelsExclude -> modelsExclude).collect {
+      case (k, patterns) if patterns.nonEmpty => k -> JsString(patterns.mkString(","))
+    }
     val tag = consumerTagOf(ws.id)
     for {
       budgets <- Budgets.list(ws.id)
@@ -1246,7 +1273,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         "authorizedEntities" -> Json.arr(),
         "authorizedGroup" -> JsNull,
         "tags" -> (stringsOf(prev.select("tags")) :+ tag).distinct,
-        "metadata" -> ((objOf(prev.select("metadata")) - MetaOwner) ++ workspaceMetadata(ws.id, "apikey") ++ JsObject(owner.map(o => MetaOwner -> JsString(o)).toSeq)),
+        "metadata" -> ((objOf(prev.select("metadata")) - MetaOwner - MetaModelsInclude - MetaModelsExclude) ++ workspaceMetadata(ws.id, "apikey") ++
+          JsObject(owner.map(o => MetaOwner -> JsString(o)).toSeq) ++ JsObject(modelsMetadata)),
         "throttlingQuota" -> quotas._1,
         "dailyQuota" -> quotas._2,
         "monthlyQuota" -> quotas._3,

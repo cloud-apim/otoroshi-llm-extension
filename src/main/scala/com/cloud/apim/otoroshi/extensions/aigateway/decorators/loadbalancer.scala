@@ -180,6 +180,8 @@ class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
             case obj: JsObject if withModel.exists(_ eq selectedProvider) => obj - "model"
             case other => other
           }
+          // the target serves the call the consumers made to the load balancer, if they were allowed to
+          ModelConstraints.delegate(attrs, ModelTarget.of(provider), originalBody.select("model").asOptString, selectedProvider, client, body)
           val result = f(selectedProvider, client, body)
           if (settings.enabled) {
             result.andThen {
