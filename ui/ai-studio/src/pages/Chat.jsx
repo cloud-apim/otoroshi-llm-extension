@@ -87,12 +87,12 @@ function ModelPicker({ value, onChange, models, width = 520 }) {
         }}
       />
       {open && (
-        <div className="search-results">
+        <div className="search-results model-results">
           {filtered.length === 0 && <div className="item muted">No model matches, press enter to use “{q}”</div>}
           {filtered.map((m) => (
-            <div key={m.id} className={`item ${m.id === value ? 'active' : ''}`} onMouseDown={() => onChange(m.id)}>
-              <span className="grow truncate">{m.id}</span>
-              <span className="faint small nowrap">{pickerFacts(m)}</span>
+            <div key={m.id} className={`item ${m.id === value ? 'active' : ''}`} title={`${m.id}\n${pickerFacts(m)}`} onMouseDown={() => onChange(m.id)}>
+              <span className="model-name">{m.id}</span>
+              <span className="model-facts faint small">{pickerFacts(m)}</span>
             </div>
           ))}
         </div>

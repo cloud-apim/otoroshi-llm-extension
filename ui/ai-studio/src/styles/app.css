@@ -893,4 +893,7 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .health-degraded { color: var(--warning-text); }
 .health-failing { color: var(--negative-text); }
 .health-idle { color: var(--border-strong); }
-
+/* the model picker list stays wide enough to read the model ids, even under a narrow input */
+.search-results.model-results { right: auto; width: 560px; min-width: 100%; max-width: calc(100vw - 32px); }
+.model-results .model-name { flex: 0 1 auto; max-width: 70%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-results .model-facts { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
