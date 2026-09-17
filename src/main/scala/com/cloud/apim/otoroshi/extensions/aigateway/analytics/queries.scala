@@ -480,6 +480,51 @@ object AiGatewayQueries {
       }
     }
 
+    // what the gateway refuses by itself, before any provider is called: not a failure of the provider
+    private val GatewayRefusal = "COALESCE(error_kind IN ('guardrail_denied', 'budget_exceeded', 'you_can''t_use_this_model', 'no_known_cost_for_this_model'), false)"
+    private val ProviderFailure = s"err AND NOT $GatewayRefusal"
+
+    /**
+     * How the providers of the period behave: calls, failures (the refusals of the gateway itself aside),
+     * latency and generation speed of the calls they served (cache hits aside), per provider entity or per
+     * model of each provider entity.
+     */
+    val HealthTable = lq("cloudapim_llm_health_table", "Provider and model health", "Calls, failure rate, latency, time to first token and generation speed per provider, or per model of each provider. The refusals of the gateway (guardrails, budgets, model restrictions) are not failures, cache hits are not timed.", AnalyticsShape.Table, "table", params = Seq(
+      QueryParam("group_by", "string", JsString("model"), "model (a row per model of each provider) or provider"),
+      QueryParam("top_n", "int", JsNumber(200), "Number of rows, the busiest first (max 1000)")
+    )) { ctx =>
+      given ExecutionContext = ctx.ec
+      val byModel       = !param(ctx, "group_by").contains("provider")
+      val keys          = if (byModel) "provider_id, model" else "provider_id"
+      val attempted     = s"cache_status IS DISTINCT FROM 'hit' AND NOT $GatewayRefusal"
+      val timed         = "cache_status IS DISTINCT FROM 'hit' AND NOT err AND duration_ms IS NOT NULL"
+      val generating    = s"$timed AND output_tokens + reasoning_tokens > 0 AND duration_ms > COALESCE(ttft_ms, 0)"
+      val limit         = (ctx.params \ "top_n").asOpt[Int].getOrElse(200).max(1).min(1000)
+      val (where, vals) = FilterSql.whereClause(ctx.filters)
+      val sql           =
+        s"""SELECT $keys, MAX(provider_name) AS provider_name, MAX(provider_kind) AS provider_kind,
+           |  COUNT(*) AS calls,
+           |  COUNT(*) FILTER (WHERE $ProviderFailure) AS failures,
+           |  COUNT(*) FILTER (WHERE err AND $GatewayRefusal) AS refusals,
+           |  COUNT(*) FILTER (WHERE cache_status = 'hit') AS cached,
+           |  COALESCE((COUNT(*) FILTER (WHERE $ProviderFailure))::float / NULLIF(COUNT(*) FILTER (WHERE $attempted), 0), 0) AS failure_rate,
+           |  percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE $timed) AS p50_ms,
+           |  percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE $timed) AS p95_ms,
+           |  percentile_cont(0.5) WITHIN GROUP (ORDER BY ttft_ms) FILTER (WHERE $timed AND ttft_ms IS NOT NULL) AS p50_ttft_ms,
+           |  (SUM(output_tokens + reasoning_tokens) FILTER (WHERE $generating))::float * 1000.0 / NULLIF(SUM(duration_ms - COALESCE(ttft_ms, 0)) FILTER (WHERE $generating), 0) AS tokens_per_second,
+           |  MAX(ts) AS last_call,
+           |  MAX(ts) FILTER (WHERE $ProviderFailure) AS last_failure,
+           |  (array_agg(error_message ORDER BY ts DESC) FILTER (WHERE $ProviderFailure))[1] AS last_failure_message
+           |FROM ${t(ctx.settings)}${and(where, real(ctx, s"provider_id IS NOT NULL${if (byModel) " AND model IS NOT NULL" else ""}"))}
+           |GROUP BY $keys
+           |ORDER BY calls DESC, $keys
+           |LIMIT $limit""".stripMargin
+      QueryHelpers.runSelect(ctx.pool, sql, vals).map { rows =>
+        val items = rows.map(rowJson)
+        QueryResult(AnalyticsShape.Table, Json.obj("items" -> JsArray(items)), JsArray(items))
+      }
+    }
+
     val CallDetail = lq("cloudapim_llm_call_detail", "LLM call detail", "Every recorded field of one call, prompts and outputs excluded.", AnalyticsShape.Table, "table", params = Seq(
       QueryParam("id", "string", JsNull, "Id of the call (the `id` column of the calls log)")
     )) { ctx =>
@@ -723,7 +768,7 @@ object AiGatewayQueries {
     }
 
     lazy val all: Seq[AnalyticsQuery] = Seq(
-      CallsLog, CallDetail, RequestCalls, Explore, SessionsTable, EndUsersTable, TtftP50, TtftP95, TtftPctTs, TtftByModel, ByFinishReason, TruncatedRate, CallsByApikeyTs, TokensByApikeyTs, CostByApikeyTs, CallsByUserTs, TokensByUserTs, CostByUserTs,
+      CallsLog, CallDetail, HealthTable, RequestCalls, Explore, SessionsTable, EndUsersTable, TtftP50, TtftP95, TtftPctTs, TtftByModel, ByFinishReason, TruncatedRate, CallsByApikeyTs, TokensByApikeyTs, CostByApikeyTs, CallsByUserTs, TokensByUserTs, CostByUserTs,
       RequestsTotal, ErrorsTotal, ErrorRate_, CallsOverTime, CallsPerSecond, ByProviderKind, ByProvider, ByModality,
       ByOperation, StreamingRatio, TopModels, TopProviders, TopApikeys, TopUsers, TopRoutes, CallsByModelTs,
       CallsByModalityTs, ActivityHeatmap, DistinctUsers, DistinctApikeys, DistinctModels, DistinctProviders, RecentCalls,

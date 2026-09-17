@@ -655,6 +655,39 @@ class AnalyticsQueriesSuite extends munit.FunSuite {
     assertEquals((run("cloudapim_llm_explore", params = Json.obj("metric" -> "requests", "group_by" -> "status", "status" -> "error")).data \ "items").as[Seq[JsObject]].map(i => (i \ "key").as[String]).toSet, Set("status_429", "guardrail_denied"))
   }
 
+  test("the health of providers and models leaves the gateway refusals and the cache hits aside") {
+    def rows(groupBy: String): Seq[JsObject] = (run("cloudapim_llm_health_table", params = Json.obj("group_by" -> groupBy)).data \ "items").as[Seq[JsObject]]
+    val providers = rows("provider").map(r => (r \ "provider_id").as[String] -> r).toMap
+    // delegated re-reports are not calls of the load balancer nor of the primary provider
+    assertEquals(providers.keySet, Set("provider_1", "provider_2", "emb_1", "img_1", "audio_1"))
+    val openai = providers("provider_1")
+    // a chat, a rate limit, a guardrail denial and a cache hit
+    assertEquals((openai \ "calls").as[Long], 4L)
+    assertEquals((openai \ "failures").as[Long], 1L)
+    assertEquals((openai \ "refusals").as[Long], 1L)
+    assertEquals((openai \ "cached").as[Long], 1L)
+    assertEquals((openai \ "failure_rate").as[Double], 0.5)
+    assertEquals((openai \ "p50_ms").as[Double], 450.0)
+    assertEquals((openai \ "p95_ms").as[Double], 450.0)
+    assert((openai \ "p50_ttft_ms").asOpt[Double].isEmpty, "blocking calls have no time to first token")
+    assertEqualsDouble((openai \ "tokens_per_second").as[Double], 50 * 1000.0 / 450, 0.001)
+    assertEquals((openai \ "last_failure_message").as[String], "Rate limit reached")
+    assert((openai \ "last_failure").as[Long] > 0L)
+    val anthropic = providers("provider_2")
+    assertEquals(((anthropic \ "calls").as[Long], (anthropic \ "failures").as[Long], (anthropic \ "failure_rate").as[Double]), (1L, 0L, 0.0))
+    assertEquals((anthropic \ "p50_ttft_ms").as[Double], 150.0)
+    // the generation speed leaves the wait for the first token aside
+    assertEqualsDouble((anthropic \ "tokens_per_second").as[Double], 100 * 1000.0 / (1200 - 150), 0.001)
+    assert((anthropic \ "last_failure").asOpt[Long].isEmpty)
+    val models = rows("model")
+    assertEquals(models.filter(r => (r \ "provider_id").as[String] == "provider_1").map(r => (r \ "calls").as[Long]).sum, 4L)
+    assertEquals(models.find(r => (r \ "provider_id").as[String] == "provider_2").map(r => (r \ "model").as[String]), Some("claude-sonnet-5"))
+    assertEquals(models.find(r => (r \ "provider_id").as[String] == "emb_1").map(r => (r \ "model").as[String]), Some("text-embedding-3-small"))
+    // the busiest first
+    assertEquals((rows("provider").head \ "provider_id").as[String], "provider_1")
+    assertEquals((run("cloudapim_llm_health_table", params = Json.obj("group_by" -> "provider", "top_n" -> 1)).data \ "items").as[Seq[JsObject]].size, 1)
+  }
+
   test("errors, guardrails and cache are counted") {
     assertEquals(value(run("cloudapim_llm_errors_total")), 2.0)
     assertEquals(value(run("cloudapim_llm_guardrail_denials_total")), 1.0)

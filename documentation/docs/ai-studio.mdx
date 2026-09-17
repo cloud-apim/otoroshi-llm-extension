@@ -123,7 +123,15 @@ price or context, switch to a comparison table, and open any model for its full 
 paste request. **Estimate costs** answers "what would this cost us?" before you commit to a model: describe
 a workload (tokens in and out per request, requests per month, share of the prompt served from cache) or
 start from a typical one (chat message, RAG answer, agent step, summary), and every model shows what it
-would cost per request and per month at its list price, the cheapest first. **Chat** is a playground to try any of them, with streaming, reasoning
+would cost per request and per month at its list price, the cheapest first.
+
+The models also show how they actually behave in your workspace: the share of calls that succeeded,
+median latency and generation speed, over the last day, week or month. Filter the healthy, degraded or
+failing ones, sort by usage, latency or speed, and open a model for its p95 latency, time to first token
+and last failure, with a link to its calls. The refusals of the gateway itself (guardrails, budgets, model
+restrictions) never count as failures of a model, and answers served from the cache never skew its latency.
+**Providers** show the same health for each connection over the last 24 hours, so a provider that starts
+failing stands out at a glance. **Chat** is a playground to try any of them, with streaming, reasoning
 display, presets and generation settings. Conversations are saved per user and per workspace.
 
 Each answer shows its model, tokens, latency and what the gateway billed for it, and the conversation

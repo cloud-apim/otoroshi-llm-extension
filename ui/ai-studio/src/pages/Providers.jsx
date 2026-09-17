@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { HealthSummary } from '../components/health';
+import { combine, healthIndex, loadHealth } from '../lib/health';
 import { useWorkspace } from '../App';
 import {
   Badge,
@@ -351,6 +353,10 @@ export function ProvidersPage() {
   const connections = useAsync(() => listConnections(workspace.id), [workspace.id]);
   // the models each connection serves, refreshed with the connections
   const models = useAsync(() => (connections.data ? listWorkspaceModels(workspace) : Promise.resolve(null)), [workspace.id, connections.data]);
+  // how each connection behaved over the last 24 hours, null without analytics
+  const health = useAsync(() => loadHealth(workspace.id, '24h', 'provider'), [workspace.id]);
+  const healthByProvider = useMemo(() => healthIndex(health.data, false), [health.data]);
+  const healthOf = (conn) => combine(Object.values(conn.entities || {}).map((e) => healthByProvider.get(e.id)));
 
   // load balancers and routers are managed in the routing page
   const list = (connections.data || []).filter((c) => !['loadbalancer', 'otoroshi'].includes(c.kind));
@@ -421,6 +427,7 @@ export function ProvidersPage() {
                   <th>Capabilities</th>
                   <th>Default model</th>
                   <th>Models</th>
+                  {health.data && <th title="Calls served over the last 24 hours">Health · 24h</th>}
                   <th>Key</th>
                   <th>Status</th>
                   <th />
@@ -446,6 +453,11 @@ export function ProvidersPage() {
                     <td>
                       <ConnectionModels models={modelsOf(conn)} loading={models.loading && !models.data} workspace={workspace} />
                     </td>
+                    {health.data && (
+                      <td className="small">
+                        <HealthSummary health={healthOf(conn)} />
+                      </td>
+                    )}
                     <td>
                       {conn.token ? (
                         <Badge kind="positive">Configured</Badge>

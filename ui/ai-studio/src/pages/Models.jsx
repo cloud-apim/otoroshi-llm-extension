@@ -22,7 +22,10 @@ import {
   kindsOf,
   promptPrice,
 } from '../lib/modelmeta';
-import { fmtCost, fmtInt } from '../lib/format';
+import { HealthDetails, HealthDot, HealthSummary } from '../components/health';
+import { PERIODS } from '../lib/analytics';
+import { fmtCost, fmtInt, fmtMs } from '../lib/format';
+import { attempted, fmtSpeed, fmtSuccess, HEALTH, healthIndex, healthNumber, healthOfModel, loadHealth, statusOf } from '../lib/health';
 import { Link, useRouter } from '../lib/router';
 
 const CONTEXTS = [
@@ -117,7 +120,16 @@ function EstimateLine({ estimate }) {
   );
 }
 
-const EMPTY_FILTERS = { q: '', kinds: [], capabilities: [], endpoints: [], cost: '', context: 0, providers: [] };
+const EMPTY_FILTERS = { q: '', kinds: [], capabilities: [], endpoints: [], cost: '', context: 0, providers: [], health: [] };
+
+// sorts on the calls of the period, when the workspace has analytics
+const HEALTH_SORTS = [
+  { value: 'calls', label: 'Most used first' },
+  { value: 'latency', label: 'Lowest latency first' },
+  { value: 'speed', label: 'Fastest generation first' },
+];
+
+const HEALTH_PERIODS = PERIODS.filter((p) => ['24h', '7d', '30d'].includes(p.value));
 
 // a blended price, 1 input token for 3 output tokens, to sort by price
 function blended(m) {
@@ -128,7 +140,7 @@ function blended(m) {
 }
 
 // every facet but `except` (the counts of a facet are the ones its other filters leave)
-function matches(m, f, except) {
+function matches(m, f, except, healthOf) {
   const needle = f.q.trim().toLowerCase();
   if (needle && !m.id.toLowerCase().includes(needle) && !(m.model || '').toLowerCase().includes(needle)) return false;
   if (except !== 'kinds' && f.kinds.length && !kindsOf(m).some((k) => f.kinds.includes(k))) return false;
@@ -140,6 +152,7 @@ function matches(m, f, except) {
   if (except !== 'cost' && f.cost && (f.cost === 'priced') !== hasCost(m)) return false;
   if (except !== 'context' && f.context && (contextOf(m) || 0) < f.context) return false;
   if (except !== 'providers' && f.providers.length && !f.providers.includes(m.provider)) return false;
+  if (except !== 'health' && f.health.length && !f.health.includes(statusOf(healthOf(m)))) return false;
   return true;
 }
 
@@ -199,6 +212,12 @@ export function ModelsPage() {
   };
   const estimateOf = (m) => (estimate.on ? estimateCost(m, { ...estimate, cached: estimate.cached / 100 }) : null);
   const data = useAsync(() => listWorkspaceModels(workspace, force > 0), [workspace.id, force]);
+  const [healthPeriod, setHealthPeriod] = useState('7d');
+  // null when the workspace has no analytics
+  const health = useAsync(() => loadHealth(workspace.id, healthPeriod, 'model'), [workspace.id, healthPeriod, force]);
+  const hasHealth = !!health.data;
+  const healthByModel = useMemo(() => healthIndex(health.data), [health.data]);
+  const healthOf = (m) => healthOfModel(healthByModel, m);
 
   const models = (data.data && data.data.models) || [];
   const infos = (data.data && data.data.providers) || [];
@@ -207,7 +226,7 @@ export function ModelsPage() {
   const active = JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS);
 
   const facets = useMemo(() => {
-    const keep = (except) => models.filter((m) => matches(m, filters, except));
+    const keep = (except) => models.filter((m) => matches(m, filters, except, healthOf));
     const priced = keep('cost');
     return {
       kinds: countBy(keep('kinds'), kindsOf),
@@ -215,8 +234,10 @@ export function ModelsPage() {
       endpoints: countBy(keep('endpoints'), endpointsOf),
       cost: { priced: priced.filter(hasCost).length, unpriced: priced.filter((m) => !hasCost(m)).length },
       providers: countBy(keep('providers'), (m) => [m.provider]),
+      health: countBy(keep('health'), (m) => [statusOf(healthOf(m))]),
     };
-  }, [models, filters]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [models, filters, healthByModel]);
 
   const kindOptions = KIND_ORDER.filter((k) => models.some((m) => kindsOf(m).includes(k))).map((k) => ({ value: k, label: KIND_LABELS[k] }));
   const capabilityOptions = CAPABILITIES.filter((c) => models.some((m) => c.test(m))).map((c) => ({ value: c.id, label: c.label, title: c.title }));
@@ -226,19 +247,27 @@ export function ModelsPage() {
   const providerOptions = [...new Set(models.map((m) => m.provider))].sort().map((p) => ({ value: p, label: p }));
 
   const filtered = useMemo(() => {
-    const list = models.filter((m) => matches(m, filters));
+    const list = models.filter((m) => matches(m, filters, undefined, healthOf));
     const byName = (a, b) => a.id.localeCompare(b.id);
-    const nullsLast = (a, b, fn) => {
+    // the models without a value last, whatever the direction
+    const nullsLast = (a, b, fn, desc = false) => {
       const x = fn(a);
       const y = fn(b);
       if (x === null && y === null) return byName(a, b);
       if (x === null) return 1;
       if (y === null) return -1;
-      return x - y || byName(a, b);
+      return (desc ? y - x : x - y) || byName(a, b);
     };
     if (sort === 'price-asc') return list.sort((a, b) => nullsLast(a, b, blended));
-    if (sort === 'price-desc') return list.sort((a, b) => nullsLast(b, a, blended));
-    if (sort === 'context') return list.sort((a, b) => nullsLast(b, a, contextOf));
+    if (sort === 'price-desc') return list.sort((a, b) => nullsLast(a, b, blended, true));
+    if (sort === 'context') return list.sort((a, b) => nullsLast(a, b, contextOf, true));
+    const measured = (fn) => (m) => {
+      const h = healthOf(m);
+      return h && attempted(h) > 0 ? fn(h) : null;
+    };
+    if (sort === 'calls') return list.sort((a, b) => nullsLast(a, b, measured((h) => healthNumber(h.calls)), true));
+    if (sort === 'latency') return list.sort((a, b) => nullsLast(a, b, measured((h) => healthNumber(h.p50_ms))));
+    if (sort === 'speed') return list.sort((a, b) => nullsLast(a, b, measured((h) => healthNumber(h.tokens_per_second)), true));
     if (sort === 'estimate') {
       const totals = new Map(list.map((m) => [m, estimateOf(m)]));
       // a workload that generates text: the models that only read their input (embeddings, moderation) come after
@@ -247,7 +276,7 @@ export function ModelsPage() {
     }
     return list.sort(byName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [models, filters, sort, estimate]);
+  }, [models, filters, sort, estimate, healthByModel]);
 
   const shown = filtered.slice(0, 500);
   const pricedCount = filtered.filter(hasCost).length;
@@ -255,7 +284,7 @@ export function ModelsPage() {
   const estimatedModels = filtered.filter((m) => estimates.get(m));
   const generating = estimatedModels.filter((m) => !(estimate.output > 0 && estimates.get(m).inputOnly));
   const cheapest = (generating.length ? generating : estimatedModels).reduce((best, m) => (!best || estimates.get(m).total < best.estimate.total ? { model: m, estimate: estimates.get(m) } : best), null);
-  const sorts = estimate.on ? [...SORTS, { value: 'estimate', label: 'Cheapest for this workload' }] : SORTS;
+  const sorts = [...SORTS, ...(estimate.on ? [{ value: 'estimate', label: 'Cheapest for this workload' }] : []), ...(hasHealth ? HEALTH_SORTS : [])];
 
   return (
     <div className="content wide">
@@ -337,6 +366,19 @@ export function ModelsPage() {
               ))}
             </div>
           </div>
+          {hasHealth && (
+            <div className="field">
+              <label title="How the models behaved in the period">Health</label>
+              <select className="sm" value={healthPeriod} onChange={(e) => setHealthPeriod(e.target.value)} aria-label="Health period" style={{ marginBottom: 6 }}>
+                {HEALTH_PERIODS.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <FacetChecks options={HEALTH} value={filters.health} counts={facets.health} onChange={(v) => set({ health: v })} />
+            </div>
+          )}
           {providerOptions.length > 1 && (
             <div className="field">
               <label>Providers</label>
@@ -406,6 +448,11 @@ export function ModelsPage() {
                     <ModelLabels model={m} compact />
                   </div>
                   <ModelFacts model={m} />
+                  {hasHealth && attempted(healthOf(m)) > 0 && (
+                    <div className="small" style={{ marginTop: 8 }}>
+                      <HealthSummary health={healthOf(m)} />
+                    </div>
+                  )}
                   {estimate.on && <EstimateLine estimate={estimates.get(m)} />}
                 </div>
               ))}
@@ -423,6 +470,9 @@ export function ModelsPage() {
                       <th className="num">Context</th>
                       <th className="num">Input / 1M</th>
                       <th className="num">Output / 1M</th>
+                      {hasHealth && <th title="Share of the calls of the period that succeeded">Health</th>}
+                      {hasHealth && <th className="num">p50</th>}
+                      {hasHealth && <th className="num">Speed</th>}
                       {estimate.on && <th className="num">Per request</th>}
                       {estimate.on && <th className="num">Per month</th>}
                       <th>Capabilities</th>
@@ -439,6 +489,20 @@ export function ModelsPage() {
                         <td className="num">{fmtTokens(contextOf(m))}</td>
                         <td className="num">{fmtPrice(promptPrice(m))}</td>
                         <td className="num">{fmtPrice(completionPrice(m))}</td>
+                        {hasHealth && (
+                          <td className="nowrap">
+                            {attempted(healthOf(m)) > 0 ? (
+                              <span className="health-summary">
+                                <HealthDot health={healthOf(m)} />
+                                {fmtSuccess(healthOf(m))}
+                              </span>
+                            ) : (
+                              <span className="faint">—</span>
+                            )}
+                          </td>
+                        )}
+                        {hasHealth && <td className="num">{attempted(healthOf(m)) > 0 && healthNumber(healthOf(m).p50_ms) !== null ? fmtMs(healthOf(m).p50_ms) : '—'}</td>}
+                        {hasHealth && <td className="num nowrap">{attempted(healthOf(m)) > 0 ? fmtSpeed(healthOf(m).tokens_per_second) : '—'}</td>}
                         {estimate.on && <td className="num">{estimates.get(m) ? fmtCost(estimates.get(m).perRequest) : '—'}</td>}
                         {estimate.on && <td className="num">{estimates.get(m) ? <b>{fmtCost(estimates.get(m).total)}</b> : '—'}</td>}
                         <td className="faint small">{capabilitiesOf(m).map((c) => c.label).join(', ')}</td>
@@ -456,6 +520,13 @@ export function ModelsPage() {
         {selected && (
           <>
             <ModelDetails model={selected} baseUrl={workspace.baseUrl} />
+            {hasHealth && (
+              <HealthDetails
+                health={healthOf(selected)}
+                periodLabel={(HEALTH_PERIODS.find((p) => p.value === healthPeriod) || {}).label}
+                logsUrl={`/workspaces/${workspace.id}/logs?model=${encodeURIComponent(selected.model)}&period=${healthPeriod}`}
+              />
+            )}
             {selected.modality === 'text' && !chatUnavailableReason(selected) && (
               <button className="btn primary mt" onClick={() => navigate(`/workspaces/${workspace.id}/chat?model=${encodeURIComponent(selected.id)}`)}>
                 <Icon name="message" />
