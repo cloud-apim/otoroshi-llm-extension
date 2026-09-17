@@ -402,7 +402,7 @@ class ModelsCatalog(env: Env) {
 
   // `provider` is an entity provider kind or a price table provider name. None until the catalog is loaded.
   def lookup(provider: String, model: String): Option[CatalogMatch] = index.flatMap { idx =>
-    matches.get(s"${provider} ${model}", _ => idx.find(idx.providersFor(provider), model))
+    matches.get(s"${provider}\u0000${model}", _ => idx.find(idx.providersFor(provider), model))
   }
 
   def lookupCost(provider: String, model: String): Option[CostModel] = {
@@ -630,10 +630,14 @@ object ModelsMetadata {
 
   private def nonZero(value: BigDecimal): Option[JsString] = Option.when(value > 0)(price(value))
 
-  // OpenRouter's pricing shape: dollars per token (per image for images), as strings
+  private def listed(cost: CostModel, field: String): Option[BigDecimal] = cost.raw.select(field).asOpt[BigDecimal]
+
+  // OpenRouter's pricing shape: dollars per token (per image for images), as strings. A model billed per second,
+  // per character or per second of video has no token price at all (rather than a price of zero): it gets the
+  // price of its own unit
   def pricing(cost: CostModel): JsObject = obj(
-    "prompt" -> price(cost.input_cost_per_token).some,
-    "completion" -> price(cost.output_cost_per_token).some,
+    "prompt" -> listed(cost, "input_cost_per_token").map(price),
+    "completion" -> listed(cost, "output_cost_per_token").map(price),
     "input_cache_read" -> nonZero(cost.cache_read_input_token_cost).orElse(nonZero(cost.input_cost_per_token_cache_hit)),
     "input_cache_write" -> nonZero(cost.cache_creation_input_token_cost),
     "internal_reasoning" -> nonZero(cost.output_cost_per_reasoning_token),
@@ -641,6 +645,10 @@ object ModelsMetadata {
     "audio_output" -> nonZero(cost.output_cost_per_audio_token),
     "image" -> nonZero(cost.input_cost_per_image),
     "image_output" -> nonZero(cost.output_cost_per_image),
+    "input_second" -> nonZero(cost.input_cost_per_second),
+    "output_second" -> nonZero(cost.output_cost_per_second),
+    "input_character" -> listed(cost, "input_cost_per_character").flatMap(nonZero),
+    "video_second" -> listed(cost, "output_cost_per_video_per_second").flatMap(nonZero),
   )
 
   /**

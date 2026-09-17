@@ -548,11 +548,18 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = completion //api.supportsCompletion
 
+  override def transformOpenAIInputBodyToProviderInputBody(inputBody: JsObject): JsObject = {
+    inputBody.select("max_tokens").asOpt[Long] match {
+      case None => inputBody
+      case Some(maxTokens) => inputBody - "max_tokens" ++ Json.obj("max_completion_tokens" -> maxTokens)
+    }
+  }
+
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val body = originalBody.asObject - "messages" - "provider"
     val _mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = _mergedOptions.select("model").asOptString.orElse(computeModel(_mergedOptions)).getOrElse("--")
-    val mergedOptions = if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions
+    val mergedOptions = (if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val hasToolsInRequest = body.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
     val acc = new UsageAccumulator()
     // tracks whether this stream already pushed its analytics slug, so that seeing the final state twice
@@ -683,7 +690,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     val body = originalBody.asObject - "messages" - "provider"
     val _mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = _mergedOptions.select("model").asOptString.orElse(computeModel(_mergedOptions)).getOrElse("--")
-    val mergedOptions = if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions
+    val mergedOptions = (if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val hasToolsInRequest = body.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
     val acc = new UsageAccumulator()
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty || options.a2aConnectors.nonEmpty || options.searchEngines.nonEmpty)) {
@@ -741,7 +748,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     val body = originalBody.asObject - "messages" - "provider" - "prompt"
     val _mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
     val finalModel = _mergedOptions.select("model").asString
-    val mergedOptions = if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions
+    val mergedOptions = (if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val acc = new UsageAccumulator()
     val callF = api.call("POST", "/completions", Some(mergedOptions ++ Json.obj("prompt" -> prompt.messages.head.content)), acc)
     callF.map {
@@ -790,7 +797,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     api.rawCall("GET", modelsPath, None).map { resp =>
       if (resp.status == 200) {
         Right(resp.json.select("data").as[List[JsObject]].map(obj => obj.select("id").asString)
-          .applyOnIf(providerName.toLowerCase() == "openai")(_.filter(v => v.toLowerCase.startsWith("gpt") || v.toLowerCase.startsWith("o1")))
+          //.applyOnIf(providerName.toLowerCase() == "openai")(_.filter(v => v.toLowerCase.startsWith("gpt") || v.toLowerCase.startsWith("o1")))
         )
       } else {
         Left(Json.obj("error" -> s"bad response code: ${resp.status}"))

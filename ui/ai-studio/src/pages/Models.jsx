@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useWorkspace } from '../App';
-import { CopyButton, Drawer, Empty, ErrorAlert, Loading, PageHeader, Segmented, useAsync } from '../components/ui';
+import { CopyButton, Drawer, Empty, ErrorAlert, Field, Loading, NumberInput, PageHeader, Segmented, useAsync } from '../components/ui';
 import { Icon } from '../components/icons';
 import { ModelDetails, ModelFacts, ModelLabels } from '../components/modelinfo';
 import { listWorkspaceModels } from '../lib/models';
@@ -13,6 +13,7 @@ import {
   countBy,
   ENDPOINT_LABELS,
   endpointsOf,
+  estimateCost,
   fmtPrice,
   fmtTokens,
   hasCost,
@@ -21,6 +22,7 @@ import {
   kindsOf,
   promptPrice,
 } from '../lib/modelmeta';
+import { fmtCost, fmtInt } from '../lib/format';
 import { Link, useRouter } from '../lib/router';
 
 const CONTEXTS = [
@@ -37,6 +39,83 @@ const SORTS = [
   { value: 'price-desc', label: 'Most expensive first' },
   { value: 'context', label: 'Largest context first' },
 ];
+
+// typical requests, to start an estimate from
+const WORKLOADS = [
+  { id: 'chat', label: 'Chat message', input: 1000, output: 400 },
+  { id: 'rag', label: 'RAG answer', input: 8000, output: 500 },
+  { id: 'agent', label: 'Agent step', input: 30000, output: 1000 },
+  { id: 'summary', label: 'Summary', input: 20000, output: 800 },
+];
+
+const ESTIMATE_KEY = 'ai-studio.models.estimate';
+const DEFAULT_ESTIMATE = { on: false, input: 1000, output: 400, requests: 10000, cached: 0 };
+
+function loadEstimate() {
+  try {
+    return { ...DEFAULT_ESTIMATE, ...(JSON.parse(window.localStorage.getItem(ESTIMATE_KEY)) || {}) };
+  } catch (e) {
+    return DEFAULT_ESTIMATE;
+  }
+}
+
+function EstimatePanel({ value, onChange, cheapest, estimated, total }) {
+  return (
+    <div className="card estimate-panel">
+      <div className="row between wrap top">
+        <div>
+          <h3>Cost estimate</h3>
+          <p className="muted small">What a workload costs on each model at its list price. Reasoning tokens are billed as output tokens.</p>
+        </div>
+        <div className="picks">
+          {WORKLOADS.map((w) => (
+            <button
+              key={w.id}
+              className={`pick ${value.input === w.input && value.output === w.output ? 'active' : ''}`}
+              title={`${fmtInt(w.input)} input and ${fmtInt(w.output)} output tokens per request`}
+              onClick={() => onChange({ input: w.input, output: w.output })}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="estimate-grid">
+        <Field label="Input tokens per request">
+          <NumberInput value={value.input} min="0" step="100" onChange={(v) => onChange({ input: v ?? 0 })} />
+        </Field>
+        <Field label="Output tokens per request">
+          <NumberInput value={value.output} min="0" step="100" onChange={(v) => onChange({ output: v ?? 0 })} />
+        </Field>
+        <Field label="Requests per month">
+          <NumberInput value={value.requests} min="0" step="1000" onChange={(v) => onChange({ requests: v ?? 0 })} />
+        </Field>
+        <Field label="Cached input (%)" hint="Read from the prompt cache, for the models that price it.">
+          <NumberInput value={value.cached} min="0" max="100" step="10" onChange={(v) => onChange({ cached: Math.min(100, Math.max(0, v ?? 0)) })} />
+        </Field>
+      </div>
+      <p className="small muted" style={{ margin: 0 }}>
+        {cheapest ? (
+          <>
+            Cheapest: <b className="mono">{cheapest.model.id}</b> at <b>{fmtCost(cheapest.estimate.total)}</b> a month. {estimated} of {total} models have a token price.
+          </>
+        ) : (
+          'None of these models has a token price.'
+        )}
+      </p>
+    </div>
+  );
+}
+
+function EstimateLine({ estimate }) {
+  if (!estimate) return <div className="estimate-line muted small">No token price to estimate</div>;
+  return (
+    <div className="estimate-line small">
+      ≈ <b>{fmtCost(estimate.total)}</b> a month · {fmtCost(estimate.perRequest)} a request
+      {estimate.inputOnly && <span className="faint"> · input only</span>}
+    </div>
+  );
+}
 
 const EMPTY_FILTERS = { q: '', kinds: [], capabilities: [], endpoints: [], cost: '', context: 0, providers: [] };
 
@@ -101,9 +180,24 @@ export function ModelsPage() {
   const { navigate } = useRouter();
   const [force, setForce] = useState(0);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
-  const [sort, setSort] = useState('name');
+  const [estimate, setEstimateState] = useState(loadEstimate);
+  const [sort, setSort] = useState(() => (estimate.on ? 'estimate' : 'name'));
   const [view, setView] = useState('cards');
   const [selected, setSelected] = useState(null);
+  const setEstimate = (patch) =>
+    setEstimateState((e) => {
+      const next = { ...e, ...patch };
+      try {
+        window.localStorage.setItem(ESTIMATE_KEY, JSON.stringify(next));
+      } catch (err) {}
+      return next;
+    });
+  const toggleEstimate = () => {
+    setEstimate({ on: !estimate.on });
+    if (!estimate.on) setSort('estimate');
+    else if (sort === 'estimate') setSort('name');
+  };
+  const estimateOf = (m) => (estimate.on ? estimateCost(m, { ...estimate, cached: estimate.cached / 100 }) : null);
   const data = useAsync(() => listWorkspaceModels(workspace, force > 0), [workspace.id, force]);
 
   const models = (data.data && data.data.models) || [];
@@ -145,11 +239,23 @@ export function ModelsPage() {
     if (sort === 'price-asc') return list.sort((a, b) => nullsLast(a, b, blended));
     if (sort === 'price-desc') return list.sort((a, b) => nullsLast(b, a, blended));
     if (sort === 'context') return list.sort((a, b) => nullsLast(b, a, contextOf));
+    if (sort === 'estimate') {
+      const totals = new Map(list.map((m) => [m, estimateOf(m)]));
+      // a workload that generates text: the models that only read their input (embeddings, moderation) come after
+      const secondary = (m) => Number(!!(estimate.output > 0 && totals.get(m) && totals.get(m).inputOnly));
+      return list.sort((a, b) => secondary(a) - secondary(b) || nullsLast(a, b, (m) => (totals.get(m) ? totals.get(m).total : null)));
+    }
     return list.sort(byName);
-  }, [models, filters, sort]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [models, filters, sort, estimate]);
 
   const shown = filtered.slice(0, 500);
   const pricedCount = filtered.filter(hasCost).length;
+  const estimates = useMemo(() => new Map(filtered.map((m) => [m, estimateOf(m)])), [filtered, estimate]); // eslint-disable-line react-hooks/exhaustive-deps
+  const estimatedModels = filtered.filter((m) => estimates.get(m));
+  const generating = estimatedModels.filter((m) => !(estimate.output > 0 && estimates.get(m).inputOnly));
+  const cheapest = (generating.length ? generating : estimatedModels).reduce((best, m) => (!best || estimates.get(m).total < best.estimate.total ? { model: m, estimate: estimates.get(m) } : best), null);
+  const sorts = estimate.on ? [...SORTS, { value: 'estimate', label: 'Cheapest for this workload' }] : SORTS;
 
   return (
     <div className="content wide">
@@ -245,8 +351,12 @@ export function ModelsPage() {
               {filtered.length > 0 && ` · ${pricedCount} with a known price`}
             </p>
             <div className="row">
+              <button className={`btn sm ${estimate.on ? 'active-toggle' : ''}`} onClick={toggleEstimate} title="Estimate what a workload costs on each model">
+                <Icon name="wallet" />
+                Estimate costs
+              </button>
               <select className="sm" value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort models">
-                {SORTS.map((s) => (
+                {sorts.map((s) => (
                   <option key={s.value} value={s.value}>
                     {s.label}
                   </option>
@@ -262,6 +372,9 @@ export function ModelsPage() {
               />
             </div>
           </div>
+          {estimate.on && data.data && models.length > 0 && (
+            <EstimatePanel value={estimate} onChange={setEstimate} cheapest={cheapest} estimated={estimatedModels.length} total={filtered.length} />
+          )}
           {data.loading && !data.data && <Loading label="Asking providers for their models…" />}
           {data.data && models.length === 0 && (
             <div className="card">
@@ -293,6 +406,7 @@ export function ModelsPage() {
                     <ModelLabels model={m} compact />
                   </div>
                   <ModelFacts model={m} />
+                  {estimate.on && <EstimateLine estimate={estimates.get(m)} />}
                 </div>
               ))}
             </div>
@@ -309,6 +423,8 @@ export function ModelsPage() {
                       <th className="num">Context</th>
                       <th className="num">Input / 1M</th>
                       <th className="num">Output / 1M</th>
+                      {estimate.on && <th className="num">Per request</th>}
+                      {estimate.on && <th className="num">Per month</th>}
                       <th>Capabilities</th>
                     </tr>
                   </thead>
@@ -323,6 +439,8 @@ export function ModelsPage() {
                         <td className="num">{fmtTokens(contextOf(m))}</td>
                         <td className="num">{fmtPrice(promptPrice(m))}</td>
                         <td className="num">{fmtPrice(completionPrice(m))}</td>
+                        {estimate.on && <td className="num">{estimates.get(m) ? fmtCost(estimates.get(m).perRequest) : '—'}</td>}
+                        {estimate.on && <td className="num">{estimates.get(m) ? <b>{fmtCost(estimates.get(m).total)}</b> : '—'}</td>}
                         <td className="faint small">{capabilitiesOf(m).map((c) => c.label).join(', ')}</td>
                       </tr>
                     ))}

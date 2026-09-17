@@ -279,6 +279,43 @@ export function Checks({ options, value = [], onChange }) {
   );
 }
 
+// a button opening a list of actions, closed by a click anywhere else
+export function MenuButton({ icon, label, title, items, className = 'btn sm', disabled, minWidth = 200 }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e) => ref.current && !ref.current.contains(e.target) && setOpen(false);
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+  return (
+    <div className="menu" ref={ref}>
+      <button className={className} disabled={disabled} onClick={() => setOpen(!open)} title={title}>
+        {icon && <Icon name={icon} />}
+        {label}
+      </button>
+      {open && (
+        <div className="menu-items" style={{ minWidth }}>
+          {items.map((item) => (
+            <button
+              key={item.label}
+              disabled={item.disabled}
+              title={item.title}
+              onClick={() => {
+                setOpen(false);
+                item.onClick();
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // `anchor` is the element that asked for the copy
 export function copyToClipboard(text, anchor) {
   if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text);

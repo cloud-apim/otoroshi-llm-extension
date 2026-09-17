@@ -281,12 +281,12 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(describe("openai", "gpt-audio").kinds, Seq("text", "audio"))
   }
 
-  // the openai client only lists the `gpt` and `o1` models
   val listedModels = Seq(
     "gpt-4o", "gpt-4o-2099-01-01", "gpt-totally-made-up", "gpt-image-1", "text-embedding-3-small", "whisper-1",
     "tts-1", "omni-moderation-latest", "mistral-ocr-latest", "sora-2", "bge-reranker-v2-m3", "gpt-realtime-whisper",
   )
-  val openaiModels = listedModels.filter(_.startsWith("gpt"))
+  // the openai client lists every model of the provider
+  val openaiModels = listedModels
 
   val (openaiPort, _) = createTestServerWithRoutes("openai-models", routes => routes
     .get("/v1/models", (req, response) => response
@@ -385,6 +385,16 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       assertEquals(gpt4o.select("sources").select("catalog").select("provider").asOptString, Some("openai"))
       assertEquals(gpt4o.select("sources").select("catalog").select("match").asOptString, Some(CatalogMatch.Exact))
 
+      // a model billed per second, per character or per second of video has no token price, not a free one
+      def pricingOf(model: String): JsObject = models(model).select("_metadata").select("pricing").asOpt[JsObject].getOrElse(Json.obj())
+      val whisper = ext.costsTracking.lookupModel("openai", "whisper-1").get
+      assertEquals(pricingOf("whisper-1").keys, Set("input_second", "output_second"))
+      assertEquals(pricingOf("whisper-1").select("input_second").asOptString, Some(ModelsMetadata.price(whisper.input_cost_per_second).value))
+      assertEquals(pricingOf("tts-1").keys, Set("input_character"))
+      assertEquals(pricingOf("sora-2").keys, Set("video_second"))
+      // a price of zero the price table does give is kept
+      assertEquals(pricingOf("omni-moderation-latest").select("prompt").asOptString, Some("0"))
+
       val snapshot = models("gpt-4o-2099-01-01").select("_metadata").as[JsObject]
       assertEquals(snapshot.select("sources").select("pricing").select("source").asOptString, Some("models.dev"))
       assertEquals(snapshot.select("sources").select("catalog").select("match").asOptString, Some(CatalogMatch.Normalized))
@@ -420,9 +430,10 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     }
 
     test(s"${host}: models can be filtered on their cost") {
-      assertEquals(list(host, "?has_cost=true").keySet, Set("gpt-4o", "gpt-4o-2099-01-01", "gpt-image-1", "gpt-realtime-whisper"))
+      val unpriced = Set("gpt-totally-made-up", "bge-reranker-v2-m3", "mistral-ocr-latest")
+      assertEquals(list(host, "?has_cost=true").keySet, listedModels.toSet -- unpriced)
       assertEquals(list(host, "?has_cost").keySet, list(host, "?has_cost=true").keySet)
-      assertEquals(list(host, "?has_cost=false").keySet, Set("gpt-totally-made-up"))
+      assertEquals(list(host, "?has_cost=false").keySet, unpriced)
       assertEquals(list(host, "?has_cost=true&kind=text").keySet, Set("gpt-4o", "gpt-4o-2099-01-01"))
       assert(list(host, "?has_cost=false").values.forall(_.select("_metadata").isEmpty), "the filter alone adds no metadata")
     }

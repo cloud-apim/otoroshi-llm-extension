@@ -18,6 +18,16 @@ import {
   promptPrice,
 } from '../lib/modelmeta';
 
+// the prices that are not per token: per image, per second of audio or video, per character
+const UNIT_PRICES = {
+  image: { factor: 1, label: 'an image' },
+  image_output: { factor: 1, label: 'an image' },
+  input_second: { factor: 60, label: 'a minute' },
+  output_second: { factor: 60, label: 'a minute' },
+  input_character: { factor: 1000000, label: '/ 1M characters' },
+  video_second: { factor: 1, label: 'a second' },
+};
+
 const PRICING_LABELS = {
   prompt: 'Input',
   completion: 'Output',
@@ -28,10 +38,18 @@ const PRICING_LABELS = {
   audio_output: 'Audio output',
   image: 'Image input',
   image_output: 'Image output',
+  input_second: 'Audio input',
+  output_second: 'Audio output',
+  input_character: 'Text input',
+  video_second: 'Video output',
 };
 
-// per image prices are not token prices
-const PER_UNIT = ['image', 'image_output'];
+
+// the prices that are not per token, in the unit people compare them in
+function unitPrice(key, value) {
+  const unit = UNIT_PRICES[key];
+  return unit ? `${fmtPrice(Number(value) * unit.factor)} ${unit.label}` : `${fmtPrice(perMillion(value))} / 1M tokens`;
+}
 
 export function ModelLabels({ model, compact = false }) {
   const meta = metaOf(model);
@@ -71,7 +89,12 @@ export function ModelLabels({ model, compact = false }) {
 export function PriceSummary({ model }) {
   const input = promptPrice(model);
   const output = completionPrice(model);
-  if (input === null && output === null) return null;
+  if (input === null && output === null) {
+    const pricing = metaOf(model).pricing || {};
+    const units = Object.keys(pricing).filter((k) => UNIT_PRICES[k]);
+    if (units.length === 0) return null;
+    return <span title="This model is not billed per token">{[...new Set(units.map((k) => unitPrice(k, pricing[k])))].join(' · ')}</span>;
+  }
   if (input === 0 && output === 0) return <span>Free</span>;
   return (
     <span title="Price per million tokens">
@@ -214,7 +237,7 @@ export function ModelDetails({ model, baseUrl }) {
           <div className="kv">
             {Object.keys(pricing).map((k) => (
               <Row key={k} label={PRICING_LABELS[k] || k}>
-                {PER_UNIT.includes(k) ? `$${Number(pricing[k])} per image` : `${fmtPrice(perMillion(pricing[k]))} / 1M tokens`}
+                {unitPrice(k, pricing[k])}
               </Row>
             ))}
           </div>

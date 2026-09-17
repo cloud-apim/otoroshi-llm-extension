@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useWorkspace } from '../App';
 import { StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
-import { Badge, CopyButton, Drawer, Empty, ErrorAlert, Loading, PageHeader, Select, Tabs, useAsync } from '../components/ui';
-import { itemsOf, NoExporterError, PERIODS, runQuery, seriesOf } from '../lib/analytics';
+import { Badge, CopyButton, Drawer, Empty, ErrorAlert, Loading, PageHeader, Select, Tabs, useAsync, useToast } from '../components/ui';
+import { fetchAllPages, itemsOf, NoExporterError, PERIODS, runQuery, seriesOf } from '../lib/analytics';
 import { listApikeys } from '../lib/apikeys';
 import { listBudgets } from '../lib/budgets';
+import { exportName, downloadCsv, isoDate } from '../lib/files';
 import { fmtCost, fmtDate, fmtInt, fmtMs, fmtNumber } from '../lib/format';
 import { Link, useRouter } from '../lib/router';
 
@@ -54,6 +55,45 @@ const COLUMNS = [
 ];
 
 const COLUMNS_KEY = 'ai-studio.logs.columns';
+
+// every recorded field of a call but the caller ip, one call per line
+const CSV_COLUMNS = [
+  { label: 'date', value: (c) => isoDate(c.ts) },
+  { label: 'call_id', value: (c) => c.id },
+  { label: 'request_id', value: (c) => c.request_id },
+  { label: 'model', value: (c) => c.model },
+  { label: 'provider', value: (c) => c.provider_name },
+  { label: 'provider_kind', value: (c) => c.provider_kind },
+  { label: 'modality', value: (c) => c.modality },
+  { label: 'streaming', value: (c) => c.streaming },
+  { label: 'user', value: (c) => c.user_email },
+  { label: 'apikey_owner', value: (c) => c.apikey_owner },
+  { label: 'apikey', value: (c) => c.apikey_name },
+  { label: 'apikey_id', value: (c) => c.apikey_id },
+  { label: 'end_user', value: (c) => c.end_user },
+  { label: 'session_id', value: (c) => c.session_id },
+  { label: 'status', value: (c) => (c.err ? 'error' : c.cache_status === 'hit' ? 'cached' : 'ok') },
+  { label: 'error_kind', value: (c) => c.error_kind },
+  { label: 'error_message', value: (c) => c.error_message },
+  { label: 'finish_reason', value: (c) => c.finish_reason },
+  { label: 'input_tokens', value: (c) => c.input_tokens },
+  { label: 'output_tokens', value: (c) => c.output_tokens },
+  { label: 'reasoning_tokens', value: (c) => c.reasoning_tokens },
+  { label: 'total_tokens', value: (c) => c.total_tokens },
+  { label: 'input_cost_usd', value: (c) => c.input_cost },
+  { label: 'output_cost_usd', value: (c) => c.output_cost },
+  { label: 'reasoning_cost_usd', value: (c) => c.reasoning_cost },
+  { label: 'total_cost_usd', value: (c) => c.total_cost },
+  { label: 'cost_source', value: (c) => c.cost_source },
+  { label: 'duration_ms', value: (c) => c.duration_ms },
+  { label: 'first_token_ms', value: (c) => c.ttft_ms },
+  { label: 'tokens_per_second', value: (c) => (speedOf(c) === null ? null : Math.round(speedOf(c) * 10) / 10) },
+  { label: 'cache_status', value: (c) => c.cache_status },
+  { label: 'energy_kwh', value: (c) => c.energy_kwh },
+  { label: 'gwp_kgco2eq', value: (c) => c.gwp_kgco2eq },
+];
+
+const MAX_EXPORT = 10000;
 
 function useColumns() {
   const [shown, setShown] = useState(() => {
@@ -344,6 +384,9 @@ export function LogsPage() {
   const [refresh, setRefresh] = useState(0);
   const [pages, setPages] = useState({ items: [], next: null, loadingMore: false });
   const [columns, shown, toggleColumn] = useColumns();
+  const toast = useToast();
+  // the number of calls fetched so far while exporting, null otherwise
+  const [exporting, setExporting] = useState(null);
   const keys = useAsync(() => listApikeys(workspace.id), [workspace.id]);
   const users = useAsync(
     () =>
@@ -380,6 +423,26 @@ export function LogsPage() {
     runQuery(workspace.id, 'cloudapim_llm_calls_log', { ...opts, params: { ...params, before: pages.next } })
       .then((res) => setPages((p) => ({ items: [...p.items, ...itemsOf(res)], next: res.data.next_before, loadingMore: false })))
       .catch(() => setPages((p) => ({ ...p, loadingMore: false })));
+  };
+
+  // every call matching the filters, newest first
+  const exportCalls = async () => {
+    setExporting(0);
+    try {
+      const fetchPage = (before) =>
+        runQuery(workspace.id, 'cloudapim_llm_calls_log', { ...opts, params: { ...params, limit: 200, ...(before !== undefined ? { before } : {}) } }).then((res) => ({
+          items: itemsOf(res),
+          next: res.data.next_before,
+        }));
+      const { rows, truncated } = await fetchAllPages(fetchPage, { max: MAX_EXPORT, onProgress: setExporting });
+      downloadCsv(exportName('logs', workspace.slug, period), CSV_COLUMNS, rows);
+      if (truncated) toast.success(`Exported the ${fmtInt(MAX_EXPORT)} most recent calls, narrow the filters to get the older ones`);
+      else toast.success(`${fmtInt(rows.length)} call${rows.length === 1 ? '' : 's'} exported`);
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setExporting(null);
+    }
   };
 
   const noExporter = first.error instanceof NoExporterError;
@@ -437,6 +500,12 @@ export function LogsPage() {
             )}
             {tab === 'calls' && <Select className="sm" style={{ width: 'auto' }} value={finish} onChange={(v) => setQuery({ finish: v })} placeholder="All finish reasons" options={[...new Set([...FINISH_REASONS, ...(finish ? [finish] : [])])].map((r) => ({ value: r, label: r }))} />}
             <div className="grow" />
+            {tab === 'calls' && (
+              <button className="btn sm" disabled={exporting !== null || pages.items.length === 0} onClick={exportCalls} title="Download the calls matching these filters as CSV">
+                <Icon name="download" />
+                {exporting !== null ? `Exporting ${fmtInt(exporting)}…` : 'Export CSV'}
+              </button>
+            )}
             {tab === 'calls' && <ColumnsMenu shown={shown} toggle={toggleColumn} />}
           </div>
           {(session || filtered) && tab === 'calls' && (

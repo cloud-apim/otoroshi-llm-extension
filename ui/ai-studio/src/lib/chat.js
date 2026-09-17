@@ -2,7 +2,7 @@ import { currentTenant } from './bootstrap';
 import { proxyUrl } from './models';
 
 // Calls the workspace endpoint as the signed-in backoffice user (no api key) and streams the answer. `onDelta(content, reasoning)` receives the text as it arrives.
-// `sessionId` groups the calls of one conversation in the logs.
+// `sessionId` groups the calls of one conversation in the logs. `costs` is what the gateway billed for the answer, when the model has a known price.
 export async function chatCompletion({ workspace, body, stream, signal, onDelta, sessionId }) {
   const started = Date.now();
   const res = await fetch(proxyUrl(workspace, '/chat/completions'), {
@@ -33,7 +33,7 @@ export async function chatCompletion({ workspace, body, stream, signal, onDelta,
     const content = (choice.message && choice.message.content) || '';
     const reasoning = (choice.message && (choice.message.reasoning_content || choice.message.reasoning || (typeof choice.message.reasoning_details === 'string' ? choice.message.reasoning_details : ''))) || '';
     onDelta && onDelta(content, reasoning);
-    return { content, reasoning, usage: json.usage, model: json.model, duration: Date.now() - started };
+    return { content, reasoning, usage: json.usage, costs: json.costs || null, model: json.model, duration: Date.now() - started };
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -41,6 +41,7 @@ export async function chatCompletion({ workspace, body, stream, signal, onDelta,
   let content = '';
   let reasoning = '';
   let usage = null;
+  let costs = null;
   let model = null;
   let firstTokenAt = null;
   for (;;) {
@@ -58,6 +59,7 @@ export async function chatCompletion({ workspace, body, stream, signal, onDelta,
         const chunk = JSON.parse(data);
         if (chunk.error) throw new Error(chunk.error.message || JSON.stringify(chunk.error));
         if (chunk.usage) usage = chunk.usage;
+        if (chunk.costs) costs = chunk.costs;
         if (chunk.model) model = chunk.model;
         const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta;
         const thinking = delta && (delta.reasoning_content || delta.reasoning);
@@ -73,5 +75,5 @@ export async function chatCompletion({ workspace, body, stream, signal, onDelta,
       }
     }
   }
-  return { content, reasoning, usage, model, duration: Date.now() - started, ttft: firstTokenAt ? firstTokenAt - started : null };
+  return { content, reasoning, usage, costs, model, duration: Date.now() - started, ttft: firstTokenAt ? firstTokenAt - started : null };
 }

@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { useWorkspace } from '../App';
-import { Field, NumberInput, Select, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
+import { Badge, Field, MenuButton, NumberInput, Select, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
 import { Markdown } from '../components/Markdown';
 import { chatCompletion } from '../lib/chat';
 import { Resources, randomId, workspaceFilter } from '../lib/entities';
-import { fmtInt, fmtMs } from '../lib/format';
+import { fmtCost, fmtInt, fmtMs } from '../lib/format';
 import { deleteConversation, getConversation, listConversations, listWorkspaceModels, saveConversation } from '../lib/models';
 import { bootstrap } from '../lib/bootstrap';
 import { useRouter } from '../lib/router';
 import { capabilitiesOf, chatUsable, contextOf, fmtPrice, fmtTokens, promptPrice } from '../lib/modelmeta';
+import { copyOf, costOf, fileNameOf, MAX_IMPORT_BYTES, parseImport, persisted, toExport, toMarkdown, totalsOf } from '../lib/conversations';
+import { download } from '../lib/files';
 
 const SUGGESTIONS = [
   { title: 'Strawberry Test', prompt: "How many r's are in the word strawberry?" },
@@ -84,6 +86,11 @@ function ModelPicker({ value, onChange, models }) {
   );
 }
 
+function costTitle(costs) {
+  const part = (label, v) => (v === null || v === undefined ? null : `${label}: ${fmtCost(v)}`);
+  return [part('input', costs.input_cost), part('output', costs.output_cost), part('reasoning', costs.reasoning_cost)].filter(Boolean).join(' · ');
+}
+
 export function ChatPage() {
   const { workspace } = useWorkspace();
   const toast = useToast();
@@ -109,7 +116,10 @@ export function ChatPage() {
   const setSettings = (patch) => updatePrefs({ settings: { ...settings, ...patch } });
 
   const [conversation, setConversation] = useState(null);
+  // a temporary chat is never stored: it lives in this page only
+  const [temporary, setTemporary] = useState(false);
   const [input, setInput] = useState('');
+  const fileRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const abortRef = useRef(null);
   const endRef = useRef(null);
@@ -125,17 +135,92 @@ export function ChatPage() {
     endRef.current && endRef.current.scrollIntoView({ block: 'end' });
   }, [conversation]);
 
-  const openRoom = (id) => {
-    if (busy) return;
+  const messages = (conversation && conversation.messages) || [];
+  const totals = totalsOf(conversation);
+
+  const persist = (conv) => saveConversation(workspace, persisted(conv)).then(() => rooms.reload());
+
+  // leaving a temporary chat loses it
+  const leaveTemporary = () =>
+    !temporary || messages.length === 0
+      ? Promise.resolve(true)
+      : confirm({ title: 'Leave this temporary chat?', message: 'It is not saved: its messages will be lost.', danger: true, confirmLabel: 'Leave' });
+
+  const openRoom = async (id) => {
+    if (busy || !(await leaveTemporary())) return;
     getConversation(workspace, id)
-      .then((c) => setConversation(c))
+      .then((c) => {
+        setTemporary(false);
+        setConversation(c);
+      })
       .catch(toast.error);
   };
 
-  const newChat = () => {
+  const newChat = async (temp) => {
+    if (!(await leaveTemporary())) return;
     if (busy) abortRef.current && abortRef.current.abort();
     setConversation(null);
+    setTemporary(!!temp);
     setInput('');
+  };
+
+  const clearChat = () => {
+    confirm({
+      title: 'Clear this conversation?',
+      message: temporary ? 'All its messages will be removed.' : 'All its messages will be removed, the conversation stays in your chats.',
+      danger: true,
+      confirmLabel: 'Clear',
+    }).then((ok) => {
+      if (!ok) return;
+      const cleared = { ...conversation, messages: [] };
+      setConversation(cleared);
+      if (!temporary) persist(cleared).catch(toast.error);
+    });
+  };
+
+  const duplicateChat = async () => {
+    const copy = copyOf(conversation, `conv_${randomId(16)}`, `Copy of ${conversation.title || 'Untitled'}`);
+    try {
+      await persist(copy);
+      setConversation(copy);
+      toast.success('Conversation duplicated');
+    } catch (e) {
+      toast.error(e);
+    }
+  };
+
+  const keepTemporary = async () => {
+    try {
+      await persist(conversation);
+      setTemporary(false);
+      toast.success('Chat saved');
+    } catch (e) {
+      toast.error(e);
+    }
+  };
+
+  const exportChat = (kind) => {
+    if (kind === 'json') download(fileNameOf(conversation, 'json'), JSON.stringify(toExport(conversation), null, 2), 'application/json');
+    else download(fileNameOf(conversation, 'md'), toMarkdown(conversation), 'text/markdown');
+  };
+
+  const importChat = async (file) => {
+    if (!file) return;
+    if (file.size > MAX_IMPORT_BYTES) {
+      toast.error('The file is too large, 5 MB at most');
+      return;
+    }
+    try {
+      const parsed = parseImport(await file.text(), file.name);
+      if (!(await leaveTemporary())) return;
+      const imported = { id: `conv_${randomId(16)}`, created_at: Date.now(), imported_at: Date.now(), ...parsed };
+      await persist(imported);
+      setTemporary(false);
+      setConversation(imported);
+      toast.success(`${parsed.messages.length} message${parsed.messages.length === 1 ? '' : 's'} imported`);
+    } catch (e) {
+      toast.error(`Import failed: ${e.message}`);
+    }
   };
 
   const removeRoom = (id) => {
@@ -158,6 +243,7 @@ export function ChatPage() {
       return;
     }
     const base = conversation || { id: `conv_${randomId(16)}`, title: content.substring(0, 60), created_at: Date.now(), messages: [] };
+    const keep = !temporary;
     const userMsg = { role: 'user', content, at: Date.now() };
     const pending = { role: 'assistant', content: '', model, pending: true, at: Date.now() };
     let current = { ...base, model, messages: [...base.messages, userMsg, pending] };
@@ -196,6 +282,7 @@ export function ChatPage() {
         model: res.model || model,
         at: Date.now(),
         usage: res.usage || null,
+        costs: res.costs || null,
         duration: res.duration,
         ttft: res.ttft,
       });
@@ -209,24 +296,39 @@ export function ChatPage() {
     } finally {
       setBusy(false);
       abortRef.current = null;
-      saveConversation(workspace, { ...current, messages: current.messages.map(({ pending: _p, ...m }) => m) })
-        .then(() => rooms.reload())
-        .catch(() => {});
+      if (keep) persist(current).catch(() => {});
     }
   };
 
-  const messages = (conversation && conversation.messages) || [];
   const roomList = rooms.data || [];
 
   return (
     <div className="chat grow" style={{ gridTemplateColumns: '260px minmax(0, 1fr)' }}>
       <div className="chat-side">
-        <button className="btn primary" onClick={newChat}>
-          <Icon name="plus" />
-          New chat
-        </button>
+        <div className="row" style={{ gap: 6 }}>
+          <button className="btn primary grow" onClick={() => newChat(false)}>
+            <Icon name="plus" />
+            New chat
+          </button>
+          <button className={`btn icon ${temporary ? 'active' : ''}`} onClick={() => newChat(true)} title="New temporary chat, never saved">
+            <Icon name="ghost" />
+          </button>
+          <button className="btn icon" disabled={busy} onClick={() => fileRef.current && fileRef.current.click()} title="Import a conversation (json)">
+            <Icon name="upload" />
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={(e) => {
+              importChat(e.target.files && e.target.files[0]);
+              e.target.value = '';
+            }}
+          />
+        </div>
         <div className="faint small" style={{ padding: '2px 6px' }}>
-          {roomList.length} room{roomList.length === 1 ? '' : 's'} · stored in Otoroshi
+          {rooms.loading && !rooms.data ? 'loading rooms…' : `${roomList.length} room${roomList.length === 1 ? '' : 's'} · stored in Otoroshi`}
         </div>
         <div>
           {roomList.map((r) => (
@@ -250,6 +352,46 @@ export function ChatPage() {
           <ModelPicker value={model} onChange={(m) => updatePrefs({ model: m })} models={textModels} />
           <span className="muted small">{models.loading ? 'loading models…' : `${textModels.length} models`}</span>
           <div className="grow" />
+          {temporary && (
+            <Badge kind="warning" title="Not saved in your chats. Its calls still count in the activity and the budgets.">
+              Temporary
+            </Badge>
+          )}
+          {totals.answers > 0 && (
+            <span
+              className="muted small nowrap"
+              title={totals.priced < totals.answers ? `${totals.answers - totals.priced} answer(s) from models with no known price are not counted` : 'Billed by the gateway for this conversation'}
+            >
+              {totals.priced > 0 ? fmtCost(totals.cost) : 'no known cost'}
+              {totals.priced > 0 && totals.priced < totals.answers ? '+' : ''} · {fmtInt(totals.tokens)} tokens
+            </span>
+          )}
+          {messages.length > 0 && (
+            <>
+              {temporary ? (
+                <button className="btn sm" disabled={busy} onClick={keepTemporary} title="Keep this chat in your chats">
+                  Save chat
+                </button>
+              ) : (
+                <button className="btn sm icon" disabled={busy} onClick={duplicateChat} title="Duplicate this conversation">
+                  <Icon name="copy" />
+                </button>
+              )}
+              <button className="btn sm icon" disabled={busy} onClick={clearChat} title="Clear this conversation">
+                <Icon name="eraser" />
+              </button>
+              <MenuButton
+                className="btn sm icon"
+                icon="download"
+                title="Export this conversation"
+                minWidth={250}
+                items={[
+                  { label: 'JSON, to import it again', onClick: () => exportChat('json') },
+                  { label: 'Markdown, to read or share', onClick: () => exportChat('markdown') },
+                ]}
+              />
+            </>
+          )}
           <button className="btn sm" onClick={() => updatePrefs({ showSettings: !prefs.showSettings })}>
             <Icon name="sliders" />
             Settings
@@ -262,9 +404,10 @@ export function ChatPage() {
                 {messages.length === 0 && (
                   <>
                     <div className="chat-welcome">
-                      <h3>What can I help with?</h3>
+                      <h3>{temporary ? 'Temporary chat' : 'What can I help with?'}</h3>
                       <p className="muted">
                         Chat with the models of <code>{workspace.baseUrl.replace(/^https?:\/\//, '')}</code> as {bootstrap.user.email}.
+                        {temporary && ' This chat is not saved, its calls still count in the activity and the budgets.'}
                       </p>
                     </div>
                   </>
@@ -286,6 +429,7 @@ export function ChatPage() {
                       <div className="meta">
                         {m.model && <span>{m.model}</span>}
                         {m.usage && <span>{fmtInt((m.usage.prompt_tokens || 0) + (m.usage.completion_tokens || 0))} tokens</span>}
+                        {costOf(m) !== null && <span title={costTitle(m.costs)}>{fmtCost(costOf(m))}</span>}
                         {m.duration && <span>{fmtMs(m.duration)}</span>}
                         {m.ttft && <span>ttft {fmtMs(m.ttft)}</span>}
                         {m.stopped && <span>stopped</span>}

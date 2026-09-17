@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useWorkspace } from '../App';
 import { AreaChart, StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
-import { Empty, ErrorAlert, Loading, PageHeader, Select, Tabs, useAsync } from '../components/ui';
+import { Empty, ErrorAlert, Loading, MenuButton, PageHeader, Select, Tabs, useAsync, useToast } from '../components/ui';
 import { BudgetsCard, ConsumersCard, Kpi, UsageCard } from '../components/usage';
 import { compareOf, itemsOf, NoExporterError, PERIODS, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
 import { listApikeys } from '../lib/apikeys';
+import { downloadCsv, exportName, isoDate } from '../lib/files';
 import { fmtCost, fmtInt, fmtMs, fmtNumber, fmtPercent } from '../lib/format';
 import { Link, useRouter } from '../lib/router';
 import { ExploreTab, GuardrailsTab, McpTab, TrendsTab } from './ActivityTabs';
@@ -19,6 +20,77 @@ const TABS = [
 ];
 
 const DEFAULT_PERIOD = '7d';
+
+const num = (field) => (row) => row[field];
+// sums of float costs, without their rounding noise
+const usd = (value) => Math.round((Number(value) || 0) * 1e10) / 1e10;
+
+// what can be downloaded from the activity, for the period and the filters of the page
+const USAGE_EXPORTS = [
+  {
+    id: 'models',
+    label: 'Usage by model',
+    query: 'cloudapim_llm_models_table',
+    columns: [
+      { label: 'model', value: (r) => r.key },
+      { label: 'calls', value: num('calls') },
+      { label: 'tokens', value: num('tokens') },
+      { label: 'spend_usd', value: num('spend_usd') },
+      { label: 'usd_per_1k_tokens', value: num('usd_per_1k_tokens') },
+      { label: 'avg_duration_ms', value: num('avg_ms') },
+      { label: 'error_rate_pct', value: num('error_rate_pct') },
+      { label: 'gco2eq_per_1k_tokens', value: num('gco2eq_per_1k_tokens') },
+    ],
+  },
+  ...[
+    ['apikeys', 'Usage by API key', 'cloudapim_llm_apikeys_table', 'apikey'],
+    ['users', 'Usage by user', 'cloudapim_llm_users_table', 'user'],
+  ].map(([id, label, query, key]) => ({
+    id,
+    label,
+    query,
+    columns: [
+      { label: key, value: (r) => r.key },
+      { label: 'calls', value: num('calls') },
+      { label: 'tokens', value: num('tokens') },
+      { label: 'spend_usd', value: num('spend_usd') },
+      { label: 'errors', value: num('errors') },
+      { label: 'gco2eq', value: num('gco2eq') },
+    ],
+  })),
+];
+
+// one line per hour or per day, calls, tokens and spend side by side
+const TIME_COLUMNS = [
+  { label: 'from', value: (r) => isoDate(r.ts) },
+  { label: 'calls', value: (r) => r.success + r.error },
+  { label: 'errors', value: (r) => r.error },
+  { label: 'input_tokens', value: num('input_tokens') },
+  { label: 'output_tokens', value: num('output_tokens') },
+  { label: 'reasoning_tokens', value: num('reasoning_tokens') },
+  { label: 'input_cost_usd', value: (r) => usd(r.input_cost) },
+  { label: 'output_cost_usd', value: (r) => usd(r.output_cost) },
+  { label: 'reasoning_cost_usd', value: (r) => usd(r.reasoning_cost) },
+  { label: 'total_cost_usd', value: (r) => usd(r.input_cost + r.output_cost + r.reasoning_cost) },
+];
+
+const exportBucket = (period) => (period === '1h' ? '5m' : period === '24h' ? '1h' : '1d');
+
+// the series of several timeseries results, merged bucket by bucket under `<prefix><series name>`
+function mergeSeries(results) {
+  const rows = new Map();
+  results.forEach(([prefix, suffix, res]) =>
+    seriesOf(res).forEach((s) =>
+      s.points.forEach((p) => {
+        const row = rows.get(p.ts) || { ts: p.ts };
+        row[`${prefix}${s.name}${suffix}`] = Number(p.value) || 0;
+        rows.set(p.ts, row);
+      })
+    )
+  );
+  const fields = ['success', 'error', 'input_tokens', 'output_tokens', 'reasoning_tokens', 'input_cost', 'output_cost', 'reasoning_cost'];
+  return [...rows.values()].sort((a, b) => a.ts - b.ts).map((row) => Object.fromEntries([['ts', row.ts], ...fields.map((f) => [f, row[f] || 0])]));
+}
 
 // impacts are tiny per call: pick the unit that keeps a readable number
 const scaled = (units) => (v) => {
@@ -119,6 +191,8 @@ export function ActivityPage() {
     navigate(`/workspaces/${workspace.id}/activity${qs ? `?${qs}` : ''}`, { replace: true, keepScroll: true });
   };
   const [refresh, setRefresh] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const toast = useToast();
   const keys = useAsync(() => listApikeys(workspace.id), [workspace.id]);
   // the users that called the workspace in the period, whatever the user filter, to fill the picker
   const users = useAsync(
@@ -167,6 +241,30 @@ export function ActivityPage() {
   }, [workspace.id, period, apikey, user, refresh, tab]);
   const deps = [workspace.id, period, apikey, user, refresh];
 
+  const exportUsage = async (kind) => {
+    setExporting(true);
+    const name = (what) => exportName('activity', workspace.slug, what, period, apikey && keyName(apikey), user);
+    try {
+      if (kind === 'time') {
+        const bucket = exportBucket(period);
+        const [calls, tokens, cost] = await Promise.all([
+          q('cloudapim_llm_requests_over_time', { bucket }),
+          q('cloudapim_llm_tokens_over_time', { bucket }),
+          q('cloudapim_llm_cost_over_time', { bucket }),
+        ]);
+        downloadCsv(name(`per-${bucket}`), TIME_COLUMNS, mergeSeries([['', '', calls], ['', '_tokens', tokens], ['', '_cost', cost]]));
+      } else {
+        const exp = USAGE_EXPORTS.find((e) => e.id === kind);
+        const rows = itemsOf(await q(exp.query, { params: { top_n: 1000 } }));
+        downloadCsv(name(exp.id), exp.columns, rows);
+      }
+    } catch (e) {
+      toast.error(e);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const noExporter = [kpis.error, charts.error].some((e) => e instanceof NoExporterError);
   const k = kpis.data;
   const c = charts.data;
@@ -190,6 +288,17 @@ export function ActivityPage() {
         <button className="btn sm" onClick={() => setRefresh((r) => r + 1)} title="Refresh">
           <Icon name="refresh" />
         </button>
+        <MenuButton
+          icon="download"
+          label={exporting ? 'Exporting…' : 'Export CSV'}
+          title="Download the usage of the period, with the filters of the page"
+          disabled={exporting}
+          minWidth={230}
+          items={[
+            ...USAGE_EXPORTS.map((e) => ({ label: e.label, onClick: () => exportUsage(e.id) })),
+            { label: period === '1h' ? 'Usage every 5 minutes' : period === '24h' ? 'Usage per hour' : 'Usage per day', onClick: () => exportUsage('time') },
+          ]}
+        />
       </PageHeader>
 
       {(apikey || user) && (

@@ -373,6 +373,7 @@ a.btn { text-decoration: none; }
 .btn.ghost:hover { background: var(--hover); }
 .btn.sm { padding: 5px 10px; font-size: 12.5px; }
 .btn.icon { padding: 6px; }
+.btn.icon.active { background: var(--accent-subtle); border-color: transparent; color: var(--accent-text); }
 .btn svg { width: 15px; height: 15px; }
 .segmented { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
 .segmented button { border: 0; background: var(--surface); color: var(--muted); font: inherit; padding: 6px 12px; cursor: pointer; font-weight: 500; }
@@ -870,3 +871,10 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .model-checklist { display: flex; flex-direction: column; gap: 6px; }
 .model-checklist-items { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 4px 10px; }
 .model-checklist-items .check { min-width: 0; }
+.estimate-panel { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+.estimate-panel h3 { margin: 0 0 2px; }
+.estimate-panel p { margin: 0; }
+.estimate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.estimate-grid .field { margin: 0; }
+.estimate-line { margin-top: 8px; color: var(--ink); }
+.btn.active-toggle { background: var(--accent-subtle); border-color: transparent; color: var(--accent-text); }

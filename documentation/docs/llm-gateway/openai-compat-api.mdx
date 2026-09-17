@@ -230,7 +230,7 @@ The metadata combines the [models.dev](https://models.dev) catalog, bundled with
 | `capabilities.prompt_caching`, `capabilities.web_search` | Prompt caching and built-in web search support |
 | `modalities.input`, `modalities.output` | Accepted and produced content: `text`, `image`, `pdf`, `audio`, `video` |
 | `limits.context`, `limits.input`, `limits.output` | Context window, maximum input and maximum output, in tokens |
-| `pricing` | The prices cost tracking bills the model with, in dollars per token, as strings, in the OpenRouter format: `prompt`, `completion`, `input_cache_read`, `input_cache_write`, `internal_reasoning`, `audio`, `audio_output`, `image`, `image_output` |
+| `pricing` | The prices cost tracking bills the model with, in dollars, as strings, in the OpenRouter format: per token for `prompt`, `completion`, `input_cache_read`, `input_cache_write`, `internal_reasoning`, `audio`, `audio_output`, per image for `image`, `image_output`. Models billed in another unit get `input_second` and `output_second` (per second of audio), `input_character` (per character of text to speak) or `video_second` (per second of generated video) instead of token prices |
 | `knowledge` | Knowledge cutoff |
 | `status`, `deprecation_date` | `beta` or `deprecated` status, and the announced deprecation date |
 | `sources` | Where the metadata comes from (see below) |

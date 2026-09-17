@@ -54,6 +54,31 @@ export function totalPoints(res) {
   return [...acc.entries()].sort((a, b) => a[0] - b[0]).map(([ts, value]) => ({ ts, value }));
 }
 
+// Every row of a log paged with `before` (the timestamp of the last row of a page), newest first, `max` at most.
+// A page can end in the middle of rows sharing a timestamp: the next one starts again from that instant and
+// skips the rows already fetched. `fetchPage(before)` gives `{ items, next }`, `next` null on the last page.
+export async function fetchAllPages(fetchPage, { max = 10000, onProgress } = {}) {
+  const seen = new Set();
+  const rows = [];
+  let before;
+  for (;;) {
+    const { items, next } = await fetchPage(before);
+    let added = 0;
+    items.forEach((row) => {
+      if (!seen.has(row.id)) {
+        seen.add(row.id);
+        rows.push(row);
+        added++;
+      }
+    });
+    if (onProgress) onProgress(rows.length);
+    if (next === null || next === undefined || rows.length >= max) break;
+    // a page with nothing new, or ending on the instant it started from, moves strictly past that instant
+    before = added > 0 && Number(next) + 1 !== before ? Number(next) + 1 : Number(next);
+  }
+  return { rows: rows.slice(0, max), truncated: rows.length >= max };
+}
+
 export function itemsOf(res) {
   return (res && res.data && res.data.items) || [];
 }

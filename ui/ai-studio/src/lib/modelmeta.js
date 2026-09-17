@@ -99,6 +99,31 @@ export function fmtTokens(value) {
   return tokens.format(value);
 }
 
+const perToken = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isNaN(n) ? null : n;
+};
+
+// What a workload costs on a model at its list prices, null when the model has no token price. `cached` is the
+// share (0 to 1) of the input read from the prompt cache, billed at the cache price when the model has one.
+// Embedding and moderation models only bill their input.
+export function estimateCost(model, { input = 0, output = 0, cached = 0, requests = 1 }) {
+  const pricing = metaOf(model).pricing;
+  if (!pricing) return null;
+  const prompt = perToken(pricing.prompt);
+  if (prompt === null) return null;
+  const kinds = kindsOf(model);
+  const inputOnly = kinds.length > 0 && kinds.every((k) => k === 'embedding' || k === 'moderation');
+  const completion = inputOnly ? 0 : perToken(pricing.completion);
+  if (completion === null) return null;
+  const cacheRead = perToken(pricing.input_cache_read);
+  const inputTokens = Math.max(0, Number(input) || 0);
+  const cachedTokens = cacheRead === null ? 0 : inputTokens * Math.min(1, Math.max(0, Number(cached) || 0));
+  const perRequest = (inputTokens - cachedTokens) * prompt + cachedTokens * cacheRead + (inputOnly ? 0 : Math.max(0, Number(output) || 0)) * completion;
+  return { perRequest, total: perRequest * Math.max(0, Number(requests) || 0), cached: cachedTokens > 0, inputOnly };
+}
+
 export function promptPrice(model) {
   const p = metaOf(model).pricing;
   return p ? perMillion(p.prompt) : null;

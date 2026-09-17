@@ -120,8 +120,19 @@ not know: every call of the provider then counts against your dollar budgets.
 output, vision, PDF, audio, prompt caching, web search), context window and price per million tokens.
 Filter them by type, capability, API endpoint, known price, context window and provider, sort them by
 price or context, switch to a comparison table, and open any model for its full details and a ready to
-paste request. **Chat** is a playground to try any of them, with streaming, reasoning
+paste request. **Estimate costs** answers "what would this cost us?" before you commit to a model: describe
+a workload (tokens in and out per request, requests per month, share of the prompt served from cache) or
+start from a typical one (chat message, RAG answer, agent step, summary), and every model shows what it
+would cost per request and per month at its list price, the cheapest first. **Chat** is a playground to try any of them, with streaming, reasoning
 display, presets and generation settings. Conversations are saved per user and per workspace.
+
+Each answer shows its model, tokens, latency and what the gateway billed for it, and the conversation
+keeps a running total, so you know what a prompt costs before it ships. Duplicate a conversation to try
+another direction without losing the first one, clear it to start over, or open a **temporary chat**
+that is never saved, for a quick test or a sensitive question (its calls still count in the activity
+and the budgets). Export a conversation as JSON to import it again later, in another workspace or by a
+teammate, or as Markdown to read or share it. Import also accepts the `messages` of an OpenAI chat
+request, to replay a prompt from your code.
 
 ![The models page listing every model reachable through the workspace](/img/ai-studio-models.png)
 
@@ -269,6 +280,8 @@ key or one user from the selectors, or by clicking a row of the usage tables. Th
 the page URL, so a filtered view can be bookmarked and shared. The overview also estimates the
 environmental impact of the calls with [EcoLogits](/docs/reporting/ecological): emissions,
 energy and water, their evolution, and the footprint of each model for the same amount of generated text.
+**Export CSV** hands the usage over to your spreadsheet or your chargeback: by model, by API key, by user,
+or hour by hour and day by day, for the period and the filters of the page.
 
 - **Trends** puts side by side, for models, users, API keys and end users, how the spend, tokens or
   requests evolve and the biggest moves against the previous period, new comers included.
@@ -314,7 +327,8 @@ from your name in the top bar.
 
 **Logs** lists every call, newest first, with its model, user, API key, tokens, cost, speed, latency, finish
 reason and status. Pick the columns you care about, filter by model, key, user, status or finish reason, and
-share a filtered view or a single call with its link. Only metadata is recorded: prompts and answers are
+share a filtered view or a single call with its link. **Export CSV** downloads the calls matching the
+filters, up to the 10,000 most recent, with every recorded field. Only metadata is recorded: prompts and answers are
 never stored.
 
 The details of a call show how long the answer took and how long the first token made the caller wait, why it

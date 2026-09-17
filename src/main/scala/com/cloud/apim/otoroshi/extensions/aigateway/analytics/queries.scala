@@ -189,7 +189,7 @@ object AiGatewayQueries {
         table(t(ctx.settings), label, keyName, Seq(
           ("calls", "COUNT(*)", false),
           ("tokens", "COALESCE(SUM(total_tokens), 0)", false),
-          ("spend_usd", "ROUND(COALESCE(SUM(total_cost), 0)::numeric, 4)", true),
+          ("spend_usd", "ROUND(COALESCE(SUM(total_cost), 0)::numeric, 6)", true),
           ("errors", "COUNT(*) FILTER (WHERE err)", false),
           ("gco2eq", "ROUND((COALESCE(SUM(gwp_kgco2eq), 0) * 1000)::numeric, 3)", true)
         ), real(ctx, s"$key IS NOT NULL"), orderBy = "4 DESC NULLS LAST, 2 DESC")(ctx)
@@ -257,7 +257,7 @@ object AiGatewayQueries {
       table(t(ctx.settings), "model", "model", Seq(
         ("calls", "COUNT(*)", false),
         ("tokens", "COALESCE(SUM(total_tokens), 0)", false),
-        ("spend_usd", "ROUND(COALESCE(SUM(total_cost), 0)::numeric, 4)", true),
+        ("spend_usd", "ROUND(COALESCE(SUM(total_cost), 0)::numeric, 6)", true),
         ("usd_per_1k_tokens", "ROUND(COALESCE(SUM(total_cost) * 1000.0 / NULLIF(SUM(total_tokens), 0), 0)::numeric, 6)", true),
         ("avg_ms", "ROUND(COALESCE(AVG(duration_ms), 0))", false),
         ("error_rate_pct", s"ROUND(($ErrorRate * 100)::numeric, 2)", true),
