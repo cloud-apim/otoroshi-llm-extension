@@ -24,7 +24,7 @@ extension at `/extensions/cloud-apim/ai-studio` (backoffice session required) an
 | Studio concept | Otoroshi entities |
 |---|---|
 | workspace | a team `team_ai_studio_<id>` (owner of every entity) + a route `route_ai_studio_<id>` with `IpAddressAllowedList` / `IpAddressBlockList` (enabled when they have addresses), `MandatoryConsumerPreset` and `OpenAiCompatApi` |
-| api key | an apikey authorized on the route, tagged `ai_studio_ws_<id>` |
+| api key | an apikey authorized on the route, tagged `ai_studio_ws_<id>`. Its expiration is `validUntil`, and resetting its secret replaces `clientSecret` (64 random lowercase alphanumerics, like the template) and drops `rotation.nextSecret` |
 | provider (BYOK) | one entity per enabled capability (`providers`, `embedding-models`, `image-models`, `audio-models`, `moderation-models`, `ocr-models`, `video-models`) sharing `metadata.ai_studio_connection` and `models.require_known_costs` |
 | guardrails, model access | `guardrails` / `models` of every provider of the workspace |
 | routing | `provider_fallback`, `loadbalancer` and `otoroshi` (router) providers, order of the route `language_model_refs` |

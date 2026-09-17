@@ -21,7 +21,7 @@ import play.api.libs.json.*
 import play.api.mvc.{RequestHeader, Result, Results}
 
 import java.text.Normalizer
-import java.time.Instant
+import java.time.{Instant, LocalDate, ZoneOffset}
 import java.time.temporal.ChronoUnit
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Try
@@ -1143,6 +1143,23 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       apikey.select("dailyQuota").asOpt[Long].contains(config.quota("default_daily_quota")) &&
       apikey.select("monthlyQuota").asOpt[Long].contains(config.quota("default_monthly_quota"))
 
+  // `validUntil` is the epoch millis date the key stops working: otoroshi refuses it and reads it as disabled
+  private def validUntilOf(apikey: JsValue): Option[Long] = apikey.select("validUntil").asOpt[Long]
+
+  private def expired(apikey: JsValue): Boolean = validUntilOf(apikey).exists(_ <= System.currentTimeMillis())
+
+  // `valid_until`: an ISO-8601 instant, epoch millis, or a date, valid through the end of that day (UTC)
+  private def validUntilFrom(form: JsObject): Option[Long] = form.value.get("valid_until") match {
+    case None | Some(JsNull) => None
+    case Some(JsNumber(n)) => Some(n.toLong)
+    case Some(JsString(s)) if s.trim.isEmpty => None
+    case Some(JsString(s)) =>
+      Some(Try(Instant.parse(s.trim).toEpochMilli)
+        .orElse(Try(LocalDate.parse(s.trim).plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant.toEpochMilli - 1))
+        .getOrElse(throw badRequest("'valid_until' must be an ISO-8601 date, like 2027-01-31 or 2027-01-31T18:00:00Z")))
+    case Some(_) => throw badRequest("'valid_until' must be an ISO-8601 date or null")
+  }
+
   private def apikeyJson(apikey: JsObject, budgets: Seq[JsObject], config: AiStudioConfig): JsObject = {
     val clientId = apikey.select("clientId").asString
     Json.obj(
@@ -1152,6 +1169,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       "name" -> apikey.select("clientName").asOptString.getOrElse(clientId),
       "description" -> apikey.select("description").asOptString.getOrElse(""),
       "enabled" -> apikey.select("enabled").asOptBoolean.getOrElse(true),
+      "valid_until" -> validUntilOf(apikey).map(v => JsString(Instant.ofEpochMilli(v).toString)).getOrElse(JsNull).as[JsValue],
+      "expired" -> expired(apikey),
       "owner" -> optString(metaOf(apikey, MetaOwner)),
       "uses_workspace_quotas" -> usesWorkspaceQuotas(apikey, config),
       "quotas" -> Json.obj(
@@ -1194,6 +1213,11 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     // `owner`: the email the usage of the key is attributed to, null makes it a workspace key, absent keeps the current one
     val owner = if (has(form, "owner")) string(form, "owner").map(_.trim).filter(_.nonEmpty) else metaOf(prev, MetaOwner)
     if (owner.exists(o => !OwnerPattern.matches(o))) throw badRequest("'owner' must be an email")
+    // `valid_until`: the date the key stops working, null for a key that never expires, absent keeps the current one
+    val validUntil = if (has(form, "valid_until")) validUntilFrom(form) else validUntilOf(prev)
+    // an expired key reads as disabled: a new date enables it again, unless `enabled` says otherwise
+    val revived = existing.exists(expired) && has(form, "valid_until") && !validUntil.exists(_ <= System.currentTimeMillis())
+    val enabled = boolean(form, "enabled").getOrElse(revived || prev.select("enabled").asOptBoolean.getOrElse(true))
     val tag = consumerTagOf(ws.id)
     for {
       budgets <- Budgets.list(ws.id)
@@ -1215,7 +1239,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         "_loc" -> prev.select("_loc").asOpt[JsObject].getOrElse(ws.location).as[JsObject],
         "clientName" -> name,
         "description" -> (if (has(form, "description")) string(form, "description").getOrElse("") else prev.select("description").asOptString.getOrElse("")),
-        "enabled" -> boolean(form, "enabled").getOrElse(prev.select("enabled").asOptBoolean.getOrElse(true)),
+        "enabled" -> enabled,
+        "validUntil" -> validUntil.map(v => JsNumber(v)).getOrElse(JsNull).as[JsValue],
         // only this workspace route, never the defaults of the template
         "authorizations" -> Json.arr(Json.obj("kind" -> "route", "id" -> routeIdOf(ws.id))),
         "authorizedEntities" -> Json.arr(),
@@ -1253,6 +1278,18 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       fresh <- Apikeys.get(clientId).map(_.getOrElse(saved))
       budgetsAfter <- Budgets.list(ws.id)
     } yield apikeyJson(fresh, budgetsAfter, config)
+  }
+
+  // a new secret, drawn like the ones of the api key template, and no pending rotation secret: the
+  // previous bearer and basic credentials of the key stop working
+  private def resetApikeySecret(ws: Workspace, clientId: String)(using call: AiStudioApiRequest): Future[JsObject] = {
+    for {
+      key <- workspaceApikey(ws, clientId)
+      rotation = objOf(key.select("rotation")) - "nextSecret" - "bearer"
+      saved <- Apikeys.update((key ++ Json.obj("clientSecret" -> randomId(64), "rotation" -> rotation)) - "bearer")
+      fresh <- Apikeys.get(clientId).map(_.getOrElse(saved))
+      budgets <- Budgets.list(ws.id)
+    } yield apikeyJson(fresh, budgets, AiStudioConfig.current(env))
   }
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2087,6 +2124,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     },
     route("PUT", "/workspaces/:id/apikeys/:kid", wantsBody = true) {
       withWorkspace(ws => workspaceApikey(ws, call.param("kid")).flatMap(key => saveApikey(ws, call.form, Some(key))).map(ok))
+    },
+    route("POST", "/workspaces/:id/apikeys/:kid/_reset-secret") {
+      withWorkspace(ws => resetApikeySecret(ws, call.param("kid")).map(ok))
     },
     route("DELETE", "/workspaces/:id/apikeys/:kid") {
       withWorkspace { ws =>

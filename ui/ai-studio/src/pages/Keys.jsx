@@ -3,11 +3,11 @@ import { useWorkspace } from '../App';
 import { Badge, CopyButton, Empty, ErrorAlert, Field, Loading, Modal, NumberInput, PageHeader, Segmented, Select, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { BudgetModal } from '../components/BudgetModal';
 import { Icon } from '../components/icons';
-import { listApikeys, OWNER_PATTERN, ownerOf, saveApikey, usesWorkspaceQuotas } from '../lib/apikeys';
+import { isExpired, listApikeys, OWNER_PATTERN, ownerOf, resetApikeySecret, saveApikey, usesWorkspaceQuotas, validUntilOf } from '../lib/apikeys';
 import { bootstrap } from '../lib/bootstrap';
 import { budgetsOfKey, keyBudgetOf, listBudgets, periodLabel, PERIODS, periodOf, saveBudget } from '../lib/budgets';
 import { Resources } from '../lib/entities';
-import { fmtCost, fmtInt } from '../lib/format';
+import { fmtCost, fmtDate, fmtDay, fmtInt, fmtRelative } from '../lib/format';
 import { Link } from '../lib/router';
 
 const OWNER_KINDS = [
@@ -15,6 +15,61 @@ const OWNER_KINDS = [
   { value: 'teammate', label: 'Teammate' },
   { value: 'workspace', label: 'Workspace' },
 ];
+
+const DAY = 24 * 3600 * 1000;
+
+const EXPIRIES = [
+  { value: 'never', label: 'Never' },
+  { value: '7', label: 'In 7 days' },
+  { value: '30', label: 'In 30 days' },
+  { value: '90', label: 'In 90 days' },
+  { value: '365', label: 'In 1 year' },
+  { value: 'date', label: 'On a date…' },
+];
+
+const pad = (n) => String(n).padStart(2, '0');
+
+// the local day of a date, as the value of a date input
+function localDay(ts) {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// a key valid until a day works through the end of that day
+function endOfDay(day) {
+  const [y, m, d] = day.split('-').map(Number);
+  return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+}
+
+// the validUntil of the form: null for no expiration, undefined while no date is picked
+function expiryOf(form, apikey) {
+  if (form.expiry === 'never') return null;
+  if (form.expiry !== 'date') return Date.now() + Number(form.expiry) * DAY;
+  if (!form.expiryDate) return undefined;
+  const current = validUntilOf(apikey);
+  // an untouched date keeps its exact time
+  return current !== null && localDay(current) === form.expiryDate ? current : endOfDay(form.expiryDate);
+}
+
+function Expiry({ apikey }) {
+  const v = validUntilOf(apikey);
+  if (v === null) return <span className="muted">never</span>;
+  if (isExpired(apikey)) {
+    return (
+      <Badge kind="negative" title={`Expired on ${fmtDate(v)}`}>
+        Expired
+      </Badge>
+    );
+  }
+  if (v - Date.now() < 7 * DAY) {
+    return (
+      <Badge kind="warning" title={fmtDate(v)}>
+        {fmtRelative(v)}
+      </Badge>
+    );
+  }
+  return <span title={fmtDate(v)}>{fmtDay(v)}</span>;
+}
 
 function ownerKindOf(apikey) {
   const owner = ownerOf(apikey);
@@ -32,6 +87,8 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
     name: apikey ? apikey.clientName : '',
     description: apikey ? apikey.description : '',
     enabled: apikey ? apikey.enabled : true,
+    expiry: validUntilOf(apikey) !== null ? 'date' : 'never',
+    expiryDate: validUntilOf(apikey) !== null ? localDay(validUntilOf(apikey)) : '',
     override: apikey ? !usesWorkspaceQuotas(apikey) : false,
     throttlingQuota: apikey ? apikey.throttlingQuota : c.default_throttling_quota,
     dailyQuota: apikey ? apikey.dailyQuota : c.default_daily_quota,
@@ -43,11 +100,24 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const owner = form.ownerKind === 'me' ? bootstrap.user.email : form.ownerKind === 'teammate' ? form.teammate.trim() : null;
   const invalidOwner = form.ownerKind !== 'workspace' && !OWNER_PATTERN.test(owner || '');
+  const validUntil = expiryOf(form, apikey);
+  const wasExpired = !!apikey && isExpired(apikey);
+  // an expired key can be saved as is, but a new date must be in the future
+  const staysExpired = wasExpired && validUntil === validUntilOf(apikey);
+  const pastDate = validUntil !== null && validUntil !== undefined && validUntil <= Date.now() && !staysExpired;
+  const invalidExpiry = validUntil === undefined || pastDate;
+  // an expired key reads as disabled: giving it a new date enables it again
+  const setExpiry = (patch) =>
+    setForm((f) => {
+      const next = { ...f, ...patch };
+      const v = expiryOf(next, apikey);
+      return wasExpired && (v === null || (v !== undefined && v > Date.now())) ? { ...next, enabled: true } : next;
+    });
 
   const save = async () => {
     setSaving(true);
     try {
-      const saved = await saveApikey(workspace.id, { ...form, owner }, apikey);
+      const saved = await saveApikey(workspace.id, { ...form, owner, validUntil }, apikey);
       const hasCredit = form.credit !== null && form.credit !== '' && !Number.isNaN(Number(form.credit));
       if (hasCredit) {
         await saveBudget(
@@ -86,7 +156,7 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
           <button className="btn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn primary" disabled={!form.name.trim() || invalidOwner || saving} onClick={save}>
+          <button className="btn primary" disabled={!form.name.trim() || invalidOwner || invalidExpiry || saving} onClick={save}>
             {saving ? 'Saving…' : apikey ? 'Save' : 'Create'}
           </button>
         </>
@@ -104,6 +174,27 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
       <Field label="Name">
         <TextInput value={form.name} onChange={(v) => set({ name: v })} placeholder="My app" autoFocus />
       </Field>
+      <div className="form-grid">
+        <Field
+          label="Expires"
+          hint={
+            staysExpired
+              ? `Expired on ${fmtDate(validUntil)}: the gateway refuses this key until it gets a new date.`
+              : form.expiry === 'never'
+                ? 'The key works until you disable or delete it.'
+                : form.expiry === 'date'
+                  ? 'The key works through the end of that day, then the gateway refuses it.'
+                  : `On ${fmtDate(validUntil)}, then the gateway refuses it.`
+          }
+        >
+          <Select value={form.expiry} onChange={(v) => setExpiry({ expiry: v, expiryDate: v === 'date' && !form.expiryDate ? localDay(Date.now() + 30 * DAY) : form.expiryDate })} options={EXPIRIES} />
+        </Field>
+        {form.expiry === 'date' && (
+          <Field label="Valid until" error={pastDate ? 'Pick a date in the future.' : validUntil === undefined ? 'Pick a date.' : null}>
+            <TextInput type="date" value={form.expiryDate} min={localDay(Date.now())} onChange={(v) => setExpiry({ expiryDate: v })} />
+          </Field>
+        )}
+      </div>
       <div className="form-grid">
         <Field label="Credit limit (USD)" hint="Leave blank for unlimited. Enforced by a budget scoped to this key.">
           <NumberInput value={form.credit} onChange={(v) => set({ credit: v })} placeholder="Leave blank for unlimited" step="0.01" min="0" />
@@ -128,30 +219,72 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
         <Field label="Requests per month" hint={`default: ${fmtInt(c.default_monthly_quota)}`}>
           <NumberInput value={form.monthlyQuota} disabled={!form.override} onChange={(v) => set({ monthlyQuota: v })} />
         </Field>
-        <Field label="Enabled">
-          <Toggle value={form.enabled} onChange={(v) => set({ enabled: v })} />
+        <Field label="Enabled" hint={staysExpired ? 'Expired keys stay disabled.' : null}>
+          <Toggle value={form.enabled && !staysExpired} disabled={staysExpired} onChange={(v) => set({ enabled: v })} />
         </Field>
       </div>
     </Modal>
   );
 }
 
-function RevealModal({ apikey, onClose }) {
+function RevealModal({ apikey, onClose, onReset }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [full, setFull] = useState(null);
+  const [fresh, setFresh] = useState(null);
+  const [resetting, setResetting] = useState(false);
   const key = useAsync(() => Resources.apikeys.get(apikey.clientId), [apikey.clientId]);
-  const bearer = (key.data && key.data.bearer) || apikey.bearer;
+  const current = fresh || key.data || apikey;
+  const bearer = current.bearer;
+  const validUntil = validUntilOf(current);
+
+  const reset = () => {
+    confirm({
+      title: `Reset the secret of ${apikey.clientName}?`,
+      message: 'The key gets a new secret. Applications still using the current one receive 401 errors within a few seconds.',
+      danger: true,
+      confirmLabel: 'Reset secret',
+    }).then(async (ok) => {
+      if (!ok) return;
+      setResetting(true);
+      try {
+        setFresh(await resetApikeySecret(apikey.clientId));
+        setFull(true);
+        toast.success('Secret reset: copy the new key');
+        if (onReset) onReset();
+      } catch (e) {
+        toast.error(e);
+      } finally {
+        setResetting(false);
+      }
+    });
+  };
+
   return (
     <Modal
       open
       onClose={onClose}
       title={`API key ${apikey.clientName}`}
       footer={
-        <button className="btn primary" onClick={onClose}>
-          Done
-        </button>
+        <>
+          <button className="btn danger left" disabled={resetting || key.loading} onClick={reset} title="Replace the secret of this key">
+            <Icon name="refresh" />
+            {resetting ? 'Resetting…' : 'Reset secret'}
+          </button>
+          <button className="btn primary" onClick={onClose}>
+            Done
+          </button>
+        </>
       }
     >
-      <p className="muted">Use this value as the bearer token of your OpenAI SDK. Keep it secret.</p>
+      <p className="muted">
+        {fresh ? 'This is the new key: update your applications with it.' : 'Use this value as the bearer token of your OpenAI SDK.'} Keep it secret.
+      </p>
+      {isExpired(current) ? (
+        <p className="warning-text">This key expired on {fmtDate(validUntil)}: edit it to give it a new date.</p>
+      ) : (
+        validUntil !== null && <p className="muted small">Valid until {fmtDate(validUntil)}.</p>
+      )}
       {key.loading && <Loading />}
       {bearer && (
         <>
@@ -242,6 +375,7 @@ export function KeysPage() {
                   <th>Key limit</th>
                   <th>Budgets</th>
                   <th>Quotas</th>
+                  <th>Expires</th>
                   <th>Status</th>
                   <th />
                 </tr>
@@ -280,15 +414,22 @@ export function KeysPage() {
                         })()}
                       </td>
                       <td className="muted">{usesWorkspaceQuotas(k) ? 'default' : `${fmtInt(k.throttlingQuota)}/s · ${fmtInt(k.dailyQuota)}/d`}</td>
+                      <td className="nowrap">
+                        <Expiry apikey={k} />
+                      </td>
                       <td>
-                        <Toggle value={k.enabled} onChange={() => toggle(k)} title={k.enabled ? 'Enabled' : 'Disabled'} />
+                        {isExpired(k) ? (
+                          <Toggle value={false} disabled onChange={() => {}} title="Expired: edit the key to give it a new date" />
+                        ) : (
+                          <Toggle value={k.enabled} onChange={() => toggle(k)} title={k.enabled ? 'Enabled' : 'Disabled'} />
+                        )}
                       </td>
                       {/* the secondary actions are icons: with an owner column, labels push Delete out of a laptop screen */}
                       <td className="actions">
                         <Link className="btn sm icon" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.clientId)}`} title="Usage of this key">
                           <Icon name="chart" />
                         </Link>
-                        <button className="btn sm icon" onClick={() => setRevealing(k)} title="Show the key">
+                        <button className="btn sm icon" onClick={() => setRevealing(k)} title="Show or reset the key">
                           <Icon name="key" />
                         </button>
                         <button className="btn sm icon" onClick={() => setBudgeting(k.clientId)} title="Create a budget for this key">
@@ -322,7 +463,7 @@ export function KeysPage() {
           }}
         />
       )}
-      {revealing && <RevealModal apikey={revealing} onClose={() => setRevealing(null)} />}
+      {revealing && <RevealModal apikey={revealing} onClose={() => setRevealing(null)} onReset={() => data.reload()} />}
       {budgeting && (
         <BudgetModal
           workspace={workspace}

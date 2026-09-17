@@ -14,6 +14,40 @@ export function ownerOf(apikey) {
   return (apikey && apikey.metadata && apikey.metadata[META.owner]) || null;
 }
 
+// the date the key stops working (epoch millis), null for a key that never expires
+export function validUntilOf(apikey) {
+  const v = apikey && apikey.validUntil;
+  return v === null || v === undefined || v === '' ? null : Number(v);
+}
+
+// otoroshi refuses an expired key, and reads it as disabled
+export function isExpired(apikey, now = Date.now()) {
+  const v = validUntilOf(apikey);
+  return v !== null && v <= now;
+}
+
+const SECRET_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+// drawn like the secrets of the api key template, from the browser CSPRNG (bytes over 251 are dropped
+// so every character is equally likely)
+export function randomSecret(size = 64) {
+  let secret = '';
+  while (secret.length < size) {
+    for (const b of crypto.getRandomValues(new Uint8Array(size))) {
+      if (b < 252 && secret.length < size) secret += SECRET_ALPHABET[b % SECRET_ALPHABET.length];
+    }
+  }
+  return secret;
+}
+
+// a new secret and no pending rotation secret: the previous bearer and basic credentials stop working
+export async function resetApikeySecret(clientId) {
+  const { bearer: _bearer, ...current } = await Resources.apikeys.get(clientId);
+  const { nextSecret: _next, bearer: _nextBearer, ...rotation } = current.rotation || {};
+  await Resources.apikeys.update({ ...current, clientSecret: randomSecret(), rotation });
+  return Resources.apikeys.get(clientId);
+}
+
 export function usesWorkspaceQuotas(apikey) {
   const c = bootstrap.config;
   return (
@@ -32,6 +66,7 @@ export async function saveApikey(wsId, form, existing) {
     clientName: form.name,
     description: form.description || '',
     enabled: form.enabled !== false,
+    validUntil: form.validUntil ?? null,
     // only this workspace route, never the defaults of the template
     authorizations: [{ kind: 'route', id: routeIdOf(wsId) }],
     authorizedEntities: [],

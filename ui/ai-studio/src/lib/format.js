@@ -40,6 +40,31 @@ export function fmtDate(v) {
   return d.toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+export function fmtDay(v) {
+  if (!v) return '—';
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return String(v);
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
+const RELATIVE_UNITS = [
+  ['year', 365 * 24 * 3600 * 1000],
+  ['month', 30 * 24 * 3600 * 1000],
+  ['day', 24 * 3600 * 1000],
+  ['hour', 3600 * 1000],
+  ['minute', 60 * 1000],
+];
+
+// "in 3 days", "2 hours ago"
+export function fmtRelative(v, now = Date.now()) {
+  const d = new Date(v).getTime();
+  if (Number.isNaN(d)) return String(v);
+  const diff = d - now;
+  const [unit, size] = RELATIVE_UNITS.find(([, ms]) => Math.abs(diff) >= ms) || RELATIVE_UNITS[RELATIVE_UNITS.length - 1];
+  return relative.format(Math.round(diff / size), unit);
+}
+
 export function fmtShortDate(v, bucket) {
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return String(v);

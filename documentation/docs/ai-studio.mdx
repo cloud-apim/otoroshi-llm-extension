@@ -142,13 +142,19 @@ the chat.
 Create keys for your applications, reveal and copy them, set per-key quotas and a credit limit, and jump
 to the activity of a single key.
 
+Give a key an **expiration date** for a contractor, a demo or a proof of concept: from that date, the
+gateway refuses it, with no cleanup to remember. The list shows when each key expires and flags the ones
+about to. Extending an expired key brings it back. If a key leaks, **Reset secret** issues a new one in
+one click: the leaked key stops working within seconds, while the key keeps its name, owner, quotas,
+budgets and history.
+
 Every key has an **owner**: yourself, a teammate, or the whole workspace. The usage of a key counts for
 its owner, so the activity of a person covers both their chats and the applications running with their
 keys. Workspace keys belong to no one in particular, which suits shared applications and agents.
 
 ![The API keys page of a workspace](/img/ai-studio-api-keys.png)
 
-*Each key with its credit limit, its budgets and its quotas, and shortcuts to its activity and its budget.*
+*Each key with its credit limit, its budgets, its quotas and its expiration, and shortcuts to its activity and its budget.*
 
 ### Route and protect
 
@@ -382,7 +388,8 @@ models from the catalog, workspace quotas, every provider selected for a preset 
 | `GET` `POST /workspaces/:id/providers` | List or connect providers: `kind`, `name`, `token`, `base_url`, `timeout`, `enabled`, `require_known_costs` (refuse and hide the models with no known price), `fields` and `modalities` (`text`, `embedding`, `image`, `audio`, `moderation`, `ocr`, `video`, each with `enabled`, `model`, and `stt_model` for audio). |
 | `GET` `PUT` `DELETE /workspaces/:id/providers/:provider` | Read, update or remove a provider and all of its capabilities. |
 | `GET /workspaces/:id/providers/:provider/models`, `POST /workspaces/:id/providers/_models` | The models offered by a connected provider, or by a provider before connecting it. `?enriched=true` adds the `details` of each model. |
-| `GET` `POST /workspaces/:id/apikeys`, `GET` `PUT` `DELETE /workspaces/:id/apikeys/:clientId` | API keys: `name`, `description`, `enabled`, `owner` (the email the usage of the key counts for, `null` for a workspace key), `quotas` (`null` for the workspace defaults) and `credit_limit` (`{ usd, period }`, `null` to remove it). |
+| `GET` `POST /workspaces/:id/apikeys`, `GET` `PUT` `DELETE /workspaces/:id/apikeys/:clientId` | API keys: `name`, `description`, `enabled`, `owner` (the email the usage of the key counts for, `null` for a workspace key), `valid_until` (the date the key stops working: an ISO-8601 date and time, or a day, valid through its end in UTC; `null` for no expiration), `quotas` (`null` for the workspace defaults) and `credit_limit` (`{ usd, period }`, `null` to remove it). Responses add `expired`. Giving an expired key a new `valid_until` enables it again, unless `enabled` is set. |
+| `POST /workspaces/:id/apikeys/:clientId/_reset-secret` | Gives the key a new secret. The previous secret stops working, and the response contains the new `bearer`. |
 | `GET` `POST /workspaces/:id/budgets`, `GET` `PUT` `DELETE /workspaces/:id/budgets/:budget` | Credits: `name`, `usd`, `tokens`, `period` (`lifetime`, `daily`, `weekly`, `monthly`, `yearly`), `mode` (`block` or `soft`), `alert`, `scope` (`workspace`, `apikey` or `custom`) with `apikeys`, `users`, `models` and `rules`. `?consumption=true` adds the live consumption to the list. |
 | `GET /workspaces/:id/budgets/:budget/consumption`, `POST .../consumption/_reset` | Live consumption of a budget, and reset of its current window (`?all=true` resets everything). |
 | `GET` `PUT /workspaces/:id/guardrails` | Content policies of the workspace (`items`, `fail_on_deny`), applied to every provider. |

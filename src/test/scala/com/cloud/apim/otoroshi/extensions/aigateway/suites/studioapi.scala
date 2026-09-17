@@ -7,6 +7,7 @@ import play.api.libs.ws.WSResponse
 import reactor.core.publisher.Mono
 
 import java.nio.charset.StandardCharsets
+import java.time.Instant
 import java.util.Base64
 import scala.concurrent.duration.DurationInt
 
@@ -146,6 +147,40 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("owner" -> JsNull)), 200).select("owner").asOpt[String], None)
     assertEquals(entity("apim.otoroshi.io", "apikeys", clientId).get.select("metadata").select("ai_studio_owner").asOpt[String], None)
     assert(key.select("bearer").asString.nonEmpty)
+    // the expiration of a key: kept when absent, removed by null, and a new date enables an expired key again
+    assertEquals(key.select("valid_until").asOpt[String], None)
+    assertEquals(key.select("expired").asBoolean, false)
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("valid_until" -> "2099-01-31")), 200).select("valid_until").asString, "2099-01-31T23:59:59.999Z")
+    assertEquals(entity("apim.otoroshi.io", "apikeys", clientId).get.select("validUntil").asOpt[Long], Some(Instant.parse("2099-01-31T23:59:59.999Z").toEpochMilli))
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("description" -> "the app")), 200).select("valid_until").asString, "2099-01-31T23:59:59.999Z")
+    expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("valid_until" -> "next year")), 400)
+    val lapsed = expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("valid_until" -> "2020-01-01T00:00:00Z")), 200)
+    assertEquals(lapsed.select("expired").asBoolean, true)
+    assertEquals(lapsed.select("enabled").asBoolean, false)
+    val revived = expect(studio("PUT", s"/workspaces/$wsId/apikeys/$clientId", Json.obj("valid_until" -> JsNull)), 200)
+    assertEquals(revived.select("valid_until").asOpt[String], None)
+    assertEquals(revived.select("expired").asBoolean, false)
+    assertEquals(revived.select("enabled").asBoolean, true)
+    assertEquals(entity("apim.otoroshi.io", "apikeys", clientId).get.select("validUntil").asOpt[Long], None)
+    // a new secret, which also drops a pending rotation secret
+    val pending = entity("apim.otoroshi.io", "apikeys", clientId).get
+    val previousSecret = pending.select("clientSecret").asString
+    val withRotation = pending ++ Json.obj("rotation" -> (pending.select("rotation").as[JsObject] ++ Json.obj("nextSecret" -> "pending-secret")))
+    assertEquals(client.call("PUT", s"http://otoroshi-api.oto.tools:$port/apis/apim.otoroshi.io/v1/apikeys/$clientId", Map("Authorization" -> s"Basic $basic"), Some(withRotation)).awaitf(30.seconds).status, 200)
+    assertEquals(entity("apim.otoroshi.io", "apikeys", clientId).get.select("rotation").select("nextSecret").asOpt[String], Some("pending-secret"))
+    val renewed = expect(studio("POST", s"/workspaces/$wsId/apikeys/$clientId/_reset-secret"), 200)
+    val renewedEntity = entity("apim.otoroshi.io", "apikeys", clientId).get
+    val renewedSecret = renewedEntity.select("clientSecret").asString
+    assertNotEquals(renewedSecret, previousSecret)
+    assert(renewedSecret.matches("^[a-z0-9]{64}$"), renewedSecret)
+    assertEquals(renewedEntity.select("rotation").select("nextSecret").asOpt[String], None)
+    assertEquals(renewed.select("client_secret").asString, renewedSecret)
+    assert(renewed.select("bearer").asString.nonEmpty)
+    assertNotEquals(renewed.select("bearer").asString, key.select("bearer").asString)
+    assertEquals(renewed.select("name").asString, "my app")
+    assertEquals(renewed.select("enabled").asBoolean, true)
+    assertEquals(renewedEntity.select("metadata").select("ai_studio_workspace").asString, wsId)
+    expect(studio("POST", s"/workspaces/$wsId/apikeys/nope/_reset-secret"), 404)
 
     // a second provider with two capabilities, then one of them disabled
     val openai = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj(
