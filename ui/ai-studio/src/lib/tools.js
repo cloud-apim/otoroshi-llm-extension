@@ -1,4 +1,4 @@
-import { Resources, randomId } from './entities';
+import { Resources, randomId, workspaceFilter } from './entities';
 import { workspaceLocation, workspaceMetadata } from './workspaces';
 
 // The studio only creates MCP connectors speaking the stateless Streamable HTTP revision: every request is
@@ -69,6 +69,24 @@ export const SEARCH_PROVIDERS = [
 export function attachedProviders(providers, kind, id) {
   const option = TOOL_KINDS[kind].option;
   return providers.filter((p) => ((p.options && p.options[option]) || []).includes(id));
+}
+
+export const TOOL_LABELS = { functions: 'function', mcp: 'MCP', search: 'web search' };
+
+// Every tool of the workspace that a provider carries, with the providers it is attached to. A call can
+// pick among them (`allowed_tools`): it only narrows what its provider offers, so a tool nobody attached
+// stays out of reach.
+export async function listAttachedTools(wsId) {
+  const filter = workspaceFilter(wsId);
+  const [providers, functions, mcp, search] = await Promise.all([
+    Resources.providers.list(filter),
+    Resources.functions.list(filter),
+    Resources.mcpConnectors.list(filter),
+    Resources.searchEngines.list(filter),
+  ]);
+  const listed = (kind, entities) =>
+    (entities || []).map((e) => ({ id: e.id, name: e.name, kind, providers: attachedProviders(providers, kind, e.id).map((p) => p.id) }));
+  return [...listed('functions', functions), ...listed('mcp', mcp), ...listed('search', search)].filter((t) => t.providers.length > 0);
 }
 
 export async function attachTool(providers, kind, id, selectedIds) {

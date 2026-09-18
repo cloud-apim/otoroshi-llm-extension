@@ -4,12 +4,14 @@ import { Badge, CopyButton, Field, MenuButton, Modal, NumberInput, Select, Toggl
 import { Icon } from '../components/icons';
 import { Markdown } from '../components/Markdown';
 import { chatCompletion } from '../lib/chat';
+import { generateImage } from '../lib/images';
 import { Resources, randomId, workspaceFilter } from '../lib/entities';
+import { listAttachedTools, TOOL_LABELS } from '../lib/tools';
 import { fmtCost, fmtInt, fmtMs } from '../lib/format';
 import { deleteConversation, getConversation, listConversations, listWorkspaceModels, saveConversation } from '../lib/models';
 import { bootstrap } from '../lib/bootstrap';
 import { useRouter } from '../lib/router';
-import { capabilitiesOf, chatUsable, contextOf, fmtPrice, fmtTokens, promptPrice } from '../lib/modelmeta';
+import { capabilitiesOf, chatUsable, contextOf, fmtPrice, fmtTokens, imageGenerator, imageOutput, promptPrice } from '../lib/modelmeta';
 import {
   answerSlot,
   columnThread,
@@ -26,7 +28,20 @@ import {
   toMarkdown,
   totalsOf,
 } from '../lib/conversations';
-import { download } from '../lib/files';
+import { download, downloadDataUrl } from '../lib/files';
+import {
+  ACCEPT,
+  acceptedKinds,
+  attachmentsBytes,
+  carriedKinds,
+  bytesOf,
+  conversationBytes,
+  fmtBytes,
+  KIND_LABELS,
+  MAX_CONVERSATION_BYTES,
+  readAttachment,
+  thumbnailOf,
+} from '../lib/attachments';
 
 const SUGGESTIONS = [
   { title: 'Strawberry Test', prompt: "How many r's are in the word strawberry?" },
@@ -35,7 +50,8 @@ const SUGGESTIONS = [
   { title: 'Car Wash Test', prompt: 'It is raining. Should I walk or drive to the car wash 200 m away?' },
 ];
 
-const DEFAULT_SETTINGS = { system: '', stream: true, temperature: 0.7, top_p: 1, max_tokens: 1024, preset: '' };
+// `tools`: null when every tool of the provider is offered, the ids to offer otherwise
+const DEFAULT_SETTINGS = { system: '', stream: true, temperature: 0.7, top_p: 1, max_tokens: 1024, preset: '', tools: null };
 
 function storageGet(key, fallback) {
   try {
@@ -55,6 +71,7 @@ function storageSet(key, value) {
 // what tells two chat models apart at a glance
 function pickerFacts(model) {
   const facts = [];
+  if (imageGenerator(model)) facts.push('draws images');
   if (capabilitiesOf(model).some((c) => c.id === 'reasoning')) facts.push('reasoning');
   if (capabilitiesOf(model).some((c) => c.id === 'vision')) facts.push('vision');
   if (contextOf(model)) facts.push(fmtTokens(contextOf(model)));
@@ -99,6 +116,13 @@ function ModelPicker({ value, onChange, models, width = 520 }) {
       )}
     </div>
   );
+}
+
+// what an image model is asked to draw: the last question, its files aside
+function promptOf(history) {
+  const last = [...history].reverse().find((m) => m.role === 'user');
+  if (!last) return '';
+  return typeof last.content === 'string' ? last.content : last.content.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
 }
 
 function costTitle(costs) {
@@ -149,7 +173,7 @@ function Versions({ answer, onPick }) {
 }
 
 // an answer of the assistant: its text, what it cost, and what can be done with it
-function Answer({ answer, busy, compact, onRegenerate, onRegenerateWith, onVersion, onContinue }) {
+function Answer({ answer, busy, compact, onRegenerate, onRegenerateWith, onVersion, onContinue, onOpenImage }) {
   return (
     <>
       <div className="bubble">
@@ -162,6 +186,15 @@ function Answer({ answer, busy, compact, onRegenerate, onRegenerateWith, onVersi
           </details>
         )}
         {answer.error ? answer.content : <Markdown text={answer.content || (answer.pending && !answer.reasoning ? '…' : '')} />}
+        {(answer.images || []).length > 0 && (
+          <div className="answer-images">
+            {answer.images.map((src, i) => (
+              <button key={i} className="answer-image" onClick={() => onOpenImage && onOpenImage(src, i)} title="See this image full size">
+                <img src={src} alt={`Generated ${i + 1}`} />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       {!answer.pending && (
         <div className="answer-foot">
@@ -196,6 +229,64 @@ function Answer({ answer, busy, compact, onRegenerate, onRegenerateWith, onVersi
         </div>
       )}
     </>
+  );
+}
+
+// the files of a question, in the composer and above the message once it is sent
+function Attachments({ list, onRemove, onOpen, className = '' }) {
+  if (!list || list.length === 0) return null;
+  return (
+    <div className={`attachments ${className}`}>
+      {list.map((a) => {
+        const thumb = thumbnailOf(a);
+        return (
+          <div key={a.id} className="attachment" title={`${a.name} · ${fmtBytes(a.size)}${a.truncated ? ' · truncated' : ''}`}>
+            <button className="attachment-open" onClick={() => onOpen && onOpen(a)} disabled={a.kind === 'pdf'}>
+              {thumb ? <img src={thumb} alt={a.name} /> : <Icon name="file" size={14} />}
+              <span className="truncate">{a.name}</span>
+            </button>
+            <span className="faint small nowrap">{fmtBytes(a.size)}</span>
+            {onRemove && (
+              <button className="copy-btn" onClick={() => onRemove(a.id)} title="Remove this file">
+                <Icon name="x" size={12} />
+              </button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AttachmentModal({ attachment, onClose }) {
+  // a file keeps its name, an image a model drew gets one
+  const fileName = /\.[a-z0-9]{2,4}$/i.test(attachment.name) ? attachment.name : `${attachment.name.replace(/[^a-z0-9.-]+/gi, '-')}.png`;
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={attachment.name}
+      size="wide"
+      footer={
+        <>
+          {attachment.kind === 'image' && (
+            <button className="btn" onClick={() => downloadDataUrl(fileName, attachment.data)}>
+              <Icon name="download" />
+              Download
+            </button>
+          )}
+          <button className="btn primary" onClick={onClose}>
+            Close
+          </button>
+        </>
+      }
+    >
+      {attachment.kind === 'image' ? (
+        <img className="attachment-preview" src={attachment.data} alt={attachment.name} />
+      ) : (
+        <pre className="attachment-text">{attachment.data}</pre>
+      )}
+    </Modal>
   );
 }
 
@@ -235,9 +326,11 @@ export function ChatPage() {
   const models = useAsync(() => listWorkspaceModels(workspace), [workspace.id]);
   const presets = useAsync(() => Resources.contexts.list(workspaceFilter(workspace.id)), [workspace.id]);
   const rooms = useAsync(() => listConversations(workspace), [workspace.id]);
+  const tools = useAsync(() => listAttachedTools(workspace.id), [workspace.id]);
 
-  // the chat talks the chat completions api: image, realtime or responses only models would fail there
-  const textModels = ((models.data && models.data.models) || []).filter(chatUsable);
+  // the chat talks the chat completions api: realtime or responses only models would fail there. The image
+  // models of the workspace are served on its images endpoint, and draw instead of answering.
+  const textModels = ((models.data && models.data.models) || []).filter((m) => chatUsable(m) || imageGenerator(m));
 
   const [prefs, setPrefs] = useState(() => storageGet(prefKey, { model: '', settings: DEFAULT_SETTINGS, showSettings: true }));
   const settings = { ...DEFAULT_SETTINGS, ...(prefs.settings || {}) };
@@ -262,7 +355,12 @@ export function ChatPage() {
   const [draft, setDraft] = useState(null);
   const [regenerateAt, setRegenerateAt] = useState(null);
   const [input, setInput] = useState('');
+  // the files of the question being written, and the one shown full size
+  const [attachments, setAttachments] = useState([]);
+  const [preview, setPreview] = useState(null);
+  const [dragging, setDragging] = useState(false);
   const fileRef = useRef(null);
+  const attachRef = useRef(null);
   const [busy, setBusy] = useState(false);
   const abortRef = useRef(null);
   const endRef = useRef(null);
@@ -284,6 +382,48 @@ export function ChatPage() {
   const columns = (conversation && conversation.compare) || (messages.length === 0 ? draft : null);
   const locked = messages.length > 0;
 
+  const modelById = (id) => textModels.find((m) => m.id === id) || null;
+  // the kinds of files every model of the conversation reads: text always, images and PDF when they all do
+  const targeted = columns ? columns.map(modelById) : [modelById(model)];
+  // the tools the models of this conversation can call, and the ones this chat offers them
+  const providerIds = [...new Set(targeted.filter(Boolean).map((m) => m.provider_id))];
+  const availableTools = (tools.data || []).filter((t) => t.providers.some((p) => providerIds.includes(p)));
+  const toolIsOn = (id) => settings.tools === null || settings.tools.includes(id);
+  const toggleTool = (id, on) => {
+    const current = availableTools.filter((t) => toolIsOn(t.id)).map((t) => t.id);
+    const next = on ? [...current, id] : current.filter((x) => x !== id);
+    setSettings({ tools: next.length === availableTools.length ? null : next });
+  };
+  const offeredTools = availableTools.filter((t) => toolIsOn(t.id));
+  const kinds = targeted.some(imageGenerator) ? [] : acceptedKinds(targeted);
+  const carried = conversationBytes(messages) + attachmentsBytes(attachments);
+  const unreadable = ['image', 'pdf'].filter((k) => !kinds.includes(k));
+  const attachTitle =
+    kinds.length === 0
+      ? 'An image model takes a prompt only'
+      : `Attach files — ${kinds.map((k) => KIND_LABELS[k]).join(', ')}` +
+        (unreadable.length > 0 ? `. Pick a model that reads ${unreadable.map((k) => KIND_LABELS[k]).join(' or ')} to send them.` : '');
+
+  // reads the files into the question being written, telling what it does not take
+  const addFiles = async (files) => {
+    let room = MAX_CONVERSATION_BYTES - carried;
+    const added = [];
+    for (const file of [...(files || [])]) {
+      try {
+        const attachment = await readAttachment(file, kinds);
+        if (bytesOf(attachment) > room) {
+          toast.error(`${file.name}: a conversation carries ${fmtBytes(MAX_CONVERSATION_BYTES)} of files at most, and every question sends them again`);
+          break;
+        }
+        room -= bytesOf(attachment);
+        added.push(attachment);
+      } catch (e) {
+        toast.error(e.message);
+      }
+    }
+    if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
+  };
+
   const persist = (conv) => saveConversation(workspace, persisted(conv)).then(() => rooms.reload());
 
   // leaving a temporary chat loses it
@@ -298,6 +438,7 @@ export function ChatPage() {
       .then((c) => {
         setTemporary(false);
         setDraft(null);
+        setAttachments([]);
         commit(c);
       })
       .catch(toast.error);
@@ -310,6 +451,7 @@ export function ChatPage() {
     setDraft(null);
     setTemporary(!!temp);
     setInput('');
+    setAttachments([]);
     return true;
   };
 
@@ -413,6 +555,8 @@ export function ChatPage() {
     top_p: Number(settings.top_p),
     ...(settings.max_tokens ? { max_tokens: Number(settings.max_tokens) } : {}),
     ...(settings.preset ? { context: settings.preset } : {}),
+    // the gateway narrows the tools of the provider to these ones; nothing is sent when they are all offered
+    ...(settings.tools === null ? {} : { allowed_tools: offeredTools.map((t) => t.id) }),
   });
 
   // Streams the answers of `jobs` ({ index, column, requested, history, previous }) into `start`, all at once, then
@@ -433,24 +577,29 @@ export function ChatPage() {
       if (conversationRef.current && conversationRef.current.id === current.id) commit(current);
     };
     const answer = async ({ index, column, requested, history, previous }, signal) => {
+      const target = modelById(requested);
       let partial = { model: requested, requested, content: '', at: Date.now() };
       place(index, column, answerSlot(previous, partial, true));
       let complete;
       try {
-        const res = await chatCompletion({
-          workspace,
-          body: requestBody(requested, history),
-          stream: settings.stream,
-          signal,
-          sessionId: start.id,
-          onDelta: (content, reasoning) => {
-            partial = { ...partial, content, reasoning };
-            place(index, column, answerSlot(previous, partial, true));
-          },
-        });
+        const res = imageGenerator(target)
+          ? await generateImage({ workspace, model: requested, prompt: promptOf(history), signal, sessionId: start.id })
+          : await chatCompletion({
+              workspace,
+              body: requestBody(requested, history),
+              // a streamed answer carries no image: a model that draws is asked in one go
+              stream: settings.stream && !imageOutput(target),
+              signal,
+              sessionId: start.id,
+              onDelta: (content, reasoning) => {
+                partial = { ...partial, content, reasoning };
+                place(index, column, answerSlot(previous, partial, true));
+              },
+            });
         complete = {
           content: res.content,
           reasoning: res.reasoning || '',
+          ...((res.images || []).length > 0 ? { images: res.images } : {}),
           model: res.model || requested,
           requested,
           at: Date.now(),
@@ -478,16 +627,25 @@ export function ChatPage() {
 
   const send = async (text) => {
     const content = (text ?? input).trim();
-    if (!content || busy) return;
+    const files = attachments;
+    if ((!content && files.length === 0) || busy) return;
     if (columns ? columns.some((c) => !c) : !model) {
       toast.error(columns ? 'Select a model for every column' : 'Select a model');
       return;
     }
-    const base = conversation || { id: `conv_${randomId(16)}`, title: content.substring(0, 60), created_at: Date.now(), messages: [] };
-    const asked = [...base.messages, { role: 'user', content, at: Date.now() }];
+    // the model may have changed since the files were attached, and every turn sends them again
+    const unread = carriedKinds([...messages, { attachments: files }]).filter((k) => !kinds.includes(k));
+    if (unread.length > 0) {
+      toast.error(`This conversation has ${unread.map((k) => KIND_LABELS[k]).join(' and ')} that ${columns ? 'one of the models' : model} does not read: pick another model, or start a new chat`);
+      return;
+    }
+    const title = content.substring(0, 60) || (files[0] && files[0].name) || 'Untitled';
+    const base = conversation || { id: `conv_${randomId(16)}`, title, created_at: Date.now(), messages: [] };
+    const asked = [...base.messages, { role: 'user', content, at: Date.now(), ...(files.length > 0 ? { attachments: files } : {}) }];
     const index = asked.length;
     const turn = columns ? { role: 'assistant', answers: columns.map((c) => ({ model: c, requested: c, content: '', pending: true })), at: Date.now() } : { role: 'assistant', model, requested: model, content: '', pending: true, at: Date.now() };
     setInput('');
+    setAttachments([]);
     setDraft(null);
     await run(
       { ...base, ...(columns ? { compare: columns, model: columns[0] } : { model }), messages: [...asked, turn] },
@@ -695,7 +853,8 @@ export function ChatPage() {
                   if (m.role !== 'assistant') {
                     return (
                       <div key={idx} className={`msg ${m.role}`}>
-                        <div className="bubble">{m.content}</div>
+                        <Attachments list={m.attachments} onOpen={setPreview} className="sent" />
+                        {m.content && <div className="bubble">{m.content}</div>}
                       </div>
                     );
                   }
@@ -711,6 +870,7 @@ export function ChatPage() {
                               answer={a}
                               busy={busy}
                               compact
+                              onOpenImage={(src, i) => setPreview({ kind: 'image', name: `${conversation.compare[col]} ${i + 1}`, data: src })}
                               onRegenerate={last ? () => regenerateColumn(idx, col) : null}
                               onVersion={last ? (v) => switchVersion(idx, col, v) : null}
                               onContinue={last ? () => continueWith(col) : null}
@@ -725,6 +885,7 @@ export function ChatPage() {
                       <Answer
                         answer={m}
                         busy={busy}
+                        onOpenImage={(src, i) => setPreview({ kind: 'image', name: `${m.model || 'image'} ${i + 1}`, data: src })}
                         onRegenerate={() => regenerate(idx)}
                         onRegenerateWith={() => setRegenerateAt(idx)}
                         onVersion={last ? (v) => switchVersion(idx, null, v) : null}
@@ -745,12 +906,35 @@ export function ChatPage() {
                 ))}
               </div>
             )}
-            <div className="chat-input">
+            <div
+              className={`chat-input ${dragging ? 'dropping' : ''}`}
+              onDragOver={(e) => {
+                if (!busy && [...e.dataTransfer.types].includes('Files')) {
+                  e.preventDefault();
+                  setDragging(true);
+                }
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragging(false);
+                if (!busy) addFiles(e.dataTransfer.files);
+              }}
+            >
               <div className="box">
+                <Attachments list={attachments} onRemove={(id) => setAttachments((prev) => prev.filter((a) => a.id !== id))} onOpen={setPreview} />
                 <textarea
-                  placeholder={columns ? `Ask ${columns.length} models…` : 'Ask anything…'}
+                  placeholder={dragging ? 'Drop the files here…' : columns ? `Ask ${columns.length} models…` : 'Ask anything…'}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
+                  onPaste={(e) => {
+                    if (!busy && e.clipboardData.files.length > 0) {
+                      e.preventDefault();
+                      addFiles(e.clipboardData.files);
+                    }
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
@@ -759,16 +943,39 @@ export function ChatPage() {
                   }}
                 />
                 <div className="row between">
-                  <span className="faint small">
-                    {settings.stream ? 'Streaming' : 'Blocking'} · temp {settings.temperature} · max {settings.max_tokens || '∞'} tokens
-                    {settings.preset ? ` · preset ${settings.preset}` : ''}
-                  </span>
+                  <div className="row" style={{ gap: 8, minWidth: 0 }}>
+                    <button
+                      className="copy-btn"
+                      disabled={busy || kinds.length === 0}
+                      onClick={() => attachRef.current && attachRef.current.click()}
+                      title={attachTitle}
+                    >
+                      <Icon name="paperclip" />
+                    </button>
+                    <input
+                      ref={attachRef}
+                      type="file"
+                      accept={ACCEPT}
+                      multiple
+                      hidden
+                      onChange={(e) => {
+                        addFiles(e.target.files);
+                        e.target.value = '';
+                      }}
+                    />
+                    <span className="faint small truncate">
+                      {settings.stream ? 'Streaming' : 'Blocking'} · temp {settings.temperature} · max {settings.max_tokens || '∞'} tokens
+                      {settings.preset ? ` · preset ${settings.preset}` : ''}
+                      {availableTools.length > 0 && settings.tools !== null ? ` · ${offeredTools.length}/${availableTools.length} tools` : ''}
+                      {carried > 0 ? ` · ${fmtBytes(carried)} of files` : ''}
+                    </span>
+                  </div>
                   {busy ? (
                     <button className="send" onClick={() => abortRef.current && abortRef.current.abort()} title="Stop">
                       <Icon name="stop" />
                     </button>
                   ) : (
-                    <button className="send" disabled={!input.trim()} onClick={() => send()} title="Send">
+                    <button className="send" disabled={!input.trim() && attachments.length === 0} onClick={() => send()} title="Send">
                       <Icon name="send" />
                     </button>
                   )}
@@ -786,6 +993,19 @@ export function ChatPage() {
               <Field label="System prompt">
                 <textarea value={settings.system} placeholder="You are a helpful assistant." onChange={(e) => setSettings({ system: e.target.value })} />
               </Field>
+              {availableTools.length > 0 && (
+                <Field label="Tools" hint="What the models may call in this chat. A tool stays attached to its provider: unchecking it only keeps it out of these calls.">
+                  <div className="tool-picks">
+                    {availableTools.map((t) => (
+                      <label key={t.id} className="check" title={`${t.name} · ${TOOL_LABELS[t.kind]}`}>
+                        <input type="checkbox" checked={toolIsOn(t.id)} onChange={(e) => toggleTool(t.id, e.target.checked)} />
+                        <span className="truncate">{t.name}</span>
+                        <span className="faint small nowrap">{TOOL_LABELS[t.kind]}</span>
+                      </label>
+                    ))}
+                  </div>
+                </Field>
+              )}
               <Field label="Streaming">
                 <Toggle value={settings.stream} onChange={(v) => setSettings({ stream: v })} />
               </Field>
@@ -805,6 +1025,7 @@ export function ChatPage() {
           )}
         </div>
       </div>
+      {preview && <AttachmentModal attachment={preview} onClose={() => setPreview(null)} />}
       {regenerateAt !== null && (
         <RegenerateModal
           models={textModels}

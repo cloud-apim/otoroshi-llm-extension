@@ -2,10 +2,50 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
+import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
+
+/**
+ * The tools of one call. The tools a model can use are attached to its provider, for all of its traffic:
+ * a request names in `allowed_tools` the ones it wants this time, by entity id. It can only narrow what
+ * the provider carries — an id it does not carry is ignored, so a caller cannot reach a tool the operator
+ * did not attach — and an empty list asks for no tool at all. Without the field, the provider serves its
+ * own tools, as it always did.
+ */
+object ToolsSelection {
+
+  val field = "allowed_tools"
+
+  // every option of a provider that holds tool entity ids
+  private val options = Seq("wasm_tools", "tool_functions", "mcp_connectors", "a2a_connectors", "search_engines")
+
+  // the selection of the request, and the body to go on with: the field never reaches the provider api
+  def extract(body: JsValue): (JsValue, Option[Seq[String]]) = body match {
+    case obj: JsObject => obj.select(field).asOpt[Seq[String]] match {
+      case None      => (obj, None)
+      case Some(ids) => (obj - field, Some(ids))
+    }
+    case other => (other, None)
+  }
+
+  def narrow(provider: AiProvider, allowed: Option[Seq[String]]): AiProvider = allowed match {
+    case None => provider
+    case Some(ids) =>
+      val kept = options.foldLeft(Json.obj()) { case (acc, option) =>
+        provider.options.select(option).asOpt[Seq[String]] match {
+          case None             => acc
+          case Some(configured) => acc ++ Json.obj(option -> configured.filter(ids.contains))
+        }
+      }
+      provider.copy(options = provider.options ++ kept)
+  }
+
+  // the tools of a provider, as a request names them
+  def attached(provider: AiProvider): Seq[String] = options.flatMap(o => provider.options.select(o).asOpt[Seq[String]].getOrElse(Seq.empty)).distinct
+}
 
 object LlmFunctions {
 

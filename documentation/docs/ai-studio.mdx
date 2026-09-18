@@ -169,6 +169,19 @@ conversation with that one only.
 
 *The same question to two models at once, each answering in its own column with what it cost and how fast it was.*
 
+Questions carry files: drop an image, a PDF or a text file in the composer, paste a screenshot, or pick
+them with the paperclip. Images are resized in the browser, so a conversation stays light, and only the
+models that read them are offered them: the paperclip says what the model of the moment takes. Text files
+work everywhere, they are sent as text. A model that draws answers with its images in the conversation,
+and the image models of the workspace are in the picker too: ask for a picture in the same place you ask
+for an answer, and save it in one click.
+
+When your workspace gives models **tools** — HTTP or JavaScript functions, MCP connectors, web search —
+the request settings list them, and every conversation picks the ones it wants. Unchecking a tool keeps it
+out of these calls only: it stays attached to its provider for your applications. It is the fastest way to
+tell what a tool changes in an answer, or to keep a model from reaching for the web when you want what it
+knows.
+
 Conversations are yours to shape:
 
 - **Duplicate** a conversation to try another direction without losing the first one, or **clear** it to
@@ -177,7 +190,7 @@ Conversations are yours to shape:
   count in the activity and the budgets.
 - **Export** a conversation as JSON to import it again later, in another workspace or by a teammate, or as
   Markdown to read or share it. **Import** also accepts the `messages` of an OpenAI chat request, to replay
-  a prompt from your code.
+  a prompt from your code, images and documents included.
 
 The chat needs no API key: it runs as the signed-in backoffice user, with the same configuration as the
 workspace endpoint. Guardrails, fallbacks, routers, costs and analytics apply as they do for your

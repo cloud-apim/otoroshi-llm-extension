@@ -2,7 +2,7 @@ package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ToolsSelection}
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefConfig, AiPluginRefsConfig, AiPluginsKeys, PromptValidatorConfig}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
 import otoroshi.env.Env
@@ -62,14 +62,15 @@ class AiLlmProxy extends NgBackendCall {
   }
 
   def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    val jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config)
+    // the tools this call asks for, when it names them: the body goes on without the field
+    val (jsonBody, allowedTools): (JsValue, Option[Seq[String]]) = ToolsSelection.extract(AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config))
     val provider: Option[AiProvider] = jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap { r =>
       env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
     }.orElse(
       config.refs.headOption.flatMap { r =>
         env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(r))
       }
-    )
+    ).map(p => ToolsSelection.narrow(p, allowedTools))
     provider.flatMap(_.getChatClient()) match {
       case None => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "provider not found")))).vfuture // TODO: rewrite error
       case Some(client) => {

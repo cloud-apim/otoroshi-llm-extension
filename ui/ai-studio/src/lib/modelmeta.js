@@ -52,6 +52,12 @@ export function outputsOf(model) {
   return (m && m.output) || [];
 }
 
+// a model of the workspace that draws rather than writes: the chat sends it to the images endpoint
+export const imageGenerator = (model) => !!model && model.modality === 'image';
+
+// an answer of this model can carry images, so the chat asks for it without streaming (a stream drops them)
+export const imageOutput = (model) => outputsOf(model).includes('image');
+
 export function endpointsOf(model) {
   return metaOf(model).endpoints || [];
 }

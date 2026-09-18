@@ -81,6 +81,32 @@ To enable function calling on a provider, add tool function IDs to the `wasm_too
 
 If the consumer's request already includes a `tools` array, the gateway passes it through to the provider as-is (no injection of configured tools).
 
+## Picking the tools of a call
+
+The tools of a provider are offered on every call it serves. A consumer that only needs some of them names
+them in `allowed_tools`, with the ids of the tool entities:
+
+```js
+{
+  "model": "gpt-4o-mini",
+  "messages": [{ "role": "user", "content": "what is the weather in Paris?" }],
+  "allowed_tools": ["tool-function_xxx"]
+}
+```
+
+| Request | Tools offered to the model |
+|---------|----------------------------|
+| no `allowed_tools` | every tool attached to the provider |
+| `["tool-function_xxx"]` | that one, if the provider carries it |
+| `[]` | none |
+
+A call can only **narrow** what its provider carries: an id the provider does not have is ignored, so a
+consumer never reaches a tool you did not attach. The field covers tool functions, MCP connectors, A2A
+connectors and search engines alike, and it stays in the gateway — the provider API never sees it.
+
+It works on the chat completions, completions and responses endpoints, and the AI Studio chat uses it: the
+**Tools** list of its request settings picks what the models may call in a conversation.
+
 ## Tool function entity
 
 A tool function entity defines a callable tool with its JSON schema and backend:

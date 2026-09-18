@@ -46,6 +46,9 @@ const paths = {
   users: <><circle cx="9" cy="8" r="4" /><path d="M1 21v-1a7 7 0 0 1 14 0v1" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /><path d="M23 21v-1a7 7 0 0 0-5-6.7" /></>,
   sparkles: <><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z" /></>,
   plug: <><path d="M9 2v6" /><path d="M15 2v6" /><path d="M6 8h12v3a6 6 0 0 1-12 0z" /><path d="M12 17v5" /></>,
+  paperclip: <path d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8.5-8.5a3.5 3.5 0 0 1 5 5L10.4 18a2 2 0 0 1-3-3l8-8" />,
+  file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></>,
+  image: <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="m21 15-5-5L5 21" /></>,
 };
 
 export function Icon({ name, size, className, style }) {

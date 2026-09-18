@@ -30,6 +30,12 @@ export function downloadCsv(fileName, columns, rows) {
   download(fileName, toCsv(columns, rows), 'text/csv;charset=utf-8');
 }
 
+// a data url the browser saves as a file: an attachment, an image a model drew
+export async function downloadDataUrl(fileName, url) {
+  const blob = await fetch(url).then((r) => r.blob());
+  download(fileName, blob, blob.type);
+}
+
 // `logs-demo-24h-2026-09-17.csv`
 export function exportName(...parts) {
   const slug = parts

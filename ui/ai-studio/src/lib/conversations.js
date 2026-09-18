@@ -1,13 +1,17 @@
-// Chat conversations of the playground: what they cost, their versions and comparisons, their copies, and the files
-// they are exported to and imported from. No dependency on the page, so the rules stay easy to check.
+// Chat conversations of the playground: what they cost, their versions and comparisons, their copies, the files
+// they carry and the files they are exported to and imported from. No dependency on the page, so the rules stay
+// easy to check.
 //
 // A conversation is a list of messages. An answer is an assistant message; regenerating it keeps every answer it
 // had in `versions`, the displayed one being `versions[version]` and copied at the top of the message. In a
 // comparison (`conversation.compare`, the models of the columns), each turn of the assistant is one message with
 // the answer of every column in `answers`, and each column only follows its own answers.
 
+import { attachmentsOfContent, importedAttachment, partsOf } from './attachments';
+
 export const EXPORT_FORMAT = 'ai-studio-conversation';
-export const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+// a conversation carries its attachments, a text only one never comes close
+export const MAX_IMPORT_BYTES = 20 * 1024 * 1024;
 export const MAX_COMPARED = 3;
 const MAX_IMPORT_MESSAGES = 5000;
 const ROLES = ['system', 'user', 'assistant'];
@@ -19,6 +23,8 @@ const ANSWER_FIELDS = {
   // the model the gateway answered with, and the model id the studio asked for
   model: (v) => typeof v === 'string',
   requested: (v) => typeof v === 'string',
+  // the images a model drew, as data urls or links
+  images: (v) => Array.isArray(v) && v.every((i) => typeof i === 'string'),
   usage: (v) => v !== null && typeof v === 'object' && !Array.isArray(v),
   costs: (v) => v !== null && typeof v === 'object' && !Array.isArray(v),
   duration: (v) => typeof v === 'number',
@@ -62,12 +68,13 @@ export function totalsOf(conversation) {
   return totals;
 }
 
-// the messages a model is sent for the next turn: in a comparison, the answers of its column only
+// the messages a model is sent for the next turn: in a comparison, the answers of its column only.
+// A question that has files is sent as content parts, its files with it, at every turn.
 export function historyFor(messages, column = null) {
   const history = [];
   for (const m of messages || []) {
     if (m.role === 'user' || m.role === 'system') {
-      history.push({ role: m.role, content: m.content });
+      history.push({ role: m.role, content: partsOf(m) });
     } else if (m.role === 'assistant') {
       const answer = m.answers ? (column === null ? null : m.answers[column]) : m;
       if (answer && !answer.error && !answer.pending) history.push({ role: 'assistant', content: answer.content || '' });
@@ -133,11 +140,18 @@ export function toExport(conversation) {
 
 export function toMarkdown(conversation) {
   const lines = [`# ${conversation.title || 'Conversation'}`, ''];
-  const answer = (a) => [`## Assistant${a.model ? ` · ${a.model}` : ''}`, '', a.error ? `> Error: ${a.content}` : a.content || '', ''];
+  const answer = (a) => [
+    `## Assistant${a.model ? ` · ${a.model}` : ''}`,
+    '',
+    a.error ? `> Error: ${a.content}` : a.content || '',
+    '',
+    ...((a.images || []).length ? [`*${a.images.length} generated image${a.images.length > 1 ? 's' : ''}*`, ''] : []),
+  ];
+  const files = (m) => ((m.attachments || []).length ? [`*Attached: ${m.attachments.map((a) => a.name).join(', ')}*`, ''] : []);
   for (const m of finished(conversation.messages)) {
     if (m.answers) m.answers.forEach((a, column) => lines.push(...answer({ model: (conversation.compare || [])[column], ...a })));
     else if (m.role === 'assistant') lines.push(...answer(m));
-    else lines.push(`## ${m.role === 'user' ? 'User' : 'System'}`, '', m.content || '', '');
+    else lines.push(`## ${m.role === 'user' ? 'User' : 'System'}`, '', m.content || '', '', ...files(m));
   }
   return lines.join('\n');
 }
@@ -215,8 +229,10 @@ export function parseImport(text, fileName) {
       return { role: 'assistant', ...importedVersions(answer, m) };
     }
     const content = textOf(m.content);
-    if (content === null) throw invalid(idx);
-    return { role: m.role, content, at: Number(m.at) || Date.now() };
+    // the files of an exported conversation, or of an openai request with images or documents in its parts
+    const attachments = [...(Array.isArray(m.attachments) ? m.attachments.map(importedAttachment).filter(Boolean) : []), ...attachmentsOfContent(m.content)];
+    if (content === null && attachments.length === 0) throw invalid(idx);
+    return { role: m.role, content: content || '', at: Number(m.at) || Date.now(), ...(attachments.length ? { attachments } : {}) };
   });
   const firstQuestion = messages.find((m) => m.role === 'user');
   const title =
