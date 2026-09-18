@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useWorkspace } from '../App';
 import { Badge, Checks, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, NumberInput, PageHeader, Select, TextInput, Toggle, useAsync, useToast } from '../components/ui';
+import { Icon } from '../components/icons';
 import { Resources, workspaceFilter } from '../lib/entities';
-import { GUARDRAIL_KINDS, kindOf, summaryOf } from '../lib/guardrails';
+import { FILTER_OPERATORS, FILTER_SOURCES, filtersSummary, formatFilterValue, GUARDRAIL_KINDS, kindOf, operatorOf, parseFilterValue, summaryOf } from '../lib/guardrails';
 import { listBudgets, periodLabel } from '../lib/budgets';
 import { fmtCost } from '../lib/format';
 import { Link } from '../lib/router';
@@ -12,11 +13,36 @@ function sameJson(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+// One consumer filter: what is read on the call, how it is compared, and to what. A source the studio does
+// not list (a header, a metadata) is edited as the expression itself.
+function FilterRow({ filter, onChange, onRemove }) {
+  const known = FILTER_SOURCES.some((s) => s.value === filter.from);
+  const { operator, operand } = parseFilterValue(filter.value);
+  const op = operatorOf(operator);
+  return (
+    <div className="filter-row">
+      <Select
+        value={known ? filter.from : 'custom'}
+        onChange={(v) => onChange({ ...filter, from: v === 'custom' ? '' : v })}
+        options={[...FILTER_SOURCES, { value: 'custom', label: 'Custom expression' }]}
+      />
+      {!known && <TextInput value={filter.from} onChange={(v) => onChange({ ...filter, from: v })} placeholder="${req.headers.x-team}" />}
+      <Select value={operator} onChange={(v) => onChange({ ...filter, value: formatFilterValue(v, operand) })} options={FILTER_OPERATORS.map((o) => ({ value: o.value, label: o.label }))} />
+      {!op.fixed && <TextInput value={operand} onChange={(v) => onChange({ ...filter, value: formatFilterValue(operator, v) })} placeholder={op.placeholder} />}
+      <button className="btn sm ghost" onClick={onRemove} title="Remove this filter">
+        Remove
+      </button>
+    </div>
+  );
+}
+
 function GuardrailModal({ initial, providers, moderationModels, onClose, onSave }) {
   const [item, setItem] = useState(
     initial || { enabled: true, before: true, after: false, id: 'regex', config: {} }
   );
   const kind = kindOf(item.id);
+  const filters = item.filters || [];
+  const setFilters = (next) => setItem((i) => ({ ...i, filters: next }));
   const setConfig = (patch) => setItem((i) => ({ ...i, config: { ...i.config, ...patch } }));
   const changeKind = (id) => {
     const k = kindOf(id);
@@ -69,6 +95,28 @@ function GuardrailModal({ initial, providers, moderationModels, onClose, onSave 
           );
         })}
       </div>
+      <Field
+        label="Applies to"
+        hint="Without a filter, the policy applies to every call of the workspace. With filters, only to the calls matching all of them. A call that carries none of what a filter reads — no API key, no signed-in user — is left alone."
+      >
+        <div className="filters">
+          {filters.length === 0 && <p className="muted small">Every call.</p>}
+          {filters.map((f, idx) => (
+            <FilterRow
+              key={idx}
+              filter={f}
+              onChange={(next) => setFilters(filters.map((x, i) => (i === idx ? next : x)))}
+              onRemove={() => setFilters(filters.filter((_, i) => i !== idx))}
+            />
+          ))}
+          <div>
+            <button className="btn sm" onClick={() => setFilters([...filters, { from: FILTER_SOURCES[0].value, value: '' }])}>
+              <Icon name="plus" />
+              Add a filter
+            </button>
+          </div>
+        </div>
+      </Field>
     </Modal>
   );
 }
@@ -193,6 +241,7 @@ export function GuardrailsPage() {
                       <th>Policy</th>
                       <th>Phase</th>
                       <th>Configuration</th>
+                      <th>Applies to</th>
                       <th>Status</th>
                       <th />
                     </tr>
@@ -203,6 +252,7 @@ export function GuardrailsPage() {
                         <td>{kindOf(item.id).label}</td>
                         <td className="muted">{[item.before && 'input', item.after && 'output'].filter(Boolean).join(' + ') || '—'}</td>
                         <td className="muted">{summaryOf(item, providers)}</td>
+                        <td className="muted">{filtersSummary(item.filters)}</td>
                         <td>
                           <Toggle
                             value={item.enabled !== false}

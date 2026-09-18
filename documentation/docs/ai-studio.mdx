@@ -231,7 +231,9 @@ keys. Workspace keys belong to no one in particular, which suits shared applicat
 
 - **Guardrails** block or check prompts and answers (regex, moderation, prompt injection, secrets
   leakage, and more) and restrict the models a workspace may call, one by one or a whole provider at
-  once (`openai/.*`).
+  once (`openai/.*`). A policy can be limited to some callers — an API key, a list of keys, the users of
+  one email domain, a range of IPs — so the strict rules of one integration do not slow every other call
+  down.
 - **Routing** sets fallbacks between providers, load balancers, [Otoroshi routers](/docs/llm-gateway/otoroshi-router)
   and the default provider used when a request does not name one.
 

@@ -1371,7 +1371,19 @@ class AiStudioApi(env: Env, ext: AiExtension) {
             val config = defaults ++ judge ++ provided
             if (llm) config.select("provider").asOptString.filterNot(providerIds.contains).foreach(p => throw badRequest(s"the provider '$p' of 'items[$idx]' does not belong to this workspace"))
             if (id == "moderation_model") config.select("moderation_model").asOptString.filterNot(moderationModels.map(_.select("id").asString).contains).foreach(m => throw badRequest(s"the moderation model '$m' of 'items[$idx]' does not belong to this workspace"))
-            Json.obj("enabled" -> true, "before" -> true, "after" -> false) ++ item ++ Json.obj("config" -> config)
+            // the calls a guardrail applies to, none of them meaning every call (see GuardrailFilter)
+            val filters: JsArray = item.value.get("filters") match {
+              case None => Json.arr()
+              case Some(JsArray(values)) => JsArray(values.zipWithIndex.map {
+                case (filter: JsObject, fidx) =>
+                  def field(name: String): String = filter.select(name).asOptString.map(_.trim).filter(_.nonEmpty)
+                    .getOrElse(throw badRequest(s"'items[$idx].filters[$fidx].$name' is required"))
+                  Json.obj("from" -> field("from"), "value" -> field("value"))
+                case (_, fidx) => throw badRequest(s"'items[$idx].filters[$fidx]' must be an object")
+              })
+              case Some(_) => throw badRequest(s"'items[$idx].filters' must be an array")
+            }
+            Json.obj("enabled" -> true, "before" -> true, "after" -> false) ++ item ++ Json.obj("config" -> config, "filters" -> filters)
           case (_, idx) => throw badRequest(s"'items[$idx]' must be an object")
         }
         case Some(_) => throw badRequest("'items' must be an array")

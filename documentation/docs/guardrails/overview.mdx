@@ -50,6 +50,41 @@ You can now choose from the list of available Guardrails.
 
 The guardrails that ask a model to judge the messages (personal information, secrets leakage, prompt injection, toxic language, moderation, and so on) take a validation `provider` and an optional `model`. Keep the default model of the provider, or pick a smaller and faster one dedicated to validation: a provider can even judge its own messages with another of its models.
 
+### Apply a guardrail to some calls only
+
+A guardrail applies to every call its provider serves. Add **consumer filters** to it, and it only applies
+to the calls that match them:
+
+```js
+{
+  "enabled": true,
+  "before": true,
+  "after": false,
+  "id": "regex",
+  "config": { "deny": [".*confidential.*"], "allow": [] },
+  "filters": [
+    { "from": "${apikey.id}", "value": "ContainedIn(apikey_partner_a, apikey_partner_b)" },
+    { "from": "${user.email}", "value": "RegexNot(.*@acme.com)" }
+  ]
+}
+```
+
+- `from` is read on the call with the [expression language](https://maif.github.io/otoroshi/manual/topics/expression-language.html):
+  `${apikey.id}`, `${apikey.name}`, `${apikey.metadata.team}`, `${user.email}`, `${req.ip}`,
+  `${req.headers.x-team}`, and everything else the language offers.
+- `value` is what it has to match, with the operators of the otoroshi json validators: the exact value, or
+  `Not(...)`, `Regex(...)`, `RegexNot(...)`, `Wildcard(...)`, `WildcardNot(...)`, `Contains(...)`,
+  `ContainsNot(...)`, `ContainedIn(a, b)`, `NotContainedIn(a, b)`, `IsDefined()` and `NotDefined()`.
+- **Every filter has to match** for the guardrail to run. Use `ContainedIn` or `Regex` to cover several
+  consumers with one filter.
+- A call that carries none of what a filter reads — no api key, no signed-in user — is left alone, so a
+  guardrail filtered on api keys never fires on a call that has none. `NotDefined()` matches exactly those
+  calls, when that is what you want.
+- A guardrail without `filters` applies to every call, which is what every guardrail written before this
+  option does.
+
+The AI Studio guardrails page edits them under **Applies to**.
+
 ### Available Guardrails
 
 - [Rampart — local PII detection/redaction (no LLM)](/docs/guardrails/rampart)

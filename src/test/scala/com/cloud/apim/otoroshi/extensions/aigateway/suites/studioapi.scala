@@ -231,7 +231,9 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
     // guardrails and model access apply to every provider of the workspace
     val guardrails = expect(studio("PUT", s"/workspaces/$wsId/guardrails", Json.obj("items" -> Json.arr(
-      Json.obj("id" -> "regex", "config" -> Json.obj("deny" -> Json.arr(".*forbidden.*"))),
+      Json.obj("id" -> "regex", "config" -> Json.obj("deny" -> Json.arr(".*forbidden.*")),
+        // this one only applies to the calls of two api keys
+        "filters" -> Json.arr(Json.obj("from" -> "${apikey.id}", "value" -> "ContainedIn(key_a, key_b)"))),
       Json.obj("id" -> "prompt_injection"),
     ))), 200)
     assertEquals(guardrails.select("mixed").asBoolean, false)
@@ -241,8 +243,14 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       assert(Seq(ollamaText, openaiText).contains(items(1).select("config").select("provider").asString))
       assertEquals(items(1).select("config").select("max_injection_score").as[Int], 90)
       assertEquals(items.head.select("before").asBoolean, true)
+      assertEquals(items.head.select("filters").as[Seq[JsObject]], Seq(Json.obj("from" -> "${apikey.id}", "value" -> "ContainedIn(key_a, key_b)")))
+      // a guardrail without filters applies to every call
+      assertEquals(items(1).select("filters").as[Seq[JsObject]], Seq.empty)
     }
     expect(studio("PUT", s"/workspaces/$wsId/guardrails", Json.obj("items" -> Json.arr(Json.obj("id" -> "nope")))), 400)
+    expect(studio("PUT", s"/workspaces/$wsId/guardrails", Json.obj("items" -> Json.arr(
+      Json.obj("id" -> "regex", "filters" -> Json.arr(Json.obj("from" -> "${apikey.id}")))
+    ))), 400)
     expect(studio("PUT", s"/workspaces/$wsId/model-access", Json.obj("include" -> Json.arr("llama*"))), 200)
     assertEquals(aiEntity("providers", openaiText).get.select("models").select("include").as[Seq[String]], Seq("llama*"))
 

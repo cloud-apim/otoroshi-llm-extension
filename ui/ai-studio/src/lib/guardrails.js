@@ -168,3 +168,59 @@ export function summaryOf(item, providers) {
   if (item.id === 'moderation_model') return (item.config || {}).moderation_model ? 'moderation model set' : 'no moderation model';
   return '';
 }
+
+// Consumer filters: a policy can apply to some calls only. `from` is read on the call with the expression
+// language of the gateway, `value` is what it must match, with the operators of the otoroshi validators.
+// See `GuardrailFilter` in `decorators/guardrails.scala`.
+
+export const FILTER_SOURCES = [
+  { value: '${apikey.id}', label: 'API key id' },
+  { value: '${apikey.name}', label: 'API key name' },
+  { value: '${user.email}', label: 'User email' },
+  { value: '${user.name}', label: 'User name' },
+  { value: '${req.ip}', label: 'Caller IP' },
+];
+
+export const FILTER_OPERATORS = [
+  { value: 'is', label: 'is', placeholder: 'the exact value' },
+  { value: 'is_one_of', label: 'is one of', prefix: 'ContainedIn(', placeholder: 'value, other value' },
+  { value: 'matches', label: 'matches', prefix: 'Regex(', placeholder: '.*@acme.com' },
+  { value: 'contains', label: 'contains', prefix: 'Contains(', placeholder: 'a part of the value' },
+  { value: 'is_not', label: 'is not', prefix: 'Not(', placeholder: 'the exact value' },
+  { value: 'is_not_one_of', label: 'is not one of', prefix: 'NotContainedIn(', placeholder: 'value, other value' },
+  { value: 'does_not_match', label: 'does not match', prefix: 'RegexNot(', placeholder: '.*@acme.com' },
+  { value: 'is_missing', label: 'is not set', fixed: 'NotDefined()' },
+];
+
+export const operatorOf = (value) => FILTER_OPERATORS.find((o) => o.value === value) || FILTER_OPERATORS[0];
+
+// `ContainedIn(a, b)` becomes { operator: 'is_one_of', operand: 'a, b' }
+export function parseFilterValue(value) {
+  const raw = (value || '').trim();
+  const fixed = FILTER_OPERATORS.find((o) => o.fixed === raw);
+  if (fixed) return { operator: fixed.value, operand: '' };
+  const wrapping = FILTER_OPERATORS.find((o) => o.prefix && raw.startsWith(o.prefix) && raw.endsWith(')'));
+  if (wrapping) return { operator: wrapping.value, operand: raw.substring(wrapping.prefix.length, raw.length - 1) };
+  return { operator: 'is', operand: raw };
+}
+
+export function formatFilterValue(operator, operand) {
+  const op = operatorOf(operator);
+  if (op.fixed) return op.fixed;
+  return op.prefix ? `${op.prefix}${operand || ''})` : operand || '';
+}
+
+const sourceLabel = (from) => (FILTER_SOURCES.find((s) => s.value === from) || { label: from }).label;
+
+// « API key id is one of key_a, key_b, and User email matches .*@acme.com »
+export function filtersSummary(filters) {
+  const list = filters || [];
+  if (list.length === 0) return 'every call';
+  return list
+    .map((f) => {
+      const { operator, operand } = parseFilterValue(f.value);
+      const op = operatorOf(operator);
+      return `${sourceLabel(f.from)} ${op.label}${op.fixed ? '' : ` ${operand}`}`.trim();
+    })
+    .join(', and ');
+}

@@ -5,9 +5,9 @@ import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatCallKind, ChatClient, ChatGeneration, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseMetadata, InputChatMessage, OutputChatMessage}
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.*
 import otoroshi.env.Env
-import otoroshi.utils.TypedMap
+import otoroshi.utils.{JsonPathValidator, TypedMap}
 import otoroshi.utils.syntax.implicits.*
-import play.api.libs.json.{Format, JsArray, JsError, JsObject, JsResult, JsSuccess, JsValue, Json}
+import play.api.libs.json.{Format, JsArray, JsError, JsObject, JsResult, JsString, JsSuccess, JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
@@ -87,7 +87,7 @@ case class Guardrails(items: Seq[GuardrailItem]) {
         case GuardrailsCallPhase.Before => guardrail._1.before && guardrail._2.isBefore
         case GuardrailsCallPhase.After => guardrail._1.after && guardrail._2.isAfter
       }
-    }
+    }.filter(_._1.appliesTo(attrs))
 
     // runs a single guardrail over the current messages, returning either a terminal result
     // (deny/error) or the resulting messages (possibly rewritten through GuardrailTransform)
@@ -141,6 +141,47 @@ case class Guardrails(items: Seq[GuardrailItem]) {
   }
 }
 
+object GuardrailFilter {
+  val format = new Format[GuardrailFilter] {
+    override def reads(json: JsValue): JsResult[GuardrailFilter] = Try {
+      GuardrailFilter(
+        from = json.select("from").asOpt[String].getOrElse(""),
+        value = json.select("value").asOpt[String].getOrElse(""),
+      )
+    } match {
+      case Failure(exception) => JsError(exception.getMessage)
+      case Success(v) => JsSuccess(v)
+    }
+    override def writes(o: GuardrailFilter): JsValue = Json.obj(
+      "from" -> o.from,
+      "value" -> o.value,
+    )
+  }
+}
+
+/**
+ * What a call must look like for a guardrail to apply to it. `from` is read on the call with the
+ * expression language (`${apikey.id}`, `${user.email}`, `${req.ip}`, `${req.headers.x-team}`…) and `value`
+ * is what it must match, with the operators of the otoroshi json validators: a plain value for an exact
+ * match, then `Not(...)`, `Regex(...)`, `RegexNot(...)`, `Wildcard(...)`, `Contains(...)`,
+ * `ContainsNot(...)`, `ContainedIn(a, b)`, `NotContainedIn(a, b)`, `IsDefined()` and `NotDefined()`.
+ *
+ * What the call does not carry — no api key, no user, an unknown expression — is read as absent: only
+ * `NotDefined()` matches it, so a filter never applies to a call it cannot read.
+ */
+case class GuardrailFilter(from: String, value: String) {
+
+  private lazy val validator = JsonPathValidator("$.value", JsString(value))
+
+  def json: JsValue = GuardrailFilter.format.writes(this)
+
+  def matches(attrs: TypedMap)(using env: Env): Boolean = {
+    val resolved = from.evaluateEl(attrs)
+    val payload = if (resolved == "bad-expr" || resolved.startsWith("no-")) Json.obj() else Json.obj("value" -> resolved)
+    Try(validator.validate(payload)).getOrElse(false)
+  }
+}
+
 object GuardrailItem {
   val format = new Format[GuardrailItem] {
     override def reads(json: JsValue): JsResult[GuardrailItem] = Try {
@@ -150,6 +191,8 @@ object GuardrailItem {
         after = json.select("after").asOpt[Boolean].getOrElse(false),
         guardrailId = json.select("id").asString,
         config = json.select("config").asOpt[JsObject].getOrElse(Json.obj()),
+        // entities stored before consumer filters existed have none: the guardrail applies to every call
+        filters = json.select("filters").asOpt[Seq[JsObject]].map(_.flatMap(f => GuardrailFilter.format.reads(f).asOpt)).getOrElse(Seq.empty),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -161,12 +204,17 @@ object GuardrailItem {
       "after" -> o.after,
       "id" -> o.guardrailId,
       "config" -> o.config,
+      "filters" -> JsArray(o.filters.map(_.json)),
     )
   }
 }
 
-case class GuardrailItem(enabled: Boolean, before: Boolean, after: Boolean, guardrailId: String, config: JsObject) {
+case class GuardrailItem(enabled: Boolean, before: Boolean, after: Boolean, guardrailId: String, config: JsObject, filters: Seq[GuardrailFilter] = Seq.empty) {
+
   def json: JsValue = GuardrailItem.format.writes(this)
+
+  // without a filter a guardrail applies to every call, with filters only to the calls matching them all
+  def appliesTo(attrs: TypedMap)(using env: Env): Boolean = filters.isEmpty || filters.forall(_.matches(attrs))
 }
 
 object ChatClientWithGuardrailsValidation {

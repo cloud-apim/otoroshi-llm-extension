@@ -703,6 +703,10 @@ dialog.modal::backdrop { background: rgba(3, 8, 10, 0.35); }
 .attachment-open img { border-radius: 4px; width: 28px; height: 28px; object-fit: cover; }
 .attachment-preview { border-radius: var(--radius); max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; }
 .attachment-text { white-space: pre-wrap; word-break: break-word; max-height: 60vh; }
+/* the consumer filters of a guardrail: what is read on the call, how it is compared, and to what */
+.filters { display: flex; flex-direction: column; gap: 8px; }
+.filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.filter-row select, .filter-row .input { flex: 1 1 160px; width: auto; min-width: 120px; }
 .tool-picks { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow: auto; }
 .tool-picks .check { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .answer-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }

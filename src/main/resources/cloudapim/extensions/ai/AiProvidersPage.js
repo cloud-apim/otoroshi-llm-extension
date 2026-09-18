@@ -173,10 +173,41 @@ class AiProviderTester extends Component {
 const RAMPART_ALL_ENTITIES = ['GIVEN_NAME','SURNAME','PHONE','TAX_ID','BANK_ACCOUNT','ROUTING_NUMBER','GOVERNMENT_ID','PASSPORT','DRIVERS_LICENSE','BUILDING_NUMBER','STREET_NAME','SECONDARY_ADDRESS','EMAIL','URL','SSN','CREDIT_CARD','IP_ADDRESS','CITY','STATE','ZIP_CODE'];
 const RAMPART_DEFAULT_ENTITIES = RAMPART_ALL_ENTITIES.filter(e => ['CITY','STATE','ZIP_CODE'].indexOf(e) < 0);
 
+// One consumer filter of a guardrail: an expression read on the call, and what it has to match for the
+// guardrail to apply. Same operators as the otoroshi json validators.
+class GuardrailFilter extends Component {
+  render() {
+    const item = this.props.itemValue || {};
+    return (
+      React.createElement(Form, {
+        flow: ['from', 'value'],
+        schema: {
+          from: { type: 'string', props: {
+            label: 'Read on the call',
+            placeholder: '${apikey.id}',
+            help: 'An expression language expression: ${apikey.id}, ${apikey.name}, ${apikey.metadata.team}, ${user.email}, ${req.ip}, ${req.headers.x-team}…',
+          } },
+          value: { type: 'string', props: {
+            label: 'Has to match',
+            placeholder: 'ContainedIn(key_a, key_b)',
+            help: 'The exact value, or Not(...), Regex(...), RegexNot(...), Wildcard(...), Contains(...), ContainsNot(...), ContainedIn(a, b), NotContainedIn(a, b), IsDefined(), NotDefined()',
+          } },
+        },
+        value: { from: item.from || '', value: item.value || '' },
+        onChange: (i) => {
+          this.props.value[this.props.idx] = i;
+          this.props.onChange(this.props.value);
+        }
+      }, null)
+    )
+  }
+}
+
 class Guardrail extends Component {
   flow = (id) => {
     const def = ['enabled', 'id', 'before', 'after'];
-    const tail = []; // ['config'];
+    // a guardrail applies to every call of the provider, unless it carries consumer filters
+    const tail = ['filters'];
     if (id === 'regex') return [...def, 'config.deny', 'config.allow', ...tail];
     if (id === 'webhook') return [...def, 'config.url', 'config.headers', 'config.ttl', ...tail];
     if (id === 'llm') return [...def, 'config.provider', 'config.model', 'config.prompt', ...tail];
@@ -213,6 +244,12 @@ class Guardrail extends Component {
           enabled: { type: 'bool', props: { label: 'Enabled' } },
           before: { type: 'bool', props: { label: 'Apply before' } },
           after: { type: 'bool', props: { label: 'Apply after' } },
+          filters: { type: 'array', props: {
+            label: 'Apply only when',
+            help: 'Without a filter, the guardrail applies to every call of the provider. With filters, only to the calls matching all of them. A call that carries none of what a filter reads (no api key, no user) is left alone.',
+            defaultValue: { from: '${apikey.id}', value: '' },
+            component: GuardrailFilter,
+          } },
           provider: { type: 'select', props: {
             label: 'LLM Provider',
             valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
