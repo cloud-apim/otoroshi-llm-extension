@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.9.2">
 <title data-rh="true">AI Studio | Otoroshi LLM Extension</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://cloud-apim.github.io/otoroshi-llm-extension/img/otoroshi-llm-extension-logo.png"><meta data-rh="true" name="twitter:image" content="https://cloud-apim.github.io/otoroshi-llm-extension/img/otoroshi-llm-extension-logo.png"><meta data-rh="true" property="og:url" content="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="AI Studio | Otoroshi LLM Extension"><meta data-rh="true" name="description" content="A simple, OpenRouter-like console on top of the LLM extension - workspaces, bring your own keys, API keys, chat, activity, logs and budgets, all backed by regular Otoroshi entities."><meta data-rh="true" property="og:description" content="A simple, OpenRouter-like console on top of the LLM extension - workspaces, bring your own keys, API keys, chat, activity, logs and budgets, all backed by regular Otoroshi entities."><link data-rh="true" rel="icon" href="/otoroshi-llm-extension/img/otoroshi-llm-extension-logo-no-bg-no-text.png"><link data-rh="true" rel="canonical" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio"><link data-rh="true" rel="alternate" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio" hreflang="en"><link data-rh="true" rel="alternate" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"AI Studio","item":"https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio"}]}</script><link rel="stylesheet" href="/otoroshi-llm-extension/assets/css/styles.72c2a4ca.css">
-<script src="/otoroshi-llm-extension/assets/js/runtime~main.666fd7d0.js" defer="defer"></script>
+<script src="/otoroshi-llm-extension/assets/js/runtime~main.6d80f524.js" defer="defer"></script>
 <script src="/otoroshi-llm-extension/assets/js/main.a7cf9001.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -16,8 +16,8 @@
 clicks, a team gets its own <strong>workspace</strong>: an OpenAI-compatible endpoint, API keys, the providers of
 its choice with its own provider keys, a playground to chat with every model, and dashboards showing
 where tokens and dollars go.</p>
-<p><img decoding="async" loading="lazy" alt="The overview of an AI Studio workspace: base URL, quickstart snippets and featured models" src="/otoroshi-llm-extension/assets/images/ai-studio-overview-b74bb7bd3f552556c856b1ef9c66a6f1.png" width="1393" height="990" class="img_ev3q"></p>
-<p><em>The home page of a workspace: its OpenAI-compatible base URL, a quickstart in curl, Python and TypeScript, and the models ready to use.</em></p>
+<p><img decoding="async" loading="lazy" alt="The overview of an AI Studio workspace: base URL, quickstart snippets and featured models" src="/otoroshi-llm-extension/assets/images/ai-studio-overview-d74121085f46e56fcab5b181ccb7eefb.png" width="1393" height="1323" class="img_ev3q"></p>
+<p><em>The home page of a workspace: its OpenAI-compatible base URL, a quickstart in curl, Python and TypeScript, the week it just had and the models ready to use.</em></p>
 <p>The home page also shows the week the workspace just had — what it spent, how many calls it served and
 how many tokens it moved, day by day, with the models behind each figure — so the first thing a team
 sees is where its budget went, without leaving for a dashboard.</p>
@@ -83,7 +83,7 @@ and price. Turn on <strong>Require known costs</strong> to refuse, and hide, the
 not know: every call of the provider then counts against your dollar budgets.</p>
 <p>Each connected provider also shows its health over the last 24 hours: the share of calls that succeeded,
 median latency and generation speed. A provider that starts failing stands out at a glance.</p>
-<p><img decoding="async" loading="lazy" alt="The providers page: connected providers and the catalog of available providers with their capabilities" src="/otoroshi-llm-extension/assets/images/ai-studio-providers-75a24dbf807b4d0ecd063459a455828c.png" width="1393" height="3148" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The providers page: connected providers and the catalog of available providers with their capabilities" src="/otoroshi-llm-extension/assets/images/ai-studio-providers-1cd0062243cc2982e7f8a6ca2b8907f7.png" width="1393" height="3182" class="img_ev3q"></p>
 <p><em>Connected providers on top, with their health over the last day, and the catalog below with the capabilities of each provider.</em></p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="find-the-right-model">Find the right model<a href="#find-the-right-model" class="hash-link" aria-label="Direct link to Find the right model" title="Direct link to Find the right model" translate="no">​</a></h3>
 <p><strong>Models</strong> lists every model reachable through the workspace endpoint, with the exact id to put in the
@@ -92,20 +92,20 @@ output, vision, PDF, audio, prompt caching, web search), context window and pric
 Filter them by type, capability, API endpoint, known price, context window and provider, sort them by
 price or context, switch to a comparison table, and open any model for its full details and a ready to
 paste request.</p>
-<p><img decoding="async" loading="lazy" alt="The models page listing every model reachable through the workspace" src="/otoroshi-llm-extension/assets/images/ai-studio-models-29f9bbc0822037139405474a13eeaade.png" width="1393" height="911" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The models page listing every model reachable through the workspace" src="/otoroshi-llm-extension/assets/images/ai-studio-models-5ef5a6c9bdb8ab1480d9839c1ca7be50.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>Every model of the workspace, with the id to use in your requests, its capabilities and its price.</em></p>
 <p><strong>Estimate costs</strong> answers &quot;what would this cost us?&quot; before you commit to a model: describe a workload
 (tokens in and out per request, requests per month, share of the prompt served from cache) or start from
 a typical one (chat message, RAG answer, agent step, summary), and every model shows what it would cost
 per request and per month at its list price, the cheapest first.</p>
-<p><img decoding="async" loading="lazy" alt="The cost estimate of the models page: a workload priced on every model, the cheapest first" src="/otoroshi-llm-extension/assets/images/ai-studio-models-estimate-51792a10b935a18032696df1857342ea.png" width="1393" height="911" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The cost estimate of the models page: a workload priced on every model, the cheapest first" src="/otoroshi-llm-extension/assets/images/ai-studio-models-estimate-a4f1f260ba23b560fe905a46877ed27b.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>One workload, and what it would cost each month on every model of the workspace.</em></p>
 <p>The models also show how they actually behave in your workspace: the share of calls that succeeded,
 median latency and generation speed, over the last day, week or month. Filter the healthy, degraded or
 failing ones, sort by usage, latency or speed, and open a model for its p95 latency, time to first token
 and last failure, with a link to its calls. The refusals of the gateway itself (guardrails, budgets, model
 restrictions) never count as failures of a model, and answers served from the cache never skew its latency.</p>
-<p><img decoding="async" loading="lazy" alt="The health of the models: success rate, median latency and generation speed of the busiest models" src="/otoroshi-llm-extension/assets/images/ai-studio-models-health-55a1e8352b40f69f26b395710e702de5.png" width="1393" height="911" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The health of the models: success rate, median latency and generation speed of the busiest models" src="/otoroshi-llm-extension/assets/images/ai-studio-models-health-b0af1f04dd948e29ef9b469d5bc351ad.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>The busiest models of the week, with the share of their calls that succeeded, their median latency and their speed.</em></p>
 <p>A model that does not chat is one click away from being tried anyway. Every image, embedding, speech,
 transcription, moderation and OCR model of the workspace opens its own <strong>playground</strong> next to its details:
@@ -114,19 +114,21 @@ drop a PDF or a photo of a document and get its text, paste a paragraph and see 
 moderation model makes of it. Each run is a real call on the workspace endpoint — same models, same
 guardrails, same budgets, same audit trail — so trying a model tells you exactly what your applications
 will get, with the tokens, pages and cost it took shown next to the answer.</p>
+<p><img decoding="async" loading="lazy" alt="The playground of an image model, next to its details: a prompt, and the image the model draws" src="/otoroshi-llm-extension/assets/images/ai-studio-models-playground-9e76c6974f2ad9f67742015f02926685.png" width="1393" height="911" class="img_ev3q"></p>
+<p><em>A model that does not chat is tried where it is listed: a prompt or a file in, what the model answers out.</em></p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="chat-with-any-model">Chat with any model<a href="#chat-with-any-model" class="hash-link" aria-label="Direct link to Chat with any model" title="Direct link to Chat with any model" translate="no">​</a></h3>
 <p><strong>Chat</strong> is a playground to try any model of the workspace, with streaming, reasoning display, presets and
 generation settings. Conversations are saved per user and per workspace. Each answer shows its model,
 tokens, latency and what the gateway billed for it, and the conversation keeps a running total, so you
 know what a prompt costs before it ships.</p>
-<p><img decoding="async" loading="lazy" alt="The AI Studio chat with its conversations, model picker and request settings" src="/otoroshi-llm-extension/assets/images/ai-studio-chat-94e9fe5d4947e8b9b0917bc79e80f16f.png" width="1393" height="911" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The AI Studio chat with its conversations, model picker and request settings" src="/otoroshi-llm-extension/assets/images/ai-studio-chat-c49b32fa05af8f5aa6b60719f8c63f56.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>The chat: conversations on the left, the model picker on top, presets, system prompt and generation settings on the right.</em></p>
 <p>Not convinced by an answer? <strong>Regenerate</strong> it, with the same model or with another one: every answer
 stays one click away, so you can flip between them and keep the best. <strong>Compare</strong> puts up to three models
 side by side: each question goes to all of them at once, each model keeps its own thread, and every column
 shows its answer, cost, latency and time to first token. Once you know which model fits, continue the
 conversation with that one only.</p>
-<p><img decoding="async" loading="lazy" alt="Two models compared side by side in the chat, each with its answer, tokens, latency and time to first token" src="/otoroshi-llm-extension/assets/images/ai-studio-chat-compare-66c40f1985ffc6b28038bde694bacdc7.png" width="1393" height="911" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="Two models compared side by side in the chat, each with its answer, tokens, latency and time to first token" src="/otoroshi-llm-extension/assets/images/ai-studio-chat-compare-ac5ee3e7cf50961b53ee6023058aa7db.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>The same question to two models at once, each answering in its own column with what it cost and how fast it was.</em></p>
 <p>Questions carry files: drop an image, a PDF or a text file in the composer, paste a screenshot, or pick
 them with the paperclip. Images are resized in the browser, so a conversation stays light, and only the
@@ -170,9 +172,9 @@ budgets and history.</p>
 <p>Every key has an <strong>owner</strong>: yourself, a teammate, or the whole workspace. The usage of a key counts for
 its owner, so the activity of a person covers both their chats and the applications running with their
 keys. Workspace keys belong to no one in particular, which suits shared applications and agents.</p>
-<p><img decoding="async" loading="lazy" alt="The API keys page of a workspace" src="/otoroshi-llm-extension/assets/images/ai-studio-api-keys-ef0fe425b5a9819ff82306a1038f60f7.png" width="1393" height="911" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The API keys page of a workspace" src="/otoroshi-llm-extension/assets/images/ai-studio-api-keys-f2abc9a2b991ef3223fa2f4f0fd893e8.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>Each key with its credit limit, its budgets, its quotas and its expiration, and shortcuts to its activity and its budget.</em></p>
-<p><img decoding="async" loading="lazy" alt="Editing an API key: owner, expiration, the models it may call, credit limit and quotas" src="/otoroshi-llm-extension/assets/images/ai-studio-api-key-edit-a0c4cc0d4631f2a13bbaed1bbc244b2f.png" width="1393" height="911" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="Editing an API key: owner, expiration, the models it may call, credit limit and quotas" src="/otoroshi-llm-extension/assets/images/ai-studio-api-key-edit-0654a427b2b63408e092d8993e7daa89.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>A key limited to two models and expiring in 90 days, with its own credit limit.</em></p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="route-and-protect">Route and protect<a href="#route-and-protect" class="hash-link" aria-label="Direct link to Route and protect" title="Direct link to Route and protect" translate="no">​</a></h3>
 <ul>
@@ -184,7 +186,7 @@ down.</li>
 <li class=""><strong>Routing</strong> sets fallbacks between providers, load balancers, <a class="" href="/otoroshi-llm-extension/docs/llm-gateway/otoroshi-router">Otoroshi routers</a>
 and the default provider used when a request does not name one.</li>
 </ul>
-<p><img decoding="async" loading="lazy" alt="The guardrails page: model access and content policies" src="/otoroshi-llm-extension/assets/images/ai-studio-guardrails-7c7cb34da72791f21e8727729fae75d6.png" width="1393" height="983" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The guardrails page: model access and content policies" src="/otoroshi-llm-extension/assets/images/ai-studio-guardrails-50c9c5da9f51cc75fd138f5138ea6612.png" width="1393" height="925" class="img_ev3q"></p>
 <p><em>Model access rules and content policies, applied to every provider of the workspace.</em></p>
 <p><img decoding="async" loading="lazy" alt="The routing page: provider fallbacks, load balancers, smart routing and default provider" src="/otoroshi-llm-extension/assets/images/ai-studio-routing-80ece4c7ee9cc6d82b8bc3544f19d9a3.png" width="1393" height="1025" class="img_ev3q"></p>
 <p><em>Fallback chains, load balancers, Otoroshi routers and the default provider of the workspace.</em></p>
@@ -206,7 +208,7 @@ alive, and any instance of the cluster can serve the next call.</li>
 </ul>
 <p><img decoding="async" loading="lazy" alt="The tools page of a workspace: ready-made functions and the HTTP functions of the workspace" src="/otoroshi-llm-extension/assets/images/ai-studio-tools-4238bd81ff76d6ff56ae72046b53775d.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>The tools the models of this workspace can call, and the ready-made ones a click away.</em></p>
-<p><img decoding="async" loading="lazy" alt="The presets page of a workspace" src="/otoroshi-llm-extension/assets/images/ai-studio-presets-00a0447363ee33e01d4ffa4b11695e74.png" width="1393" height="911" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The presets page of a workspace" src="/otoroshi-llm-extension/assets/images/ai-studio-presets-0ca72d43d635e3a09c2d5f43c7c56120.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>Reusable system prompts, selectable in the chat or with the <code>context</code> field of a request.</em></p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="serve-your-tools-over-mcp">Serve your tools over MCP<a href="#serve-your-tools-over-mcp" class="hash-link" aria-label="Direct link to Serve your tools over MCP" title="Direct link to Serve your tools over MCP" translate="no">​</a></h3>
 <p>A workspace can be an <a class="" href="/otoroshi-llm-extension/docs/mcp/overview">MCP server</a> too. The tools it already has — its HTTP functions
@@ -220,7 +222,7 @@ over Streamable HTTP with a key of the workspace:</p>
 <strong>MCP</strong> tab of Activity shows what was served, tool by tool, user by user and key by key.</p>
 <p><img decoding="async" loading="lazy" alt="The MCP server page of a workspace: exposed tools and the configuration to paste in a client" src="/otoroshi-llm-extension/assets/images/ai-studio-mcp-server-b95d85d43dc071942c977474f94d8f3a.png" width="1393" height="1234" class="img_ev3q"></p>
 <p><em>What the workspace exposes over MCP, and the client configuration to paste.</em></p>
-<p><img decoding="async" loading="lazy" alt="The MCP tab of the activity page: requests served, tools called, users and recent calls" src="/otoroshi-llm-extension/assets/images/ai-studio-activity-mcp-699d070a90dee47824f1e4bfed15bdd3.png" width="1393" height="911" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The MCP tab of the activity page: requests served, tools called, users and recent calls" src="/otoroshi-llm-extension/assets/images/ai-studio-activity-mcp-e6e8379f350fe8f18d04f847a416231e.png" width="1393" height="2484" class="img_ev3q"></p>
 <p><em>What the workspace served to MCP clients: tools, users, API keys and the latest calls.</em></p>
 <div class="theme-admonition theme-admonition-info admonition_xJq3 alert alert--info"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 14 16"><path fill-rule="evenodd" d="M7 2.3c3.14 0 5.7 2.56 5.7 5.7s-2.56 5.7-5.7 5.7A5.71 5.71 0 0 1 1.3 8c0-3.14 2.56-5.7 5.7-5.7zM7 1C3.14 1 0 4.14 0 8s3.14 7 7 7 7-3.14 7-7-3.14-7-7-7zm1 3H6v5h2V4zm0 6H6v2h2v-2z"></path></svg></span>info</div><div class="admonitionContent_BuS1"><p>MCP clients look for an OAuth authorization server (RFC 9728) and will not send an API key on their own,
 which is why the key is given as a header. For an MCP server protected by OAuth, expose the virtual server
@@ -260,13 +262,13 @@ reasons, models, keys and users they concern.</li>
 the tools actually called, and who called them. It only counts what the gateway served — the tools a model
 calls through a connector during a completion belong to the LLM side and stay out of these numbers.</li>
 </ul>
-<p><img decoding="async" loading="lazy" alt="The activity dashboard of a workspace: KPIs, usage by API key, user and model, requests, tokens, caching and latency" src="/otoroshi-llm-extension/assets/images/ai-studio-activity-ab642e72aa554ee257d528a31518ed44.png" width="1393" height="3039" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The activity dashboard of a workspace: KPIs, usage by API key, user and model, requests, tokens, caching and latency" src="/otoroshi-llm-extension/assets/images/ai-studio-activity-cac1dc5e8d755ef3110980905d2bc359.png" width="1393" height="3364" class="img_ev3q"></p>
 <p><em>Spend, requests and tokens compared to the previous period, the usage by API key, by user and by model, and the live consumption of the budgets.</em></p>
-<p><img decoding="async" loading="lazy" alt="The environmental impact section: emissions, energy, water and the footprint of each model" src="/otoroshi-llm-extension/assets/images/ai-studio-activity-impact-1442a41e499eba10385ce5846231b641.png" width="1053" height="483" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The environmental impact section: emissions, energy, water and the footprint of each model" src="/otoroshi-llm-extension/assets/images/ai-studio-activity-impact-7e6fa770ae01691a88253ae12f6ec6fa.png" width="1053" height="483" class="img_ev3q"></p>
 <p><em>What the calls of the period drew and emitted, and which models cost the most for the same amount of generated text.</em></p>
-<p><img decoding="async" loading="lazy" alt="The trends tab: how spend, tokens and requests move against the previous period" src="/otoroshi-llm-extension/assets/images/ai-studio-activity-trends-bae7497fc8877a916a75e1bb9e8d1f13.png" width="1393" height="1868" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The trends tab: how spend, tokens and requests move against the previous period" src="/otoroshi-llm-extension/assets/images/ai-studio-activity-trends-ab07d928043aa9ed2fdd961035692779.png" width="1393" height="1913" class="img_ev3q"></p>
 <p><em>Who and what moved since the previous period, new comers included.</em></p>
-<p><img decoding="async" loading="lazy" alt="The explore tab: any metric broken down by any dimension, as a ranking or over time" src="/otoroshi-llm-extension/assets/images/ai-studio-activity-explore-6f11d3d4fc6b3861b672fe34626d6e8f.png" width="1393" height="911" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The explore tab: any metric broken down by any dimension, as a ranking or over time" src="/otoroshi-llm-extension/assets/images/ai-studio-activity-explore-f80c60106489e349a8191bf44dcbc3ca.png" width="1393" height="989" class="img_ev3q"></p>
 <p><em>One metric, one or two dimensions, as a ranking or over time — the questions the dashboards don&#x27;t answer.</em></p>
 <p>Calls made from the studio chat are attributed to the person chatting. Calls made by your applications
 are attributed to their API key, and to the owner of that key. Filter on a user to see everything they
@@ -275,7 +277,7 @@ consume, and on one of their keys to narrow it further.</p>
 the API keys they own. The profile of a user gathers their spend, tokens and requests by model, a year of
 daily activity, the keys they own and the budgets that apply to them. Your own profile is one click away
 from your name in the top bar.</p>
-<p><img decoding="async" loading="lazy" alt="The profile of a user: spend, tokens, a year of activity, the keys they own and their budgets" src="/otoroshi-llm-extension/assets/images/ai-studio-user-profile-e17637f333d108caee2faa4b4e28d376.png" width="1393" height="1331" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The profile of a user: spend, tokens, a year of activity, the keys they own and their budgets" src="/otoroshi-llm-extension/assets/images/ai-studio-user-profile-887e5d15a0653169cd6585eef1b6f59d.png" width="1393" height="1331" class="img_ev3q"></p>
 <p><em>Everything one person consumes, their own chats and the applications running with their keys.</em></p>
 <p><strong>Logs</strong> lists every call, newest first, with its model, user, API key, tokens, cost, speed, latency, finish
 reason and status. Pick the columns you care about, filter by model, key, user, status or finish reason, and
@@ -289,9 +291,9 @@ calls (a guardrail, a failed attempt before a fallback, a router), they are laid
 <p>The <strong>Sessions</strong> tab groups the calls of a conversation or an agent run: send the same id in the
 <code>x-session-id</code> header, or in a <code>session_id</code> field of the body, with each call. The studio chat sends one per
 conversation. The end user comes from the standard <code>user</code> field of the request.</p>
-<p><img decoding="async" loading="lazy" alt="The logs of a workspace: every call with its model, consumer, tokens, cost, latency and status" src="/otoroshi-llm-extension/assets/images/ai-studio-logs-f213cba3fa58008a79f44597d241801c.png" width="1393" height="2033" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The logs of a workspace: every call with its model, consumer, tokens, cost, latency and status" src="/otoroshi-llm-extension/assets/images/ai-studio-logs-2fd148b8010639d0517f028d7c81b4c3.png" width="1393" height="3283" class="img_ev3q"></p>
 <p><em>Every call, filterable by model, API key, status and text. Click a call to see all its details.</em></p>
-<p><img decoding="async" loading="lazy" alt="The details of a call: timings, finish reason, who it counts for, cost breakdown and the timeline of the request" src="/otoroshi-llm-extension/assets/images/ai-studio-log-details-8185e9bd93d5602bf473d6d8634dfceb.png" width="1393" height="911" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The details of a call: timings, finish reason, who it counts for, cost breakdown and the timeline of the request" src="/otoroshi-llm-extension/assets/images/ai-studio-log-details-97f877cb21c98ebdbb8a844cdb8b4d0f.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>A single call: how long it took, why it ended, who it counts for, and the model calls behind the request.</em></p>
 <div class="theme-admonition theme-admonition-info admonition_xJq3 alert alert--info"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 14 16"><path fill-rule="evenodd" d="M7 2.3c3.14 0 5.7 2.56 5.7 5.7s-2.56 5.7-5.7 5.7A5.71 5.71 0 0 1 1.3 8c0-3.14 2.56-5.7 5.7-5.7zM7 1C3.14 1 0 4.14 0 8s3.14 7 7 7 7-3.14 7-7-3.14-7-7-7zm1 3H6v5h2V4zm0 6H6v2h2v-2z"></path></svg></span>info</div><div class="admonitionContent_BuS1"><p>Activity and logs read the Otoroshi user analytics database: they need an active <strong>User Analytics
 (PostgreSQL)</strong> data exporter (see <a href="#prerequisites" class="">prerequisites</a>). Budgets consumption is live and works
@@ -302,7 +304,7 @@ subdomain. It also holds the gateway settings of the workspace endpoint (timeout
 image decoding), the IP addresses allowed or blocked for applications, and the deletion of the workspace.
 <strong>Technical details</strong> shows the ids of the route and the team of the workspace, with a link to open the
 route in the backoffice.</p>
-<p><img decoding="async" loading="lazy" alt="The settings of a workspace: identity, domain, gateway and IP access control" src="/otoroshi-llm-extension/assets/images/ai-studio-settings-105ae512637c6e12e6005343bbc8eb7d.png" width="1393" height="1855" class="img_ev3q"></p>
+<p><img decoding="async" loading="lazy" alt="The settings of a workspace: identity, domain, gateway and IP access control" src="/otoroshi-llm-extension/assets/images/ai-studio-settings-042172fb7ba41347e217f60e8e4e264b.png" width="1393" height="1855" class="img_ev3q"></p>
 <p><em>The settings of a workspace.</em></p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="automate-with-the-admin-api">Automate with the admin API<a href="#automate-with-the-admin-api" class="hash-link" aria-label="Direct link to Automate with the admin API" title="Direct link to Automate with the admin API" translate="no">​</a></h2>
 <p>Everything you do in a workspace can also be scripted with the <strong>AI Studio admin API</strong>: provision a

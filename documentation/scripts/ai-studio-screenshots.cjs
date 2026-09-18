@@ -11,12 +11,16 @@
  *
  * Optional: OTO_URL (default http://otoroshi.oto.tools:9999), WS_ID (the workspace to shoot),
  * PROFILE_EMAIL (the user whose profile is captured), SESSION_ID (the session whose call is shown in
- * the log details), CHAT_TITLE and COMPARE_TITLE (a part of the title of the conversation shown in the
- * chat, and of the comparison shown side by side, the most recent ones otherwise), OTO_TENANT (default
- * `default`), ONLY=overview,logs (a subset).
+ * the log details, the most recent call of the log when it has none), CHAT_TITLE and COMPARE_TITLE (a
+ * part of the title of the conversation shown in the chat, and of the comparison shown side by side, the
+ * most recent ones otherwise), OTO_TENANT (default `default`), ONLY=overview,logs (a subset),
+ * PLAYGROUND_PROMPT (the prompt of the playground shot, empty to capture the form without running it),
+ * PLAYGROUND_MODEL (the model that playground tries, an image model of the workspace otherwise).
  *
  * The chat shots show conversations of the signed-in user: have a plain conversation and a comparison of
  * two or three models in the workspace before running the script.
+ *
+ * Note: the `models-playground` shot runs the playground it opens, so the provider bills that one image.
  */
 const path = require('path');
 
@@ -46,9 +50,17 @@ const OUT = path.resolve(__dirname, '../static/img');
 const WIDTH = 1393;
 const HEIGHT = 911;
 const ONLY = (process.env.ONLY || '').split(',').map((s) => s.trim()).filter(Boolean);
+const PLAYGROUND_PROMPT = process.env.PLAYGROUND_PROMPT === undefined ? 'A red panda coding on a laptop, watercolor' : process.env.PLAYGROUND_PROMPT;
 
 const studio = (p) => `${BASE}/extensions/cloud-apim/ai-studio${p}`;
 const ws = (p) => studio(`/workspaces/${WS}${p}`);
+
+// the saved preference of the user wins over the color scheme: pin the theme of the docs on every load
+const goTo = async (page, url) => {
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
+  await settle(page);
+};
 
 const clickFirst = (selector) => async (page) => {
   await page.locator(selector).first().click();
@@ -97,6 +109,65 @@ const steps = (...fns) => async (page) => {
   for (const fn of fns) await fn(page);
 };
 
+// The playground of a model that does not chat, run so the shot shows what comes back rather than an
+// empty form — that one image is billed by the provider. An image model makes the best picture, any other
+// playground does when the workspace has none, and `PLAYGROUND_PROMPT=''` captures the form without running.
+const openPlayground = async (page) => {
+  const image = page.locator('.filters .check.facet:has(span.grow:text-is("Image")) input');
+  const wanted = process.env.PLAYGROUND_MODEL;
+  if (wanted) {
+    await page.locator('.filters input.search').fill(wanted);
+    await page.waitForTimeout(800);
+  } else if (await image.count()) {
+    await image.check();
+    await page.waitForTimeout(800);
+  }
+  let button = page.locator('.model-card button:has-text("Playground")').first();
+  // nothing to try under that filter: any other playground of the workspace makes the point
+  if ((await button.count()) === 0) {
+    await page.locator('.filters input.search').fill('');
+    if (await image.count()) await image.uncheck();
+    await page.waitForTimeout(800);
+    button = page.locator('.model-card button:has-text("Playground")').first();
+  }
+  await button.click();
+  await page.waitForTimeout(900);
+  const prompt = page.locator('.drawer .playground textarea');
+  // a playground that takes a file rather than a prompt is captured as it is
+  if (!PLAYGROUND_PROMPT || (await prompt.count()) === 0) return;
+  await prompt.fill(PLAYGROUND_PROMPT);
+  await page.locator('.drawer .playground button.primary').click();
+  await page
+    .locator('.drawer .playground-result')
+    .waitFor({ timeout: 180000 })
+    .catch(() => console.warn('  the playground did not answer, capturing the form'));
+  await page.waitForTimeout(800);
+};
+
+// The details of one call: the session of SESSION_ID when the period still holds it, the most recent call
+// of the log otherwise — a demo conversation ages out of the log long before the log itself.
+const openLogCall = async (page) => {
+  const rows = () => page.locator('tr.clickable');
+  for (const url of [null, ws('/logs?period=24h'), ws('/logs?period=7d')]) {
+    if (url) await goTo(page, url);
+    if ((await rows().count()) > 0) break;
+  }
+  await rows().first().click();
+  await page.waitForTimeout(1200);
+};
+
+// the editor of a content policy, narrowed to the calls of two api keys, closed without saving
+const editGuardrail = async (page) => {
+  await page.locator('.table button:text-is("Edit")').first().click();
+  await page.waitForTimeout(900);
+  const modal = page.locator('dialog.modal');
+  await modal.locator('button:has-text("Add a filter")').click();
+  await page.waitForTimeout(400);
+  await modal.locator('.filter-row select').nth(1).selectOption('is_one_of');
+  await modal.locator('.filter-row input.input').last().fill('apikey_partner_a, apikey_partner_b');
+  await page.waitForTimeout(400);
+};
+
 // the edit form of a key limited to two models and expiring in 90 days, closed without saving
 const editKey = async (page) => {
   const modal = page.locator('dialog.modal');
@@ -118,6 +189,8 @@ const SHOTS = [
   { name: 'models', url: ws('/models'), viewport: true },
   // how the models behave in the workspace, the busiest first (needs user analytics)
   { name: 'models-health', url: ws('/models'), viewport: true, before: sortModels('calls') },
+  // what a model that does not chat is tried with: image, embedding, speech, transcription, moderation, OCR
+  { name: 'models-playground', url: ws('/models'), viewport: true, before: openPlayground },
   // the estimate stays on for the next visits of the page (local storage): keep this shot after the other models ones
   {
     name: 'models-estimate',
@@ -130,6 +203,7 @@ const SHOTS = [
   { name: 'api-keys', url: ws('/keys') },
   { name: 'api-key-edit', url: ws('/keys'), viewport: true, before: steps(clickFirst('td.actions button:text-is("Edit")'), editKey) },
   { name: 'guardrails', url: ws('/guardrails') },
+  { name: 'guardrail-filters', url: ws('/guardrails'), viewport: true, before: editGuardrail },
   { name: 'routing', url: ws('/routing') },
   { name: 'tools', url: ws('/tools') },
   { name: 'presets', url: ws('/presets') },
@@ -140,11 +214,12 @@ const SHOTS = [
   { name: 'activity-impact', url: ws('/activity?period=24h'), element: 'div.stack:has(> div > h2:has-text("Environmental impact"))' },
   { name: 'activity-trends', url: ws('/activity?tab=trends&period=24h'), before: clickAll(showTokens) },
   { name: 'activity-explore', url: ws('/activity?tab=explore&period=24h&metric=tokens&by=model&sub=apikey') },
-  { name: 'activity-mcp', url: ws('/activity?tab=mcp&period=24h') },
+  // a week: the mcp traffic of a demo gateway comes in bursts, a quiet day would show an empty tab
+  { name: 'activity-mcp', url: ws('/activity?tab=mcp&period=7d') },
   { name: 'user-profile', url: ws(`/users/${encodeURIComponent(PROFILE_EMAIL)}`), before: clickFirst(showTokens) },
   { name: 'logs', url: ws('/logs?period=24h') },
   // a call of a session, so the details show more than dashes
-  { name: 'log-details', url: ws(`/logs?period=24h&session=${SESSION}`), viewport: true, before: clickFirst('tr.clickable') },
+  { name: 'log-details', url: ws(`/logs?period=24h&session=${SESSION}`), viewport: true, before: openLogCall },
   { name: 'settings', url: ws('/settings') },
 ];
 
@@ -180,14 +255,15 @@ async function settle(page) {
     const file = path.join(OUT, `ai-studio-${shot.name}.png`);
     process.stdout.write(`${shot.name.padEnd(18)} `);
     try {
-      await page.goto(shot.url, { waitUntil: 'domcontentloaded' });
-      // the saved preference of the user wins over the color scheme: pin the theme of the docs
-      await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'));
-      await settle(page);
+      await goTo(page, shot.url);
       if (shot.before) {
         await shot.before(page);
         await settle(page);
       }
+      // clicking a control scrolls it into view, and a full page capture would then stitch the sticky
+      // topbar where the page was left: every shot starts again from the top of the page
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.waitForTimeout(400);
       if (shot.element) {
         await page.locator(shot.element).first().screenshot({ path: file });
       } else {
