@@ -36,7 +36,7 @@ class ModerationModelsPage extends Component {
           type: 'bool',
           props: {
             label: 'Require known costs',
-            help: 'if enabled, a model with no known price is not listed and any call using it is rejected before reaching the provider',
+            help: 'if enabled, a model the gateway cannot bill - no known price, or a price in a unit it cannot measure - is not listed and any call using it is rejected before reaching the provider',
           },
         },
         provider: {

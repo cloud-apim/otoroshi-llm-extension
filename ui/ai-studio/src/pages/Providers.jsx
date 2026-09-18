@@ -37,7 +37,7 @@ import {
 import { listWorkspaceModels, loadCatalog } from '../lib/models';
 import { initials } from '../lib/format';
 import { ModelLabels, PriceSummary } from '../components/modelinfo';
-import { contextOf, fitsCapability, fmtPrice, fmtTokens, hasCost, KIND_LABELS, KIND_ORDER, kindsOf, kindsSummary, metaOf, perMillion } from '../lib/modelmeta';
+import { contextOf, fitsCapability, fmtPrice, fmtTokens, hasCost, KIND_LABELS, KIND_ORDER, kindsSummary, metaOf, perMillion } from '../lib/modelmeta';
 
 // a short description of a model, next to its id in the suggestions
 function suggestionLabel(model) {
@@ -177,13 +177,13 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
   const textEntity = conn.entities && conn.entities.text;
 
   // without details (an older gateway), every model is a text model suggestion. A provider requiring known
-  // costs refuses the others, they are no suggestion
+  // costs refuses what it cannot bill, whatever the modality: those are no suggestion
   const suggestions = (cap, audioMode) => {
     if (!models.length) return null;
     if (!models.some((m) => m.details)) return cap === 'text' ? models : null;
-    return models.filter((m) => fitsCapability(m, cap, audioMode) && (!conn.require_known_costs || cap !== 'text' || hasCost(m)));
+    return models.filter((m) => fitsCapability(m, cap, audioMode) && (!conn.require_known_costs || hasCost(m)));
   };
-  const unpriced = models.filter((m) => m.details && kindsOf(m).includes('text') && !hasCost(m)).length;
+  const unbillable = models.filter((m) => m.details && !hasCost(m)).length;
 
   return (
     <Modal
@@ -324,9 +324,9 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
             <div className="grow">
               <div className="title">Require known costs</div>
               <div className="muted small">
-                Calls to a model whose price cost tracking does not know are refused before they reach the provider, and such models are not listed: nothing
-                escapes your dollar budgets.
-                {unpriced > 0 && ` ${unpriced} of the text models found have no known price.`}
+                Calls to a model this gateway cannot bill are refused before they reach the provider, and such models are not listed: nothing escapes your
+                dollar budgets. A model is billable when its price is known and expressed in a unit measured on the call.
+                {unbillable > 0 && ` ${unbillable} of the models found cannot be billed.`}
               </div>
             </div>
           </div>
@@ -483,7 +483,7 @@ export function ProvidersPage() {
                       <div className="badges">
                         {conn.enabled ? <Badge kind="positive">Enabled</Badge> : <Badge>Disabled</Badge>}
                         {conn.require_known_costs && (
-                          <Badge kind="info" title="Models with no known price are refused and not listed">
+                          <Badge kind="info" title="Models this gateway cannot bill are refused and not listed">
                             Known costs only
                           </Badge>
                         )}

@@ -110,8 +110,9 @@ compatibility or to the providers whose prices are known.
 
 When you pick the default model of each capability, the suggestions only list the models fitting it
 (embedding models for embeddings, speech models for text to speech, and so on), with their context window
-and price. Turn on **Require known costs** to refuse, and hide, the models whose price cost tracking does
-not know: every call of the provider then counts against your dollar budgets.
+and price. Turn on **Require known costs** to refuse, and hide, every model the gateway cannot put a price
+on: those it knows no price for, and those priced in a unit it cannot measure on the call. Every call of the
+provider then counts against your dollar budgets.
 
 Each connected provider also shows its health over the last 24 hours: the share of calls that succeeded,
 median latency and generation speed. A provider that starts failing stands out at a glance.
@@ -478,7 +479,7 @@ models from the catalog, workspace quotas, every provider selected for a preset 
 | `GET` `POST /workspaces` | List or create workspaces (`name`, `description`, `slug`). The `Otoroshi-Tenant` header sets the tenant of a new workspace. |
 | `GET` `PUT` `PATCH` `DELETE /workspaces/:id` | Read, update or delete a workspace: `name`, `description`, `enabled`, `slug`, `call_timeout`, `global_timeout`, `max_size_upload`, `decode_images`, `allowed_ip_addresses`, `blocked_ip_addresses`. Deleting a workspace deletes all of its entities. |
 | `GET /workspaces/:id/models` | Every model reachable through the workspace endpoint, with the id to use in requests and its `metadata`: the same types, cost, API, capabilities, limits and prices as the [enriched models](/docs/llm-gateway/openai-compat-api#enriched-models) of the unified API (`?force=true` refreshes the lists of models). |
-| `GET` `POST /workspaces/:id/providers` | List or connect providers: `kind`, `name`, `token`, `base_url`, `timeout`, `enabled`, `require_known_costs` (refuse and hide the models with no known price), `fields` and `modalities` (`text`, `embedding`, `image`, `audio`, `moderation`, `ocr`, `video`, each with `enabled`, `model`, and `stt_model` for audio). |
+| `GET` `POST /workspaces/:id/providers` | List or connect providers: `kind`, `name`, `token`, `base_url`, `timeout`, `enabled`, `require_known_costs` (refuse and hide the models the gateway cannot bill), `fields` and `modalities` (`text`, `embedding`, `image`, `audio`, `moderation`, `ocr`, `video`, each with `enabled`, `model`, and `stt_model` for audio). |
 | `GET` `PUT` `DELETE /workspaces/:id/providers/:provider` | Read, update or remove a provider and all of its capabilities. |
 | `GET /workspaces/:id/providers/:provider/models`, `POST /workspaces/:id/providers/_models` | The models offered by a connected provider, or by a provider before connecting it. `?enriched=true` adds the `details` of each model. |
 | `GET` `POST /workspaces/:id/apikeys`, `GET` `PUT` `DELETE /workspaces/:id/apikeys/:clientId` | API keys: `name`, `description`, `enabled`, `owner` (the email the usage of the key counts for, `null` for a workspace key), `models` (`{ include, exclude }`, regular expressions on `model`, `provider/model` or `provider###model`, `null` for every model), `valid_until` (the date the key stops working: an ISO-8601 date and time, or a day, valid through its end in UTC; `null` for no expiration), `quotas` (`null` for the workspace defaults) and `credit_limit` (`{ usd, period }`, `null` to remove it). Responses add `expired`. Giving an expired key a new `valid_until` enables it again, unless `enabled` is set. |

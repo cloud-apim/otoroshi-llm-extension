@@ -570,7 +570,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     token: String,
     timeout: BigDecimal,
     enabled: Boolean,
-    // `models.require_known_costs` of every entity: models with no known price are refused and not listed
+    // `models.require_known_costs` of every entity: the models the gateway cannot bill - no known price, or a
+    // price in a unit it does not measure - are refused and not listed
     requireKnownCosts: Boolean,
     fields: Map[String, JsValue],
     modalities: Map[String, ModalityConf],

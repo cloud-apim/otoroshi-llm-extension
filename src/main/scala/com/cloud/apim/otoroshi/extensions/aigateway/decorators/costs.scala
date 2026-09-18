@@ -4,7 +4,7 @@ import org.apache.pekko.stream.scaladsl.{Sink, Source, StreamConverters}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioTranscriptionResponseMetadataUsage, ImagesGenResponseMetadataUsage, VideosGenResponseMetadataUsage, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import com.cloud.apim.otoroshi.extensions.aigateway.AiMetrics
-import com.cloud.apim.otoroshi.extensions.aigateway.catalog.{ModelEndpoints, ModelsCatalog}
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.{ModelEndpoints, ModelKinds, ModelsCatalog}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AiProvidersCatalog, AudioModel, EmbeddingModel, ImageModel, ModelSettings, ModerationModel, OcrModel, VideoModel}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
@@ -478,15 +478,20 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
 }
 
 
-// A provider can demand that every model it serves has a known price (`models.require_known_costs`).
-// The point is to never run a call that could not be billed, so the check happens before the provider is
-// reached at all, and the models whose price is unknown disappear from the listings.
+// A provider can demand that every model it serves can be billed (`models.require_known_costs`). The point is
+// to never run a call that would count against no budget, so the check happens before the provider is reached
+// at all, and what cannot be billed disappears from the listings. Billable is what `has_cost` reports in the
+// listings, and the two must keep saying the same thing: a price the grid knows, in a unit the gateway
+// measures on the call. Text, embeddings and moderations are billed per token, so the price entry is enough
+// for them; the other modalities are billed in a unit of their own, and a voice priced per second of audio
+// produced - a duration nothing reports back - is refused like a model the grid never heard of.
 object RequiredCosts {
 
   val errorMessage = "no known cost for this model"
+  val unbillableMessage = "no billable cost for this model"
 
-  def error(model: Option[String]): JsValue = Json.obj(
-    "error" -> errorMessage,
+  def error(model: Option[String], message: String = errorMessage): JsValue = Json.obj(
+    "error" -> message,
     "model" -> model.getOrElse("--").json,
   )
 
@@ -497,33 +502,67 @@ object RequiredCosts {
   }
 
   // the price grid is the in-memory one: resource files, user provided prices and the synced catalogs
-  def hasKnownCosts(provider: Option[String], model: String)(using env: Env): Boolean = {
-    env.adminExtensions.extension[AiExtension].exists { ext =>
-      provider.exists(name => ext.costsTracking.canHandle(name, model))
-    }
+  def priceOf(provider: Option[String], model: String)(using env: Env): Option[CostModel] = {
+    for {
+      ext   <- env.adminExtensions.extension[AiExtension]
+      name  <- provider
+      price <- ext.costsTracking.getModel(name, model)
+    } yield price
   }
 
-  def check(provider: Option[String], settings: ModelSettings, model: Option[String])(using env: Env): Either[JsValue, Unit] = {
+  def hasKnownCosts(provider: Option[String], model: String)(using env: Env): Boolean = priceOf(provider, model).isDefined
+
+  private def billable(price: CostModel, kinds: Seq[String], endpoints: Seq[String]): Boolean = {
+    !ModalityCosts.billedPerUnit(kinds) || ModalityCosts.canBill(price, kinds, endpoints)
+  }
+
+  // whether a call on this model would produce an amount. `kinds` and `endpoints` are what the caller knows of
+  // the model: an entity serves one modality and each of its methods one endpoint, so they say it exactly.
+  // Empty means billed per token, the rule of text, embeddings and moderations.
+  def canBeBilled(provider: Option[String], model: String, kinds: Seq[String], endpoints: Seq[String])(using env: Env): Boolean = {
+    priceOf(provider, model).exists(price => billable(price, kinds, endpoints))
+  }
+
+  def check(provider: Option[String], settings: ModelSettings, model: Option[String], kinds: Seq[String] = Seq.empty, endpoints: Seq[String] = Seq.empty)(using env: Env): Either[JsValue, Unit] = {
     if (!settings.requireKnownCosts) {
       Right(())
     } else model match {
-      case Some(name) if hasKnownCosts(provider, name) => Right(())
+      case Some(name) if canBeBilled(provider, name, kinds, endpoints) => Right(())
+      // the price is known but in a unit no call reports back: saying so beats pretending the grid ignores it
+      case Some(name) if hasKnownCosts(provider, name) => AiMetrics.markModelConstraintDenied(); Left(error(model, unbillableMessage))
       // an unresolved model is refused too: without knowing which model runs, no price can be guaranteed
       case _ => AiMetrics.markModelConstraintDenied(); Left(error(model))
     }
   }
 
-  // same rule applied to a listing: what cannot be billed is not offered
-  def filterModels(provider: Option[String], settings: ModelSettings, models: List[String])(using env: Env): List[String] = {
-    if (!settings.requireKnownCosts) models else models.filter(model => hasKnownCosts(provider, model))
+  // the same rule applied to a listing, which knows nothing but names: the price entry says what the model is
+  // and where it is served, so what a call would refuse is never offered in the first place.
+  def filterModels(provider: Option[String], providerKind: String, settings: ModelSettings, models: List[String])(using env: Env): List[String] = {
+    if (!settings.requireKnownCosts) models else models.filter { model =>
+      priceOf(provider, model).exists { price =>
+        val supported = price.raw.select("supported_endpoints").asOpt[Seq[String]].getOrElse(Seq.empty)
+        val endpoints = ModelEndpoints.known(supported, price.mode.some, None)
+        val kinds = ModelKinds.of(providerKind, Seq(model, price.nameWithoutProvider), price.mode.some, Seq.empty, Seq.empty, endpoints)
+        billable(price, kinds, endpoints)
+      }
+    }
   }
 }
 
-// The same gate for the non-text modalities. They have no cost decorator of their own, so these only
-// enforce `models.require_known_costs`: a model with no price is refused before the provider is called.
-// Listing is not covered here on purpose - only the text `/models` endpoint lists models.
-private def requiredCostsOf(provider: String, settings: ModelSettings, model: Option[String], configured: => Option[String])(using env: Env): Either[JsValue, Unit] = {
-  RequiredCosts.check(RequiredCosts.pricingProvider(provider), settings, model.orElse(configured))
+// An audio entity holds one model per section. The audio client reads them at the root of the config, the
+// admin ui writes them under `options`: both the gate and the biller below must find them wherever they are.
+private def audioModelIn(config: JsValue, section: String): Option[String] = {
+  config.at(s"${section}.model").asOptString
+    .orElse(config.at(s"${section}.model_id").asOptString)
+    .orElse(config.at(s"options.${section}.model").asOptString)
+    .orElse(config.at(s"options.${section}.model_id").asOptString)
+}
+
+// The same gate for the non-text modalities, where the entity itself says which modality is served: they pass
+// their kind, and the audio ones the endpoint of the method called, because a voice and a transcription are
+// not billed on the same unit. Listing is not covered here on purpose - only text providers list models.
+private def requiredCostsOf(provider: String, settings: ModelSettings, model: Option[String], configured: => Option[String], kinds: Seq[String] = Seq.empty, endpoints: Seq[String] = Seq.empty)(using env: Env): Either[JsValue, Unit] = {
+  RequiredCosts.check(RequiredCosts.pricingProvider(provider), settings, model.orElse(configured), kinds, endpoints)
 }
 
 object EmbeddingModelClientWithRequiredCosts {
@@ -547,25 +586,26 @@ object AudioModelClientWithRequiredCosts {
 
 class AudioModelClientWithRequiredCosts(originalModel: AudioModel, val audioModelClient: AudioModelClient) extends DecoratorAudioModelClient {
 
-  private def check(model: Option[String], slot: String)(using env: Env): Either[JsValue, Unit] =
-    requiredCostsOf(originalModel.provider, originalModel.models, model, originalModel.config.at(slot).asOptString)
+  private def check(model: Option[String], section: String, endpoint: String)(using env: Env): Either[JsValue, Unit] =
+    requiredCostsOf(originalModel.provider, originalModel.models, model, audioModelIn(originalModel.config, section),
+      Seq(AiProvidersCatalog.Audio), Seq(endpoint))
 
   override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
-    check(opts.model, "stt.model") match {
+    check(opts.model, "stt", ModelEndpoints.AudioTranscriptions) match {
       case Left(err) => err.leftf
       case Right(_) => audioModelClient.speechToText(opts, rawBody, attrs)
     }
   }
 
   override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
-    check(opts.model, "tts.model") match {
+    check(opts.model, "tts", ModelEndpoints.AudioSpeech) match {
       case Left(err) => err.leftf
       case Right(_) => audioModelClient.textToSpeech(opts, rawBody, attrs)
     }
   }
 
   override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
-    check(opts.model, "translate.model") match {
+    check(opts.model, "translate", ModelEndpoints.AudioTranslations) match {
       case Left(err) => err.leftf
       case Right(_) => audioModelClient.translate(opts, rawBody, attrs)
     }
@@ -580,7 +620,8 @@ object ImageModelClientWithRequiredCosts {
 class ImageModelClientWithRequiredCosts(originalModel: ImageModel, val imageModelClient: ImageModelClient) extends DecoratorImageModelClient {
 
   private def check(model: Option[String], slot: String)(using env: Env): Either[JsValue, Unit] =
-    requiredCostsOf(originalModel.provider, originalModel.models, model, originalModel.config.at(slot).asOptString)
+    requiredCostsOf(originalModel.provider, originalModel.models, model, originalModel.config.at(slot).asOptString,
+      Seq(AiProvidersCatalog.Image))
 
   override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     check(opts.model, "options.generation.model") match {
@@ -604,7 +645,8 @@ object VideoModelClientWithRequiredCosts {
 
 class VideoModelClientWithRequiredCosts(originalModel: VideoModel, val videoModelClient: VideoModelClient) extends DecoratorVideoModelClient {
   override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
-    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString) match {
+    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString,
+      Seq(AiProvidersCatalog.Video)) match {
       case Left(err) => err.leftf
       case Right(_) => videoModelClient.generate(opts, rawBody, attrs)
     }
@@ -632,7 +674,8 @@ object OcrModelClientWithRequiredCosts {
 
 class OcrModelClientWithRequiredCosts(originalModel: OcrModel, val ocrModelClient: OcrModelClient) extends DecoratorOcrModelClient {
   override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
-    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString) match {
+    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString,
+      Seq(AiProvidersCatalog.Ocr)) match {
       case Left(err) => err.leftf
       case Right(_) => ocrModelClient.ocr(opts, rawBody, attrs)
     }
@@ -717,6 +760,13 @@ object ModalityCosts {
     costs(input, output)
       .orElse(seconds.flatMap(s => costs(s * cost.input_cost_per_video_per_second, s * cost.output_cost_per_video_per_second)))
   }
+
+  // the modalities billed in a unit of their own. Everything else - text, embeddings, moderations - is billed
+  // per token, where knowing the price entry is enough to know a call produces an amount.
+  private val perUnitKinds: Set[String] =
+    Set(AiProvidersCatalog.Image, AiProvidersCatalog.Audio, AiProvidersCatalog.Ocr, AiProvidersCatalog.Video)
+
+  def billedPerUnit(kinds: Seq[String]): Boolean = kinds.exists(perUnitKinds.contains)
 
   /**
    * Whether a call on this model can be billed at all: the same units as above, read before the call. An
@@ -853,13 +903,7 @@ object AudioModelClientWithCostsTracking {
 
 class AudioModelClientWithCostsTracking(originalModel: AudioModel, val audioModelClient: AudioModelClient) extends DecoratorAudioModelClient {
 
-  // the audio client reads its models at the root of the config, the admin ui writes them under options
-  private def configured(section: String): Option[String] = {
-    originalModel.config.at(s"$section.model").asOptString
-      .orElse(originalModel.config.at(s"$section.model_id").asOptString)
-      .orElse(originalModel.config.at(s"options.$section.model").asOptString)
-      .orElse(originalModel.config.at(s"options.$section.model_id").asOptString)
-  }
+  private def configured(section: String): Option[String] = audioModelIn(originalModel.config, section)
 
   private def transcribed(model: Option[String], section: String, resp: AudioTranscriptionResponse, attrs: TypedMap)(using env: Env): Option[CostsOutput] = {
     ModalityCosts.track(originalModel.provider, model.orElse(configured(section)), attrs)(ModalityCosts.transcription(_, resp.metadata.usage, None))
@@ -1125,7 +1169,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     given env: Env = decoratorEnv
     chatClient.listModels(raw, attrs).map {
       case Left(err) => Left(err)
-      case Right(models) => Right(RequiredCosts.filterModels(pricingProvider(), originalProvider.models, models))
+      case Right(models) => Right(RequiredCosts.filterModels(pricingProvider(), originalProvider.provider, originalProvider.models, models))
     }
   }
 }
