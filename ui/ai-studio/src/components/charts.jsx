@@ -71,6 +71,12 @@ export function Legend({ series }) {
   );
 }
 
+// a daily bucket is a day, not an instant: its tooltip says so
+function bucketTitle(ts, bucket) {
+  const d = new Date(ts);
+  return !bucket || bucket.endsWith('m') || bucket.endsWith('h') ? d.toLocaleString() : d.toLocaleDateString();
+}
+
 function Tooltip({ x, y, width, title, rows, format }) {
   const left = Math.min(Math.max(x + 12, 0), width - 170);
   return (
@@ -119,12 +125,13 @@ function Axes({ width, height, pad, max, format, buckets, bucket }) {
   );
 }
 
-export function StackedBars({ series: rawSeries, bucket, format = (v) => v, height = 220, empty = 'No data for this period' }) {
+// `compact` drops the axes and the legend: a strip of bars to read at a glance, tooltip included
+export function StackedBars({ series: rawSeries, bucket, format = (v) => v, height = 220, empty = 'No data for this period', compact = false }) {
   const [ref, width] = useWidth();
   const [hover, setHover] = useState(null);
   const series = useMemo(() => foldSeries(rawSeries || []), [rawSeries]);
   const buckets = useMemo(() => toBuckets(rawSeries && rawSeries.length ? rawSeries : []), [rawSeries]);
-  const pad = { l: 56, r: 8, t: 10, b: 24 };
+  const pad = compact ? { l: 0, r: 0, t: 6, b: 2 } : { l: 56, r: 8, t: 10, b: 24 };
   const totals = buckets.map((b) => series.reduce((acc, s) => acc + (b.values[s.name] || 0), 0));
   const max = niceMax(Math.max(0, ...totals));
   const plotH = height - pad.t - pad.b;
@@ -140,7 +147,7 @@ export function StackedBars({ series: rawSeries, bucket, format = (v) => v, heig
         </div>
       ) : (
         <svg height={height} viewBox={`0 0 ${width} ${height}`} onMouseLeave={() => setHover(null)}>
-          <Axes width={width} height={height} pad={pad} max={max} format={format} buckets={buckets} bucket={bucket} />
+          {!compact && <Axes width={width} height={height} pad={pad} max={max} format={format} buckets={buckets} bucket={bucket} />}
           {buckets.map((b, i) => {
             const x = pad.l + step * i + (step - barW) / 2;
             let acc = 0;
@@ -149,6 +156,8 @@ export function StackedBars({ series: rawSeries, bucket, format = (v) => v, heig
               .filter((seg) => seg.v > 0);
             return (
               <g key={b.ts}>
+                {/* a day without a call keeps its place in the week, as a baseline tick */}
+                {compact && segments.length === 0 && <rect className="chart-zero" x={x} y={pad.t + plotH - 1.5} width={barW} height={1.5} rx={0.75} />}
                 {segments.map((seg, j) => {
                   const h = (seg.v / max) * plotH;
                   const y = pad.t + plotH - ((acc + seg.v) / max) * plotH;
@@ -179,7 +188,7 @@ export function StackedBars({ series: rawSeries, bucket, format = (v) => v, heig
           x={hover.x}
           y={10}
           width={width}
-          title={new Date(hover.b.ts).toLocaleString()}
+          title={bucketTitle(hover.b.ts, bucket)}
           format={format}
           rows={series
             .map((s, idx) => ({ name: s.name, value: hover.b.values[s.name] || 0, color: seriesColor(idx, s.name) }))
@@ -187,7 +196,7 @@ export function StackedBars({ series: rawSeries, bucket, format = (v) => v, heig
             .reverse()}
         />
       )}
-      <Legend series={series} />
+      {!compact && <Legend series={series} />}
     </div>
   );
 }
@@ -257,7 +266,7 @@ export function AreaChart({ series: rawSeries, bucket, format = (v) => v, height
           x={hover.x}
           y={10}
           width={width}
-          title={new Date(hover.b.ts).toLocaleString()}
+          title={bucketTitle(hover.b.ts, bucket)}
           format={format}
           rows={series.map((s, idx) => ({ name: s.name, value: hover.b.values[s.name] || 0, color: seriesColor(idx, s.name) }))}
         />

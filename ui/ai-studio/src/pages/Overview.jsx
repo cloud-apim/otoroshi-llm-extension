@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useWorkspace } from '../App';
 import { Badge, CopyButton, Tabs, useAsync } from '../components/ui';
+import { WeekUsage } from '../components/usage';
 import { Resources, workspaceFilter } from '../lib/entities';
 import { Link, useRouter } from '../lib/router';
 import { listWorkspaceModels } from '../lib/models';
@@ -123,6 +124,8 @@ export function OverviewPage() {
           <code>{code}</code>
         </pre>
       </div>
+
+      <WeekUsage workspace={workspace} href={`/workspaces/${workspace.id}/activity`} />
 
       <div className="page-header" style={{ marginTop: 28, marginBottom: 14 }}>
         <div>

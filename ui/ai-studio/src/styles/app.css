@@ -958,3 +958,14 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .playground-verdict { display: flex; align-items: center; gap: 6px; font-weight: 500; }
 .playground-verdict.flagged { color: var(--negative-text); }
 .playground-verdict.clean { color: var(--positive-text); }
+/* the week of a workspace on its overview: a figure, the days behind it, and the models that made it */
+.chart-zero { fill: var(--border-strong); }
+.week-card { display: flex; flex-direction: column; gap: 2px; }
+.week-card .label { color: var(--muted); font-size: 13px; font-weight: 500; }
+.week-card .value { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
+.week-card .chart { margin: 4px -2px 2px; }
+.week-models { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.week-models .row { gap: 10px; }
+.week-models .truncate { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.week-models i { width: 8px; height: 8px; border-radius: 3px; flex-shrink: 0; }
+.week-models b { color: var(--ink); font-weight: 500; white-space: nowrap; }

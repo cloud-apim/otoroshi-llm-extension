@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { Sparkline, StackedBars } from './charts';
+import { Sparkline, StackedBars, seriesColor } from './charts';
 import { Empty, Loading, Progress, Segmented, useAsync } from './ui';
-import { seriesOf } from '../lib/analytics';
+import { NoExporterError, runQuery, scalarOf, seriesOf } from '../lib/analytics';
+import { Link } from '../lib/router';
 import { budgetConsumption, listBudgets, periodLabel } from '../lib/budgets';
 import { fmtCost, fmtInt, fmtNumber } from '../lib/format';
 
@@ -159,5 +160,77 @@ export function UsageCard({ title, description, dimension, run, deps, bucket, em
       </div>
       {data.loading && !data.data ? <Loading /> : <StackedBars series={seriesOf(data.data)} bucket={bucket} format={METRICS[metric].format} height={240} empty={empty} />}
     </div>
+  );
+}
+
+// The week of a workspace at a glance, on its overview: what it spent, how many calls it served and how
+// many tokens it moved, each with the models behind it. Only shown once the workspace has been called,
+// and only when the instance stores its usage (no analytics exporter, no panel).
+const WEEK_CARDS = [
+  { id: 'spend', label: 'Spend', metric: 'spend', total: 'cloudapim_llm_cost_total', format: fmtCost },
+  { id: 'requests', label: 'Requests', metric: 'requests', total: 'cloudapim_llm_requests_total', format: fmtNumber },
+  { id: 'tokens', label: 'Tokens', metric: 'tokens', total: 'cloudapim_llm_tokens_total', format: fmtNumber },
+];
+
+// the models behind a metric: the biggest three, then everything else as one line
+function breakdown(series, total, max = 3) {
+  const summed = series.map((s, idx) => ({ name: s.name, color: seriesColor(idx, s.name), value: (s.points || []).reduce((acc, p) => acc + (Number(p.value) || 0), 0) }));
+  const top = summed.filter((s) => s.value > 0).slice(0, max);
+  const others = total - top.reduce((acc, s) => acc + s.value, 0);
+  // the series only carry the top models of the period, the rest is what the total has above them
+  return others > total * 0.001 ? [...top, { name: 'Others', color: 'var(--chart-other)', value: others }] : top;
+}
+
+export function WeekUsage({ workspace, href }) {
+  const data = useAsync(async () => {
+    const q = (id, params) => runQuery(workspace.id, id, { period: '7d', ...(params ? { params } : {}) });
+    try {
+      const results = await Promise.all(
+        WEEK_CARDS.flatMap((c) => [q(c.total), q('cloudapim_llm_explore', { metric: c.metric, group_by: 'model', rollup: 'day', top_n: 6 })])
+      );
+      return WEEK_CARDS.map((c, i) => ({ ...c, value: scalarOf(results[i * 2]), series: seriesOf(results[i * 2 + 1]) }));
+    } catch (e) {
+      // a workspace whose usage is not stored anywhere simply has no panel
+      if (e instanceof NoExporterError) return null;
+      throw e;
+    }
+  }, [workspace.id]);
+
+  const cards = data.data;
+  if (!cards || !cards.some((c) => c.value > 0)) return null;
+  return (
+    <>
+      <div className="page-header" style={{ marginTop: 28, marginBottom: 14 }}>
+        <div>
+          <h2>This week</h2>
+          <p>What this workspace served over the past 7 days.</p>
+        </div>
+        {href && (
+          <Link className="btn sm" to={href}>
+            View activity
+          </Link>
+        )}
+      </div>
+      <div className="grid cols-3">
+        {cards.map((c) => (
+          <div key={c.id} className="card week-card">
+            <div className="label">{c.label}</div>
+            <div className="value">{c.format(c.value)}</div>
+            <StackedBars compact series={c.series} bucket="1d" format={c.format} height={68} empty=" " />
+            <div className="week-models">
+              {breakdown(c.series, c.value).map((row) => (
+                <div key={row.name} className="row between" title={row.name}>
+                  <span className="truncate">
+                    <i style={{ background: row.color }} />
+                    {row.name}
+                  </span>
+                  <b>{c.format(row.value)}</b>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
