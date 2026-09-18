@@ -450,7 +450,9 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
           val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
           val totalCost = costs.map(_.totalCost)
-          val totalTokens = attrs.get(AudioModelClient.ApiUsageKey).map(_.usage.total)
+          // read from the response, not from the attrs: the attr below is only set further down, so reading
+          // it here always yielded None and the tokens never reached the budget
+          val totalTokens: Option[Long] = Some(resp.metadata.usage.total).filter(_ > 0L)
           ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Audio, attrs).map { budgetIds =>
             val _output = resp.toOpenAiJson(env).asObject
             val slug = Json.obj(
@@ -541,7 +543,9 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
           val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
           val totalCost = costs.map(_.totalCost)
-          val totalTokens = attrs.get(AudioModelClient.ApiUsageKey).map(_.usage.total)
+          // read from the response, not from the attrs: the attr below is only set further down, so reading
+          // it here always yielded None and the tokens never reached the budget
+          val totalTokens: Option[Long] = Some(resp.metadata.usage.total).filter(_ > 0L)
           ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Audio, attrs).map { budgetIds =>
             val _output = resp.toOpenAiJson(env).asObject
             val slug = Json.obj(
@@ -583,8 +587,79 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
     )
   }
 
-  // no metrics right now !!!
-  override def textToSpeech(options: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = super.textToSpeech(options, rawBody, attrs)
+  // A voice answers with a stream of audio and no usage at all: it used to go straight through, audited by
+  // nothing and counted by no budget. What it read is what bills it, and the costs decorator has put that
+  // in the attrs by now.
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
+    val startTime = System.currentTimeMillis()
+    val user = attrs.get(otoroshi.plugins.Keys.UserKey)
+    val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
+    val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
+    attrs.put(ChatClientWithAuding.ProviderKey -> originalModel)
+    attrs.put(ChatClientWithAuding.ModelKey -> opts.model.getOrElse("--"))
+    def failed(error: JsValue): Unit = {
+      AuditEvent.generic("LLMUsageAudit") {
+        Json.obj(
+          "error" -> error,
+          "provider_kind" -> originalModel.provider.toLowerCase,
+          "consumed_using" -> "audio_model/tts",
+          "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
+          "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+          "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+          "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+          "input_body" -> rawBody,
+          "output" -> JsNull,
+          "provider_details" -> originalModel.redactedJson
+        )
+      }.toAnalytics()
+    }
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      Json.obj("error" -> "budget exceeded").leftf,
+      audioModelClient.textToSpeech(opts, rawBody, attrs).andThen {
+        case Failure(exception) => failed(Json.obj("exception" -> exception.getMessage))
+        case Success(Left(err)) => failed(err)
+        case Success(Right((_, contentType))) => {
+          val impacts = attrs.get(ChatClientWithEcoImpact.key)
+          val costs = attrs.get(ChatClientWithCostsTracking.key)
+          val ext = env.adminExtensions.extension[AiExtension].get
+          ext.datastores.budgetsDataStore.updateUsage(costs.map(_.totalCost), None, AiBudgetUsageKind.Audio, attrs).map { budgetIds =>
+            val _output = Json.obj("characters" -> opts.input.length, "content_type" -> contentType)
+            val slug = Json.obj(
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "provider" -> originalModel.id,
+              "duration" -> (System.currentTimeMillis() - startTime),
+            ) ++ _output
+            attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+              case Some(obj@JsObject(_)) => {
+                val arr = obj.select("ai-audio").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                obj ++ Json.obj("ai-audio" -> (arr ++ Seq(slug)))
+              }
+              case None => Json.obj("ai-audio" -> Seq(slug))
+            }
+            AuditEvent.generic("LLMUsageAudit") {
+              Json.obj(
+                "provider_kind" -> originalModel.provider.toLowerCase,
+                "provider" -> originalModel.id,
+                "duration" -> (System.currentTimeMillis() - startTime),
+                "error" -> JsNull,
+                "consumed_using" -> "audio_model/tts",
+                "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
+                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+                "input_body" -> rawBody,
+                "output" -> _output,
+                "provider_details" -> originalModel.redactedJson,
+                "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+                "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+                "budgets" -> budgetIds.json
+              )
+            }.toAnalytics()
+          }
+        }
+      }
+    )
+  }
 }
 
 object ImageModelClientWithAuditing {
@@ -644,7 +719,9 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
           val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
           val totalCost = costs.map(_.totalCost)
-          val totalTokens = attrs.get(ImageModelClient.ApiUsageKey).map(_.usage.totalTokens)
+          // read from the response, not from the attrs: the attr below is only set further down, so reading
+          // it here always yielded None and the tokens never reached the budget
+          val totalTokens: Option[Long] = Some(resp.metadata.usage.totalTokens).filter(_ > 0L)
           ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Image, attrs).map { budgetIds =>
             val _output = resp.toOpenAiJson(env).asObject
             val slug = Json.obj(
@@ -735,7 +812,9 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
           val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
           val totalCost = costs.map(_.totalCost)
-          val totalTokens = attrs.get(ImageModelClient.ApiUsageKey).map(_.usage.totalTokens)
+          // read from the response, not from the attrs: the attr below is only set further down, so reading
+          // it here always yielded None and the tokens never reached the budget
+          val totalTokens: Option[Long] = Some(resp.metadata.usage.totalTokens).filter(_ > 0L)
           ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Image, attrs).map { budgetIds =>
             val _output = resp.toOpenAiJson(env).asObject
             val slug = Json.obj(
@@ -936,7 +1015,9 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
           val costs = attrs.get(ChatClientWithCostsTracking.key)
           val ext = env.adminExtensions.extension[AiExtension].get
           val totalCost = costs.map(_.totalCost)
-          val totalTokens = attrs.get(VideoModelClient.ApiUsageKey).map(_.usage.totalTokens)
+          // read from the response, not from the attrs: the attr below is only set further down, so reading
+          // it here always yielded None and the tokens never reached the budget
+          val totalTokens: Option[Long] = Some(resp.metadata.usage.totalTokens).filter(_ > 0L)
           ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Video, attrs).map { budgetIds =>
             val _output = resp.toOpenAiJson(env).asObject
             val slug = Json.obj(

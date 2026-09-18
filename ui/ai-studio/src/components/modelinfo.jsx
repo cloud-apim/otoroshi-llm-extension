@@ -13,6 +13,7 @@ import {
   kindsOf,
   metaOf,
   MODALITY_NAMES,
+  pricedButNotBilled,
   outputsOf,
   perMillion,
   promptPrice,
@@ -78,8 +79,15 @@ export function ModelLabels({ model, compact = false }) {
       {meta.status === 'deprecated' && <Badge kind="negative">Deprecated</Badge>}
       {meta.status === 'beta' && <Badge kind="info">Beta</Badge>}
       {meta.has_cost === false && (
-        <Badge kind="warning" title="Cost tracking cannot put a price on this model: its calls do not count against dollar budgets">
-          No known price
+        <Badge
+          kind="warning"
+          title={
+            pricedButNotBilled(model)
+              ? 'Its price is known, but in a unit the gateway cannot measure — the seconds of audio a voice produces, for instance. Its calls do not count against dollar budgets.'
+              : 'Cost tracking knows no price for this model: its calls do not count against dollar budgets'
+          }
+        >
+          {pricedButNotBilled(model) ? 'Not billed' : 'No known price'}
         </Badge>
       )}
     </div>
@@ -188,7 +196,13 @@ export function ModelDetails({ model, baseUrl }) {
           </Row>
           {model.modality === 'text' && <Row label="Studio chat">{unavailable ? <span className="faint">{unavailable}</span> : 'Available'}</Row>}
           <Row label="Cost tracking">
-            {hasCost(model) ? 'Calls are priced and count against dollar budgets' : <span className="warning-text">No known price, calls are not priced</span>}
+            {hasCost(model) ? (
+              'Calls are priced and count against dollar budgets'
+            ) : pricedButNotBilled(model) ? (
+              <span className="warning-text">Priced in a unit the gateway cannot measure, so calls are not billed</span>
+            ) : (
+              <span className="warning-text">No known price, calls are not priced</span>
+            )}
           </Row>
         </div>
         {kinds.includes('text') || kinds.includes('embedding') ? <pre className="mt">{snippet}</pre> : null}

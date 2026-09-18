@@ -1,8 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ChatClientWithCostsTracking
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{EmbeddingModel, ModerationModel}
-import com.cloud.apim.otoroshi.extensions.aigateway.{EmbeddingClientInputOptions, LlmExtensionOneOtoroshiServerPerSuite, ModerationInput, ModerationInputKind, ModerationModelClientInputOptions}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AudioModel, EmbeddingModel, ImageModel, ModerationModel, OcrModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClientTextToSpeechInputOptions, EmbeddingClientInputOptions, ImageModelClientGenerationInputOptions, LlmExtensionOneOtoroshiServerPerSuite, ModerationInput, ModerationInputKind, ModerationModelClientInputOptions, OcrModelClientInputOptions}
 import otoroshi.env.Env
 import otoroshi.models.EntityLocation
 import otoroshi.next.models.*
@@ -43,6 +43,24 @@ class NonTextCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
              |  "usage": {"prompt_tokens": ${inputTokens}, "total_tokens": ${inputTokens}}
              |}""".stripMargin))
     })
+    // an image model of the grid billed per token: 16 text tokens in, 186 tokens of picture out
+    .post("/images/generations", (req, response) => {
+      req.receiveContent().ignoreElements().subscribe()
+      response
+        .status(200)
+        .addHeader("Content-Type", "application/json")
+        .sendString(Mono.just(
+          s"""{
+             |  "created": 1,
+             |  "data": [{"b64_json": "aGV5"}],
+             |  "usage": {"total_tokens": 202, "input_tokens": 16, "output_tokens": 186, "input_tokens_details": {"text_tokens": 16, "image_tokens": 0}}
+             |}""".stripMargin))
+    })
+    // a voice answers with its audio and nothing else: only what it read can be billed
+    .post("/audio/speech", (req, response) => {
+      req.receiveContent().ignoreElements().subscribe()
+      response.status(200).addHeader("Content-Type", "audio/mpeg").sendString(Mono.just("fake-audio"))
+    })
     .post("/moderations", (req, response) => {
       req.receiveContent().ignoreElements().subscribe()
       response
@@ -70,6 +88,25 @@ class NonTextCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   lazy val moderationModel: ModerationModel = ModerationModel(
     EntityLocation.default, UUID.randomUUID().toString, "moderation costs", "", Seq.empty, Map.empty, "openai",
     Json.obj("connection" -> connection, "options" -> Json.obj("model" -> moderationModelName)),
+  )
+
+  // billed per token by the grid: 16 * 0.000005 + 186 * 0.00003
+  val imageModelName = "gpt-image-2"
+  val expectedImageCost = BigDecimal("0.005660")
+
+  // tts-1 is billed per character of the text it reads
+  val ttsModelName = "tts-1"
+  val spokenText = "Bonjour, ceci est la passerelle Otoroshi."
+  val expectedSpeechCost = BigDecimal(spokenText.length) * BigDecimal("0.000015")
+
+  lazy val imageModel: ImageModel = ImageModel(
+    EntityLocation.default, UUID.randomUUID().toString, "image costs", "", Seq.empty, Map.empty, "openai",
+    Json.obj("connection" -> connection, "options" -> Json.obj("generation" -> Json.obj("enabled" -> true, "model" -> imageModelName))),
+  )
+
+  lazy val audioModel: AudioModel = AudioModel(
+    EntityLocation.default, UUID.randomUUID().toString, "audio costs", "", Seq.empty, Map.empty, "openai",
+    Json.obj("connection" -> connection, "tts" -> Json.obj("enabled" -> true, "model" -> ttsModelName, "voice" -> "alloy")),
   )
 
   val budgetName = "non text budget"
@@ -100,11 +137,13 @@ class NonTextCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       "enabled" -> true,
       "duration" -> Json.obj("value" -> 1, "unit" -> "year"),
       "limits" -> Json.obj("total_usd" -> 10, "total_tokens" -> 1000000),
-      "scope" -> Json.obj("providers" -> Json.arr(embeddingModel.id)),
+      "scope" -> Json.obj("providers" -> Json.arr(embeddingModel.id, imageModel.id, audioModel.id)),
       "action_on_exceed" -> Json.obj("mode" -> "soft"),
     )
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "embedding-models").upsertEntity(embeddingModel).awaitf(10.seconds)
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "moderation-models").upsertEntity(moderationModel).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "image-models").upsertEntity(imageModel).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "audio-models").upsertEntity(audioModel).awaitf(10.seconds)
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "ai-budgets").createRaw(budgetJson).awaitf(10.seconds)
     client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(route).awaitf(10.seconds)
     await(10.seconds)
@@ -137,6 +176,45 @@ class NonTextCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val costs = attrs.get(ChatClientWithCostsTracking.key)
     assert(costs.isDefined, "a cost should have been computed, even a zero one")
     assertEquals(costs.get.totalCost, BigDecimal(0))
+  }
+
+  test("an image generation is billed on the tokens the provider counted, and moves the dollar budget") {
+    setup
+    given env: Env = otoroshi.env
+    val budget = ext.states.allBudgets().find(_.name == budgetName).get
+    val before = budget.getConsumptions().awaitf(10.seconds)
+    val attrs = TypedMap.empty
+    val resp = ext.states.imageModel(imageModel.id).flatMap(_.getImageModelClient()).get
+      .generate(ImageModelClientGenerationInputOptions(prompt = "a red panda coding on a laptop"), Json.obj(), attrs)(using ec, otoroshi.env)
+      .awaitf(30.seconds)
+    assert(resp.isRight, s"the call should succeed, got ${resp}")
+    val costs = attrs.get(ChatClientWithCostsTracking.key)
+    assert(costs.isDefined, "an image call should have a cost: nothing used to price the modalities that are not text")
+    assertEquals(costs.get.totalCost, expectedImageCost)
+    await(5.seconds)
+    val after = budget.getConsumptions().awaitf(10.seconds)
+    assertEquals(after.imageUsd - before.imageUsd, expectedImageCost, "the image budget should have moved by the exact cost")
+    assertEquals(after.totalUsd - before.totalUsd, expectedImageCost, "and the dollar budget of the workspace with it")
+    assertEquals(after.imageTokens - before.imageTokens, 202L, "the tokens were already counted, and still are")
+  }
+
+  test("a voice is billed on the characters it read") {
+    setup
+    given env: Env = otoroshi.env
+    val budget = ext.states.allBudgets().find(_.name == budgetName).get
+    val before = budget.getConsumptions().awaitf(10.seconds)
+    val attrs = TypedMap.empty
+    val resp = ext.states.audioModel(audioModel.id).flatMap(_.getAudioModelClient()).get
+      .textToSpeech(AudioModelClientTextToSpeechInputOptions(input = spokenText), Json.obj(), attrs)(using ec, otoroshi.env)
+      .awaitf(30.seconds)
+    assert(resp.isRight, s"the call should succeed, got ${resp}")
+    val costs = attrs.get(ChatClientWithCostsTracking.key)
+    assert(costs.isDefined, "a voice answers with audio only: the text it read is what bills it")
+    assertEquals(costs.get.totalCost, expectedSpeechCost)
+    await(5.seconds)
+    val after = budget.getConsumptions().awaitf(10.seconds)
+    assertEquals(after.audioUsd - before.audioUsd, expectedSpeechCost, "the audio budget should have moved")
+    assertEquals(after.totalUsd - before.totalUsd, expectedSpeechCost)
   }
 
   test("an embedding call decrements a dollar budget, tokens included") {

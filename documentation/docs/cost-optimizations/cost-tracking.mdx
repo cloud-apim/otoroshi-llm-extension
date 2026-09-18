@@ -80,17 +80,27 @@ OpenRouter model variants and aliases — `anthropic/claude-opus-5:batch`, `~ven
 
 ### Supported modalities
 
-Costs are computed for the modalities the price grid bills per token:
+Every modality is priced, each in the unit its providers invoice:
 
-| Modality | Cost tracking |
+| Modality | Billed on |
 |---|---|
-| Text (chat, completion, responses) | ✅ |
-| Embeddings | ✅ |
-| Moderation | ✅ (free on most providers, so the cost is a legitimate zero) |
-| Image, audio, video, OCR | ❌ not yet — these are billed per image, pixel, second, character or page |
+| Text (chat, completion, responses) | input, output and reasoning tokens |
+| Embeddings | input tokens |
+| Moderation | input tokens (free on most providers, so the cost is a legitimate zero) |
+| Image | the prompt, input image and output image tokens the provider counted, or the images themselves |
+| Audio — transcription | the tokens the provider counted, or the seconds of audio it read |
+| Audio — speech | the characters the voice read |
+| OCR | the pages the model processed |
+| Video | the tokens the provider counted, or the seconds generated |
 
-Calls on the modalities without cost tracking still count their tokens and pages against your budgets; only
-the dollar amount is missing.
+A call is only priced with a unit the gateway can measure. A voice billed per second of audio produced is the
+one case where it cannot: nothing in the answer says how long the audio lasts, so its calls carry no cost
+rather than a made up one. The `has_cost` flag of the [models listing](/docs/llm-gateway/openai-compat-api)
+answers exactly that question — *can a call on this model be billed* — and the AI Studio models page shows
+it as **Billed** or **Not billed**.
+
+Whatever the modality, tokens and pages always count against your budgets; the dollar amount follows the
+table above.
 
 ### Supported providers
 
@@ -173,6 +183,12 @@ Available pricing fields:
 | `output_cost_per_reasoning_token` | Cost per reasoning token (falls back to `output_cost_per_token` if not set) |
 | `input_cost_per_image` | Cost per input image |
 | `output_cost_per_image` | Cost per output image |
+| `input_cost_per_image_token` / `output_cost_per_image_token` | Cost per image token, for the models that count them |
+| `input_cost_per_audio_token` | Cost per audio token of a transcription |
+| `input_cost_per_character` | Cost per character read by a voice |
+| `input_cost_per_second` | Cost per second of audio read by a transcription |
+| `ocr_cost_per_page` | Cost per page extracted |
+| `input_cost_per_video_per_second` / `output_cost_per_video_per_second` | Cost per second of video |
 
 ### Cost output
 

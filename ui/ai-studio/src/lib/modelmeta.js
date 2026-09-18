@@ -145,8 +145,15 @@ export function contextOf(model) {
   return (l && (l.context || l.input)) || null;
 }
 
+// whether the gateway can put a price on a call of this model, which is what makes it count against
+// dollar budgets: the price table knows its unit, and that unit is one the gateway measures
 export function hasCost(model) {
   return metaOf(model).has_cost === true;
+}
+
+// a model whose price is known but whose unit the gateway cannot measure: priced on paper, never billed
+export function pricedButNotBilled(model) {
+  return !hasCost(model) && Object.keys(metaOf(model).pricing || {}).length > 0;
 }
 
 // why the chat of the studio cannot use a model, null when it can

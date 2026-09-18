@@ -430,7 +430,10 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     }
 
     test(s"${host}: models can be filtered on their cost") {
-      val unpriced = Set("gpt-totally-made-up", "bge-reranker-v2-m3", "mistral-ocr-latest")
+      // `has_cost` is "the gateway can bill a call on this model": nobody prices the first two, this provider
+      // does not serve the mistral ocr entry, and the two last ones are billed per second of audio — a unit
+      // the gateway never measures, so their calls carry no cost rather than a made up one
+      val unpriced = Set("gpt-totally-made-up", "bge-reranker-v2-m3", "mistral-ocr-latest", "whisper-1", "gpt-realtime-whisper")
       assertEquals(list(host, "?has_cost=true").keySet, listedModels.toSet -- unpriced)
       assertEquals(list(host, "?has_cost").keySet, list(host, "?has_cost=true").keySet)
       assertEquals(list(host, "?has_cost=false").keySet, unpriced)
@@ -460,5 +463,24 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assert(enriched.values.forall(_.select("_metadata").select("kinds").asOpt[Seq[String]].contains(Seq("audio"))))
     // a ranker is listed, but it is none of the types
     assertEquals(list("kinds.oto.tools", "?enriched=true")("bge-reranker-v2-m3").select("_metadata").select("kinds").asOpt[Seq[String]], Some(Seq.empty))
+  }
+  // `has_cost` answers "the gateway can bill a call on this model", which is what decides whether its calls
+  // move a dollar budget. Images and pages are billed by their own units, a voice priced per second of audio
+  // is not billable at all, and the answer no longer depends on which entity lists the model.
+  test("a model that is not text is billed when the table holds a unit the gateway can measure") {
+    given env: Env = otoroshi.env
+    val openai = AiProvider(id = "provider_costs", name = "openai", provider = "openai", connection = Json.obj(), options = Json.obj())
+    val mistral = AiProvider(id = "provider_costs_mistral", name = "mistral", provider = "mistral", connection = Json.obj(), options = Json.obj())
+    def billed(provider: AiProvider, model: String, modality: String): Boolean = ModelsMetadata.describe(provider, model, modality).hasCost
+    assert(billed(openai, "gpt-image-2", "image"), "an image model counting its tokens is billed")
+    assert(billed(openai, "dall-e-3", "image"), "an image model billed by the image is billed")
+    assert(billed(openai, "tts-1", "audio"), "a voice billed per character is billed")
+    assert(!billed(openai, "gpt-4o-mini-tts", "audio"), "a voice billed per second of audio cannot be measured")
+    assert(billed(openai, "gpt-4o-mini-transcribe", "audio"), "a transcription counting its tokens is billed")
+    assert(!billed(openai, "whisper-1", "audio"), "a transcription billed per second of audio cannot be measured")
+    assert(billed(mistral, "mistral-ocr-latest", "ocr"), "an ocr model billed by the page is billed")
+    // the same models, listed by the LLM connection that exposes them, answer the same thing
+    assert(billed(openai, "gpt-image-2", "text"), "an image model listed by a text provider is billed the same way")
+    assert(!billed(openai, "whisper-1", "text"), "and so is one that cannot be billed")
   }
 }

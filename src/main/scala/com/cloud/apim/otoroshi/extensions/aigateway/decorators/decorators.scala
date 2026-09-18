@@ -85,6 +85,7 @@ object AudioModelClientDecorators {
   val possibleDecorators: Seq[Function[(AudioModel, AudioModelClient, Env), AudioModelClient]] = Seq(
     AudioModelClientWithModels.applyIfPossible,
     AudioModelClientWithRequiredCosts.applyIfPossible,
+    AudioModelClientWithCostsTracking.applyIfPossible,
     AudioModelClientWithAuditing.applyIfPossible,
     AudioModelClientWithMetrics.applyIfPossible,
   )
@@ -112,6 +113,7 @@ object ImageModelClientDecorators {
   val possibleDecorators: Seq[Function[(ImageModel, ImageModelClient, Env), ImageModelClient]] = Seq(
     ImageModelClientWithModels.applyIfPossible,
     ImageModelClientWithRequiredCosts.applyIfPossible,
+    ImageModelClientWithCostsTracking.applyIfPossible,
     ImageModelClientWithAuditing.applyIfPossible,
     ImageModelClientWithMetrics.applyIfPossible,
   )
@@ -162,6 +164,7 @@ object VideosGenModelClientDecorators {
   val possibleDecorators: Seq[Function[(VideoModel, VideoModelClient, Env), VideoModelClient]] = Seq(
     VideoModelClientWithModels.applyIfPossible,
     VideoModelClientWithRequiredCosts.applyIfPossible,
+    VideoModelClientWithCostsTracking.applyIfPossible,
     VideoModelClientWithAuditing.applyIfPossible,
     VideoModelClientWithMetrics.applyIfPossible,
   )
@@ -184,6 +187,7 @@ object OcrModelClientDecorators {
   val possibleDecorators: Seq[Function[(OcrModel, OcrModelClient, Env), OcrModelClient]] = Seq(
     OcrModelClientWithModels.applyIfPossible,
     OcrModelClientWithRequiredCosts.applyIfPossible,
+    OcrModelClientWithCostsTracking.applyIfPossible,
     OcrModelClientWithAuditing.applyIfPossible,
   )
 

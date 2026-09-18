@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.catalog
 
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostModel, CostsOutput}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostModel, CostsOutput, ModalityCosts}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AiProvidersCatalog}
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
@@ -550,6 +550,9 @@ object ModelEndpoints {
   import AiProvidersCatalog.{Audio, Embedding, Image, Moderation, Ocr, Text, Video}
 
   val Messages = "messages"
+  val AudioSpeech = "audio_speech"
+  val AudioTranscriptions = "audio_transcriptions"
+  val AudioTranslations = "audio_translations"
   val conversational = Set("chat_completions", "completions", "responses", Messages)
 
   private val paths = Map(
@@ -707,13 +710,18 @@ object ModelsMetadata {
       else if (knownEndpoints.nonEmpty) knownEndpoints.filterNot(_ == ModelEndpoints.Messages)
       else ModelEndpoints.ofKinds(kinds, names, input.getOrElse(Seq.empty))
     val cacheRead = catalog.flatMap(_.cost).map(_.cacheRead.isDefined).filter(identity)
+    // What the gateway can actually bill for a call on this model, which decides whether its calls count
+    // against dollar budgets. Text, embeddings and moderations are billed per token; the other modalities by
+    // the unit the price table holds for them, and only when the gateway can measure it — a voice billed per
+    // second of audio stays unpriced, whatever its price entry says. The kinds decide, not the entity that
+    // lists the model, so an image model listed by an LLM connection answers like the image entity serving it.
     val hasCost = ext.exists { e =>
-      modality match {
-        case AiProvidersCatalog.Text => e.costsTracking.hasCost(provider, model)
-        case AiProvidersCatalog.Embedding | AiProvidersCatalog.Moderation => e.costsTracking.hasTokenCost(provider.provider, model)
-        // images, sounds, videos and pages are not billed per token
-        case _ => false
-      }
+      val conversational = kinds.contains(AiProvidersCatalog.Text)
+      val perToken = conversational || kinds.exists(k => k == AiProvidersCatalog.Embedding || k == AiProvidersCatalog.Moderation)
+      if (conversational) e.costsTracking.hasCost(provider, model)
+      else if (perToken) e.costsTracking.hasTokenCost(provider.provider, model)
+      else (e.costsTrackingSettings.enabled || provider.models.requireKnownCosts) &&
+        prices.exists(c => ModalityCosts.canBill(c, kinds, knownEndpoints))
     }
     ModelDescription(kinds, hasCost, endpoints, obj(
       "kinds" -> JsArray(kinds.map(JsString.apply)).some,

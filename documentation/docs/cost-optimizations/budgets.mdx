@@ -31,6 +31,11 @@ A  budget is defined between a start date and an end date. Limits are applied fo
 
 A budget can defined limits that can be global or per usage (inference, image, audio, video, embedding, moderation)
 
+Every modality feeds those counters, in tokens and in dollars: an image generation, a transcription, a voice
+and an extracted page are priced the way [cost tracking](/docs/cost-optimizations/cost-tracking) describes,
+and a call is refused once the limit it falls under is reached. The only calls that move tokens without
+moving dollars are the ones priced in a unit the gateway cannot measure — a voice billed per second of audio.
+
 ![](/img/budgets-limits.png)
 
 ![](/img/budgets-consumptions.png)

@@ -2,10 +2,10 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import org.apache.pekko.stream.scaladsl.{Sink, Source, StreamConverters}
 import org.apache.pekko.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioTranscriptionResponseMetadataUsage, ImagesGenResponseMetadataUsage, VideosGenResponseMetadataUsage, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import com.cloud.apim.otoroshi.extensions.aigateway.AiMetrics
-import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsCatalog
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel, ModelSettings, ModerationModel, OcrModel, VideoModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.{ModelEndpoints, ModelsCatalog}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AiProvidersCatalog, AudioModel, EmbeddingModel, ImageModel, ModelSettings, ModerationModel, OcrModel, VideoModel}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -129,8 +129,22 @@ case class CostModel(name: String, raw: JsValue) {
   lazy val search_context_cost_per_query = raw.select("search_context_cost_per_query").asOpt[JsObject].map { obj =>
     SearchContextCostPerQuery(obj)
   }
+  lazy val output_cost_per_image_token = raw.select("output_cost_per_image_token").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val input_cost_per_character = raw.select("input_cost_per_character").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val output_cost_per_character = raw.select("output_cost_per_character").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val ocr_cost_per_page = raw.select("ocr_cost_per_page").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val input_cost_per_video_per_second = raw.select("input_cost_per_video_per_second").asOpt[BigDecimal].getOrElse(BigDecimal(0))
+  lazy val output_cost_per_video_per_second = raw.select("output_cost_per_video_per_second").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val effectiveReasoningTokenCost: BigDecimal =
     if (output_cost_per_reasoning_token > 0) output_cost_per_reasoning_token else output_cost_per_token
+  lazy val effectiveInputImageTokenCost: BigDecimal =
+    if (input_cost_per_image_token > 0) input_cost_per_image_token else input_cost_per_token
+  lazy val effectiveOutputImageTokenCost: BigDecimal =
+    if (output_cost_per_image_token > 0) output_cost_per_image_token else output_cost_per_token
+  lazy val effectiveInputAudioTokenCost: BigDecimal =
+    if (input_cost_per_audio_token > 0) input_cost_per_audio_token else input_cost_per_token
+  lazy val effectiveOutputAudioTokenCost: BigDecimal =
+    if (output_cost_per_audio_token > 0) output_cost_per_audio_token else output_cost_per_token
 }
 
 object CostsOutput {
@@ -652,6 +666,98 @@ object TokenBasedCosts {
   }
 }
 
+/**
+ * What a call of a modality that is not text costs. The price table bills these per token when the provider
+ * counts them — an image generation reports its prompt, image and output tokens, a transcription its audio
+ * tokens — and per image, character, second or page when it does not. Pricing them at zero, which a token
+ * based computation does, is what used to leave dollar budgets untouched by everything but chat.
+ *
+ * Every function returns None when the table holds no unit the gateway can measure for that call: an honest
+ * "not priced" rather than a free call. `canBill` answers the same question before the call, for `has_cost`.
+ */
+object ModalityCosts {
+
+  private def costs(input: BigDecimal, output: BigDecimal): Option[CostsOutput] =
+    Option.when(input > 0 || output > 0)(CostsOutput(inputCost = input, outputCost = output, reasoningCost = 0))
+
+  /** An image generated or edited: the prompt and image tokens it took, or the images themselves. */
+  def image(cost: CostModel, usage: ImagesGenResponseMetadataUsage, images: Long): Option[CostsOutput] = {
+    val imageTokens = usage.tokenImage.max(0L)
+    // a provider that does not split its input tokens has counted text
+    val textTokens = if (usage.tokenText > 0) usage.tokenText else (usage.tokenInput.max(0L) - imageTokens).max(0L)
+    val input = textTokens * cost.input_cost_per_token + imageTokens * cost.effectiveInputImageTokenCost
+    val output = usage.tokenOutput.max(0L) * cost.effectiveOutputImageTokenCost
+    costs(input, output).orElse {
+      // dall-e and friends count no token at all: they are billed by the image
+      costs(images.max(0L) * cost.input_cost_per_image, images.max(0L) * cost.output_cost_per_image)
+    }
+  }
+
+  /** A transcription or a translation: the tokens the provider counted, or the seconds of audio it read. */
+  def transcription(cost: CostModel, usage: AudioTranscriptionResponseMetadataUsage, seconds: Option[BigDecimal]): Option[CostsOutput] = {
+    val audioTokens = usage.input_details.get("audio_tokens").map(_.max(0L)).getOrElse(0L)
+    val textTokens = (usage.input.max(0L) - audioTokens).max(0L)
+    val input = textTokens * cost.input_cost_per_token + audioTokens * cost.effectiveInputAudioTokenCost
+    val output = usage.output.max(0L) * cost.output_cost_per_token
+    costs(input, output).orElse(seconds.flatMap(s => costs(s * cost.input_cost_per_second, 0)))
+  }
+
+  /** A voice: the characters it reads, and the seconds it speaks when the provider says how long they last. */
+  def speech(cost: CostModel, characters: Long, seconds: Option[BigDecimal]): Option[CostsOutput] = {
+    costs(characters.max(0L) * cost.input_cost_per_character, seconds.map(_ * cost.output_cost_per_second).getOrElse(0))
+  }
+
+  /** An extraction: the pages the model read. */
+  def ocr(cost: CostModel, pages: Long): Option[CostsOutput] = costs(pages.max(0L) * cost.ocr_cost_per_page, 0)
+
+  /** A generated video: the tokens the provider counted, or the seconds it lasts. */
+  def video(cost: CostModel, usage: VideosGenResponseMetadataUsage, seconds: Option[BigDecimal]): Option[CostsOutput] = {
+    val input = usage.tokenInput.max(0L) * cost.input_cost_per_token
+    val output = usage.tokenOutput.max(0L) * cost.output_cost_per_token
+    costs(input, output)
+      .orElse(seconds.flatMap(s => costs(s * cost.input_cost_per_video_per_second, s * cost.output_cost_per_video_per_second)))
+  }
+
+  /**
+   * Whether a call on this model can be billed at all: the same units as above, read before the call. An
+   * audio model is answered per endpoint, because a voice is billed per character where a transcription is
+   * billed per token, and a model priced in a unit the gateway cannot measure — the seconds of audio a voice
+   * produces — is not billable however well the table knows its price.
+   */
+  def canBill(cost: CostModel, kinds: Seq[String], endpoints: Seq[String]): Boolean = {
+    val perToken = cost.input_cost_per_token > 0 || cost.output_cost_per_token > 0
+    def audio: Boolean = {
+      val speaks = endpoints.contains(ModelEndpoints.AudioSpeech)
+      val transcribes = endpoints.contains(ModelEndpoints.AudioTranscriptions) || endpoints.contains(ModelEndpoints.AudioTranslations)
+      if (speaks && !transcribes) cost.input_cost_per_character > 0
+      else if (transcribes && !speaks) perToken || cost.input_cost_per_audio_token > 0
+      else cost.input_cost_per_character > 0 || perToken || cost.input_cost_per_audio_token > 0
+    }
+    kinds.exists {
+      case AiProvidersCatalog.Image => perToken || cost.input_cost_per_image_token > 0 || cost.output_cost_per_image_token > 0 ||
+        cost.input_cost_per_image > 0 || cost.output_cost_per_image > 0
+      case AiProvidersCatalog.Audio => audio
+      case AiProvidersCatalog.Ocr   => cost.ocr_cost_per_page > 0
+      case AiProvidersCatalog.Video => perToken || cost.input_cost_per_video_per_second > 0 || cost.output_cost_per_video_per_second > 0
+      case _                        => false
+    }
+  }
+
+  /** Stores the cost where auditing reads it, so budgets, audit events and metrics all pick it up. */
+  def track(providerKind: String, model: Option[String], attrs: TypedMap)(compute: CostModel => Option[CostsOutput])(using env: Env): Option[CostsOutput] = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    for {
+      provider <- RequiredCosts.pricingProvider(providerKind)
+      name     <- model.map(_.trim).filter(_.nonEmpty)
+      cost     <- ext.costsTracking.getModel(provider, name)
+      output   <- compute(cost)
+    } yield {
+      attrs.put(ChatClientWithCostsTracking.key -> output)
+      output
+    }
+  }
+}
+
 object EmbeddingModelClientWithCostsTracking {
   def applyIfPossible(tuple: (EmbeddingModel, EmbeddingModelClient, Env)): EmbeddingModelClient = {
     if (TokenBasedCosts.settings(using tuple._3).enabled) new EmbeddingModelClientWithCostsTracking(tuple._1, tuple._2) else tuple._2
@@ -700,6 +806,134 @@ class ModerationModelClientWithCostsTracking(originalModel: ModerationModel, val
         } else {
           Right(resp)
         }
+      }
+    }
+  }
+}
+
+object ImageModelClientWithCostsTracking {
+  def applyIfPossible(tuple: (ImageModel, ImageModelClient, Env)): ImageModelClient = {
+    if (TokenBasedCosts.settings(using tuple._3).enabled) new ImageModelClientWithCostsTracking(tuple._1, tuple._2) else tuple._2
+  }
+}
+
+class ImageModelClientWithCostsTracking(originalModel: ImageModel, val imageModelClient: ImageModelClient) extends DecoratorImageModelClient {
+
+  private def price(model: Option[String], slot: String, resp: ImagesGenResponse, attrs: TypedMap)(using env: Env): Option[CostsOutput] = {
+    val name = model.orElse(originalModel.config.at(slot).asOptString)
+    ModalityCosts.track(originalModel.provider, name, attrs)(ModalityCosts.image(_, resp.metadata.usage, resp.images.size))
+  }
+
+  override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    imageModelClient.generate(opts, rawBody, attrs).map {
+      case Left(err) => Left(err)
+      case Right(resp) => {
+        val costs = price(opts.model, "options.generation.model", resp, attrs)
+        if (TokenBasedCosts.embedInResponse(attrs)) Right(resp.copy(metadata = resp.metadata.copy(costs = costs))) else Right(resp)
+      }
+    }
+  }
+
+  override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
+    imageModelClient.edit(opts, rawBody, attrs).map {
+      case Left(err) => Left(err)
+      case Right(resp) => {
+        val costs = price(opts.model, "options.edition.model", resp, attrs)
+        if (TokenBasedCosts.embedInResponse(attrs)) Right(resp.copy(metadata = resp.metadata.copy(costs = costs))) else Right(resp)
+      }
+    }
+  }
+}
+
+object AudioModelClientWithCostsTracking {
+  def applyIfPossible(tuple: (AudioModel, AudioModelClient, Env)): AudioModelClient = {
+    if (TokenBasedCosts.settings(using tuple._3).enabled) new AudioModelClientWithCostsTracking(tuple._1, tuple._2) else tuple._2
+  }
+}
+
+class AudioModelClientWithCostsTracking(originalModel: AudioModel, val audioModelClient: AudioModelClient) extends DecoratorAudioModelClient {
+
+  // the audio client reads its models at the root of the config, the admin ui writes them under options
+  private def configured(section: String): Option[String] = {
+    originalModel.config.at(s"$section.model").asOptString
+      .orElse(originalModel.config.at(s"$section.model_id").asOptString)
+      .orElse(originalModel.config.at(s"options.$section.model").asOptString)
+      .orElse(originalModel.config.at(s"options.$section.model_id").asOptString)
+  }
+
+  private def transcribed(model: Option[String], section: String, resp: AudioTranscriptionResponse, attrs: TypedMap)(using env: Env): Option[CostsOutput] = {
+    ModalityCosts.track(originalModel.provider, model.orElse(configured(section)), attrs)(ModalityCosts.transcription(_, resp.metadata.usage, None))
+  }
+
+  override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
+    audioModelClient.textToSpeech(opts, rawBody, attrs).map {
+      case Left(err) => Left(err)
+      case Right(result) => {
+        // a voice answers with its audio and nothing else: what it read is the only thing to bill on
+        ModalityCosts.track(originalModel.provider, opts.model.orElse(configured("tts")), attrs) { cost =>
+          ModalityCosts.speech(cost, opts.input.length.toLong, None)
+        }
+        Right(result)
+      }
+    }
+  }
+
+  override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    audioModelClient.speechToText(opts, rawBody, attrs).map {
+      case Left(err) => Left(err)
+      case Right(resp) => {
+        val costs = transcribed(opts.model, "stt", resp, attrs)
+        if (TokenBasedCosts.embedInResponse(attrs)) Right(resp.copy(metadata = resp.metadata.copy(costs = costs))) else Right(resp)
+      }
+    }
+  }
+
+  override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
+    audioModelClient.translate(opts, rawBody, attrs).map {
+      case Left(err) => Left(err)
+      case Right(resp) => {
+        val costs = transcribed(opts.model, "translate", resp, attrs)
+        if (TokenBasedCosts.embedInResponse(attrs)) Right(resp.copy(metadata = resp.metadata.copy(costs = costs))) else Right(resp)
+      }
+    }
+  }
+}
+
+object OcrModelClientWithCostsTracking {
+  def applyIfPossible(tuple: (OcrModel, OcrModelClient, Env)): OcrModelClient = {
+    if (TokenBasedCosts.settings(using tuple._3).enabled) new OcrModelClientWithCostsTracking(tuple._1, tuple._2) else tuple._2
+  }
+}
+
+class OcrModelClientWithCostsTracking(originalModel: OcrModel, val ocrModelClient: OcrModelClient) extends DecoratorOcrModelClient {
+  override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
+    ocrModelClient.ocr(opts, rawBody, attrs).map {
+      case Left(err) => Left(err)
+      case Right(resp) => {
+        val name = Some(resp.model).filter(_.nonEmpty).orElse(opts.model).orElse(originalModel.config.at("options.model").asOptString)
+        // the pages the model read, which is how every ocr model of the table is billed
+        ModalityCosts.track(originalModel.provider, name, attrs)(ModalityCosts.ocr(_, resp.usage.pagesProcessed.toLong))
+        Right(resp)
+      }
+    }
+  }
+}
+
+object VideoModelClientWithCostsTracking {
+  def applyIfPossible(tuple: (VideoModel, VideoModelClient, Env)): VideoModelClient = {
+    if (TokenBasedCosts.settings(using tuple._3).enabled) new VideoModelClientWithCostsTracking(tuple._1, tuple._2) else tuple._2
+  }
+}
+
+class VideoModelClientWithCostsTracking(originalModel: VideoModel, val videoModelClient: VideoModelClient) extends DecoratorVideoModelClient {
+  override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
+    videoModelClient.generate(opts, rawBody, attrs).map {
+      case Left(err) => Left(err)
+      case Right(resp) => {
+        val name = opts.model.orElse(originalModel.config.at("options.model").asOptString)
+        val seconds = opts.duration.map(d => BigDecimal(d))
+        val costs = ModalityCosts.track(originalModel.provider, name, attrs)(ModalityCosts.video(_, resp.metadata.usage, seconds))
+        if (TokenBasedCosts.embedInResponse(attrs)) Right(resp.copy(metadata = resp.metadata.copy(costs = costs))) else Right(resp)
       }
     }
   }

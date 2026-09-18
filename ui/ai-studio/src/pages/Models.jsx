@@ -378,8 +378,8 @@ export function ModelsPage() {
             <label>Pricing</label>
             {[
               { value: '', label: 'All', count: facets.cost.priced + facets.cost.unpriced },
-              { value: 'priced', label: 'Known price', count: facets.cost.priced, title: 'Calls are priced and count against dollar budgets' },
-              { value: 'unpriced', label: 'No known price', count: facets.cost.unpriced },
+              { value: 'priced', label: 'Billed', count: facets.cost.priced, title: 'Calls are priced and count against dollar budgets' },
+              { value: 'unpriced', label: 'Not billed', count: facets.cost.unpriced, title: 'No price the gateway can apply: these calls never move a dollar budget' },
             ].map((o) => (
               <label key={o.value} className="check facet" title={o.title}>
                 <input type="radio" checked={filters.cost === o.value} onChange={() => set({ cost: o.value })} />
@@ -422,7 +422,7 @@ export function ModelsPage() {
           <div className="row between wrap list-toolbar">
             <p className="muted small">
               {filtered.length} model{filtered.length === 1 ? '' : 's'}
-              {filtered.length > 0 && ` · ${pricedCount} with a known price`}
+              {filtered.length > 0 && ` · ${pricedCount} billed`}
             </p>
             <div className="row">
               <button className={`btn sm ${estimate.on ? 'active-toggle' : ''}`} onClick={toggleEstimate} title="Estimate what a workload costs on each model">
