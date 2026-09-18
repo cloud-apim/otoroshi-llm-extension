@@ -55,6 +55,30 @@ object OpenAICompatOcrConfig {
     }
   }
 
+  def getProvidersMap(config: OpenAICompatOcrConfig)(using ec: ExecutionContext, env: Env): (Map[String, OcrModel], Map[String, OcrModel]) = {
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val providers = config.refs.flatMap(ref => ext.states.ocrModel(ref))
+    (providers.map(p => (p.id, p)).toMap, providers.map(p => (p.slugName, p)).toMap)
+  }
+
+  // like the other modalities, a `<name>/<model>` (or `<name>###<model>`) model names the ocr model entity
+  // serving the call, so a workspace exposing several of them can be asked for one in particular
+  def extractProviderFromModelInBody(_jsonBody: JsValue, config: OpenAICompatOcrConfig)(using ec: ExecutionContext, env: Env): JsValue = {
+    _jsonBody.select("model").asOpt[String].filter(v => v.contains("###") || v.contains("/")) match {
+      case None => _jsonBody
+      case Some(value) => {
+        val separator = if (value.contains("###")) "###" else "/"
+        val name = value.split(separator).head
+        val model = value.split(separator).tail.mkString(separator)
+        val (providersById, providersByName) = getProvidersMap(config)
+        providersById.get(name).orElse(providersByName.get(name)) match {
+          case None => _jsonBody
+          case Some(prov) => _jsonBody.asObject ++ Json.obj("provider" -> prov.id, "model" -> model)
+        }
+      }
+    }
+  }
+
   def resolveProvider(jsonBody: JsObject, config: OpenAICompatOcrConfig)(using ec: ExecutionContext, env: Env): Option[OcrModel] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     jsonBody.select("provider").asOpt[String].filter(v => config.refs.contains(v)).flatMap(r => ext.states.ocrModel(r))
@@ -100,7 +124,8 @@ object OpenAICompatOcr {
     }
   }
 
-  private def executeOcr(config: OpenAICompatOcrConfig, jsonBody: JsObject, fileBytes: Option[ByteString], fileContentType: Option[String], fileName: Option[String], ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  private def executeOcr(config: OpenAICompatOcrConfig, _jsonBody: JsObject, fileBytes: Option[ByteString], fileContentType: Option[String], fileName: Option[String], ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val jsonBody: JsObject = OpenAICompatOcrConfig.extractProviderFromModelInBody(_jsonBody, config).asObject
     OpenAICompatOcrConfig.resolveProvider(jsonBody, config) match {
       case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider not found"))).leftf
       case Some(model) => model.getOcrModelClient() match {

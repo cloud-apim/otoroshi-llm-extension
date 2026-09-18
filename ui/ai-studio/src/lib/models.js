@@ -34,6 +34,9 @@ export function deleteConversation(workspace, id) {
   return api.delete(`${STUDIO_API}/workspaces/${workspace.id}/conversations/${id}`);
 }
 
-export function proxyUrl(workspace, path) {
-  return `${STUDIO_API}/workspaces/${workspace.id}/proxy${path}`;
+// A call of the studio on the workspace endpoint, which always shows what it cost: `embed_costs` puts the
+// price of the call in the answer, whatever `embed-costs-tracking-in-responses` is set to on the instance.
+export function billedProxyUrl(workspace, path) {
+  const url = `${STUDIO_API}/workspaces/${workspace.id}/proxy${path}`;
+  return `${url}${path.includes('?') ? '&' : '?'}embed_costs=true`;
 }

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useWorkspace } from '../App';
-import { CopyButton, Drawer, Empty, ErrorAlert, Field, Loading, NumberInput, PageHeader, Segmented, useAsync } from '../components/ui';
+import { CopyButton, Drawer, Empty, ErrorAlert, Field, Loading, NumberInput, PageHeader, Segmented, Tabs, useAsync } from '../components/ui';
 import { Icon } from '../components/icons';
 import { ModelDetails, ModelFacts, ModelLabels } from '../components/modelinfo';
 import { listWorkspaceModels } from '../lib/models';
@@ -23,6 +23,8 @@ import {
   promptPrice,
 } from '../lib/modelmeta';
 import { HealthDetails, HealthDot, HealthSummary } from '../components/health';
+import { Playground } from '../components/playground';
+import { playgroundsOf } from '../lib/playgrounds';
 import { PERIODS } from '../lib/analytics';
 import { fmtCost, fmtInt, fmtMs } from '../lib/format';
 import { attempted, fmtSpeed, fmtSuccess, HEALTH, healthIndex, healthNumber, healthOfModel, loadHealth, statusOf } from '../lib/health';
@@ -170,9 +172,28 @@ function FacetChecks({ options, value, counts, onChange }) {
   ));
 }
 
-function ChatButton({ model, workspace, navigate }) {
-  if (model.modality !== 'text') return null;
+// Chat for a chat model, and for the others the playground of what they do: an image model draws, an
+// embedding model vectorizes, an audio model speaks or transcribes… A model that can do neither says why.
+function TryButton({ model, workspace, providers, navigate, onPlayground }) {
   const reason = chatUnavailableReason(model);
+  const playgrounds = reason ? playgroundsOf(model, providers) : [];
+  if (playgrounds.length > 0) {
+    return (
+      <button
+        className="btn sm"
+        title={`Try this model: ${playgrounds.map((p) => p.label.toLowerCase()).join(', ')}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onPlayground(model);
+        }}
+      >
+        <Icon name="play" size={13} />
+        Playground
+      </button>
+    );
+  }
+  // a model the studio cannot use says why, unless it is not a chat model at all and has nothing to try
+  if (reason && model.modality !== 'text') return null;
   return (
     <button
       className="btn sm"
@@ -197,6 +218,16 @@ export function ModelsPage() {
   const [sort, setSort] = useState(() => (estimate.on ? 'estimate' : 'name'));
   const [view, setView] = useState('cards');
   const [selected, setSelected] = useState(null);
+  // the drawer of a model opens on its details, or straight on its playground
+  const [tab, setTab] = useState('details');
+  const openModel = (model) => {
+    setTab('details');
+    setSelected(model);
+  };
+  const openPlayground = (model) => {
+    setTab('playground');
+    setSelected(model);
+  };
   const setEstimate = (patch) =>
     setEstimateState((e) => {
       const next = { ...e, ...patch };
@@ -436,12 +467,12 @@ export function ModelsPage() {
           {view === 'cards' && (
             <div className="stack tight">
               {shown.map((m) => (
-                <div key={`${m.modality}-${m.id}`} className="card model-card clickable" onClick={() => setSelected(m)}>
+                <div key={`${m.modality}-${m.id}`} className="card model-card clickable" onClick={() => openModel(m)}>
                   <div className="row between">
                     <div className="name truncate">{m.id}</div>
                     <div className="row" onClick={(e) => e.stopPropagation()}>
                       <CopyButton text={m.id} />
-                      <ChatButton model={m} workspace={workspace} navigate={navigate} />
+                      <TryButton model={m} workspace={workspace} providers={infos} navigate={navigate} onPlayground={openPlayground} />
                     </div>
                   </div>
                   <div className="labels">
@@ -480,7 +511,7 @@ export function ModelsPage() {
                   </thead>
                   <tbody>
                     {shown.map((m) => (
-                      <tr key={`${m.modality}-${m.id}`} className="clickable" onClick={() => setSelected(m)}>
+                      <tr key={`${m.modality}-${m.id}`} className="clickable" onClick={() => openModel(m)}>
                         <td className="mono truncate" style={{ maxWidth: 320 }} title={m.id}>
                           {m.id}
                         </td>
@@ -519,19 +550,35 @@ export function ModelsPage() {
       <Drawer title="Model" open={!!selected} onClose={() => setSelected(null)}>
         {selected && (
           <>
-            <ModelDetails model={selected} baseUrl={workspace.baseUrl} />
-            {hasHealth && (
-              <HealthDetails
-                health={healthOf(selected)}
-                periodLabel={(HEALTH_PERIODS.find((p) => p.value === healthPeriod) || {}).label}
-                logsUrl={`/workspaces/${workspace.id}/logs?model=${encodeURIComponent(selected.model)}&period=${healthPeriod}`}
+            {playgroundsOf(selected, infos).length > 0 && (
+              <Tabs
+                value={tab}
+                onChange={setTab}
+                tabs={[
+                  { value: 'details', label: 'Details' },
+                  { value: 'playground', label: 'Playground' },
+                ]}
               />
             )}
-            {selected.modality === 'text' && !chatUnavailableReason(selected) && (
-              <button className="btn primary mt" onClick={() => navigate(`/workspaces/${workspace.id}/chat?model=${encodeURIComponent(selected.id)}`)}>
-                <Icon name="message" />
-                Chat with this model
-              </button>
+            {tab === 'playground' && playgroundsOf(selected, infos).length > 0 ? (
+              <Playground model={selected} workspace={workspace} providers={infos} />
+            ) : (
+              <>
+                <ModelDetails model={selected} baseUrl={workspace.baseUrl} />
+                {hasHealth && (
+                  <HealthDetails
+                    health={healthOf(selected)}
+                    periodLabel={(HEALTH_PERIODS.find((p) => p.value === healthPeriod) || {}).label}
+                    logsUrl={`/workspaces/${workspace.id}/logs?model=${encodeURIComponent(selected.model)}&period=${healthPeriod}`}
+                  />
+                )}
+                {selected.modality === 'text' && !chatUnavailableReason(selected) && (
+                  <button className="btn primary mt" onClick={() => navigate(`/workspaces/${workspace.id}/chat?model=${encodeURIComponent(selected.id)}`)}>
+                    <Icon name="message" />
+                    Chat with this model
+                  </button>
+                )}
+              </>
             )}
           </>
         )}

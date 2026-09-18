@@ -53,6 +53,24 @@ export const api = {
   delete: (url, opts) => request('DELETE', url, undefined, opts),
 };
 
+/**
+ * The error of a failed call on the workspace endpoint, as an `Error` to throw. Providers answer in the
+ * OpenAI shape (`error.message`), the other endpoints in the otoroshi one, where `error` is a code and
+ * `error_details` says what actually happened — a reader only showing `error` would say `internal_error`.
+ */
+export function gatewayError(text, status, statusText) {
+  let message = text;
+  try {
+    const json = JSON.parse(text);
+    const detail = json.error_details || json.error_description || json.message;
+    const error = json.error && (json.error.message || json.error);
+    const both = typeof error === 'string' && typeof detail === 'string' && detail ? `${error}: ${detail}` : null;
+    message = both || detail || error || text;
+    if (typeof message !== 'string') message = JSON.stringify(message);
+  } catch (e) {}
+  return new Error(`${status} - ${message || statusText}`);
+}
+
 export const STUDIO_API = '/extensions/cloud-apim/extensions/ai-extension/studio';
 export const EXT_ADMIN_API = '/bo/api/proxy/api/extensions/cloud-apim/extensions/ai-extension';
 export const EXT_BO_API = '/extensions/cloud-apim/extensions/ai-extension';

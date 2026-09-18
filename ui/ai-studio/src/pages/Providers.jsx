@@ -32,6 +32,7 @@ import {
   MODALITY_LABELS,
   newConnection,
   saveConnection,
+  withModelDefaults,
 } from '../lib/connections';
 import { listWorkspaceModels, loadCatalog } from '../lib/models';
 import { initials } from '../lib/format';
@@ -119,7 +120,7 @@ function ProviderFacts({ entry }) {
 
 export function ConnectionModal({ workspace, catalog, initial, existingNames, onClose, onSaved }) {
   const toast = useToast();
-  const [conn, setConn] = useState(initial);
+  const [conn, setConn] = useState(() => withModelDefaults(initial, catalog.find((c) => c.id === initial.kind)));
   const [tab, setTab] = useState('connection');
   const [saving, setSaving] = useState(false);
   const [models, setModels] = useState([]);
@@ -128,6 +129,17 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
   const isNew = !initial.entities || Object.keys(initial.entities).length === 0;
   const set = (patch) => setConn((c) => ({ ...c, ...patch }));
   const setModality = (m, patch) => setConn((c) => ({ ...c, modalities: { ...c.modalities, [m]: { ...(c.modalities[m] || {}), ...patch } } }));
+  // A capability that carries no model makes an entity nothing can be called on — the audio one is simply
+  // off. Turning a capability on therefore starts from the model the catalog documents for it, which the
+  // field only showed as a placeholder until now.
+  const enableModality = (m, on) => {
+    const current = conn.modalities[m] || {};
+    const models = entry.models || {};
+    const defaults = m === 'audio'
+      ? { model: current.model || models.audio_tts || '', stt_model: current.stt_model || models.audio_stt || '' }
+      : { model: current.model || models[m] || '' };
+    setModality(m, on ? { enabled: true, ...defaults } : { enabled: false });
+  };
   const nameTaken = existingNames.includes(conn.name) && conn.name !== initial.name;
   const anyModality = Object.values(conn.modalities).some((m) => m.enabled);
   const valid = conn.name && !nameTaken && anyModality && (!entry.token_required || conn.token || !isNew) && (!entry.base_url_required || conn.base_url);
@@ -263,7 +275,7 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
                     <tr key={cap}>
                       <td>{MODALITY_LABELS[cap] || cap}</td>
                       <td>
-                        <Toggle value={!!mod.enabled} onChange={(v) => setModality(cap, { enabled: v })} />
+                        <Toggle value={!!mod.enabled} onChange={(v) => enableModality(cap, v)} />
                       </td>
                       <td>
                         {cap === 'audio' ? (

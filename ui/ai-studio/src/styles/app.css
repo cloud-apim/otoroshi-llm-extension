@@ -936,3 +936,25 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .search-results.model-results { right: auto; width: 560px; min-width: 100%; max-width: calc(100vw - 32px); }
 .model-results .model-name { flex: 0 1 auto; max-width: 70%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-results .model-facts { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+/* playgrounds: the small forms trying an image, audio, embedding, moderation or OCR model in the drawer */
+.playground { gap: 10px; }
+.playground textarea { min-height: 96px; }
+.playground .segmented { align-self: flex-start; }
+.dropzone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center;
+  padding: 22px 16px; border: 1px dashed var(--border-strong); border-radius: var(--radius); cursor: pointer;
+  color: var(--muted); background: var(--hover);
+}
+.dropzone:hover, .dropzone.over { border-color: var(--grape); color: var(--ink); }
+.dropzone.filled { border-style: solid; }
+.dropzone b { max-width: 100%; }
+.playground-result { display: flex; flex-direction: column; gap: 10px; }
+.playground-text { position: relative; }
+.playground-text pre { margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 40vh; overflow: auto; }
+.playground-text > .copy-btn { position: absolute; top: 2px; right: 2px; }
+.playground-vector { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+.playground-vector .copy-btn { white-space: nowrap; }
+.playground-result > .meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--faint); }
+.playground-verdict { display: flex; align-items: center; gap: 6px; font-weight: 500; }
+.playground-verdict.flagged { color: var(--negative-text); }
+.playground-verdict.clean { color: var(--positive-text); }

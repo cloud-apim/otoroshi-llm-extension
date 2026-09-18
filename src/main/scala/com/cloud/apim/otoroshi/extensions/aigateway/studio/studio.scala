@@ -340,15 +340,46 @@ class AiStudio(env: Env, ext: AiExtension) {
 
   private val openAiCompatPlugin = "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatApi"
 
-  private def modelOf(config: JsValue, modality: String): Option[String] = {
-    val options = config.select("options")
+  private val modalityEndpoints = Map(
+    "image" -> "images_generations",
+    "embedding" -> "embeddings",
+    "moderation" -> "moderations",
+    "ocr" -> "ocr",
+    "video" -> "videos",
+  )
+
+  /**
+   * What an entity of this modality can be called for, whatever model the call names: it serves every model
+   * of its kind on its connection, not only the one it carries as a default. An audio entity speaks and
+   * transcribes only through the sections that are on, the way its client reads them.
+   */
+  private def endpointsOf(config: JsValue, modality: String): Seq[String] = {
+    def on(name: String): Boolean = Seq(config.select(name), config.select("options").select(name))
+      .flatMap(_.select("enabled").asOpt[Boolean]).headOption.getOrElse(true)
     modality match {
-      case "image" => options.select("generation").select("model").asOptString.orElse(options.select("model").asOptString)
-      case "audio" => config.select("tts").select("model").asOptString
-        .orElse(options.select("tts").select("model").asOptString)
-        .orElse(config.select("stt").select("model").asOptString)
-        .orElse(options.select("stt").select("model").asOptString)
-      case _ => options.select("model").asOptString
+      case "image" => Seq(Option.when(on("generation"))("images_generations"), Option.when(on("edition"))("images_edits")).flatten
+      case "audio" => Seq(Option.when(on("tts"))("audio_speech"), Option.when(on("stt"))("audio_transcriptions")).flatten
+      case other   => modalityEndpoints.get(other).toSeq
+    }
+  }
+
+  /**
+   * The models an entity of this modality serves, each with the endpoint it is called on. An audio model
+   * carries two of them: a voice, served on `/audio/speech`, and a transcription model, served on
+   * `/audio/transcriptions` — they are two different models and both belong in the listing.
+   */
+  private def modelsOf(config: JsValue, modality: String): Seq[(String, String)] = {
+    val options = config.select("options")
+    def modelIn(values: JsLookupResult*): Option[String] = values
+      .filterNot(_.select("enabled").asOpt[Boolean].contains(false))
+      .flatMap(v => v.select("model").asOptString.orElse(v.select("model_id").asOptString))
+      .map(_.trim).find(_.nonEmpty)
+    val endpoint = modalityEndpoints.getOrElse(modality, "")
+    modality match {
+      case "image" => modelIn(options.select("generation"), options).toSeq.map(m => (m, endpoint))
+      case "audio" => modelIn(config.select("tts"), options.select("tts")).toSeq.map(m => (m, "audio_speech")) ++
+        modelIn(config.select("stt"), options.select("stt")).toSeq.map(m => (m, "audio_transcriptions"))
+      case _ => modelIn(options).toSeq.map(m => (m, endpoint))
     }
   }
 
@@ -393,8 +424,11 @@ class AiStudio(env: Env, ext: AiExtension) {
   }
 
   // a model of the listing with what the gateway knows of it: types, cost, api, capabilities, limits, prices
-  private def described(model: JsObject, provider: AiProvider, modality: String): JsObject = {
-    model ++ Json.obj("metadata" -> ModelsMetadata.describe(provider, model.select("model").asString, modality).metadata)
+  private def described(model: JsObject, provider: AiProvider, modality: String, endpoints: Seq[String] = Seq.empty): JsObject = {
+    val metadata = ModelsMetadata.describe(provider, model.select("model").asString, modality).metadata
+    // the entity says which endpoints serve this model, which beats what the catalog guesses from its name
+    val known = if (endpoints.isEmpty) metadata else metadata ++ Json.obj("endpoints" -> JsArray(endpoints.map(JsString.apply)))
+    model ++ Json.obj("metadata" -> known)
   }
 
   private def listWorkspaceModels(config: JsValue, force: Boolean): Future[JsObject] = {
@@ -463,14 +497,23 @@ class AiStudio(env: Env, ext: AiExtension) {
             val slug = entity.select("metadata").select("endpoint_name").asOptString
               .orElse(entity.select("metadata").select("provider_name").asOptString)
               .getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
-            val model = modelOf(entity.select("config").asOpt[JsValue].getOrElse(Json.obj()), modality)
-            val info = Json.obj("id" -> ref, "name" -> name, "slug" -> slug, "kind" -> entity.select("provider").asOptString.getOrElse("--").json, "modality" -> modality, "default_model" -> model.map(JsString.apply).getOrElse(JsNull).as[JsValue])
+            val served = modelsOf(entity.select("config").asOpt[JsValue].getOrElse(Json.obj()), modality)
+            val config = entity.select("config").asOpt[JsValue].getOrElse(Json.obj())
+            val info = Json.obj(
+              "id" -> ref, "name" -> name, "slug" -> slug, "kind" -> entity.select("provider").asOptString.getOrElse("--").json,
+              "modality" -> modality,
+              "default_model" -> served.headOption.map(m => JsString(m._1)).getOrElse(JsNull).as[JsValue],
+              // what this connection can be asked for, whichever model of its kind the call names
+              "endpoints" -> JsArray(endpointsOf(config, modality).map(JsString.apply)),
+            )
             val kind = entity.select("provider").asOptString.getOrElse("--")
             // enough of a provider to describe the model: its kind and the metadata costs tracking reads
             val provider = AiProvider(id = ref, name = name, provider = kind, metadata = entity.select("metadata").asOpt[Map[String, String]].getOrElse(Map.empty), connection = Json.obj(), options = Json.obj())
-            val models = model.toSeq.map { m =>
+            // one entry per model, with every endpoint it is served on (the same model can do both ways of audio)
+            val models = served.map(_._1).distinct.map { m =>
+              val endpoints = served.collect { case (model, endpoint) if model == m && endpoint.nonEmpty => endpoint }.distinct
               val id = if (all.size == 1) m else if (m.contains("/")) s"$slug###$m" else s"$slug/$m"
-              described(Json.obj("id" -> id, "model" -> m, "provider" -> slug, "provider_id" -> ref, "provider_kind" -> kind, "modality" -> modality, "created" -> now), provider, modality)
+              described(Json.obj("id" -> id, "model" -> m, "provider" -> slug, "provider_id" -> ref, "provider_kind" -> kind, "modality" -> modality, "created" -> now), provider, modality, endpoints)
             }
             (info, models)
         }

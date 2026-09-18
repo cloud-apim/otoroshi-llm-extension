@@ -1,5 +1,6 @@
+import { gatewayError } from './api';
 import { currentTenant } from './bootstrap';
-import { proxyUrl } from './models';
+import { billedProxyUrl } from './models';
 
 // Calls the workspace endpoint as the signed-in backoffice user (no api key) and streams the answer. `onDelta(content, reasoning)` receives the text as it arrives.
 // `sessionId` groups the calls of one conversation in the logs. `costs` is what the gateway billed for the answer, when the model has a known price.
@@ -12,7 +13,7 @@ export function imagesOf(message) {
 
 export async function chatCompletion({ workspace, body, stream, signal, onDelta, sessionId }) {
   const started = Date.now();
-  const res = await fetch(proxyUrl(workspace, '/chat/completions'), {
+  const res = await fetch(billedProxyUrl(workspace, '/chat/completions'), {
     method: 'POST',
     credentials: 'include',
     signal,
@@ -24,16 +25,7 @@ export async function chatCompletion({ workspace, body, stream, signal, onDelta,
     },
     body: JSON.stringify({ ...body, stream: !!stream, ...(stream ? { stream_options: { include_usage: true } } : {}) }),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    let message = text;
-    try {
-      const json = JSON.parse(text);
-      message = (json.error && (json.error.message || json.error)) || json.error_description || json.message || text;
-      if (typeof message !== 'string') message = JSON.stringify(message);
-    } catch (e) {}
-    throw new Error(`${res.status} - ${message || res.statusText}`);
-  }
+  if (!res.ok) throw gatewayError(await res.text(), res.status, res.statusText);
   if (!stream) {
     const json = await res.json();
     const choice = (json.choices && json.choices[0]) || {};

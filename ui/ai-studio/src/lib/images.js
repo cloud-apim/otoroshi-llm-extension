@@ -2,9 +2,10 @@
 // endpoint. Chat models that draw instead of writing answer on the chat endpoint, with their images in
 // the message: see `imagesOf` in `chat.js`.
 
+import { gatewayError } from './api';
 import { currentTenant } from './bootstrap';
 import { blobDataUrl } from './attachments';
-import { proxyUrl } from './models';
+import { billedProxyUrl } from './models';
 
 // the usage of an images call, as the answers of the chat read it
 function usageOf(json) {
@@ -24,7 +25,7 @@ function usageOf(json) {
  */
 export async function generateImage({ workspace, model, prompt, signal, sessionId }) {
   const started = Date.now();
-  const res = await fetch(proxyUrl(workspace, '/images/generations'), {
+  const res = await fetch(billedProxyUrl(workspace, '/images/generations'), {
     method: 'POST',
     credentials: 'include',
     signal,
@@ -36,16 +37,7 @@ export async function generateImage({ workspace, model, prompt, signal, sessionI
     },
     body: JSON.stringify({ model, prompt, n: 1 }),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    let message = text;
-    try {
-      const json = JSON.parse(text);
-      message = (json.error && (json.error.message || json.error)) || json.error_details || json.error_description || text;
-      if (typeof message !== 'string') message = JSON.stringify(message);
-    } catch (e) {}
-    throw new Error(`${res.status} - ${message || res.statusText}`);
-  }
+  if (!res.ok) throw gatewayError(await res.text(), res.status, res.statusText);
   const duration = () => Date.now() - started;
   if ((res.headers.get('Content-Type') || '').startsWith('image/')) {
     return { images: [await blobDataUrl(await res.blob())], content: '', usage: null, costs: null, duration: duration() };

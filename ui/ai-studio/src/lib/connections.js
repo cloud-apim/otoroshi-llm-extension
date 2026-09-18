@@ -251,6 +251,23 @@ export async function fetchProviderModels(wsId, conn, catalogEntry, force = fals
   return (res.models || []).map((id) => ({ id: String(id), model: String(id), provider: conn.name, modality: 'text', details: details[id] }));
 }
 
+/**
+ * The connection with a model on every capability it has on: a capability saved without one makes an entity
+ * with nothing to call (and, for audio, one that is simply off), so the model the catalog documents becomes
+ * the value of the field rather than its placeholder.
+ */
+export function withModelDefaults(conn, catalogEntry) {
+  const models = (catalogEntry && catalogEntry.models) || {};
+  const modalities = Object.fromEntries(
+    Object.entries(conn.modalities || {}).map(([id, mod]) => {
+      if (!mod || !mod.enabled) return [id, mod];
+      if (id === 'audio') return [id, { ...mod, model: mod.model || models.audio_tts || '', stt_model: mod.stt_model || models.audio_stt || '' }];
+      return [id, { ...mod, model: mod.model || models[id] || '' }];
+    })
+  );
+  return { ...conn, modalities };
+}
+
 export function newConnection(catalogEntry, existingNames = []) {
   let name = connectionName(catalogEntry.id);
   let i = 2;
