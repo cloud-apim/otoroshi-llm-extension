@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.9.2">
 <title data-rh="true">AI Studio | Otoroshi LLM Extension</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://cloud-apim.github.io/otoroshi-llm-extension/img/otoroshi-llm-extension-logo.png"><meta data-rh="true" name="twitter:image" content="https://cloud-apim.github.io/otoroshi-llm-extension/img/otoroshi-llm-extension-logo.png"><meta data-rh="true" property="og:url" content="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="AI Studio | Otoroshi LLM Extension"><meta data-rh="true" name="description" content="A simple, OpenRouter-like console on top of the LLM extension - workspaces, bring your own keys, API keys, chat, activity, logs and budgets, all backed by regular Otoroshi entities."><meta data-rh="true" property="og:description" content="A simple, OpenRouter-like console on top of the LLM extension - workspaces, bring your own keys, API keys, chat, activity, logs and budgets, all backed by regular Otoroshi entities."><link data-rh="true" rel="icon" href="/otoroshi-llm-extension/img/otoroshi-llm-extension-logo-no-bg-no-text.png"><link data-rh="true" rel="canonical" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio"><link data-rh="true" rel="alternate" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio" hreflang="en"><link data-rh="true" rel="alternate" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"AI Studio","item":"https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio"}]}</script><link rel="stylesheet" href="/otoroshi-llm-extension/assets/css/styles.72c2a4ca.css">
-<script src="/otoroshi-llm-extension/assets/js/runtime~main.8cd27800.js" defer="defer"></script>
+<script src="/otoroshi-llm-extension/assets/js/runtime~main.666fd7d0.js" defer="defer"></script>
 <script src="/otoroshi-llm-extension/assets/js/main.a7cf9001.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -18,6 +18,9 @@ its choice with its own provider keys, a playground to chat with every model, an
 where tokens and dollars go.</p>
 <p><img decoding="async" loading="lazy" alt="The overview of an AI Studio workspace: base URL, quickstart snippets and featured models" src="/otoroshi-llm-extension/assets/images/ai-studio-overview-b74bb7bd3f552556c856b1ef9c66a6f1.png" width="1393" height="990" class="img_ev3q"></p>
 <p><em>The home page of a workspace: its OpenAI-compatible base URL, a quickstart in curl, Python and TypeScript, and the models ready to use.</em></p>
+<p>The home page also shows the week the workspace just had — what it spent, how many calls it served and
+how many tokens it moved, day by day, with the models behind each figure — so the first thing a team
+sees is where its budget went, without leaving for a dashboard.</p>
 <p>AI Studio does not store anything of its own. Every workspace is made of <strong>regular Otoroshi entities</strong>
 (a team, a route, API keys, LLM providers, budgets…) that the studio creates and updates live through
 the admin API. What you do in the studio is visible in the Otoroshi backoffice, and what you change in
@@ -104,6 +107,13 @@ and last failure, with a link to its calls. The refusals of the gateway itself (
 restrictions) never count as failures of a model, and answers served from the cache never skew its latency.</p>
 <p><img decoding="async" loading="lazy" alt="The health of the models: success rate, median latency and generation speed of the busiest models" src="/otoroshi-llm-extension/assets/images/ai-studio-models-health-55a1e8352b40f69f26b395710e702de5.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>The busiest models of the week, with the share of their calls that succeeded, their median latency and their speed.</em></p>
+<p>A model that does not chat is one click away from being tried anyway. Every image, embedding, speech,
+transcription, moderation and OCR model of the workspace opens its own <strong>playground</strong> next to its details:
+write a prompt and get the image, type a sentence and play the voice, drop an mp3 and read its transcript,
+drop a PDF or a photo of a document and get its text, paste a paragraph and see its vectors or what the
+moderation model makes of it. Each run is a real call on the workspace endpoint — same models, same
+guardrails, same budgets, same audit trail — so trying a model tells you exactly what your applications
+will get, with the tokens, pages and cost it took shown next to the answer.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="chat-with-any-model">Chat with any model<a href="#chat-with-any-model" class="hash-link" aria-label="Direct link to Chat with any model" title="Direct link to Chat with any model" translate="no">​</a></h3>
 <p><strong>Chat</strong> is a playground to try any model of the workspace, with streaming, reasoning display, presets and
 generation settings. Conversations are saved per user and per workspace. Each answer shows its model,
@@ -118,6 +128,17 @@ shows its answer, cost, latency and time to first token. Once you know which mod
 conversation with that one only.</p>
 <p><img decoding="async" loading="lazy" alt="Two models compared side by side in the chat, each with its answer, tokens, latency and time to first token" src="/otoroshi-llm-extension/assets/images/ai-studio-chat-compare-66c40f1985ffc6b28038bde694bacdc7.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>The same question to two models at once, each answering in its own column with what it cost and how fast it was.</em></p>
+<p>Questions carry files: drop an image, a PDF or a text file in the composer, paste a screenshot, or pick
+them with the paperclip. Images are resized in the browser, so a conversation stays light, and only the
+models that read them are offered them: the paperclip says what the model of the moment takes. Text files
+work everywhere, they are sent as text. A model that draws answers with its images in the conversation,
+and the image models of the workspace are in the picker too: ask for a picture in the same place you ask
+for an answer, and save it in one click.</p>
+<p>When your workspace gives models <strong>tools</strong> — HTTP or JavaScript functions, MCP connectors, web search —
+the request settings list them, and every conversation picks the ones it wants. Unchecking a tool keeps it
+out of these calls only: it stays attached to its provider for your applications. It is the fastest way to
+tell what a tool changes in an answer, or to keep a model from reaching for the web when you want what it
+knows.</p>
 <p>Conversations are yours to shape:</p>
 <ul>
 <li class=""><strong>Duplicate</strong> a conversation to try another direction without losing the first one, or <strong>clear</strong> it to
@@ -126,7 +147,7 @@ start over.</li>
 count in the activity and the budgets.</li>
 <li class=""><strong>Export</strong> a conversation as JSON to import it again later, in another workspace or by a teammate, or as
 Markdown to read or share it. <strong>Import</strong> also accepts the <code>messages</code> of an OpenAI chat request, to replay
-a prompt from your code.</li>
+a prompt from your code, images and documents included.</li>
 </ul>
 <p>The chat needs no API key: it runs as the signed-in backoffice user, with the same configuration as the
 workspace endpoint. Guardrails, fallbacks, routers, costs and analytics apply as they do for your
@@ -157,7 +178,9 @@ keys. Workspace keys belong to no one in particular, which suits shared applicat
 <ul>
 <li class=""><strong>Guardrails</strong> block or check prompts and answers (regex, moderation, prompt injection, secrets
 leakage, and more) and restrict the models a workspace may call, one by one or a whole provider at
-once (<code>openai/.*</code>).</li>
+once (<code>openai/.*</code>). A policy can be limited to some callers — an API key, a list of keys, the users of
+one email domain, a range of IPs — so the strict rules of one integration do not slow every other call
+down.</li>
 <li class=""><strong>Routing</strong> sets fallbacks between providers, load balancers, <a class="" href="/otoroshi-llm-extension/docs/llm-gateway/otoroshi-router">Otoroshi routers</a>
 and the default provider used when a request does not name one.</li>
 </ul>
