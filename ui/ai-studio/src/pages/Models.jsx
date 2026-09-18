@@ -24,7 +24,7 @@ import {
 } from '../lib/modelmeta';
 import { HealthDetails, HealthDot, HealthSummary } from '../components/health';
 import { Playground } from '../components/playground';
-import { playgroundsOf } from '../lib/playgrounds';
+import { playgroundHint, playgroundsOf } from '../lib/playgrounds';
 import { PERIODS } from '../lib/analytics';
 import { fmtCost, fmtInt, fmtMs } from '../lib/format';
 import { attempted, fmtSpeed, fmtSuccess, HEALTH, healthIndex, healthNumber, healthOfModel, loadHealth, statusOf } from '../lib/health';
@@ -194,11 +194,12 @@ function TryButton({ model, workspace, providers, navigate, onPlayground }) {
   }
   // a model the studio cannot use says why, unless it is not a chat model at all and has nothing to try
   if (reason && model.modality !== 'text') return null;
+  const hint = playgroundHint(model, providers);
   return (
     <button
       className="btn sm"
       disabled={!!reason}
-      title={reason || 'Chat with this model'}
+      title={hint ? `${reason} — ${hint}` : reason || 'Chat with this model'}
       onClick={(e) => {
         e.stopPropagation();
         navigate(`/workspaces/${workspace.id}/chat?model=${encodeURIComponent(model.id)}`);
@@ -564,6 +565,14 @@ export function ModelsPage() {
               <Playground model={selected} workspace={workspace} providers={infos} />
             ) : (
               <>
+                {playgroundHint(selected, infos) && (
+                  <div className="alert info">
+                    {playgroundHint(selected, infos)}{' '}
+                    <Link className="link" to={`/workspaces/${workspace.id}/providers`}>
+                      Providers (BYOK)
+                    </Link>
+                  </div>
+                )}
                 <ModelDetails model={selected} baseUrl={workspace.baseUrl} />
                 {hasHealth && (
                   <HealthDetails

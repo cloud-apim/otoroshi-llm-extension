@@ -5,7 +5,7 @@
 import { gatewayError } from './api';
 import { currentTenant } from './bootstrap';
 import { generateImage } from './images';
-import { endpointsOf, kindsOf } from './modelmeta';
+import { endpointsOf, KIND_LABELS, kindsOf } from './modelmeta';
 import { billedProxyUrl } from './models';
 
 // a file sent to a playground: large enough for a song or a scanned contract
@@ -93,17 +93,37 @@ const modelId = (slug, model) => (model.includes('/') ? `${slug}###${model}` : `
  * the image models an LLM connection lists are playable as soon as that connection has its image capability
  * on. Without it the gateway has nothing to route the call to, and no playground is offered.
  */
-export function playgroundsOf(model, providers = []) {
-  if (!model) return [];
+// what this model is: the endpoints the gateway knows it is served on, or the kind of model it is
+function waysOf(model) {
   const endpoints = endpointsOf(model);
   const kinds = kindsOf(model);
-  const wanted = PLAYGROUNDS.filter((p) => (endpoints.length > 0 ? endpoints.includes(p.endpoint) : kinds.includes(p.modality)));
-  return wanted
+  return PLAYGROUNDS.filter((p) => (endpoints.length > 0 ? endpoints.includes(p.endpoint) : kinds.includes(p.modality)));
+}
+
+// the connection serving `model` for this playground, when it can be asked for it
+const servingOf = (model, providers, p) =>
+  providers.find((i) => i.modality === p.modality && i.slug === model.provider && !i.error && (i.endpoints || []).includes(p.endpoint));
+
+export function playgroundsOf(model, providers = []) {
+  if (!model) return [];
+  return waysOf(model)
     .map((p) => {
-      const serving = providers.find((i) => i.modality === p.modality && i.slug === model.provider && !i.error && (i.endpoints || []).includes(p.endpoint));
+      const serving = servingOf(model, providers, p);
       return serving ? { ...p, model: modelId(serving.slug, model.model || model.id) } : null;
     })
     .filter(Boolean);
+}
+
+/**
+ * Why a model that could be tried cannot be, in words: its connection does not expose that capability, so
+ * the gateway has no entity to route the call to. Null when the model has a playground, or none to have.
+ */
+export function playgroundHint(model, providers = []) {
+  if (!model) return null;
+  const ways = waysOf(model);
+  if (ways.length === 0 || ways.some((p) => servingOf(model, providers, p))) return null;
+  const capabilities = [...new Set(ways.map((p) => KIND_LABELS[p.modality] || p.modality))];
+  return `${capabilities.join(' / ')} is off on the ${model.provider} connection: turn it on to call this model, here and from your applications.`;
 }
 
 // one call to the workspace endpoint, as the signed-in backoffice user
