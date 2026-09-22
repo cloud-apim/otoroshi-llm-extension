@@ -85,7 +85,7 @@ object AiMetrics {
   }
 
   // Wraps an Either-returning operation future: records calls/errors/duration (and budget-exceeded when the
-  // Left carries a "budget exceeded" error), and runs `onSuccess` (e.g. token/cost metrics) only on Right.
+  // Left carries a "budget_exceeded": true error), and runs `onSuccess` (e.g. token/cost metrics) only on Right.
   // For streaming ops the Right is the source returned before consumption, so duration is time-to-stream-start
   // and token/cost metrics must be recorded separately at stream completion.
   def around[T](op: String, providerKind: String, start: Long, f: Future[Either[JsValue, T]])(onSuccess: T => Unit)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
@@ -95,7 +95,7 @@ object AiMetrics {
         onSuccess(v)
       case Success(Left(err)) =>
         // a budget-blocked request never hit the provider: count it as budget-exceeded, not an op error
-        if ((err \ "error").asOpt[String].exists(_.contains("budget exceeded"))) markBudgetExceeded()
+        if ((err \ "budget_exceeded").asOpt[Boolean].contains(true)) markBudgetExceeded()
         else markOperation(op, Some(providerKind), System.currentTimeMillis() - start, isError = true)
       case Failure(_) =>
         markOperation(op, Some(providerKind), System.currentTimeMillis() - start, isError = true)

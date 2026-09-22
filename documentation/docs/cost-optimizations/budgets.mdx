@@ -81,9 +81,23 @@ A budget can block requests on exceeded limits or just emit alerts.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `mode` | string | — | `"soft"` (alerts only) or `"block"` (deny requests with HTTP 429) |
-| `alertOnExceed` | boolean | — | Emit an alert when the budget is exceeded |
-| `alertOnAlmostExceed` | boolean | — | Emit an alert when the budget is almost exceeded |
-| `alertOnAlmostExceedPercentage` | number | `80` | Percentage threshold for "almost exceeded" alerts (e.g. 80 means alert at 80% consumption) |
+| `alert_on_exceed` | boolean | — | Emit an alert when the budget is exceeded |
+| `alert_on_almost_exceed` | boolean | — | Emit an alert when the budget is almost exceeded |
+| `alert_on_almost_exceed_percentage` | number | `80` | Percentage threshold for "almost exceeded" alerts (e.g. 80 means alert at 80% consumption) |
+| `error_message` | string | `budget exceeded` | Error returned to the client of a call blocked by the budget |
+
+A blocked call tells your users what happened in your own words, for instance who to contact to get more budget.
+The response always carries `budget_exceeded`, so clients, metrics and dashboards recognize it whatever the message:
+
+```json
+{
+  "error": "Your AI budget is exhausted, please contact your administrator",
+  "budget_exceeded": true
+}
+```
+
+When several budgets block the same call, the message of one of them is returned. Budgets in `soft` mode never
+block a call, so their message is never returned.
 
 ### Admin API 
 

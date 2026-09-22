@@ -173,7 +173,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     val start = System.currentTimeMillis()
     prepare(attrs, originalBody)
     AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
       chatClient.invoke(kind, prompt, attrs, originalBody).andThen {
         case Failure(exception) => auditError(consumedUsing, prompt, attrs, originalBody, start, Json.obj("exception" -> exception.getMessage))
         case Success(Left(err)) => auditError(consumedUsing, prompt, attrs, originalBody, start, err)
@@ -191,7 +191,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     val start = System.currentTimeMillis()
     prepare(attrs, originalBody)
     AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
       chatClient.invokeStream(kind, prompt, attrs, originalBody).transformWith {
         case Failure(exception) =>
           auditError(consumedUsing, prompt, attrs, originalBody, start, Json.obj("exception" -> exception.getMessage))
@@ -307,7 +307,7 @@ class EmbeddingModelClientWithAuditing(originalModel: EmbeddingModel, val embedd
     attrs.put(ChatClientWithAuding.ProviderKey -> originalModel)
     attrs.put(ChatClientWithAuding.ModelKey -> opts.model.getOrElse("--"))
     AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
       embeddingModelClient.embed(opts, rawBody, attrs).andThen {
         case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {
@@ -409,7 +409,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
     attrs.put(ChatClientWithAuding.ProviderKey -> originalModel)
     attrs.put(ChatClientWithAuding.ModelKey -> opts.model.getOrElse("--"))
     AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
       audioModelClient.translate(opts, rawBody, attrs).andThen {
         case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {
@@ -502,7 +502,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
     attrs.put(ChatClientWithAuding.ProviderKey -> originalModel)
     attrs.put(ChatClientWithAuding.ModelKey -> opts.model.getOrElse("--"))
     AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
       audioModelClient.speechToText(opts, rawBody, attrs).andThen {
         case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {
@@ -614,7 +614,7 @@ class AudioModelClientWithAuditing(originalModel: AudioModel, val audioModelClie
       }.toAnalytics()
     }
     AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
       audioModelClient.textToSpeech(opts, rawBody, attrs).andThen {
         case Failure(exception) => failed(Json.obj("exception" -> exception.getMessage))
         case Success(Left(err)) => failed(err)
@@ -678,7 +678,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
     attrs.put(ChatClientWithAuding.ProviderKey -> originalModel)
     attrs.put(ChatClientWithAuding.ModelKey -> opts.model.getOrElse("--"))
     AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
       imageModelClient.edit(opts, rawBody, attrs).andThen {
         case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {
@@ -771,7 +771,7 @@ class ImageModelClientWithAuditing(originalModel: ImageModel, val imageModelClie
     attrs.put(ChatClientWithAuding.ProviderKey -> originalModel)
     attrs.put(ChatClientWithAuding.ModelKey -> opts.model.getOrElse("--"))
     AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
       imageModelClient.generate(opts, rawBody, attrs).andThen {
         case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {
@@ -873,7 +873,7 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
     attrs.put(ChatClientWithAuding.ProviderKey -> originalModel)
     attrs.put(ChatClientWithAuding.ModelKey -> opts.model.getOrElse("--"))
     AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
       moderationModelClient.moderate(opts, rawBody, attrs).andThen {
         case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {
@@ -974,7 +974,7 @@ class VideoModelClientWithAuditing(originalModel: VideoModel, val videoModelClie
     attrs.put(ChatClientWithAuding.ProviderKey -> originalModel)
     attrs.put(ChatClientWithAuding.ModelKey -> opts.model.getOrElse("--"))
     AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
       videoModelClient.generate(opts, rawBody, attrs).andThen {
         case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {
@@ -1076,7 +1076,7 @@ class OcrModelClientWithAuditing(originalModel: OcrModel, val ocrModelClient: Oc
     attrs.put(ChatClientWithAuding.ProviderKey -> originalModel)
     attrs.put(ChatClientWithAuding.ModelKey -> opts.model.getOrElse("--"))
     AiBudgetsDataStore.handleWithinBudget(attrs)(
-      Json.obj("error" -> "budget exceeded").leftf,
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
       ocrModelClient.ocr(opts, rawBody, attrs).andThen {
         case Failure(exception) => {
           AuditEvent.generic("LLMUsageAudit") {

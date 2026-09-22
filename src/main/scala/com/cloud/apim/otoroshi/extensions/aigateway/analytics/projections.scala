@@ -243,6 +243,8 @@ object LlmUsageProjection extends AnalyticsProjection {
     case JsNull                                                   => None
     case JsString(_)                                              => Some("error")
     case obj: JsObject if (obj \ "exception").isDefined           => Some("exception")
+    // a call blocked by a budget, whatever the error message the budget returns
+    case obj: JsObject if (obj \ "budget_exceeded").asOpt[Boolean].contains(true) => Some("budget_exceeded")
     // providers classify their own errors (`invalid_request_error`, `rate_limit_error`,
     // `insufficient_quota`…), directly or wrapped with the status they came with
     case obj: JsObject if providerErrorCode(obj).isDefined        => providerErrorCode(obj)

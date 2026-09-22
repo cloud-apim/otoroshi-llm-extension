@@ -495,16 +495,19 @@ object AiBudgetActionOnExceedMode {
   }
 }
 
-case class AiBudgetActionOnExceed(mode: AiBudgetActionOnExceedMode, alertOnExceed: Boolean, alertOnAlmostExceed: Boolean, alertOnAlmostExceedPercentage: Int) {
+// `errorMessage` is the error returned to the client of a call blocked by the budget (`block` mode only)
+case class AiBudgetActionOnExceed(mode: AiBudgetActionOnExceedMode, alertOnExceed: Boolean, alertOnAlmostExceed: Boolean, alertOnAlmostExceedPercentage: Int, errorMessage: Option[String] = None) {
   def json: JsValue = AiBudgetActionOnExceed.format.writes(this)
 }
 object AiBudgetActionOnExceed {
+  val defaultErrorMessage = "budget exceeded"
   val format = new Format[AiBudgetActionOnExceed] {
     override def writes(o: AiBudgetActionOnExceed): JsValue = Json.obj(
       "mode" -> o.mode.json,
       "alert_on_exceed" -> o.alertOnExceed,
       "alert_on_almost_exceed" -> o.alertOnAlmostExceed,
       "alert_on_almost_exceed_percentage" -> o.alertOnAlmostExceedPercentage,
+      "error_message" -> o.errorMessage,
     )
     override def reads(json: JsValue): JsResult[AiBudgetActionOnExceed] = Try {
       AiBudgetActionOnExceed(
@@ -512,6 +515,8 @@ object AiBudgetActionOnExceed {
         alertOnExceed = (json \ "alert_on_exceed").asOpt[Boolean].getOrElse(true),
         alertOnAlmostExceed = (json \ "alert_on_almost_exceed").asOpt[Boolean].getOrElse(true),
         alertOnAlmostExceedPercentage = (json \ "alert_on_almost_exceed_percentage").asOpt[Int].getOrElse(80),
+        // a field emptied in the form comes back as an empty string
+        errorMessage = (json \ "error_message").asOpt[String].map(_.trim).filter(_.nonEmpty),
       )
     } match {
       case Failure(ex) => JsError(ex.getMessage)
@@ -1228,7 +1233,7 @@ trait AiBudgetsDataStore extends BasicStore[AiBudget] {
 }
 
 object AiBudgetsDataStore {
-  def handleWithinBudget[A](attrs: TypedMap)(notInBudget: => Future[A], inBudget: => Future[A])(using env: Env, ec: ExecutionContext): Future[A] = {
+  def handleWithinBudget[A](attrs: TypedMap)(notInBudget: String => Future[A], inBudget: => Future[A])(using env: Env, ec: ExecutionContext): Future[A] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     if (ext.budgetsEnabled) {
       val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
@@ -1272,7 +1277,13 @@ object AiBudgetsDataStore {
             if (soft) {
               inBudget
             } else {
-              notInBudget
+              // the message of a budget that actually blocks the call, not of a soft one exceeded at the same time
+              val message = budgets
+                .filter(_.actionOnExceed.mode != AiBudgetActionOnExceedMode.Soft)
+                .flatMap(_.actionOnExceed.errorMessage)
+                .headOption
+                .getOrElse(AiBudgetActionOnExceed.defaultErrorMessage)
+              notInBudget(message)
             }
           }
         }

@@ -367,6 +367,10 @@ class BudgetsPage extends Component {
       type: 'number',
       props: {label: 'Alert on almost exceed threshold', suffix: '%' },
     },
+    'action_on_exceed.error_message': {
+      type: 'string',
+      props: {label: 'Error message', placeholder: 'budget exceeded', help: 'Error returned to the client when the budget blocks a call' },
+    },
   });
 
   columns = [
@@ -453,6 +457,7 @@ class BudgetsPage extends Component {
       'action_on_exceed.alert_on_exceed',
       'action_on_exceed.alert_on_almost_exceed',
       'action_on_exceed.alert_on_almost_exceed_percentage',
+      'action_on_exceed.error_message',
     ]
   };
 
