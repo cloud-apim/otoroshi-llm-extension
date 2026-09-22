@@ -203,7 +203,7 @@ trait NativeResponsesSupport extends ChatClient {
     }
     val (body, finalModel, _) = payload(prompt, attrs, originalBody)
     val acc = new UsageAccumulator()
-    responsesRawStream(body).map(r => ProviderHelpers.wrapStreamResponse(responsesProviderKind, r, env) { resp =>
+    responsesRawStream(body).flatMap(r => ProviderHelpers.wrapStreamResponse(responsesProviderKind, r, env) { resp =>
       val responseId = new AtomicReference[String](s"resp-${ULID.random().toLowerCase()}")
       resp.bodyAsSource
         .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, true))

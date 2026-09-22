@@ -121,7 +121,7 @@ class XAiApi(baseUrl: String = XAiApi.baseUrl, token: String, timeout: FiniteDur
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream().observeStreamQuotas("X.ai", url, providerId)(using ec, env)
-      .map(r => ProviderHelpers.wrapStreamResponse("X.ai", r, env) { resp =>
+      .flatMap(r => ProviderHelpers.wrapStreamResponse("X.ai", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
           .map(_.utf8String)

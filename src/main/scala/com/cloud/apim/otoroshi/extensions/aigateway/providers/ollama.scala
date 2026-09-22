@@ -173,7 +173,7 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map(r => ProviderHelpers.wrapStreamResponse("Ollama", r, env) { resp =>
+      .flatMap(r => ProviderHelpers.wrapStreamResponse("Ollama", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n"), Int.MaxValue, false))
           .map(_.utf8String)

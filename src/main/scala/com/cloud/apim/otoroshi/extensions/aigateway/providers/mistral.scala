@@ -150,7 +150,7 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map(r => ProviderHelpers.wrapStreamResponse("Mistral", r, env) { resp =>
+      .flatMap(r => ProviderHelpers.wrapStreamResponse("Mistral", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
           .map(_.utf8String)

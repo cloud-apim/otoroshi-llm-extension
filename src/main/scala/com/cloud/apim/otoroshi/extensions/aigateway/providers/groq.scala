@@ -151,7 +151,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map(r => ProviderHelpers.wrapStreamResponse("Groq", r, env) { resp =>
+      .flatMap(r => ProviderHelpers.wrapStreamResponse("Groq", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
           .map(_.utf8String)

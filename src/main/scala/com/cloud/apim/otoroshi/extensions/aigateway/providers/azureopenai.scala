@@ -302,7 +302,7 @@ class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val ver
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map(r => ProviderHelpers.wrapStreamResponse("AzureOpenai", r, env) { resp =>
+      .flatMap(r => ProviderHelpers.wrapStreamResponse("AzureOpenai", r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
           .map(_.utf8String)

@@ -142,7 +142,7 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map(r => ProviderHelpers.wrapStreamResponse(providerName, r, env) { resp =>
+      .flatMap(r => ProviderHelpers.wrapStreamResponse(providerName, r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n"), Int.MaxValue, false))
           .map(_.utf8String)

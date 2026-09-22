@@ -151,11 +151,14 @@ class OpenRouterAudioModelClient(val api: OpenRouterApi, val ttsOptions: OpenRou
     }.applyOnWithOpt(speedOpt) {
       case (obj, speed) => obj ++ Json.obj("speed" -> speed)
     }
-    api.rawCallStream("POST", "/audio/speech", body.some).map { response =>
+    api.rawCallStream("POST", "/audio/speech", body.some).flatMap { response =>
       if (response.status == 200) {
-        (response.bodyAsSource, ttsContentType(responseFormatOpt)).right
+        (response.bodyAsSource, ttsContentType(responseFormatOpt)).rightf
       } else {
-        Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${response.body}"))
+        // a streamed response, its body cannot be read with `response.body`
+        ProviderHelpers.readErrorBody("OpenRouter", response, env).map { raw =>
+          Left(Json.obj("error" -> "Bad response", "body" -> s"Failed with status ${response.status}: ${raw}"))
+        }
       }
     }
   }

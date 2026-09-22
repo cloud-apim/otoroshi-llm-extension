@@ -304,7 +304,7 @@ class OpenAiApi(
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream().observeStreamQuotas(providerName, url, providerId)(using ec, env)
-      .map(r => ProviderHelpers.wrapStreamResponse(providerName, r, env) { resp =>
+      .flatMap(r => ProviderHelpers.wrapStreamResponse(providerName, r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
           .map(_.utf8String)

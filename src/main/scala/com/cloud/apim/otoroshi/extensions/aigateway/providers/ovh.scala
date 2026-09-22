@@ -246,7 +246,7 @@ class OVHAiEndpointsApi(baseDomain: String = OVHAiEndpointsApi.baseDomain, token
           .withMethod(method)
           .withRequestTimeout(timeout)
           .stream()
-          .map(r => ProviderHelpers.wrapStreamResponse("OVH", r, env) { resp =>
+          .flatMap(r => ProviderHelpers.wrapStreamResponse("OVH", r, env) { resp =>
             (resp.bodyAsSource
               .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
               .map(_.utf8String)

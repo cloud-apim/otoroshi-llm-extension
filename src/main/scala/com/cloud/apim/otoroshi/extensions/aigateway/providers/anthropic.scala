@@ -175,7 +175,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
       .withMethod(method)
       .withRequestTimeout(timeout)
       .stream()
-      .map(r => ProviderHelpers.wrapStreamResponse(providerName, r, env) { resp =>
+      .flatMap(r => ProviderHelpers.wrapStreamResponse(providerName, r, env) { resp =>
         (resp.bodyAsSource
           .via(Framing.delimiter(ByteString("\n\n"), Int.MaxValue, false))
           .map(_.utf8String)

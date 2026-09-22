@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatResponseMetadataUsage
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.CostsOutput
 import otoroshi.env.Env
@@ -13,6 +14,7 @@ import play.api.libs.ws.WSResponse
 import java.util.concurrent.atomic.{AtomicLong, AtomicReference}
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.Try
 
 trait ApiClient[Resp, Chunk] {
 
@@ -54,12 +56,48 @@ object ProviderHelpers {
     if (warnedOnce.putIfAbsent(key, ()).isEmpty) AiExtension.logger.warn(message)
   }
 
+  // default max size of the error body read from a streamed provider response, see `readErrorBody`. Large enough
+  // for validation errors echoing a whole conversation
+  val defaultMaxErrorBodySize: Int = 4 * 1024 * 1024
+
+  def maxErrorBodySize(env: Env): Int = {
+    env.adminExtensions.extension[AiExtension].map(_.maxErrorBodySize).getOrElse(defaultMaxErrorBodySize)
+  }
+
+  // the provider error, wrapped with the status when it is not json (an html page from a load balancer, ...)
+  def errorBodyJson(status: Int, raw: String): JsValue = {
+    Try(Json.parse(raw)).getOrElse(Json.obj("status" -> status, "body" -> raw))
+  }
+
   def responseBody(resp: WSResponse): JsValue = {
-    if (resp.contentType.contains("application/json")) {
-      resp.json
-    } else {
-      Json.parse(resp.body)
-    }
+    val raw: String = resp.body
+    Try {
+      if (resp.contentType.contains("application/json")) {
+        resp.json
+      } else {
+        Json.parse(raw)
+      }
+    }.getOrElse(Json.obj("status" -> resp.status, "body" -> raw))
+  }
+
+  // reads and logs the body of a streamed provider response with an error status. `resp.body` / `resp.json` cannot
+  // be used there: on a response from `.stream()`, play-ws falls back to a blocking read that fails past 13 chunks
+  // or 50 ms, and the provider error is lost (issue #195). The body is read without blocking, truncated past
+  // `maxSize` bytes, and always drained to release the connection
+  def readErrorBody(from: String, resp: WSResponse, env: Env)(using ec: ExecutionContext): Future[String] = {
+    readErrorBody(from, resp, env, maxErrorBodySize(env))
+  }
+
+  def readErrorBody(from: String, resp: WSResponse, env: Env, maxSize: Int)(using ec: ExecutionContext): Future[String] = {
+    resp.bodyAsSource
+      .runFold((ByteString.empty, false)) { case ((acc, truncated), chunk) =>
+        if (acc.size + chunk.size <= maxSize) (acc ++ chunk, truncated) else (acc ++ chunk.take(maxSize - acc.size), true)
+      }(using env.otoroshiMaterializer)
+      .map { case (bytes, truncated) =>
+        val raw = bytes.utf8String
+        AiExtension.logger.error(s"Response with error from '${from}': ${resp.status} - ${raw}${if (truncated) s" (truncated to ${maxSize} bytes)" else ""}")
+        raw
+      }
   }
   def logBadResponse(from: String, resp: WSResponse): Unit = {
     AiExtension.logger.error(s"Response with error from '${from}': ${resp.status} - ${resp.body}")
@@ -103,9 +141,10 @@ object ProviderHelpers {
       responseBody(resp).left
     }
   }
-  def wrapStreamResponse[T](from: String, resp: WSResponse, env: Env)(f: WSResponse => T): Either[JsValue, T] = {
+  def wrapStreamResponse[T](from: String, resp: WSResponse, env: Env)(f: WSResponse => T)(using ec: ExecutionContext): Future[Either[JsValue, T]] = {
     if (env.isDev || AiExtension.logger.isDebugEnabled) {
-      val msg = s"provider stream response '${from}' - ${resp.status} - ${if (resp.status != 200) resp.body else "stream"}"
+      // the body of an error is logged by `readErrorBody`, it cannot be read twice
+      val msg = s"provider stream response '${from}' - ${resp.status}${if (resp.status == 200) " - stream" else ""}"
       if (env.isDev) {
         AiExtension.logger.info(msg)
         // java.nio.file.Files.writeString(new java.io.File(s"resp-stream-${System.currentTimeMillis()}.json").toPath, resp.body.parseJson.prettify, java.nio.charset.StandardCharsets.UTF_8)
@@ -114,10 +153,9 @@ object ProviderHelpers {
       }
     }
     if (resp.status == 200) {
-      f(resp).right
+      f(resp).rightf
     } else {
-      logBadResponse(from, resp)
-      responseBody(resp).left
+      readErrorBody(from, resp, env).map(raw => Left(errorBodyJson(resp.status, raw)))
     }
   }
 }

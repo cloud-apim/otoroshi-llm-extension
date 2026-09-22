@@ -11,6 +11,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.LLMGuardrailsHard
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage, KreuzbergHelper, WorkflowFunctionsInitializer}
 import com.github.blemale.scaffeine.Scaffeine
+import com.typesafe.config.ConfigMemorySize
 import otoroshi.env.Env
 import otoroshi.models.*
 import otoroshi.next.extensions.*
@@ -251,6 +252,10 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val quotaAlertsEnabled = configuration.getOptional[Boolean]("quota-alerts.enabled").getOrElse(true)
   lazy val budgetsEnabled = configuration.getOptional[Boolean]("budgets.enabled").getOrElse(true)
   lazy val embedBudgetsInResponses = budgetsEnabled && configuration.getOptional[Boolean]("budgets.embed-budgets-in-responses").getOrElse(true)
+  // max size of the error body read from a streamed provider response, the rest is dropped (see ProviderHelpers.readErrorBody)
+  lazy val maxErrorBodySize: Int = configuration.getOptional[ConfigMemorySize]("providers.max-error-body-size")
+    .map(_.toBytes.max(0L).min(Int.MaxValue.toLong).toInt)
+    .getOrElse(ProviderHelpers.defaultMaxErrorBodySize)
 
   override def id: AdminExtensionId = AiExtension.id
 

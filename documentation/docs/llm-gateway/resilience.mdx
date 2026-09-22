@@ -32,3 +32,31 @@ The Otoroshi Router is a virtual provider that picks the model for each request:
 The fallback mechanism automatically retries failed requests on an alternative provider, ensuring service continuity.
 
 [Read the full Fallback documentation](/docs/llm-gateway/fallback)
+
+## Provider errors
+
+When a provider rejects a call, the client gets the provider's own error, with its message and details, instead of a
+generic gateway error. This holds for streamed calls too, whatever the size of the error or the pace at which the
+provider sends it, and for errors that are not json (an html page from a load balancer in front of the provider, for
+instance), which are returned with their status:
+
+```json
+{
+  "status": 503,
+  "body": "<html><body><h1>503 Service Unavailable</h1></body></html>"
+}
+```
+
+The error is also logged, so you can see why a provider refuses a request. The errors of streamed calls are read up to
+4 MB, enough for validation errors that echo a whole conversation, and the rest is dropped:
+
+```hocon
+providers {
+  max-error-body-size = 4M
+  max-error-body-size = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_PROVIDERS_MAX_ERROR_BODY_SIZE}
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `max-error-body-size` | size | `4M` | Maximum size of an error body read from a streamed provider call |
