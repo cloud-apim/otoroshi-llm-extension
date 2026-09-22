@@ -47,7 +47,7 @@ All supported providers are available [here](https://cloud-apim.github.io/otoros
 * Scaleway 🇫🇷 🇪🇺
 * X.ai
 
-And 37 more including Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Chutes, CometAPI, CompactifAI, DeepInfra, Empower, Featherless AI, Fireworks AI, Friendli AI, Galadriel, GMI, Helicone, Hyperbolic, Lambda AI, LlamaGate, Meta Llama API, Minimax, Morph, Nano GPT, Nebius AI Studio, Novita AI, Nscale, Nvidia NIM, OpenRouter, Perplexity, Poe, SambaNova, Sarvam, Synthetic, Together AI, Venice AI, Xiaomi Mimo, Z.AI
+And 38 more including Abliteration, AI/ML API, Apertis, Arkane Cloud, AssemblyAI, Cerebras, Chutes, CometAPI, CompactifAI, DeepInfra, Empower, Featherless AI, Fireworks AI, Friendli AI, Galadriel, GMI, Helicone, Hyperbolic, Lambda AI, LlamaGate, Meta Llama API, Minimax, Morph, Nano GPT, Nebius AI Studio, Novita AI, Nscale, Nvidia NIM, OpenRouter, Perplexity, Poe, SambaNova, Sarvam, Synthetic, Together AI, Venice AI, Xiaomi Mimo, Z.AI
 
 ## Supported Moderation models
 
@@ -120,6 +120,8 @@ And 37 more including Abliteration, AI/ML API, Apertis, AssemblyAI, Cerebras, Ch
   * google/nano-banana-pro
 * Hive
   * black-forest-labs/flux-schnell
+* Arkane Cloud
+  * stability-ai/sdxl
 
 ## Supported Video generation models
 

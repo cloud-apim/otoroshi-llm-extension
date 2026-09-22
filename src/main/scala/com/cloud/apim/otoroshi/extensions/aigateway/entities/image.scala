@@ -119,6 +119,12 @@ object ImageModel {
       val opts = HiveImageModelClientOptions.fromJson(genOptions)
       new HiveImageModelClient(api, opts, id).some
     },
+    "arkane-cloud" -> { (c: ClientContext) =>
+      import c.*
+      val api = new OpenAiApi(baseUrl.getOrElse(ArkaneCloudApi.baseUrl), token, timeout.getOrElse(3.minutes), providerName = "Arkane Cloud", env = env, providerId = id.some)
+      val opts = ArkaneCloudImageModelClientOptions.fromJson(genOptions)
+      new ArkaneCloudImageModelClient(api, opts, id).some
+    },
     "openrouter" -> { (c: ClientContext) =>
       import c.*
       val api = new OpenRouterApi(baseUrl.getOrElse(OpenRouterApi.baseUrl), token, timeout.getOrElse(3.minutes), env = env, providerId = id.some)

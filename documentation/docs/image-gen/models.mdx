@@ -201,6 +201,59 @@ Note: Hive uses `width`/`height` integers instead of a size string like `1024x10
 
 ---
 
+## Arkane Cloud
+
+- **Base URL:** `https://console.arkanecloud.com/api/v2`
+- **Generation:** Yes
+- **Editing:** No
+
+Arkane Cloud serves open diffusion models (Stable Diffusion, FLUX...) billed per image. Consumers keep using the standard OpenAI images API: the gateway turns the OpenAI `size` (like `1024x768`) into the `width` / `height` Arkane Cloud expects, and forwards the diffusion settings (inference steps, guidance, negative prompt, seed) when they are set in the request or in the model configuration.
+
+```js
+{
+  "connection": {
+    "token": "xxx"
+  },
+  "options": {
+    "generation": {
+      "enabled": true,
+      "model": "stability-ai/sdxl",
+      "width": 1024,
+      "height": 1024,
+      "response_format": "b64_json"
+    },
+    "edition": { "enabled": false }
+  }
+}
+```
+
+### Models
+
+| Model | Description |
+|-------|-------------|
+| `stability-ai/sdxl` | Default model (Stable Diffusion XL) |
+
+The full list of image models is available in the Arkane Cloud console.
+
+### Generation parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model` | string | `stability-ai/sdxl` | Model name |
+| `size` | string | — | Image dimensions like `1024x768`, used when `width` / `height` are not set |
+| `width` | integer | `1024` | Image width in pixels (64 to 2048) |
+| `height` | integer | `1024` | Image height in pixels (64 to 2048) |
+| `num_inference_steps` | integer | model default | Number of inference steps |
+| `guidance_scale` | number | model default | How closely the image follows the prompt |
+| `negative_prompt` | string | — | What the image should avoid |
+| `seed` | integer | — | Random seed for reproducibility (`-1` for a random one) |
+| `response_format` | string | `b64_json` | `b64_json` or `url` |
+| `response_extension` | string | `png` | Image file format, also set by the OpenAI `output_format` of the request |
+
+Every parameter can be set in the model configuration and overridden per request. Arkane Cloud generates one image per request, so `n`, `quality` and `style` are not used.
+
+---
+
 ## OpenAI Compatible
 
 - **Base URL:** your own endpoint (set in the connection config)
@@ -237,14 +290,14 @@ OVH AI Endpoints exposes a unified OpenAI-compatible image API. It uses the same
 
 ## Provider comparison
 
-| Feature | OpenAI | Azure | Cloud Temple | Gemini | Grok | Luma | Hive | OVH | OAI Compat |
-|---------|:------:|:-----:|:------------:|:------:|:----:|:----:|:----:|:---:|:----------:|
-| Generation | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Editing | Yes | No | Yes | Yes | No | No | No | Yes | Yes |
-| Size control | Yes | Yes (restricted) | Yes | Yes | No | No | Yes (w/h) | Yes | Yes |
-| Quality control | Yes | Yes | Yes | Yes | No | No | Yes | Yes | Yes |
-| Style control | Yes | Yes | Yes | Yes | No | No | No | Yes | Yes |
-| Seed/reproducibility | No | No | No | No | No | No | Yes | No | No |
-| Inference steps | No | No | No | No | No | No | Yes | No | No |
+| Feature | OpenAI | Azure | Cloud Temple | Gemini | Grok | Luma | Hive | Arkane | OVH | OAI Compat |
+|---------|:------:|:-----:|:------------:|:------:|:----:|:----:|:----:|:------:|:---:|:----------:|
+| Generation | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Editing | Yes | No | Yes | Yes | No | No | No | No | Yes | Yes |
+| Size control | Yes | Yes (restricted) | Yes | Yes | No | No | Yes (w/h) | Yes | Yes | Yes |
+| Quality control | Yes | Yes | Yes | Yes | No | No | Yes | No | Yes | Yes |
+| Style control | Yes | Yes | Yes | Yes | No | No | No | No | Yes | Yes |
+| Seed/reproducibility | No | No | No | No | No | No | Yes | Yes | No | No |
+| Inference steps | No | No | No | No | No | No | Yes | Yes | No | No |
 
 For **OpenAI Compatible**, the values above reflect the OpenAI parameters the gateway forwards — what actually works depends on the endpoint you point it at.

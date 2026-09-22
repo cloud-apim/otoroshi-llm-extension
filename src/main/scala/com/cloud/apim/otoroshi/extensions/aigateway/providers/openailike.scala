@@ -61,6 +61,8 @@ object OpenAiLikeProviders {
     OpenAiLikeProviderDef("minimax",       "Minimax",          "https://api.minimax.io/v1",                                 apiKeyEnv = Some("MINIMAX_API_KEY")),
     OpenAiLikeProviderDef("morph",         "Morph",            "https://api.morphllm.com/v1",           mct,                apiKeyEnv = Some("MORPH_API_KEY")),
     OpenAiLikeProviderDef("aiml",          "AI/ML API",        "https://api.aimlapi.com/v1",                                apiKeyEnv = Some("AIML_API_KEY"), supportsEmbeddings = true, supportsImages = true),
+    // Arkane Cloud images are not OpenAI-shaped, they have a dedicated client (see `ArkaneCloudImageModelClient`)
+    OpenAiLikeProviderDef("arkane-cloud",  "Arkane Cloud",     "https://console.arkanecloud.com/api/v2",                    apiKeyEnv = Some("ARKANE_CLOUD_API_KEY")),
     OpenAiLikeProviderDef("cerebras",      "Cerebras",         "https://api.cerebras.ai/v1",            mct,                apiKeyEnv = Some("CEREBRAS_API_KEY")),
     OpenAiLikeProviderDef("cometapi",      "CometAPI",         "https://api.cometapi.com/v1",                               apiKeyEnv = Some("COMETAPI_API_KEY"), supportsEmbeddings = true, supportsImages = true, supportsSpeechToText = true, supportsTextToSpeech = true, supportsModeration = true),
     OpenAiLikeProviderDef("compactifai",   "CompactifAI",      "https://api.compactif.ai/v1",                               apiKeyEnv = Some("COMPACTIFAI_API_KEY"), supportsSpeechToText = true),

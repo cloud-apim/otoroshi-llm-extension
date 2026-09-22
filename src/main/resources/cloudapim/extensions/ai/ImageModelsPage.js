@@ -50,6 +50,7 @@ class ImageModelsPage extends Component {
           {label: 'Luma', value: "luma"},
           // {label: 'Leonardo AI', value: "leonardo-ai"},
           {label: 'Hive', value: "hive"},
+          {label: 'Arkane Cloud', value: "arkane-cloud"},
           {label: 'OpenRouter', value: "openrouter"},
           {label: 'OpenAI Compatible', value: "openai-compatible"},
           {label: 'OVH AI Endpoints', value: "ovh-ai-endpoints"}
@@ -299,6 +300,34 @@ class ImageModelsPage extends Component {
                       height: 1024,
                       output_format: "jpeg",
                       output_quality: 90
+                    },
+                    edition: {
+                      enabled: false
+                    }
+                  }
+                },
+              });
+            } else if (state.provider === 'arkane-cloud') {
+              update({
+                id: state.id,
+                name: state.name,
+                description: state.description,
+                tags: state.tags,
+                metadata: state.metadata,
+                provider: 'arkane-cloud',
+                config: {
+                  connection: {
+                    base_url: 'https://console.arkanecloud.com/api/v2',
+                    token: 'xxxxxx',
+                    timeout: 180000
+                  },
+                  options: {
+                    generation: {
+                      enabled: true,
+                      model: 'stability-ai/sdxl',
+                      width: 1024,
+                      height: 1024,
+                      response_format: 'b64_json'
                     },
                     edition: {
                       enabled: false

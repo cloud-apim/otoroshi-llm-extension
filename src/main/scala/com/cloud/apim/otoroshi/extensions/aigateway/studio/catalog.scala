@@ -83,6 +83,7 @@ object AiStudioCatalog {
     "apertis" -> Map("embedding" -> "text-embedding-3-small", "audio_stt" -> "whisper-1", "audio_tts" -> "tts-1"),
     "nano-gpt" -> Map("embedding" -> "text-embedding-3-small", "audio_stt" -> "Whisper-Large-V3", "audio_tts" -> "gpt-4o-mini-tts", "moderation" -> "omni-moderation-latest"),
     "aiml" -> Map("embedding" -> "text-embedding-3-small", "image" -> "openai/gpt-image-1"),
+    "arkane-cloud" -> Map("image" -> ArkaneCloudApi.defaultImageModel),
     "cometapi" -> Map("embedding" -> "text-embedding-3-small", "image" -> "gpt-image-2", "audio_stt" -> "whisper-1", "audio_tts" -> "tts-1", "moderation" -> "omni-moderation-latest"),
     "compactifai" -> Map("audio_stt" -> "cai-whisper-large-v3-turbo-slim"),
     "deepinfra" -> Map("embedding" -> "Qwen/Qwen3-Embedding-8B", "image" -> "black-forest-labs/FLUX-1-schnell", "audio_stt" -> "openai/whisper-large-v3-turbo", "audio_tts" -> "hexgrad/Kokoro-82M"),
