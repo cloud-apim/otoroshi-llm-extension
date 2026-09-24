@@ -480,7 +480,7 @@ case class OpenAiChatClientOptions(
   stream: Option[Boolean] = Some(false),
   top_logprobs: Option[Int] = None,
   max_tokens: Option[Int] = None,
-  n: Option[Int] = Some(1),
+  n: Option[Int] = None,
   seed: Option[Int] = None,
   presence_penalty: Option[Double] = None,
   response_format: Option[String] = None,

@@ -268,8 +268,8 @@ object OVHAiEndpointsChatClientOptions {
       model = json.select("model").asOpt[String].getOrElse(OVHAiEndpointsModels.mixtral_8x22b_instruct_v01),
       max_tokens = json.select("max_tokens").asOpt[Int],
       seed = json.select("seed").asOpt[Int],
-      temperature = json.select("temperature").asOpt[Float].getOrElse(1.0f),
-      topP = json.select("topP").asOpt[Float].getOrElse(1.0f),
+      temperature = json.select("temperature").asOpt[Float],
+      topP = json.select("topP").asOpt[Float],
       allowConfigOverride = json.select("allow_config_override").asOptBoolean.getOrElse(true),
     )
   }
@@ -279,8 +279,8 @@ case class OVHAiEndpointsChatClientOptions(
   model: String = OVHAiEndpointsModels.mixtral_8x22b_instruct_v01,
   max_tokens: Option[Int] = None,
   seed: Option[Int] = None,
-  temperature: Float = 1,
-  topP: Float = 1,
+  temperature: Option[Float] = None,
+  topP: Option[Float] = None,
   allowConfigOverride: Boolean = true,
 ) extends ChatOptions {
   override def json: JsObject = Json.obj(
