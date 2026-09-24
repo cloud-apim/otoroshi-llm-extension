@@ -26,7 +26,7 @@ object AiStudioCatalog {
     baseUrlRequired: Boolean = false,
   )
 
-  private def field(name: String, label: String, placeholder: String = "", default: String = ""): JsObject =
+  private def field(name: String, label: String, placeholder: String, default: String = ""): JsObject =
     Json.obj("name" -> name, "label" -> label, "placeholder" -> placeholder, "default" -> default)
 
   // virtual or local providers that make no sense as a BYOK connection

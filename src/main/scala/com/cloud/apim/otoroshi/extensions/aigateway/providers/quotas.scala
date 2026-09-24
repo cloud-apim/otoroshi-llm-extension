@@ -162,7 +162,7 @@ object ProviderQuotas {
           case "ms" => amount
           case "s" => amount * 1000
           case "m" => amount * 60000
-          case "h" => amount * 3600000
+          case _ => amount * 3600000 // "h", the only other unit the pattern accepts
         }
       }.sum.toLong)
     }

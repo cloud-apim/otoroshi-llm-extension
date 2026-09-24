@@ -28,7 +28,7 @@ object AiLlmProxy {
       lookup match {
         case JsString(str) => str
         case JsNumber(str) => str.toString()
-        case JsBoolean(str) => str.toString()
+        case b: JsBoolean => b.value.toString
         case JsObject(str) => str.toString()
         case JsArray(str) => str.toString()
         case JsNull => "null"

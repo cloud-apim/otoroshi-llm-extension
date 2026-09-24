@@ -121,9 +121,9 @@ object LlmUsageProjection extends AnalyticsProjection {
   override def accepts(event: JsValue): Boolean =
     (event \ "@type").asOpt[String].contains("AuditEvent") && (event \ "audit").asOpt[String].contains("LLMUsageAudit")
 
-  override def table(s: UserAnalyticsExporterSettings): String = s"${s.schema}.${s.table}_cloudapim_llm_usage"
+  override def table(s: UserAnalyticsExporterSettings): String = s.prefixedTable("cloudapim_llm_usage")
 
-  private def indexPrefix(s: UserAnalyticsExporterSettings): String = s"${s.table}_callm"
+  private def indexPrefix(s: UserAnalyticsExporterSettings): String = s"${s.tablePrefix}_callm"
 
   override def createTableSql(s: UserAnalyticsExporterSettings): String =
     s"""CREATE TABLE IF NOT EXISTS ${table(s)} (
@@ -365,9 +365,9 @@ object McpCallsProjection extends AnalyticsProjection {
   override def accepts(event: JsValue): Boolean =
     (event \ "@type").asOpt[String].contains("AuditEvent") && (event \ "audit").asOpt[String].exists(audits.contains)
 
-  override def table(s: UserAnalyticsExporterSettings): String = s"${s.schema}.${s.table}_cloudapim_mcp_calls"
+  override def table(s: UserAnalyticsExporterSettings): String = s.prefixedTable("cloudapim_mcp_calls")
 
-  private def indexPrefix(s: UserAnalyticsExporterSettings): String = s"${s.table}_camcp"
+  private def indexPrefix(s: UserAnalyticsExporterSettings): String = s"${s.tablePrefix}_camcp"
 
   override def createTableSql(s: UserAnalyticsExporterSettings): String =
     s"""CREATE TABLE IF NOT EXISTS ${table(s)} (
@@ -500,9 +500,9 @@ object AiAlertsProjection extends AnalyticsProjection {
 
   override def accepts(event: JsValue): Boolean = nameOf(event).isDefined
 
-  override def table(s: UserAnalyticsExporterSettings): String = s"${s.schema}.${s.table}_cloudapim_ai_alerts"
+  override def table(s: UserAnalyticsExporterSettings): String = s.prefixedTable("cloudapim_ai_alerts")
 
-  private def indexPrefix(s: UserAnalyticsExporterSettings): String = s"${s.table}_caal"
+  private def indexPrefix(s: UserAnalyticsExporterSettings): String = s"${s.tablePrefix}_caal"
 
   override def createTableSql(s: UserAnalyticsExporterSettings): String =
     s"""CREATE TABLE IF NOT EXISTS ${table(s)} (
