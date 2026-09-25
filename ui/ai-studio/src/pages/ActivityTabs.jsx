@@ -1,8 +1,7 @@
-import { useState } from 'react';
 import { AreaChart, seriesColor, StackedBars } from '../components/charts';
 import { Badge, Empty, ErrorAlert, Loading, Segmented, Select, useAsync } from '../components/ui';
 import { Delta, Kpi, METRIC_OPTIONS } from '../components/usage';
-import { compareOf, itemsOf, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
+import { compareOf, isShortPeriod, itemsOf, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
 import { fmtCost, fmtInt, fmtMs, fmtNumber, fmtPercent } from '../lib/format';
 
 // The Trends, Explore and Guardrails tabs of the activity page, all backed by the `cloudapim_llm_explore`
@@ -72,7 +71,6 @@ const ROLLUPS = [
 
 const metricOf = (id) => EXPLORE_METRICS.find((m) => m.value === id) || EXPLORE_METRICS[0];
 const dimensionLabel = (id) => (EXPLORE_DIMENSIONS.find((d) => d.value === id) || { label: id }).label;
-const shortPeriod = (period) => period === '1h' || period === '24h';
 
 function metricOptions() {
   return EXPLORE_METRICS.map((m) => ({ value: m.value, label: `${m.group} · ${m.label}` }));
@@ -235,12 +233,15 @@ export function ExploreTab({ workspace, query, setQuery, opts }) {
 
 const TREND_METRICS = { spend: 'spend', tokens: 'tokens', requests: 'requests' };
 
-function TrendSection({ workspace, opts, period, dimension, title }) {
-  const [metricId, setMetricId] = useState('spend');
+// the metric of each section is in the url, `?trend_model=tokens`
+function TrendSection({ workspace, opts, period, dimension, title, query, setQuery }) {
+  const key = `trend_${dimension}`;
+  const metricId = TREND_METRICS[query[key]] ? query[key] : 'spend';
+  const setMetricId = (v) => setQuery({ [key]: v === 'spend' ? '' : v });
   const metric = metricOf(TREND_METRICS[metricId]);
   const data = useAsync(async () => {
     const run = (params) => runQuery(workspace.id, 'cloudapim_llm_explore', { ...opts, params: { metric: metric.value, group_by: dimension, ...params } });
-    const [series, ranking] = await Promise.all([run({ rollup: shortPeriod(period) ? 'hour' : 'day', top_n: 6 }), run({ rollup: 'total', top_n: 50, compare: true })]);
+    const [series, ranking] = await Promise.all([run({ rollup: isShortPeriod(period) ? 'hour' : 'day', top_n: 6 }), run({ rollup: 'total', top_n: 50, compare: true })]);
     return { series, ranking };
   }, [workspace.id, JSON.stringify(opts), metric.value, dimension]);
   const d = data.data;
@@ -287,13 +288,14 @@ function TrendSection({ workspace, opts, period, dimension, title }) {
   );
 }
 
-export function TrendsTab({ workspace, opts, period, user, apikey }) {
+export function TrendsTab({ workspace, opts, period, user, apikey, query, setQuery }) {
+  const props = { workspace, opts, period, query, setQuery };
   return (
     <div className="stack" style={{ gap: 28 }}>
-      <TrendSection workspace={workspace} opts={opts} period={period} dimension="model" title="Models" />
-      {!user && <TrendSection workspace={workspace} opts={opts} period={period} dimension="user" title="Users" />}
-      {!apikey && <TrendSection workspace={workspace} opts={opts} period={period} dimension="apikey" title="API keys" />}
-      <TrendSection workspace={workspace} opts={opts} period={period} dimension="end_user" title="End users" />
+      <TrendSection {...props} dimension="model" title="Models" />
+      {!user && <TrendSection {...props} dimension="user" title="Users" />}
+      {!apikey && <TrendSection {...props} dimension="apikey" title="API keys" />}
+      <TrendSection {...props} dimension="end_user" title="End users" />
     </div>
   );
 }

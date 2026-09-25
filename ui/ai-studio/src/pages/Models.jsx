@@ -25,10 +25,11 @@ import {
 import { HealthDetails, HealthDot, HealthSummary } from '../components/health';
 import { Playground } from '../components/playground';
 import { playgroundHint, playgroundsOf } from '../lib/playgrounds';
-import { PERIODS } from '../lib/analytics';
+import { periodLabelOf, PERIODS } from '../lib/analytics';
 import { fmtCost, fmtInt, fmtMs } from '../lib/format';
 import { attempted, fmtSpeed, fmtSuccess, HEALTH, healthIndex, healthNumber, healthOfModel, loadHealth, statusOf } from '../lib/health';
-import { Link, useRouter } from '../lib/router';
+import { PeriodPicker, RefreshControl, useTimeView } from '../components/timeview';
+import { Link, useQueryState, useRouter } from '../lib/router';
 
 const CONTEXTS = [
   { value: 0, label: 'Any' },
@@ -124,6 +125,27 @@ function EstimateLine({ estimate }) {
 
 const EMPTY_FILTERS = { q: '', kinds: [], capabilities: [], endpoints: [], cost: '', context: 0, providers: [], health: [] };
 
+// the filters as they are written in the url: `?kind=chat,image&cap=vision&context=128000`
+const FILTER_KEYS = { q: 'q', kinds: 'kind', capabilities: 'cap', endpoints: 'api', cost: 'cost', context: 'context', providers: 'provider', health: 'health' };
+
+function filtersOf(query) {
+  const list = (k) => (query[k] ? query[k].split(',').filter(Boolean) : []);
+  return {
+    q: query.q || '',
+    kinds: list('kind'),
+    capabilities: list('cap'),
+    endpoints: list('api'),
+    cost: ['priced', 'unpriced'].includes(query.cost) ? query.cost : '',
+    context: CONTEXTS.some((c) => String(c.value) === query.context) ? Number(query.context) : 0,
+    providers: list('provider'),
+    health: list('health'),
+  };
+}
+
+function filtersPatch(patch) {
+  return Object.fromEntries(Object.entries(patch).map(([k, v]) => [FILTER_KEYS[k], Array.isArray(v) ? v.join(',') : v || '']));
+}
+
 // sorts on the calls of the period, when the workspace has analytics
 const HEALTH_SORTS = [
   { value: 'calls', label: 'Most used first' },
@@ -213,22 +235,22 @@ function TryButton({ model, workspace, providers, navigate, onPlayground }) {
 export function ModelsPage() {
   const { workspace } = useWorkspace();
   const { navigate } = useRouter();
+  // the filters, the sort, the view, the model opened and the health period live in the url, so a view can be shared
+  const [query, setQuery] = useQueryState();
   const [force, setForce] = useState(0);
-  const [filters, setFilters] = useState(EMPTY_FILTERS);
+  const filters = useMemo(() => filtersOf(query), [query]);
+  const setFilters = (f) => setQuery(filtersPatch(f));
   const [estimate, setEstimateState] = useState(loadEstimate);
-  const [sort, setSort] = useState(() => (estimate.on ? 'estimate' : 'name'));
-  const [view, setView] = useState('cards');
-  const [selected, setSelected] = useState(null);
+  const sort = query.sort || (estimate.on ? 'estimate' : 'name');
+  const setSort = (v) => setQuery({ sort: v });
+  const view = query.view === 'table' ? 'table' : 'cards';
+  const setView = (v) => setQuery({ view: v === 'cards' ? '' : v });
   // the drawer of a model opens on its details, or straight on its playground
-  const [tab, setTab] = useState('details');
-  const openModel = (model) => {
-    setTab('details');
-    setSelected(model);
-  };
-  const openPlayground = (model) => {
-    setTab('playground');
-    setSelected(model);
-  };
+  const tab = query.mtab === 'playground' ? 'playground' : 'details';
+  const setTab = (v) => setQuery({ mtab: v === 'playground' ? v : '' });
+  const setSelected = (model) => setQuery({ model: model ? model.id : '', mtab: '' });
+  const openModel = (model) => setQuery({ model: model.id, mtab: '' }, { push: true });
+  const openPlayground = (model) => setQuery({ model: model.id, mtab: 'playground' }, { push: true });
   const setEstimate = (patch) =>
     setEstimateState((e) => {
       const next = { ...e, ...patch };
@@ -244,17 +266,20 @@ export function ModelsPage() {
   };
   const estimateOf = (m) => (estimate.on ? estimateCost(m, { ...estimate, cached: estimate.cached / 100 }) : null);
   const data = useAsync(() => listWorkspaceModels(workspace, force > 0), [workspace.id, force]);
-  const [healthPeriod, setHealthPeriod] = useState('7d');
+  const { period: healthPeriod, refresh: reload, setPeriod: setHealthPeriod, setRefresh: setReload } = useTimeView('models', query, setQuery, '7d', HEALTH_PERIODS);
+  // bumped by the auto reload, which only asks the health again: listing the models of every provider is not cheap
+  const [healthTick, setHealthTick] = useState(0);
   // null when the workspace has no analytics
-  const health = useAsync(() => loadHealth(workspace.id, healthPeriod, 'model'), [workspace.id, healthPeriod, force]);
+  const health = useAsync(() => loadHealth(workspace.id, healthPeriod, 'model'), [workspace.id, healthPeriod, force, healthTick]);
   const hasHealth = !!health.data;
   const healthByModel = useMemo(() => healthIndex(health.data), [health.data]);
   const healthOf = (m) => healthOfModel(healthByModel, m);
 
   const models = (data.data && data.data.models) || [];
+  const selected = (query.model && models.find((m) => m.id === query.model)) || null;
   const infos = (data.data && data.data.providers) || [];
   const errors = infos.filter((p) => p.error);
-  const set = (patch) => setFilters((f) => ({ ...f, ...patch }));
+  const set = (patch) => setFilters(patch);
   const active = JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS);
 
   const facets = useMemo(() => {
@@ -321,10 +346,14 @@ export function ModelsPage() {
   return (
     <div className="content wide">
       <PageHeader title="Models" description={`Every model reachable through ${workspace.baseUrl}. Use the id as the \`model\` field of your requests.`}>
-        <button className="btn" onClick={() => setForce((f) => f + 1)} disabled={data.loading}>
-          <Icon name="refresh" />
-          Refresh
-        </button>
+        <RefreshControl
+          {...reload}
+          onChange={setReload}
+          onRefresh={() => setForce((f) => f + 1)}
+          onAutoRefresh={() => setHealthTick((t) => t + 1)}
+          busy={data.loading || health.loading}
+          loadedAt={health.loadedAt}
+        />
       </PageHeader>
       <ErrorAlert error={data.error} />
       {errors.length > 0 && (
@@ -401,13 +430,7 @@ export function ModelsPage() {
           {hasHealth && (
             <div className="field">
               <label title="How the models behaved in the period">Health</label>
-              <select className="sm" value={healthPeriod} onChange={(e) => setHealthPeriod(e.target.value)} aria-label="Health period" style={{ marginBottom: 6 }}>
-                {HEALTH_PERIODS.map((p) => (
-                  <option key={p.value} value={p.value}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
+              <PeriodPicker value={healthPeriod} onChange={setHealthPeriod} periods={HEALTH_PERIODS} align="left" className="health-period" />
               <FacetChecks options={HEALTH} value={filters.health} counts={facets.health} onChange={(v) => set({ health: v })} />
             </div>
           )}
@@ -577,8 +600,8 @@ export function ModelsPage() {
                 {hasHealth && (
                   <HealthDetails
                     health={healthOf(selected)}
-                    periodLabel={(HEALTH_PERIODS.find((p) => p.value === healthPeriod) || {}).label}
-                    logsUrl={`/workspaces/${workspace.id}/logs?model=${encodeURIComponent(selected.model)}&period=${healthPeriod}`}
+                    periodLabel={periodLabelOf(healthPeriod)}
+                    logsUrl={`/workspaces/${workspace.id}/logs?model=${encodeURIComponent(selected.model)}&period=${encodeURIComponent(healthPeriod)}`}
                   />
                 )}
                 {selected.modality === 'text' && !chatUnavailableReason(selected) && (

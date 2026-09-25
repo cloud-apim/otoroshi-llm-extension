@@ -44,6 +44,27 @@ export function useRouter() {
   return useContext(RouterContext);
 }
 
+// The query string as the state of a page: what it shows survives a reload and can be shared.
+// `setQuery` merges a patch into the current query (`null`, `undefined` and `''` remove a key) and replaces the
+// history entry rather than pushing one (unless `{ push: true }`), so the back button is not a list of every filter
+// that was tried. It reads `window.location` rather than the rendered query so two patches in the same tick add up.
+export function useQueryState() {
+  const { path, query, navigate } = useRouter();
+  const setQuery = useCallback(
+    (patch, { push = false } = {}) => {
+      const next = new URLSearchParams(window.location.search);
+      Object.entries(patch).forEach(([k, v]) => {
+        if (v === undefined || v === null || v === '') next.delete(k);
+        else next.set(k, String(v));
+      });
+      const qs = next.toString();
+      navigate(path + (qs ? '?' + qs : ''), { replace: !push, keepScroll: true });
+    },
+    [path, navigate]
+  );
+  return [query, setQuery];
+}
+
 // `/workspaces/:id/keys` matches `/workspaces/abc/keys` -> { id: 'abc' }. A trailing `/*` matches any sub path.
 export function matchPath(pattern, path) {
   const pp = pattern.split('/').filter(Boolean);

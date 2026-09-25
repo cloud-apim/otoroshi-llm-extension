@@ -145,9 +145,12 @@ export const METRICS = {
 
 export const METRIC_OPTIONS = Object.entries(METRICS).map(([value, m]) => ({ value, label: m.label }));
 
-// "Usage by <dimension>" card: one stacked bar series per model, api key or user
-export function UsageCard({ title, description, dimension, run, deps, bucket, empty }) {
-  const [metric, setMetric] = useState('tokens');
+// "Usage by <dimension>" card: one stacked bar series per model, api key or user. The metric is its own, or the
+// page's when it passes `metric` and `onMetric` (to keep it in its query string)
+export function UsageCard({ title, description, dimension, run, deps, bucket, empty, metric: shared, onMetric }) {
+  const [own, setOwn] = useState('tokens');
+  const metric = onMetric ? (METRICS[shared] ? shared : 'tokens') : own;
+  const setMetric = onMetric || setOwn;
   const data = useAsync(() => run(`cloudapim_llm_${METRICS[metric].query}_by_${dimension}_over_time`, { params: { top_n: 7 } }), [...deps, metric]);
   return (
     <div className="card">

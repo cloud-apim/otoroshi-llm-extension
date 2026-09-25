@@ -3,12 +3,13 @@ import { useWorkspace } from '../App';
 import { StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
 import { Badge, CopyButton, Drawer, Empty, ErrorAlert, Loading, PageHeader, Select, Tabs, useAsync, useToast } from '../components/ui';
-import { fetchAllPages, itemsOf, NoExporterError, PERIODS, runQuery, seriesOf } from '../lib/analytics';
+import { fetchAllPages, itemsOf, NoExporterError, periodSlug, runQuery, seriesOf } from '../lib/analytics';
 import { listApikeys } from '../lib/apikeys';
 import { listBudgets } from '../lib/budgets';
 import { exportName, downloadCsv, isoDate } from '../lib/files';
 import { fmtCost, fmtDate, fmtInt, fmtMs, fmtNumber } from '../lib/format';
-import { Link, useRouter } from '../lib/router';
+import { PeriodPicker, RefreshControl, useTimeView } from '../components/timeview';
+import { Link, useQueryState } from '../lib/router';
 
 const PAGE = 50;
 const DEFAULT_PERIOD = '24h';
@@ -372,14 +373,10 @@ function SessionsTab({ workspace, opts, onPick }) {
 export function LogsPage() {
   const { workspace } = useWorkspace();
   // filters, tab and opened call live in the url, so a filtered view or a call can be shared
-  const { query, navigate } = useRouter();
-  const period = PERIODS.some((p) => p.value === query.period) ? query.period : DEFAULT_PERIOD;
-  const { apikey = '', user = '', model = '', status = '', finish = '', session = '', q = '', call = '', tab = 'calls' } = query;
-  const setQuery = (patch) => {
-    const next = { tab, period, apikey, user, model, status, finish, session, q, call, ...patch };
-    const qs = new URLSearchParams(Object.entries(next).filter(([k, v]) => v && !(k === 'period' && v === DEFAULT_PERIOD) && !(k === 'tab' && v === 'calls'))).toString();
-    navigate(`/workspaces/${workspace.id}/logs${qs ? `?${qs}` : ''}`, { replace: true, keepScroll: true });
-  };
+  const [query, setQuery] = useQueryState();
+  const { period, refresh: reload, setPeriod, setRefresh: setReload } = useTimeView('logs', query, setQuery, DEFAULT_PERIOD);
+  const { apikey = '', user = '', model = '', status = '', finish = '', session = '', q = '', call = '' } = query;
+  const tab = query.tab === 'sessions' ? 'sessions' : 'calls';
   const [search, setSearch] = useState(q);
   const [refresh, setRefresh] = useState(0);
   const [pages, setPages] = useState({ items: [], next: null, loadingMore: false });
@@ -402,7 +399,7 @@ export function LogsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
 
-  const opts = { period, apikey: apikey || undefined, user: user || undefined, nocache: true };
+  const opts = { period, apikey: apikey || undefined, user: user || undefined, nocache: true, refresh };
   const params = { limit: PAGE, model: model || undefined, status: status || undefined, finish_reason: finish || undefined, session_id: session || undefined, search: q || undefined };
 
   const first = useAsync(async () => {
@@ -435,7 +432,7 @@ export function LogsPage() {
           next: res.data.next_before,
         }));
       const { rows, truncated } = await fetchAllPages(fetchPage, { max: MAX_EXPORT, onProgress: setExporting });
-      downloadCsv(exportName('logs', workspace.slug, period), CSV_COLUMNS, rows);
+      downloadCsv(exportName('logs', workspace.slug, periodSlug(period)), CSV_COLUMNS, rows);
       if (truncated) toast.success(`Exported the ${fmtInt(MAX_EXPORT)} most recent calls, narrow the filters to get the older ones`);
       else toast.success(`${fmtInt(rows.length)} call${rows.length === 1 ? '' : 's'} exported`);
     } catch (e) {
@@ -454,10 +451,8 @@ export function LogsPage() {
   return (
     <div className="content wide" style={{ maxWidth: 1500 }}>
       <PageHeader title="Logs" description="Every call made through this workspace, newest first. Only metadata is recorded: prompts and outputs are never stored.">
-        <Select className="sm" style={{ width: 'auto' }} value={period} onChange={(v) => setQuery({ period: v })} options={PERIODS.map((p) => ({ value: p.value, label: p.label }))} />
-        <button className="btn sm" onClick={() => setRefresh((r) => r + 1)} title="Refresh">
-          <Icon name="refresh" />
-        </button>
+        <PeriodPicker value={period} onChange={setPeriod} />
+        <RefreshControl {...reload} onChange={setReload} onRefresh={() => setRefresh((r) => r + 1)} busy={tab === 'calls' && first.loading} loadedAt={tab === 'calls' ? first.loadedAt : null} />
       </PageHeader>
 
       <Tabs
@@ -466,7 +461,7 @@ export function LogsPage() {
           { value: 'sessions', label: 'Sessions' },
         ]}
         value={tab}
-        onChange={(v) => setQuery({ tab: v, call: '' })}
+        onChange={(v) => setQuery({ tab: v, call: '' }, { push: true })}
       />
 
       {noExporter ? (

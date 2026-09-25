@@ -2,14 +2,15 @@ import { useMemo, useState } from 'react';
 import { useWorkspace } from '../App';
 import { CalendarHeatmap, StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
-import { Badge, Empty, ErrorAlert, Loading, PageHeader, Segmented, Select, StatusBadge, useAsync } from '../components/ui';
+import { Badge, Empty, ErrorAlert, Loading, PageHeader, Segmented, StatusBadge, useAsync } from '../components/ui';
 import { BudgetsCard, Delta, METRIC_OPTIONS, METRICS } from '../components/usage';
 import { compareOf, itemsOf, NoExporterError, PERIODS, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
 import { listApikeys, ownerOf } from '../lib/apikeys';
 import { bootstrap } from '../lib/bootstrap';
 import { budgetNamesUser, isWorkspaceWide, keyBudgetOf, listBudgets, periodLabel } from '../lib/budgets';
 import { fmtCost, fmtInt, fmtNumber, initials } from '../lib/format';
-import { Link, useRouter } from '../lib/router';
+import { PeriodPicker, RefreshControl, useTimeView } from '../components/timeview';
+import { Link, useQueryState, useRouter } from '../lib/router';
 
 // People of a workspace. There is no member entity: a user is whoever the usage counts for, the person
 // chatting from AI Studio or the owner of an API key.
@@ -40,9 +41,11 @@ function NoExporter() {
 function UsersList() {
   const { workspace } = useWorkspace();
   const { navigate } = useRouter();
-  const [period, setPeriod] = useState('30d');
-  const keys = useAsync(() => listApikeys(workspace.id), [workspace.id]);
-  const usage = useAsync(() => runQuery(workspace.id, 'cloudapim_llm_users_table', { period, params: { top_n: 200 } }).then(itemsOf), [workspace.id, period]);
+  const [query, setQuery] = useQueryState();
+  const { period, refresh: reload, setPeriod, setRefresh: setReload } = useTimeView('users', query, setQuery, '30d', SUMMARY_PERIODS);
+  const [refresh, setRefresh] = useState(0);
+  const keys = useAsync(() => listApikeys(workspace.id), [workspace.id, refresh]);
+  const usage = useAsync(() => runQuery(workspace.id, 'cloudapim_llm_users_table', { period, nocache: refresh > 0, params: { top_n: 200 } }).then(itemsOf), [workspace.id, period, refresh]);
   const me = bootstrap.user.email;
 
   const rows = useMemo(() => {
@@ -59,7 +62,8 @@ function UsersList() {
   return (
     <div className="content">
       <PageHeader title="Users" description="The people using this workspace, from the AI Studio chat or through the API keys they own.">
-        <Select className="sm" value={period} onChange={setPeriod} options={SUMMARY_PERIODS.map((p) => ({ value: p.value, label: p.label }))} />
+        <PeriodPicker value={period} onChange={setPeriod} periods={SUMMARY_PERIODS} />
+        <RefreshControl {...reload} onChange={setReload} onRefresh={() => setRefresh((r) => r + 1)} busy={usage.loading || keys.loading} loadedAt={usage.loadedAt} />
       </PageHeader>
       <div className="stack">
         {usage.error instanceof NoExporterError ? <NoExporter /> : <ErrorAlert error={usage.error || keys.error} />}
@@ -113,15 +117,15 @@ function UsersList() {
   );
 }
 
-function UsageSummary({ workspace, email }) {
-  const [metric, setMetric] = useState('spend');
-  const [period, setPeriod] = useState('30d');
+function UsageSummary({ workspace, email, period, setPeriod, query, setQuery, refresh }) {
+  const metric = METRICS[query.metric] ? query.metric : 'spend';
+  const setMetric = (v) => setQuery({ metric: v === 'spend' ? '' : v });
   const data = useAsync(async () => {
-    const q = (id, extra = {}) => runQuery(workspace.id, id, { period, user: email, ...extra });
+    const q = (id, extra = {}) => runQuery(workspace.id, id, { period, user: email, nocache: refresh > 0, ...extra });
     const m = METRIC_QUERIES[metric];
     const [total, byModelTs, topModels] = await Promise.all([q(m.total, { compare: true }), q(`cloudapim_llm_${METRICS[metric].query}_by_model_over_time`, { params: { top_n: 7 } }), q(m.byModel, { params: { top_n: 6 } })]);
     return { total, byModelTs, topModels };
-  }, [workspace.id, email, metric, period]);
+  }, [workspace.id, email, metric, period, refresh]);
   const d = data.data;
   const format = METRICS[metric].format;
   const models = d ? itemsOf(d.topModels) : [];
@@ -134,7 +138,7 @@ function UsageSummary({ workspace, email }) {
           <h2>Usage summary</h2>
         </div>
         <div className="row">
-          <Select className="sm" style={{ width: 'auto' }} value={period} onChange={setPeriod} options={SUMMARY_PERIODS.map((p) => ({ value: p.value, label: p.label }))} />
+          <PeriodPicker value={period} onChange={setPeriod} periods={SUMMARY_PERIODS} />
           <Segmented value={metric} onChange={setMetric} options={METRIC_OPTIONS} />
         </div>
       </div>
@@ -195,11 +199,12 @@ function longestStreak(points) {
   return best;
 }
 
-function YearActivity({ workspace, email }) {
-  const [metric, setMetric] = useState('requests');
+function YearActivity({ workspace, email, query, setQuery, refresh }) {
+  const metric = METRICS[query.year_metric] ? query.year_metric : 'requests';
+  const setMetric = (v) => setQuery({ year_metric: v === 'requests' ? '' : v });
   const data = useAsync(
-    () => runQuery(workspace.id, METRIC_QUERIES[metric].daily, { from: 'now-365d', bucket: '1d', user: email }).then(totalPoints),
-    [workspace.id, email, metric]
+    () => runQuery(workspace.id, METRIC_QUERIES[metric].daily, { from: 'now-365d', bucket: '1d', user: email, nocache: refresh > 0 }).then(totalPoints),
+    [workspace.id, email, metric, refresh]
   );
   const points = data.data || [];
   const format = METRICS[metric].format;
@@ -248,17 +253,17 @@ function YearActivity({ workspace, email }) {
   );
 }
 
-function OwnedKeys({ workspace, email }) {
+function OwnedKeys({ workspace, email, refresh }) {
   const data = useAsync(async () => {
     const [keys, budgets, usage] = await Promise.all([
       listApikeys(workspace.id),
       listBudgets(workspace.id),
-      runQuery(workspace.id, 'cloudapim_llm_apikeys_table', { period: '30d', user: email, params: { top_n: 200 } })
+      runQuery(workspace.id, 'cloudapim_llm_apikeys_table', { period: '30d', user: email, nocache: refresh > 0, params: { top_n: 200 } })
         .then(itemsOf)
         .catch(() => []),
     ]);
     return { keys: keys.filter((k) => ownerOf(k) === email), budgets, usage };
-  }, [workspace.id, email]);
+  }, [workspace.id, email, refresh]);
   const d = data.data;
   // the usage table is keyed by key name
   const usageOf = (k) => (d ? d.usage.find((u) => u.apikey === k.clientName || u.apikey === k.clientId) : null) || {};
@@ -342,6 +347,15 @@ function OwnedKeys({ workspace, email }) {
 function UserProfile({ email }) {
   const { workspace } = useWorkspace();
   const me = bootstrap.user.email === email;
+  // the period of the summary, its metric and the one of the year are in the url, like the auto reload
+  const [query, setQuery] = useQueryState();
+  const { period, refresh: reload, setPeriod, setRefresh: setReload } = useTimeView('user', query, setQuery, '30d', SUMMARY_PERIODS);
+  const [refresh, setRefresh] = useState(0);
+  const [loadedAt, setLoadedAt] = useState(() => Date.now());
+  const reloadAll = () => {
+    setRefresh((r) => r + 1);
+    setLoadedAt(Date.now());
+  };
   return (
     <div className="content wide" style={{ maxWidth: 1200 }}>
       <Link className="navlink muted" to={`/workspaces/${workspace.id}/users`}>
@@ -356,15 +370,16 @@ function UserProfile({ email }) {
           </h1>
           <p className="muted">Their chats in AI Studio and the calls of the API keys they own.</p>
         </div>
-        <Link className="btn sm" to={`/workspaces/${workspace.id}/activity?user=${encodeURIComponent(email)}`}>
+        <RefreshControl {...reload} onChange={setReload} onRefresh={reloadAll} loadedAt={loadedAt} />
+        <Link className="btn sm" to={`/workspaces/${workspace.id}/activity?user=${encodeURIComponent(email)}&period=${encodeURIComponent(period)}`}>
           <Icon name="chart" />
           Full activity
         </Link>
       </div>
       <div className="stack">
-        <UsageSummary workspace={workspace} email={email} />
-        <YearActivity workspace={workspace} email={email} />
-        <OwnedKeys workspace={workspace} email={email} />
+        <UsageSummary workspace={workspace} email={email} period={period} setPeriod={setPeriod} query={query} setQuery={setQuery} refresh={refresh} />
+        <YearActivity workspace={workspace} email={email} query={query} setQuery={setQuery} refresh={refresh} />
+        <OwnedKeys workspace={workspace} email={email} refresh={refresh} />
         <BudgetsCard
           workspace={workspace}
           description={`The budgets counting the usage of ${email}: the ones naming them and the ones of the whole workspace.`}

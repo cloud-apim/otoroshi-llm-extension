@@ -12,13 +12,59 @@ export const PERIODS = [
   { value: '90d', label: 'Past 3 months', from: 'now-90d' },
 ];
 
+// A period is either one of `PERIODS`, relative to now, or a fixed range written `<from>_<to>` in epoch
+// milliseconds: a single token, so it travels through the query string and every `runQuery` call like a preset
+export function customRange(period) {
+  const m = /^(\d+)_(\d+)$/.exec(period || '');
+  if (!m) return null;
+  const from = Number(m[1]);
+  const to = Number(m[2]);
+  return from < to ? { from, to } : null;
+}
+
+export const rangePeriod = (from, to) => `${from}_${to}`;
+
+export const isPeriod = (value) => PERIODS.some((p) => p.value === value) || customRange(value) !== null;
+
+const UNITS = { h: 3600000, d: 86400000 };
+
+// the length of a period in milliseconds
+export function periodSpan(period) {
+  const range = customRange(period);
+  if (range) return range.to - range.from;
+  const p = PERIODS.find((x) => x.value === period) || PERIODS[2];
+  return Number(p.from.slice(4, -1)) * UNITS[p.from.slice(-1)];
+}
+
+// a day or less: hourly buckets rather than daily ones
+export const isShortPeriod = (period) => periodSpan(period) <= UNITS.d;
+
+const fmtRangeEnd = (ms) => new Date(ms).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+export function periodLabelOf(period) {
+  const range = customRange(period);
+  if (range) return `${fmtRangeEnd(range.from)} → ${fmtRangeEnd(range.to)}`;
+  return (PERIODS.find((p) => p.value === period) || PERIODS[2]).label;
+}
+
+// a period as it reads in a file name: `24h`, or `2026-09-01t10-00-2026-09-02t10-00` for a range
+export function periodSlug(period) {
+  const range = customRange(period);
+  if (!range) return period;
+  const iso = (ms) => new Date(ms).toISOString().substring(0, 16);
+  return `${iso(range.from)}-${iso(range.to)}`;
+}
+
 export class NoExporterError extends Error {}
 
 // `apikey` is a platform filter, `user` (a studio user email) a param every llm query of the extension understands
 // `from` (`now-365d`) overrides the period, for views longer than the periods offered in the pickers
 export async function runQuery(wsId, query, { period = '7d', from, apikey, user, err, params = {}, compare = false, nocache = false, bucket } = {}) {
+  const range = customRange(period);
   const p = PERIODS.find((x) => x.value === period) || PERIODS[2];
-  const filters = { from: from || p.from, to: 'now', route_id: routeIdOf(wsId) };
+  const filters = range
+    ? { from: from || new Date(range.from).toISOString(), to: new Date(range.to).toISOString(), route_id: routeIdOf(wsId) }
+    : { from: from || p.from, to: 'now', route_id: routeIdOf(wsId) };
   if (apikey) filters.apikey_id = apikey;
   if (err !== undefined) filters.err = err;
   const allParams = user ? { ...params, user } : params;

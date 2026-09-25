@@ -4,11 +4,12 @@ import { AreaChart, StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
 import { Empty, ErrorAlert, Loading, MenuButton, PageHeader, Select, Tabs, useAsync, useToast } from '../components/ui';
 import { BudgetsCard, ConsumersCard, Kpi, UsageCard } from '../components/usage';
-import { compareOf, itemsOf, NoExporterError, PERIODS, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
+import { compareOf, itemsOf, NoExporterError, periodSlug, periodSpan, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
 import { listApikeys } from '../lib/apikeys';
 import { downloadCsv, exportName, isoDate } from '../lib/files';
 import { fmtCost, fmtInt, fmtMs, fmtNumber, fmtPercent } from '../lib/format';
-import { Link, useRouter } from '../lib/router';
+import { PeriodPicker, RefreshControl, useTimeView } from '../components/timeview';
+import { Link, useQueryState } from '../lib/router';
 import { ExploreTab, GuardrailsTab, McpTab, TrendsTab } from './ActivityTabs';
 
 const TABS = [
@@ -74,7 +75,8 @@ const TIME_COLUMNS = [
   { label: 'total_cost_usd', value: (r) => usd(r.input_cost + r.output_cost + r.reasoning_cost) },
 ];
 
-const exportBucket = (period) => (period === '1h' ? '5m' : period === '24h' ? '1h' : '1d');
+const exportBucket = (period) => (periodSpan(period) <= 3600000 ? '5m' : periodSpan(period) <= 86400000 ? '1h' : '1d');
+const EXPORT_LABELS = { '5m': 'Usage every 5 minutes', '1h': 'Usage per hour', '1d': 'Usage per day' };
 
 // the series of several timeseries results, merged bucket by bucket under `<prefix><series name>`
 function mergeSeries(results) {
@@ -177,19 +179,14 @@ function ImpactSection({ q, deps, bucket }) {
 
 export function ActivityPage() {
   const { workspace } = useWorkspace();
-  // the filters live in the url (`?apikey=<client id>&user=<email>&period=24h`) so any page can link to
-  // the activity of one key or one user
-  const { query, navigate } = useRouter();
-  const period = PERIODS.some((p) => p.value === query.period) ? query.period : DEFAULT_PERIOD;
+  // the filters live in the url (`?apikey=<client id>&user=<email>&period=24h&auto=true&every=30`) so any page can
+  // link to the activity of one key or one user, and a view can be shared as it is
+  const [query, setFilters] = useQueryState();
+  const { period, refresh: reload, setPeriod, setRefresh: setReload } = useTimeView('activity', query, setFilters, DEFAULT_PERIOD);
   const apikey = query.apikey || '';
   const user = query.user || '';
   const tab = TABS.some((t) => t.value === query.tab) ? query.tab : 'overview';
   // a key and a user combine: the keys a user owns count for them. The tabs keep their own settings in the url too
-  const setFilters = (patch) => {
-    const next = { ...query, period, ...patch };
-    const qs = new URLSearchParams(Object.entries(next).filter(([k, v]) => v && !(k === 'period' && v === DEFAULT_PERIOD) && !(k === 'tab' && v === 'overview'))).toString();
-    navigate(`/workspaces/${workspace.id}/activity${qs ? `?${qs}` : ''}`, { replace: true, keepScroll: true });
-  };
   const [refresh, setRefresh] = useState(0);
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
@@ -240,10 +237,12 @@ export function ActivityPage() {
     return { calls, tokensTs, cacheTs, latencyTs, models, apikeysTable, usersTable };
   }, [workspace.id, period, apikey, user, refresh, tab]);
   const deps = [workspace.id, period, apikey, user, refresh];
+  // the metric of each usage card is in the url, `?usage_model=spend`
+  const usageMetric = (dimension) => ({ metric: query[`usage_${dimension}`], onMetric: (v) => setFilters({ [`usage_${dimension}`]: v === 'tokens' ? '' : v }) });
 
   const exportUsage = async (kind) => {
     setExporting(true);
-    const name = (what) => exportName('activity', workspace.slug, what, period, apikey && keyName(apikey), user);
+    const name = (what) => exportName('activity', workspace.slug, what, periodSlug(period), apikey && keyName(apikey), user);
     try {
       if (kind === 'time') {
         const bucket = exportBucket(period);
@@ -284,10 +283,14 @@ export function ActivityPage() {
           ]}
         />
         <Select className="sm" value={user} onChange={(v) => setFilters({ user: v })} placeholder="All users" options={userOptions} />
-        <Select className="sm" value={period} onChange={(v) => setFilters({ period: v })} options={PERIODS.map((p) => ({ value: p.value, label: p.label }))} />
-        <button className="btn sm" onClick={() => setRefresh((r) => r + 1)} title="Refresh">
-          <Icon name="refresh" />
-        </button>
+        <PeriodPicker value={period} onChange={setPeriod} />
+        <RefreshControl
+          {...reload}
+          onChange={setReload}
+          onRefresh={() => setRefresh((r) => r + 1)}
+          busy={tab === 'overview' && (kpis.loading || charts.loading)}
+          loadedAt={tab === 'overview' ? charts.loadedAt : null}
+        />
         <MenuButton
           icon="download"
           label={exporting ? 'Exporting…' : 'Export CSV'}
@@ -296,7 +299,7 @@ export function ActivityPage() {
           minWidth={230}
           items={[
             ...USAGE_EXPORTS.map((e) => ({ label: e.label, onClick: () => exportUsage(e.id) })),
-            { label: period === '1h' ? 'Usage every 5 minutes' : period === '24h' ? 'Usage per hour' : 'Usage per day', onClick: () => exportUsage('time') },
+            { label: EXPORT_LABELS[exportBucket(period)], onClick: () => exportUsage('time') },
           ]}
         />
       </PageHeader>
@@ -317,7 +320,7 @@ export function ActivityPage() {
                 {user}
                 <Icon name="x" />
               </button>
-              <Link className="btn sm ghost" to={`/workspaces/${workspace.id}/users/${encodeURIComponent(user)}`} title={`The keys, budgets and yearly activity of ${user}`}>
+              <Link className="btn sm ghost" to={`/workspaces/${workspace.id}/users/${encodeURIComponent(user)}?period=${encodeURIComponent(period)}`} title={`The keys, budgets and yearly activity of ${user}`}>
                 <Icon name="user" />
                 Profile
               </Link>
@@ -329,9 +332,9 @@ export function ActivityPage() {
         </div>
       )}
 
-      <Tabs tabs={TABS} value={tab} onChange={(v) => setFilters({ tab: v })} />
+      <Tabs tabs={TABS} value={tab} onChange={(v) => setFilters({ tab: v }, { push: true })} />
 
-      {tab === 'trends' && <TrendsTab workspace={workspace} opts={opts} period={period} user={user} apikey={apikey} />}
+      {tab === 'trends' && <TrendsTab workspace={workspace} opts={opts} period={period} user={user} apikey={apikey} query={query} setQuery={setFilters} />}
       {tab === 'explore' && <ExploreTab workspace={workspace} query={query} setQuery={setFilters} opts={opts} />}
       {tab === 'guardrails' && <GuardrailsTab workspace={workspace} opts={opts} />}
       {tab === 'mcp' && <McpTab workspace={workspace} opts={opts} />}
@@ -388,10 +391,10 @@ export function ActivityPage() {
                 />
               </div>
 
-              <UsageCard title="Usage by model" dimension="model" run={q} deps={deps} bucket={bucket} />
+              <UsageCard title="Usage by model" dimension="model" run={q} deps={deps} bucket={bucket} {...usageMetric('model')} />
               <div className="grid cols-2">
-                <UsageCard title="Usage by API key over time" dimension="apikey" run={q} deps={deps} bucket={bucket} />
-                <UsageCard title="Usage by user over time" dimension="user" run={q} deps={deps} bucket={bucket} empty="No call attributed to a user in this period" />
+                <UsageCard title="Usage by API key over time" dimension="apikey" run={q} deps={deps} bucket={bucket} {...usageMetric('apikey')} />
+                <UsageCard title="Usage by user over time" dimension="user" run={q} deps={deps} bucket={bucket} empty="No call attributed to a user in this period" {...usageMetric('user')} />
               </div>
 
               <div className="grid cols-2">

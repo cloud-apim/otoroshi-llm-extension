@@ -4,7 +4,7 @@ import { Icon } from './icons';
 /* ---------- async data ---------- */
 
 export function useAsync(fn, deps = []) {
-  const [state, setState] = useState({ loading: true, error: null, data: null });
+  const [state, setState] = useState({ loading: true, error: null, data: null, loadedAt: null });
   const counter = useRef(0);
   const run = useCallback(() => {
     const current = ++counter.current;
@@ -13,11 +13,11 @@ export function useAsync(fn, deps = []) {
       .then(fn)
       .then(
         (data) => {
-          if (current === counter.current) setState({ loading: false, error: null, data });
+          if (current === counter.current) setState({ loading: false, error: null, data, loadedAt: Date.now() });
           return data;
         },
         (error) => {
-          if (current === counter.current) setState({ loading: false, error, data: null });
+          if (current === counter.current) setState((s) => ({ ...s, loading: false, error, data: null }));
         }
       );
     // eslint-disable-next-line react-hooks/exhaustive-deps
