@@ -73,25 +73,47 @@ object AiBudgetClusterAgent {
     Option(schedulerRef.get()).foreach(_.cancel())
   }
 
-  private def reset(): Unit = {
-    totalUsdCounters.clear()
-    totalTokensCounters.clear()
-    inferenceUsdCounters.clear()
-    inferenceTokensCounters.clear()
-    imageUsdCounters.clear()
-    imageTokensCounters.clear()
-    audioUsdCounters.clear()
-    audioTokensCounters.clear()
-    videoUsdCounters.clear()
-    videoTokensCounters.clear()
-    embeddingUsdCounters.clear()
-    embeddingTokensCounters.clear()
-    moderationUsdCounters.clear()
-    moderationTokensCounters.clear()
-    ocrUsdCounters.clear()
-    ocrPagesCounters.clear()
-    decisionUsdCounters.clear()
-    decisionTokensCounters.clear()
+  private val usdCounters: Seq[(String, TrieMap[String, DoubleAdder])] = Seq(
+    "total_usd" -> totalUsdCounters, "inference_usd" -> inferenceUsdCounters, "image_usd" -> imageUsdCounters,
+    "audio_usd" -> audioUsdCounters, "video_usd" -> videoUsdCounters, "embedding_usd" -> embeddingUsdCounters,
+    "moderation_usd" -> moderationUsdCounters, "ocr_usd" -> ocrUsdCounters, "decision_usd" -> decisionUsdCounters,
+  )
+  private val unitCounters: Seq[(String, TrieMap[String, AtomicLong])] = Seq(
+    "total_tokens" -> totalTokensCounters, "inference_tokens" -> inferenceTokensCounters, "image_tokens" -> imageTokensCounters,
+    "audio_tokens" -> audioTokensCounters, "video_tokens" -> videoTokensCounters, "embedding_tokens" -> embeddingTokensCounters,
+    "moderation_tokens" -> moderationTokensCounters, "ocr_pages" -> ocrPagesCounters, "decision_tokens" -> decisionTokensCounters,
+  )
+
+  // a counter the leaders are up to date with. Dollars are added as doubles: taking off what was pushed may leave
+  // dust, far below the billionth of a dollar the leaders count in
+  private def settled(usd: Double): Boolean = math.abs(usd) < 1e-10
+
+  // what was consumed here and the leaders do not know yet: for each counter, by budget and cycle
+  def deltas(): JsObject = JsObject(
+    usdCounters.map { case (name, counters) => name -> JsObject(counters.toMap.view.mapValues(_.sum).filterNot(c => settled(c._2)).mapValues(_.json).toMap) } ++
+    unitCounters.map { case (name, counters) => name -> JsObject(counters.toMap.view.mapValues(_.get).filter(_._2 != 0L).mapValues(_.json).toMap) }
+  )
+
+  // The leaders counted what was pushed: it is taken off the counters, which keep what calls consumed while the push
+  // was on its way. Clearing them here would lose it. A counter back to zero is dropped once its cycle is over
+  // (`current` tells it, from its `<budget>:<cycle>` key): nothing is added to it any more.
+  def acknowledge(pushed: JsObject, current: String => Boolean): Unit = {
+    def counted(name: String): scala.collection.Map[String, JsValue] = pushed.select(name).asOpt[JsObject].map(_.value).getOrElse(Map.empty[String, JsValue])
+    usdCounters.foreach { case (name, counters) =>
+      counted(name).foreach { case (key, value) =>
+        counters.get(key).foreach { counter =>
+          counter.add(-value.as[Double])
+          if (settled(counter.sum) && !current(key)) counters.remove(key, counter)
+        }
+      }
+    }
+    unitCounters.foreach { case (name, counters) =>
+      counted(name).foreach { case (key, value) =>
+        counters.get(key).foreach { counter =>
+          if (counter.addAndGet(-value.as[Long]) == 0L && !current(key)) counters.remove(key, counter)
+        }
+      }
+    }
   }
 
   private def otoroshiUrl(env: Env): String = {
@@ -106,26 +128,7 @@ object AiBudgetClusterAgent {
     given sc: Scheduler = env.otoroshiScheduler
     if (env.clusterConfig.mode.isWorker) {
       val config = env.clusterConfig
-      val payload = Json.obj(
-        "total_usd" -> JsObject(totalUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
-        "total_tokens" -> JsObject(totalTokensCounters.toMap.view.mapValues(_.get.json).toMap),
-        "inference_usd" -> JsObject(inferenceUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
-        "inference_tokens" -> JsObject(inferenceTokensCounters.toMap.view.mapValues(_.get.json).toMap),
-        "image_usd" -> JsObject(imageUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
-        "image_tokens" -> JsObject(imageTokensCounters.toMap.view.mapValues(_.get.json).toMap),
-        "audio_usd" -> JsObject(audioUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
-        "audio_tokens" -> JsObject(audioTokensCounters.toMap.view.mapValues(_.get.json).toMap),
-        "video_usd" -> JsObject(videoUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
-        "video_tokens" -> JsObject(videoTokensCounters.toMap.view.mapValues(_.get.json).toMap),
-        "embedding_usd" -> JsObject(embeddingUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
-        "embedding_tokens" -> JsObject(embeddingTokensCounters.toMap.view.mapValues(_.get.json).toMap),
-        "moderation_usd" -> JsObject(moderationUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
-        "moderation_tokens" -> JsObject(moderationTokensCounters.toMap.view.mapValues(_.get.json).toMap),
-        "ocr_usd" -> JsObject(ocrUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
-        "ocr_pages" -> JsObject(ocrPagesCounters.toMap.view.mapValues(_.get.json).toMap),
-        "decision_usd" -> JsObject(decisionUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
-        "decision_tokens" -> JsObject(decisionTokensCounters.toMap.view.mapValues(_.get.json).toMap),
-      )
+      val payload = deltas()
       Retry
         .retry(
           times = config.worker.retries,
@@ -151,7 +154,7 @@ object AiBudgetClusterAgent {
               if (resp.status == 200 && Cluster.logger.isDebugEnabled)
                 Cluster.logger.debug(s"Ai budgets deltas has been pushed")
               if (resp.status == 200) {
-                reset()
+                acknowledge(payload, key => ext.states.budget(key.take(key.lastIndexOf(":"))).exists(_.cycleId == key.drop(key.lastIndexOf(":") + 1)))
               }
               Some(Json.parse(resp.body))
             }
