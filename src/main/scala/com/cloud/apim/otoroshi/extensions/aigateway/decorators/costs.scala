@@ -764,14 +764,13 @@ object TokenBasedCosts {
   def track(providerKind: String, metadata: Map[String, String], model: Option[String], inputTokens: Long, outputTokens: Long, attrs: TypedMap)(using env: Env): Option[CostsOutput] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val (pricingProvider, billedModel) = RequiredCosts.billedAs(providerKind, metadata, model)
-    for {
+    val costs = for {
       provider <- pricingProvider
       name <- billedModel
       costs <- ext.costsTracking.computeCosts(provider, name, inputTokens, outputTokens, 0L).toOption
-    } yield {
-      attrs.put(ChatClientWithCostsTracking.key -> costs)
-      costs
-    }
+    } yield costs
+    ChatClientWithCostsTracking.keep(attrs, costs)
+    costs
   }
 }
 
@@ -863,15 +862,14 @@ object ModalityCosts {
   def track(providerKind: String, metadata: Map[String, String], model: Option[String], attrs: TypedMap)(compute: CostModel => Option[CostsOutput])(using env: Env): Option[CostsOutput] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val (pricingProvider, billedModel) = RequiredCosts.billedAs(providerKind, metadata, model)
-    for {
+    val costs = for {
       provider <- pricingProvider
       name     <- billedModel
       cost     <- ext.costsTracking.getModel(provider, name)
       output   <- compute(cost)
-    } yield {
-      attrs.put(ChatClientWithCostsTracking.key -> output)
-      output
-    }
+    } yield output
+    ChatClientWithCostsTracking.keep(attrs, costs)
+    costs
   }
 }
 
@@ -955,7 +953,7 @@ class DecisionModelClientWithCostsTracking(originalModel: DecisionModel, val dec
           } yield computed
         }
         // stored where auditing reads it, so budgets, audit events and metrics all pick it up
-        costs.foreach(c => attrs.put(ChatClientWithCostsTracking.key -> c))
+        ChatClientWithCostsTracking.keep(attrs, costs)
         if (TokenBasedCosts.embedInResponse(attrs)) {
           Right(resp.copy(metadata = resp.metadata.copy(costs = costs)))
         } else {
@@ -1090,6 +1088,12 @@ class VideoModelClientWithCostsTracking(originalModel: VideoModel, val videoMode
 
 object ChatClientWithCostsTracking {
   val key = TypedKey[CostsOutput]("cloud-apim.ai-gateway.CostsOutputKey")
+  // The cost of a call is the one found for it, and a call without a price has none: what another call left in
+  // the same attributes — the model a tool of this call asked, the step before it in a workflow — is not its cost.
+  def keep(attrs: TypedMap, costs: Option[CostsOutput]): Unit = costs match {
+    case Some(found) => attrs.put(key -> found)
+    case None => attrs.remove(key)
+  }
   val enabledRef = new AtomicReference[Option[Boolean]](None)
   def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
     if (enabledRef.get().isEmpty) {
@@ -1156,9 +1160,15 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     }
   }
 
+  // a stream runs the tools of the call while it is read: what they left is forgotten once it ends, before auditing reads it
+  private def withoutCosts(attrs: TypedMap, stream: Source[ChatResponseChunk, ?]): Source[ChatResponseChunk, ?] = {
+    if (HandOver.by(attrs, originalProvider)) stream
+    else stream.alsoTo(Sink.onComplete(_ => ChatClientWithCostsTracking.keep(attrs, None)))
+  }
+
   private def handleStream(attrs: TypedMap, originalBody: JsValue)(f: => Future[Either[JsValue, Source[ChatResponseChunk, ?]]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     getProvider() match {
-      case None => f // unsupported provider
+      case None => f.map(_.map(withoutCosts(attrs, _))) // unsupported provider
       case Some(provider) => {
         f.map {
           case Left(err) => Left(err)
@@ -1190,7 +1200,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
                 val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
                 val providerCosts = CostsOutput.fromJson(usageSlug.select("usage").select("provider_costs").asOpt[JsObject].getOrElse(JsObject.empty))
                 val costsOpt = resolveCosts(ext, providerCosts, finalProvider, model, inputTokens, outputTokens, reasoningTokens)
-                costsOpt.foreach(costs => attrs.put(ChatClientWithCostsTracking.key -> costs))
+                ChatClientWithCostsTracking.keep(attrs, costsOpt)
                 if (!addCostsInResp) {
                   promise.trySuccess(None)
                 } else {
@@ -1211,7 +1221,7 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
                 }
               }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right
             } else {
-              resp.right
+              withoutCosts(attrs, resp).right
             }
           }
         }
@@ -1229,7 +1239,10 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
   private def doInvoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val budgetInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_budget")).contains("true")
     getProvider() match {
-      case None => chatClient.invoke(kind, prompt, attrs, originalBody) // unsupported provider
+      case None => chatClient.invoke(kind, prompt, attrs, originalBody).map { resp => // unsupported provider
+        if (resp.isRight && !HandOver.by(attrs, originalProvider)) ChatClientWithCostsTracking.keep(attrs, None)
+        resp
+      }
       case Some(provider) => {
         chatClient.invoke(kind, prompt, attrs, originalBody).map {
           case Left(err) => Left(err)
@@ -1249,9 +1262,10 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
               reasoningTokens = usage.reasoningTokens,
             ) match {
               case None =>
+                ChatClientWithCostsTracking.keep(attrs, None)
                 Right(resp.copy(metadata = resp.metadata.copy(budget = budget)))
               case Some(costs) => {
-                attrs.put(ChatClientWithCostsTracking.key -> costs)
+                ChatClientWithCostsTracking.keep(attrs, costs.some)
                 val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_costs")).contains("true")
                 if (ext.costsTrackingSettings.embedCostsTrackingInResponses || enableInRequest) {
                   Right(resp.copy(metadata = resp.metadata.copy(costs = costs.some, budget = budget)))

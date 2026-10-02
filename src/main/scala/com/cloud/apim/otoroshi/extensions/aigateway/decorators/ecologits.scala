@@ -796,6 +796,11 @@ class LLMImpacts(settings: LLMImpactsSettings, env: Env) {
 
 object ChatClientWithEcoImpact {
   val key = TypedKey[ImpactsOutput]("cloud-apim.ai-gateway.ImpactsOutputKey")
+  // the footprint of a call is the one found for it, and none when its model was not measured: see `ChatClientWithCostsTracking.keep`
+  def keep(attrs: TypedMap, impacts: Option[ImpactsOutput]): Unit = impacts match {
+    case Some(found) => attrs.put(key -> found)
+    case None => attrs.remove(key)
+  }
   val enabledRef = new AtomicReference[Option[Boolean]](None)
   def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
     if (enabledRef.get().isEmpty) {
@@ -849,9 +854,15 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
     }
   }
 
+  // a stream runs the tools of the call while it is read: what they left is forgotten once it ends, before auditing reads it
+  private def withoutImpacts(attrs: TypedMap, stream: Source[ChatResponseChunk, ?]): Source[ChatResponseChunk, ?] = {
+    if (HandOver.by(attrs, originalProvider)) stream
+    else stream.alsoTo(Sink.onComplete(_ => ChatClientWithEcoImpact.keep(attrs, None)))
+  }
+
   private def handleStream(attrs: TypedMap, originalBody: JsValue)(f: => Future[Either[JsValue, Source[ChatResponseChunk, ?]]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     getProvider() match {
-      case None => f // unsupported provider
+      case None => f.map(_.map(withoutImpacts(attrs, _))) // unsupported provider
       case Some(provider) => {
         val start = System.currentTimeMillis()
         f.map {
@@ -897,17 +908,19 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
                   electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
                 ) match {
                   // finish reasons were stripped above: the stream must still end with one
-                  case Left(_) => promise.trySuccess(if (addCostsInResp) terminal(None).some else None)
+                  case Left(_) =>
+                    ChatClientWithEcoImpact.keep(attrs, None)
+                    promise.trySuccess(if (addCostsInResp) terminal(None).some else None)
                   case Right(impacts) if !addCostsInResp =>
-                    attrs.put(ChatClientWithEcoImpact.key -> impacts)
+                    ChatClientWithEcoImpact.keep(attrs, impacts.some)
                     promise.trySuccess(None)
                   case Right(impacts) =>
-                    attrs.put(ChatClientWithEcoImpact.key -> impacts)
+                    ChatClientWithEcoImpact.keep(attrs, impacts.some)
                     promise.trySuccess(terminal(impacts.some).some)
                 }
               }).concat(Source.lazyFuture(() => promise.future).flatMapConcat(opt => Source(opt.toList))).right
             } else {
-              resp.right
+              withoutImpacts(attrs, resp).right
             }
 
           }
@@ -918,7 +931,10 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
 
   override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     getProvider() match {
-      case None => chatClient.invoke(kind, prompt, attrs, originalBody) // unsupported provider
+      case None => chatClient.invoke(kind, prompt, attrs, originalBody).map { resp => // unsupported provider
+        if (resp.isRight && !HandOver.by(attrs, originalProvider)) ChatClientWithEcoImpact.keep(attrs, None)
+        resp
+      }
       case Some(provider) => {
         val start = System.currentTimeMillis()
         chatClient.invoke(kind, prompt, attrs, originalBody).map {
@@ -935,9 +951,11 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
               requestLatency = (System.currentTimeMillis() - start).toDouble,
               electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
             ) match {
-              case Left(_) => Right(resp)
+              case Left(_) =>
+                ChatClientWithEcoImpact.keep(attrs, None)
+                Right(resp)
               case Right(impacts) => {
-                attrs.put(ChatClientWithEcoImpact.key -> impacts)
+                ChatClientWithEcoImpact.keep(attrs, impacts.some)
                 // impacts.json(ext.llmImpactsSettings.embedDescriptionInJson).prettify.debugPrintln
                 val enableInRequest = attrs.get(otoroshi.plugins.Keys.RequestKey).flatMap(_.getQueryString("embed_impacts")).contains("true")
                 if (ext.llmImpactsSettings.embedImpactsInResponses || enableInRequest) {

@@ -18,6 +18,8 @@ This is the most powerful backend kind — workflows can chain HTTP calls, trans
 4. The workflow executes its steps (HTTP calls, data transformations, LLM calls, etc.)
 5. The workflow `returned` value is sent back to the LLM as the tool result
 
+The models a workflow calls are accounted for on their own: each one is billed, audited and counted against its budgets as the model it is. The chat call that ran the tool keeps the cost and the footprint of its own model.
+
 ## Configuration
 
 ```js
