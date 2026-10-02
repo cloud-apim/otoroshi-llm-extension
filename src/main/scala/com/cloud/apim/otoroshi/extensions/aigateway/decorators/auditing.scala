@@ -4,7 +4,7 @@ import org.apache.pekko.http.scaladsl.util.FastFuture
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.redactedJson
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions, AiBudgetUsageKind, AiBudgetsDataStore, AiProvider, AudioModel, DecisionModel, EmbeddingModel, ImageModel, ModerationModel, OcrModel, VideoModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions, AiBudgetUsageKind, AiBudgetsDataStore, AiProvider, AudioModel, DecisionModel, EmbeddingModel, ImageModel, ModerationModel, OcrModel, VideoModel, WithingBudgetConsumptions}
 import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, DecisionModelClient, DecisionModelClientInputOptions, DecisionResponse, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
@@ -148,7 +148,10 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     val ext = env.adminExtensions.extension[AiExtension].get
     val totalCost = costs.map(_.totalCost)
     val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
-    ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs).map { budgetIds =>
+    // a call handed over to another provider was counted against budgets by that provider, which served it
+    val counted = if (HandOver.by(attrs, originalProvider)) WithingBudgetConsumptions().vfuture
+      else ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs)
+    counted.map { budgetIds =>
       AuditEvent.generic("LLMUsageAudit") {
         usageSlug ++ commonFields(consumedUsing, prompt, attrs, originalBody) ++ output ++ Json.obj(
           "error" -> JsNull,
@@ -164,6 +167,7 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
 
   // the budget check needs the provider and the model in the attrs
   private def prepare(attrs: TypedMap, originalBody: JsValue): Unit = {
+    HandOver.start(attrs, originalProvider)
     attrs.put(ChatClientWithAuding.ProviderKey -> originalProvider)
     attrs.put(ChatClientWithAuding.ModelKey -> originalBody.select("model").asOptString.orElse(originalProvider.options.select("model").asOptString).getOrElse("--"))
   }

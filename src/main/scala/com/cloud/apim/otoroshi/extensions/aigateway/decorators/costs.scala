@@ -1132,6 +1132,8 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
       case Some(provider) => {
         f.map {
           case Left(err) => Left(err)
+          // the provider this call was handed over to has priced it, with its own prices
+          case Right(resp) if HandOver.by(attrs, originalProvider) => Right(resp)
           case Right(resp) => {
             val promise = Promise.apply[Option[ChatResponseChunk]]()
             val ext = env.adminExtensions.extension[AiExtension].get
@@ -1201,6 +1203,8 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
       case Some(provider) => {
         chatClient.invoke(kind, prompt, attrs, originalBody).map {
           case Left(err) => Left(err)
+          // the provider this call was handed over to has priced it, with its own prices
+          case Right(resp) if HandOver.by(attrs, originalProvider) => Right(resp)
           case Right(resp) => {
             val usage = resp.metadata.usage
             val ext = env.adminExtensions.extension[AiExtension].get

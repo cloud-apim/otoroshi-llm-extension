@@ -339,8 +339,10 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   ////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   // the candidate serves the call the consumers made to the router, if they were allowed to
-  private def delegate(attrs: TypedMap, originalBody: JsValue, candidate: AiProvider, client: ChatClient, body: JsValue): Unit =
+  private def delegate(attrs: TypedMap, originalBody: JsValue, candidate: AiProvider, client: ChatClient, body: JsValue): Unit = {
     ModelConstraints.delegate(attrs, ModelTarget.of(provider), originalBody.select("model").asOptString, candidate, client, body)
+    HandOver.mark(attrs, provider)
+  }
 
   private def isFusion(originalBody: JsValue): Boolean =
     originalBody.select("model").asOptString.exists(_.toLowerCase.contains("fusion"))

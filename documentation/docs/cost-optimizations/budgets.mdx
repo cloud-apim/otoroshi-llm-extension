@@ -51,7 +51,7 @@ A budget is defined for a scope based on pretty much whatever you want (apikey, 
 | `apikeys` | List of API key IDs |
 | `users` | List of user emails or IDs (regexes). Calls made with an API key count for the owner of the key (its `ai_studio_owner` metadata) when no user is authenticated |
 | `groups` | List of API group IDs |
-| `providers` | List of LLM provider IDs |
+| `providers` | List of LLM provider IDs. A request handed over to another provider (its fallback, the target of a load balancer, the candidate of a router) counts once, for the provider that served it |
 | `models` | List of model names |
 | `extractFromApikeyMeta` | Extract budget ref from API key metadata |
 | `extractFromApikeyGroupMeta` | Extract budget ref from API key group metadata |

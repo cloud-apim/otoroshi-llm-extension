@@ -9,17 +9,27 @@ import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, JsValue, Json}
+import play.api.libs.typedmap.TypedKey
 
 import scala.concurrent.{ExecutionContext, Future}
-import scala.util.{Failure, Success}
+import scala.util.{Failure, Success, Try}
 
 object ChatClientWithProviderFallback {
+
+  private val WaitingKey = TypedKey[java.util.Set[String]]("cloud-apim.ai-gateway.FallbackWaiting")
+
   def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
     if (tuple._1.providerFallback.isDefined) {
       new ChatClientWithProviderFallback(tuple._1, tuple._2)
     } else {
       tuple._2
     }
+  }
+
+  // the providers that failed for the call at hand, and are waiting for their fallback to answer it
+  private def waiting(attrs: TypedMap): java.util.Set[String] = {
+    attrs.putIfAbsent(WaitingKey -> java.util.concurrent.ConcurrentHashMap.newKeySet[String]())
+    attrs.get(WaitingKey).get
   }
 }
 
@@ -54,8 +64,7 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
   private def withFallback[T](originalBody: JsValue, attrs: TypedMap)(op: (ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val settings = CircuitBreakerSettings.fromProvider(originalProvider)
 
-    def callFallback(err: JsValue): Future[Either[JsValue, T]] = {
-      AiMetrics.markFallback()
+    def handOver(err: JsValue): Future[Either[JsValue, T]] = {
       fallbackClient() match {
         case None => err.leftf
         case Some((fallback, client)) =>
@@ -65,8 +74,23 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
           // the primary may have been skipped (open circuit): its model restrictions still decide
           ModelConstraints.check(target, requested, attrs) {
             ModelConstraints.delegate(attrs, target, requested, fallback, client, body)
+            HandOver.mark(attrs, originalProvider)
             op(client, body)
           }
+      }
+    }
+
+    def callFallback(err: JsValue): Future[Either[JsValue, T]] = {
+      AiMetrics.markFallback()
+      val waiting = ChatClientWithProviderFallback.waiting(attrs)
+      val fallbackRef = originalProvider.providerFallback.get
+      // A provider waiting for its fallback has already failed for this call. Asking it again, or letting it
+      // fall back a second time, is how providers falling back on each other would call each other for ever:
+      // the error at hand is the answer
+      if (fallbackRef == originalProvider.id || waiting.contains(fallbackRef) || !waiting.add(originalProvider.id)) {
+        err.leftf
+      } else {
+        Try(handOver(err)).fold(e => Future.failed(e), identity).andThen { case _ => waiting.remove(originalProvider.id) }
       }
     }
 

@@ -97,6 +97,12 @@ Provider A (primary)
 }
 ```
 
+A chain always ends. A provider that already failed for a request is not asked for it again: two providers naming each other as fallback are each tried once, then the last error goes back to the caller.
+
+## Costs and budgets
+
+A request served by a fallback is priced and counted against your [budgets](/docs/cost-optimizations/budgets) once, at the price of the provider and the model that actually answered it. The same goes for the cost reported to the caller, in the response and in its headers.
+
 ## Combining with load balancing
 
 Fallback and load balancing work together. You can set a fallback on a load balancer provider, or set fallbacks on individual providers within the load balancer:
