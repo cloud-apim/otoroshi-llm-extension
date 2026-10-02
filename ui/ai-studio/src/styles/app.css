@@ -175,17 +175,7 @@ p { margin: 0; }
   padding: 0 28px;
 }
 .brand { display: flex; letter-spacing: -0.02em; align-items: center; gap: 10px; font-size: 18px; font-weight: 700; cursor: pointer; }
-.brand-mark {
-  background: var(--grape);
-  display: grid;
-  color: #fff;
-  border-radius: 50%;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  font-size: 13px;
-  font-weight: 800;
-}
+.brand-mark { display: block; border-radius: 8px; width: 32px; height: 32px; }
 .topbar .search { flex: 0 1 320px; }
 .topbar .experimental { margin-left: -8px; cursor: help; text-transform: uppercase; letter-spacing: 0.04em; font-size: 10.5px; font-weight: 600; }
 .topbar nav { display: flex; gap: 4px; margin-left: auto; }

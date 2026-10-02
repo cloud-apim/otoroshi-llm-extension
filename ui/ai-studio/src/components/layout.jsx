@@ -3,6 +3,7 @@ import { bootstrap } from '../lib/bootstrap';
 import { initials } from '../lib/format';
 import { Link, useRouter } from '../lib/router';
 import { Icon } from './icons';
+import cloudApimLogo from '../assets/cloud-apim-logo.svg';
 
 export const WORKSPACE_PAGES = [
   { id: 'overview', label: 'Overview', icon: 'grid' },
@@ -152,8 +153,8 @@ export function Topbar({ theme, workspaces, currentWorkspace }) {
   ].filter(Boolean);
   return (
     <header className="topbar">
-      <Link to="/" className="brand">
-        <span className="brand-mark">AS</span>
+      <Link to="/" className="brand" title="AI Studio, by Cloud APIM">
+        <img className="brand-mark" src={cloudApimLogo} alt="Cloud APIM" />
         AI Studio
       </Link>
       <span className="badge warning experimental" title="AI Studio is experimental: it does not cover everything the LLM extension can do yet, and may change in future releases">
