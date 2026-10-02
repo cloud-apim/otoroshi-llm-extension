@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.AzureOpenAiApi
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, LlmExtensionOneOtoroshiServerPerSuite}
 import otoroshi.env.Env
 import otoroshi.models.EntityLocation
@@ -19,7 +20,8 @@ import scala.concurrent.duration.DurationInt
 // How long an answer may be is `max_tokens` for about every OpenAI compatible api, and `max_completion_tokens` for
 // OpenAI, whose reasoning models refuse the first name. OpenAI is sent the name it wants; the other providers
 // served by the same client are sent what the caller, or their own configuration, said. A request in the Anthropic
-// format always carries a `max_tokens`: it reaches each provider under the name that provider knows.
+// format always carries a `max_tokens`: it reaches each provider under the name that provider knows. Azure OpenAI
+// serves the models of OpenAI behind two api surfaces: `v1` is the one of OpenAI, the dated versions are older.
 class MaxTokensSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
   val received = new AtomicReference[JsValue](JsNull)
@@ -134,5 +136,15 @@ class MaxTokensSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     Seq(compatible, deepseek, mistral).foreach { p =>
       assertEquals(limitsSentForMessages(p), Json.obj("max_tokens" -> 50), s"max_tokens sent to ${p.provider}")
     }
+  }
+
+  // the url of an Azure OpenAI resource is made of its name: no call can be sent to a server of the suite
+  test("Azure OpenAI is sent max_completion_tokens on its v1 api, the name the caller used on a dated api version") {
+    assertEquals(AzureOpenAiApi.withTokenLimit("v1", Json.obj("max_tokens" -> 50)), Json.obj("max_completion_tokens" -> 50))
+    assertEquals(AzureOpenAiApi.withTokenLimit("v1", Json.obj("max_completion_tokens" -> 50)), Json.obj("max_completion_tokens" -> 50))
+    assertEquals(AzureOpenAiApi.withTokenLimit("v1", Json.obj("max_tokens" -> 64, "max_completion_tokens" -> 50)), Json.obj("max_completion_tokens" -> 50), "what the caller asked for wins over the limit of the provider")
+    assertEquals(AzureOpenAiApi.withTokenLimit("v1", Json.obj("temperature" -> 1)), Json.obj("temperature" -> 1))
+    assertEquals(AzureOpenAiApi.withTokenLimit("2024-06-01", Json.obj("max_tokens" -> 50)), Json.obj("max_tokens" -> 50))
+    assertEquals(AzureOpenAiApi.withTokenLimit("2025-04-01-preview", Json.obj("max_completion_tokens" -> 50)), Json.obj("max_completion_tokens" -> 50))
   }
 }

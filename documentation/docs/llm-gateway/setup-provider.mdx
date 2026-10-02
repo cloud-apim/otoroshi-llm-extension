@@ -111,6 +111,8 @@ Each request will use the next token in a round-robin fashion, helping to distri
 }
 ```
 
+With the `v1` API version, the limit of an answer reaches Azure OpenAI as `max_completion_tokens`, whether the request named it `max_tokens` or `max_completion_tokens`: reasoning deployments are called like any other. With a dated API version, it reaches Azure under the name the request gave it.
+
 #### Cloudflare
 
 | Field | Type | Description |

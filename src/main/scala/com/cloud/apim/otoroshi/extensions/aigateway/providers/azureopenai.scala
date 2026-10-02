@@ -159,6 +159,13 @@ object AzureOpenAiApi {
       urlPreV1(resourceName, deploymentId, version, path)
     }
   }
+  // the `v1` api is the one of OpenAI, whose reasoning models only take how long an answer may be as
+  // `max_completion_tokens`. A dated api version is sent what the caller said: the oldest ones only know `max_tokens`
+  def withTokenLimit(version: String, body: JsObject): JsObject = body.select("max_tokens").asOpt[Long] match {
+    case Some(_) if version == "v1" && body.select("max_completion_tokens").asOpt[Long].isDefined => body - "max_tokens"
+    case Some(maxTokens) if version == "v1" => body - "max_tokens" ++ Json.obj("max_completion_tokens" -> maxTokens)
+    case _ => body
+  }
 }
 // https://learn.microsoft.com/en-us/azure/ai-services/openai/reference
 class AzureOpenAiApi(val resourceName: String, val deploymentId: String, val version: String, apikey: Option[String], bearer: Option[String], timeout: FiniteDuration = 3.minutes, env: Env, providerId: Option[String] = None) extends ApiClient[AzureOpenAiApiResponse, AzureOpenAiChatResponseChunk] {
@@ -537,7 +544,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = withModelForV1(if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
+    val mergedOptions = AzureOpenAiApi.withTokenLimit(api.version, withModelForV1(if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall))
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
@@ -596,7 +603,7 @@ class AzureOpenAiChatClient(api: AzureOpenAiApi, options: AzureOpenAiChatClientO
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = withModelForV1(if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall)
+    val mergedOptions = AzureOpenAiApi.withTokenLimit(api.version, withModelForV1(if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall))
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val startTime = System.currentTimeMillis()
     val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)

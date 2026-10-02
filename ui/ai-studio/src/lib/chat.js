@@ -2,6 +2,36 @@ import { gatewayError } from './api';
 import { currentTenant } from './bootstrap';
 import { billedProxyUrl } from './models';
 
+// The request settings of the chat. A sampling setting left to `null` is not sent, the model uses its own: a
+// reasoning model, which takes no temperature, no top p and no `max_tokens`, answers like any other.
+// `tools`: null when every tool of the provider is offered, the ids to offer otherwise
+export const DEFAULT_SETTINGS = { system: '', stream: true, temperature: null, top_p: null, max_tokens: null, preset: '', tools: null };
+
+// What the chat used to send when nothing was set. A browser kept them with its preferences, as if they had been
+// chosen: they are forgotten the first time these preferences are read again.
+const FORMER_DEFAULTS = { temperature: 0.7, top_p: 1, max_tokens: 1024 };
+const PREFS_VERSION = 2;
+
+export function chatPrefs(stored) {
+  const prefs = stored || {};
+  if (prefs.version === PREFS_VERSION) return prefs;
+  const settings = { ...(prefs.settings || {}) };
+  Object.keys(FORMER_DEFAULTS).forEach((name) => {
+    if (settings[name] === FORMER_DEFAULTS[name]) settings[name] = null;
+  });
+  return { ...prefs, settings, version: PREFS_VERSION };
+}
+
+// the sampling parameters of a request: the ones that were set, and only them
+export function samplingOf(settings) {
+  const set = (v) => v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v));
+  return {
+    ...(set(settings.temperature) ? { temperature: Number(settings.temperature) } : {}),
+    ...(set(settings.top_p) ? { top_p: Number(settings.top_p) } : {}),
+    ...(set(settings.max_tokens) && Number(settings.max_tokens) > 0 ? { max_tokens: Number(settings.max_tokens) } : {}),
+  };
+}
+
 // Calls the workspace endpoint as the signed-in backoffice user (no api key) and streams the answer. `onDelta(content, reasoning)` receives the text as it arrives.
 // `sessionId` groups the calls of one conversation in the logs. `costs` is what the gateway billed for the answer, when the model has a known price.
 // the images an answer carries: the gateway puts what a model drew in `message.images`, openai style

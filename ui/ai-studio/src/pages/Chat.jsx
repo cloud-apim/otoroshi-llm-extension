@@ -3,7 +3,7 @@ import { useWorkspace } from '../App';
 import { Badge, CopyButton, Field, MenuButton, Modal, NumberInput, Select, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
 import { Markdown } from '../components/Markdown';
-import { chatCompletion } from '../lib/chat';
+import { chatCompletion, chatPrefs, DEFAULT_SETTINGS, samplingOf } from '../lib/chat';
 import { generateImage } from '../lib/images';
 import { Resources, randomId, workspaceFilter } from '../lib/entities';
 import { listAttachedTools, TOOL_LABELS } from '../lib/tools';
@@ -50,9 +50,6 @@ const SUGGESTIONS = [
   { title: 'Car Wash Test', prompt: 'It is raining. Should I walk or drive to the car wash 200 m away?' },
 ];
 
-// `tools`: null when every tool of the provider is offered, the ids to offer otherwise
-const DEFAULT_SETTINGS = { system: '', stream: true, temperature: 0.7, top_p: 1, max_tokens: 1024, preset: '', tools: null };
-
 function storageGet(key, fallback) {
   try {
     const v = window.localStorage.getItem(key);
@@ -69,6 +66,27 @@ function storageSet(key, value) {
 }
 
 // what tells two chat models apart at a glance
+// The name of a sampling setting with its value, and the way back to the default of the model once it is set
+function SamplingLabel({ name, value, onUnset }) {
+  if (value === undefined) {
+    return (
+      <span>
+        {name} · <span className="faint">model default</span>
+      </span>
+    );
+  }
+  return (
+    <>
+      <span>
+        {name} · {value}
+      </span>
+      <button type="button" className="link small" onClick={onUnset}>
+        Model default
+      </button>
+    </>
+  );
+}
+
 function pickerFacts(model) {
   const facts = [];
   if (imageGenerator(model)) facts.push('draws images');
@@ -332,7 +350,7 @@ export function ChatPage() {
   // models of the workspace are served on its images endpoint, and draw instead of answering.
   const textModels = ((models.data && models.data.models) || []).filter((m) => chatUsable(m) || imageGenerator(m));
 
-  const [prefs, setPrefs] = useState(() => storageGet(prefKey, { model: '', settings: DEFAULT_SETTINGS, showSettings: true }));
+  const [prefs, setPrefs] = useState(() => chatPrefs(storageGet(prefKey, { model: '', settings: DEFAULT_SETTINGS, showSettings: true })));
   const settings = { ...DEFAULT_SETTINGS, ...(prefs.settings || {}) };
   const updatePrefs = (patch) =>
     setPrefs((p) => {
@@ -341,6 +359,7 @@ export function ChatPage() {
       return next;
     });
   const setSettings = (patch) => updatePrefs({ settings: { ...settings, ...patch } });
+  const sampling = samplingOf(settings);
 
   // the displayed conversation, also kept in a ref so the answers coming in find it
   const [conversation, setConversation] = useState(null);
@@ -551,9 +570,7 @@ export function ChatPage() {
   const requestBody = (requested, history) => ({
     model: requested,
     messages: settings.system ? [{ role: 'system', content: settings.system }, ...history] : history,
-    temperature: Number(settings.temperature),
-    top_p: Number(settings.top_p),
-    ...(settings.max_tokens ? { max_tokens: Number(settings.max_tokens) } : {}),
+    ...samplingOf(settings),
     ...(settings.preset ? { context: settings.preset } : {}),
     // the gateway narrows the tools of the provider to these ones; nothing is sent when they are all offered
     ...(settings.tools === null ? {} : { allowed_tools: offeredTools.map((t) => t.id) }),
@@ -964,7 +981,9 @@ export function ChatPage() {
                       }}
                     />
                     <span className="faint small truncate">
-                      {settings.stream ? 'Streaming' : 'Blocking'} · temp {settings.temperature} · max {settings.max_tokens || '∞'} tokens
+                      {settings.stream ? 'Streaming' : 'Blocking'}
+                      {sampling.temperature !== undefined ? ` · temp ${sampling.temperature}` : ''}
+                      {sampling.max_tokens !== undefined ? ` · max ${sampling.max_tokens} tokens` : ''}
                       {settings.preset ? ` · preset ${settings.preset}` : ''}
                       {availableTools.length > 0 && settings.tools !== null ? ` · ${offeredTools.length}/${availableTools.length} tools` : ''}
                       {carried > 0 ? ` · ${fmtBytes(carried)} of files` : ''}
@@ -1009,14 +1028,30 @@ export function ChatPage() {
               <Field label="Streaming">
                 <Toggle value={settings.stream} onChange={(v) => setSettings({ stream: v })} />
               </Field>
-              <Field label={`Temperature · ${settings.temperature}`}>
-                <input type="range" min="0" max="2" step="0.1" value={settings.temperature} onChange={(e) => setSettings({ temperature: Number(e.target.value) })} />
+              <Field label={<SamplingLabel name="Temperature" value={sampling.temperature} onUnset={() => setSettings({ temperature: null })} />}>
+                <input
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  className={sampling.temperature === undefined ? 'unset' : ''}
+                  value={sampling.temperature ?? 1}
+                  onChange={(e) => setSettings({ temperature: Number(e.target.value) })}
+                />
               </Field>
-              <Field label={`Top P · ${settings.top_p}`}>
-                <input type="range" min="0" max="1" step="0.05" value={settings.top_p} onChange={(e) => setSettings({ top_p: Number(e.target.value) })} />
+              <Field label={<SamplingLabel name="Top P" value={sampling.top_p} onUnset={() => setSettings({ top_p: null })} />}>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  className={sampling.top_p === undefined ? 'unset' : ''}
+                  value={sampling.top_p ?? 1}
+                  onChange={(e) => setSettings({ top_p: Number(e.target.value) })}
+                />
               </Field>
-              <Field label="Max tokens">
-                <NumberInput value={settings.max_tokens} onChange={(v) => setSettings({ max_tokens: v })} />
+              <Field label="Max tokens" hint="Temperature, top P and max tokens are only sent once set: a model is otherwise left to its own.">
+                <NumberInput min="1" placeholder="Model default" value={settings.max_tokens} onChange={(v) => setSettings({ max_tokens: v })} />
               </Field>
               <button className="btn ghost" onClick={() => setSettings(DEFAULT_SETTINGS)}>
                 Reset

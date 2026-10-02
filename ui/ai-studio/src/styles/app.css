@@ -717,6 +717,9 @@ dialog.modal::backdrop { background: rgba(3, 8, 10, 0.35); }
 .room .del { visibility: hidden; }
 .room:hover .del { visibility: visible; }
 .chat-settings { border-left: 1px solid var(--border); background: var(--surface); overflow: auto; display: flex; flex-direction: column; gap: 14px; width: 320px; padding: 18px 16px; }
+.chat-settings .field label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.chat-settings .field label .faint { font-weight: 400; }
+.chat-settings input[type='range'].unset { opacity: 0.45; }
 .chat-body { display: flex; flex: 1 1 0%; min-height: 0; overflow: hidden; }
 .chat-body .chat-main { flex: 1 1 0%; }
 
