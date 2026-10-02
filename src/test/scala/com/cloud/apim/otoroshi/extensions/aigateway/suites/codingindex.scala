@@ -19,11 +19,17 @@ class CodingIndexSuite extends munit.FunSuite {
     Json.obj("slug" -> "x3", "coding_index" -> 20.0),
     Json.obj("slug" -> "bolt3-7-max", "coding_index" -> 50.0),
     Json.obj("slug" -> "muse-4-5-small", "coding_index" -> 35.0),
+    Json.obj("slug" -> "acme-4o-2024-05-13", "coding_index" -> 25.0),
+    // models that are only scored in some of their reasoning modes
+    Json.obj("slug" -> "nova-2-thinking", "coding_index" -> 55.0),
+    Json.obj("slug" -> "nova-2-low", "coding_index" -> 32.0),
+    Json.obj("slug" -> "tiny-4-5-nano-non-reasoning", "coding_index" -> 12.0),
+    Json.obj("slug" -> "mid-medium-3", "coding_index" -> 28.0),
     Json.obj("slug" -> "no-score"),
   )))
 
   test("a model is found under the name its provider gives it") {
-    assertEquals(index.size, 7, "a model without a score is not in the index")
+    assertEquals(index.size, 12, "a model without a score is not in the index")
     Seq("acme-5-5", "acme-5.5", "ACME-5.5", "vendor/acme-5.5", "acme-5.5:free", "acme-5.5-2026-04-01", "acme-5.5-20260401", "acme-5.5-latest", "my-acme-5-5-deployment").foreach { name =>
       assertEquals(index.scoreFor(name), Some(60.0), name)
     }
@@ -57,6 +63,25 @@ class CodingIndexSuite extends munit.FunSuite {
     assertEquals(index.scoreFor("muse-small-4-6"), None)
   }
 
+  test("a snapshot date that is part of the name of a model is not left out") {
+    assertEquals(index.scoreFor("acme-4o-2024-05-13"), Some(25.0))
+    assertEquals(index.scoreFor("vendor/acme-4o-2024-05-13"), Some(25.0))
+    assertEquals(index.scoreFor("acme-4o-2024-08-06"), None, "another snapshot is another model")
+    assertEquals(index.scoreFor("acme-4o"), None)
+  }
+
+  test("a model only scored in some of its reasoning modes is given its best one") {
+    assertEquals(index.scoreFor("nova-2"), Some(55.0))
+    assertEquals(index.scoreFor("vendor/nova-2-20260401"), Some(55.0))
+    assertEquals(index.scoreFor("nova-2-low"), Some(32.0), "a mode that is named keeps its own score")
+    assertEquals(index.scoreFor("tiny-nano-4-5"), Some(12.0), "whatever the order of its words")
+    // `medium` is a mode at the end of a name only: in the middle, it is the name of the model
+    assertEquals(index.scoreFor("mid-medium-3"), Some(28.0))
+    assertEquals(index.scoreFor("mid-3"), None)
+    // a model that has a score of its own keeps it, its modes do not replace it
+    assertEquals(index.scoreFor("acme-5.5"), Some(60.0))
+  }
+
   test("the index bundled with the gateway is the one the router reads") {
     val bundled = Json.parse(getClass.getClassLoader.getResourceAsStream(CodingIndex.resource))
     assert(bundled.select("origin").asOptString.exists(_.contains("artificialanalysis.ai")), "the file says where it comes from")
@@ -65,7 +90,7 @@ class CodingIndexSuite extends munit.FunSuite {
     assertEquals(CodingIndex.bundled.size, models.size, "every model of the file is in the index")
     models.foreach { model =>
       val (slug, score) = (model.select("slug").asString, model.select("coding_index").as[Double])
-      assert(score > 0 && score <= 100, s"${slug}: ${score} is not a coding index")
+      assert(score >= 0 && score <= 100, s"${slug}: ${score} is not a coding index")
       assertEquals(OtoroshiRouterChatClient.codingScoreFor(slug), Some(score), s"${slug} should be scored as the file says")
     }
   }

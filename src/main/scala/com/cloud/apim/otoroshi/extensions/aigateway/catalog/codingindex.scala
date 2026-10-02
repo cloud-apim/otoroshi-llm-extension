@@ -14,6 +14,10 @@ import scala.util.Try
  * slug has dashes, or is the name of a deployment. A model gets the score of the longest slug it carries, compared
  * word by word so that `o3` is not found in `gemini-pro-3`, and never the score of an earlier version (`gpt-5` is
  * not the score of `gpt-5.5`). A model nobody scored has no score: the router ranks it last.
+ *
+ * Artificial Analysis scores a model in each of its reasoning modes (`gpt-5-5`, `gpt-5-5-medium`, `gpt-5-5-low`),
+ * the slug without a mode being the model at its best. Some models are only there with a mode
+ * (`claude-sonnet-4-6-adaptive`): under its own name such a model is given its best mode too.
  */
 final class CodingIndex(scores: Seq[(String, Double)]) {
 
@@ -22,32 +26,46 @@ final class CodingIndex(scores: Seq[(String, Double)]) {
   private case class Entry(words: Seq[String], compact: String, score: Double)
 
   // the longest slugs first: the most specific one wins
-  private val entries: Seq[Entry] = scores
-    .map { case (slug, score) => Entry(words(slug), compact(slug), score) }
-    .filter(_.words.nonEmpty)
-    .sortBy(e => (-e.words.size, -e.compact.length))
+  private def ordered(entries: Seq[Entry]): Seq[Entry] = entries.filter(_.words.nonEmpty).sortBy(e => (-e.words.size, -e.compact.length))
+
+  private val entries: Seq[Entry] = ordered(scores.map { case (slug, score) => Entry(words(slug), compact(slug), score) })
+
+  // the models that are only there with a reasoning mode, under their own name and with their best score
+  private val unmoded: Seq[Entry] = {
+    val known = entries.map(_.words).toSet
+    ordered(entries
+      .map(e => (e.words.reverse.dropWhile(modes.contains).reverse, e.score))
+      .filter { case (model, _) => model.nonEmpty && !known.contains(model) }
+      .groupBy(_._1).toSeq
+      .map { case (model, scored) => Entry(model, model.mkString, scored.map(_._2).max) })
+  }
 
   val size: Int = entries.size
 
+  private def find(entries: Seq[Entry], named: Seq[String], name: String): Option[Entry] = {
+    entries.find(e => carries(named, e.words)(_ == _))
+      // the same name, cut differently: `qwen-3.7-max` and `qwen3-7-max`
+      .orElse(entries.find(_.compact == compact(name)))
+      // the same words in another order: `claude-haiku-4-5` and `claude-4-5-haiku`
+      .orElse(entries.find(e => carries(named, e.words)(_.sorted == _.sorted)))
+  }
+
   def scoreFor(model: String): Option[Double] = {
-    // without its vendor path, its routing tag and its snapshot date
+    // every word of the id: a snapshot date may be part of a slug (`gpt-4o-2024-05-13`)
+    val named = words(model)
+    // the name alone, without its vendor path, its routing tag and its snapshot date
     val name = ModelIds.name(model)
-    val named = words(name)
     if (named.isEmpty) None
-    else {
-      entries.find(e => carries(named, e.words)(_ == _))
-        // the same name, cut differently: `qwen-3.7-max` and `qwen3-7-max`
-        .orElse(entries.find(_.compact == compact(name)))
-        // the same words in another order: `claude-haiku-4-5` and `claude-4-5-haiku`
-        .orElse(entries.find(e => carries(named, e.words)(_.sorted == _.sorted)))
-        .map(_.score)
-    }
+    else find(entries, named, name).orElse(find(unmoded, named, name)).map(_.score)
   }
 }
 
 object CodingIndex {
 
   val resource = "data/coding-index.json"
+
+  // the reasoning modes a slug ends with: `-non-reasoning`, `-thinking`, `-adaptive`, an effort
+  private val modes = Set("non", "reasoning", "thinking", "adaptive", "minimal", "low", "medium", "high", "xhigh")
 
   private def words(name: String): Seq[String] = name.toLowerCase.split("[^a-z0-9]+").toSeq.filter(_.nonEmpty)
 
