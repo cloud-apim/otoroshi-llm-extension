@@ -133,10 +133,15 @@ currency their prices come from and the rate applied, in `sources.pricing`.
 does the same for the models.dev catalog. Add a currency and its rate to price any other provider the same way: a
 price in a currency with no rate is never billed.
 
-For unsupported providers, you can set metadata on the provider entity to map it to a supported provider/model:
+A model the price table does not know under its own name can be priced as the model it is: a self-hosted model, an
+alias, a model served by an API the gateway has no prices for. Set these metadata on its entity, whatever its type
+(LLM provider, embedding, image, audio, video, moderation, OCR or decision model):
 
 - `costs-tracking-provider`: the provider name used for price lookup
 - `costs-tracking-model`: the model name used for price lookup
+
+The same lookup prices the calls, decides what **Require known costs** lets through and what `has_cost` says in the
+models listings.
 
 ### Refusing what cannot be billed
 

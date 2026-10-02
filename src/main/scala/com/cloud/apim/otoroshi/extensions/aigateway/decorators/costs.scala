@@ -393,17 +393,21 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
   // cost may still show up for a model the price table does not know.
   def providerReportsCosts(provider: String): Boolean = provider == "openrouter"
 
-  // the price table provider and model a call on this model is billed as, as the costs decorator resolves them.
-  // None when the provider cannot be billed at all.
-  def billedAs(provider: AiProvider, model: String): Option[(String, String)] = {
-    getProvider(provider.provider).map { pricingProvider =>
-      (provider.metadata.getOrElse("costs-tracking-provider", pricingProvider), provider.metadata.getOrElse("costs-tracking-model", model))
-    }
+  // The price table provider and model a call on a model of an entity is billed as, whatever the type of the
+  // entity. The `costs-tracking-provider` and `costs-tracking-model` metadata name them when the table does not
+  // know the model under its own name: a self hosted model, an alias, an api the gateway has no prices for. None
+  // when there is no provider to look a price up for. Every cost decorator, every `require_known_costs` gate and
+  // `has_cost` resolve it here.
+  def billedAs(providerKind: String, metadata: Map[String, String], model: String): Option[(String, String)] = {
+    def named(key: String): Option[String] = metadata.get(key).map(_.trim).filter(_.nonEmpty)
+    named("costs-tracking-provider").orElse(getProvider(providerKind)).map(pricingProvider => (pricingProvider, named("costs-tracking-model").getOrElse(model)))
   }
 
-  // embeddings and moderations are billed per token by their own decorators, which honour no provider metadata
-  def hasTokenCost(providerKind: String, model: String): Boolean = {
-    settings.enabled && getProvider(providerKind).exists(pricingProvider => canHandle(pricingProvider, model))
+  def billedAs(provider: AiProvider, model: String): Option[(String, String)] = billedAs(provider.provider, provider.metadata, model)
+
+  // embeddings, moderations and decisions are billed per token: the price entry is all it takes
+  def hasTokenCost(provider: AiProvider, model: String): Boolean = {
+    settings.enabled && billedAs(provider, model).exists { case (pricingProvider, billedModel) => canHandle(pricingProvider, billedModel) }
   }
 
   // whether the costs decorator gets a cost for a call on this model
@@ -512,6 +516,16 @@ object RequiredCosts {
     env.adminExtensions.extension[AiExtension].flatMap(_.costsTracking.getProvider(providerKind))
   }
 
+  // what a call on `model` of an entity is billed as, see `CostsTracking.billedAs`. A call whose model is not
+  // known is still told the provider its price would be looked up for
+  def billedAs(providerKind: String, metadata: Map[String, String], model: Option[String])(using env: Env): (Option[String], Option[String]) = {
+    val named = model.map(_.trim).filter(_.nonEmpty)
+    env.adminExtensions.extension[AiExtension].flatMap(_.costsTracking.billedAs(providerKind, metadata, named.getOrElse(""))) match {
+      case Some((provider, billed)) => (Some(provider), Some(billed).filter(_.nonEmpty))
+      case None => (None, named)
+    }
+  }
+
   // the price grid is the in-memory one: resource files, user provided prices and the synced catalogs
   def priceOf(provider: Option[String], model: String)(using env: Env): Option[CostModel] = {
     for {
@@ -572,8 +586,9 @@ private def audioModelIn(config: JsValue, section: String): Option[String] = {
 // The same gate for the non-text modalities, where the entity itself says which modality is served: they pass
 // their kind, and the audio ones the endpoint of the method called, because a voice and a transcription are
 // not billed on the same unit. Listing is not covered here on purpose - only text providers list models.
-private def requiredCostsOf(provider: String, settings: ModelSettings, model: Option[String], configured: => Option[String], kinds: Seq[String] = Seq.empty, endpoints: Seq[String] = Seq.empty)(using env: Env): Either[JsValue, Unit] = {
-  RequiredCosts.check(RequiredCosts.pricingProvider(provider), settings, model.orElse(configured), kinds, endpoints)
+private def requiredCostsOf(provider: String, metadata: Map[String, String], settings: ModelSettings, model: Option[String], configured: => Option[String], kinds: Seq[String] = Seq.empty, endpoints: Seq[String] = Seq.empty)(using env: Env): Either[JsValue, Unit] = {
+  val (pricingProvider, billedModel) = RequiredCosts.billedAs(provider, metadata, model.orElse(configured))
+  RequiredCosts.check(pricingProvider, settings, billedModel, kinds, endpoints)
 }
 
 object EmbeddingModelClientWithRequiredCosts {
@@ -583,7 +598,7 @@ object EmbeddingModelClientWithRequiredCosts {
 
 class EmbeddingModelClientWithRequiredCosts(originalModel: EmbeddingModel, val embeddingModelClient: EmbeddingModelClient) extends DecoratorEmbeddingModelClient {
   override def embed(opts: EmbeddingClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, EmbeddingResponse]] = {
-    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString) match {
+    requiredCostsOf(originalModel.provider, originalModel.metadata, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString) match {
       case Left(err) => err.leftf
       case Right(_) => embeddingModelClient.embed(opts, rawBody, attrs)
     }
@@ -598,7 +613,7 @@ object AudioModelClientWithRequiredCosts {
 class AudioModelClientWithRequiredCosts(originalModel: AudioModel, val audioModelClient: AudioModelClient) extends DecoratorAudioModelClient {
 
   private def check(model: Option[String], section: String, endpoint: String)(using env: Env): Either[JsValue, Unit] =
-    requiredCostsOf(originalModel.provider, originalModel.models, model, audioModelIn(originalModel.config, section),
+    requiredCostsOf(originalModel.provider, originalModel.metadata, originalModel.models, model, audioModelIn(originalModel.config, section),
       Seq(AiProvidersCatalog.Audio), Seq(endpoint))
 
   override def speechToText(opts: AudioModelClientSpeechToTextInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
@@ -631,7 +646,7 @@ object ImageModelClientWithRequiredCosts {
 class ImageModelClientWithRequiredCosts(originalModel: ImageModel, val imageModelClient: ImageModelClient) extends DecoratorImageModelClient {
 
   private def check(model: Option[String], slot: String)(using env: Env): Either[JsValue, Unit] =
-    requiredCostsOf(originalModel.provider, originalModel.models, model, originalModel.config.at(slot).asOptString,
+    requiredCostsOf(originalModel.provider, originalModel.metadata, originalModel.models, model, originalModel.config.at(slot).asOptString,
       Seq(AiProvidersCatalog.Image))
 
   override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
@@ -656,7 +671,7 @@ object VideoModelClientWithRequiredCosts {
 
 class VideoModelClientWithRequiredCosts(originalModel: VideoModel, val videoModelClient: VideoModelClient) extends DecoratorVideoModelClient {
   override def generate(opts: VideoModelClientTextToVideoInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, VideosGenResponse]] = {
-    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString,
+    requiredCostsOf(originalModel.provider, originalModel.metadata, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString,
       Seq(AiProvidersCatalog.Video)) match {
       case Left(err) => err.leftf
       case Right(_) => videoModelClient.generate(opts, rawBody, attrs)
@@ -671,20 +686,20 @@ object ModerationModelClientWithRequiredCosts {
 
 class ModerationModelClientWithRequiredCosts(originalModel: ModerationModel, val moderationModelClient: ModerationModelClient) extends DecoratorModerationModelClient {
   override def moderate(opts: ModerationModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ModerationResponse]] = {
-    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString) match {
+    requiredCostsOf(originalModel.provider, originalModel.metadata, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString) match {
       case Left(err) => err.leftf
       case Right(_) => moderationModelClient.moderate(opts, rawBody, attrs)
     }
   }
 }
 
-// What a call on a decision model is billed as. Unlike the other model types, a decision model honours the
-// `costs-tracking-provider` / `costs-tracking-model` metadata, the way a text provider does: a self hosted
-// server has no price of its own, and can be given the one of the model it runs.
+// What a call on a decision model is billed as: the `costs-tracking-provider` / `costs-tracking-model` metadata
+// when the entity has them, as for every model type. A self hosted server has no price of its own, and can be
+// given the one of the model it runs.
 object DecisionCosts {
 
   def pricingProvider(model: DecisionModel)(using env: Env): Option[String] =
-    model.metadata.get("costs-tracking-provider").map(_.trim).filter(_.nonEmpty).orElse(RequiredCosts.pricingProvider(model.provider))
+    RequiredCosts.billedAs(model.provider, model.metadata, None)._1
 
   // the names the call can be priced under, the most accurate first: the model the provider says it ran (a
   // dated version the price table may not know), then the one that was asked for
@@ -724,7 +739,7 @@ object OcrModelClientWithRequiredCosts {
 
 class OcrModelClientWithRequiredCosts(originalModel: OcrModel, val ocrModelClient: OcrModelClient) extends DecoratorOcrModelClient {
   override def ocr(opts: OcrModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, OcrModelClientResponse]] = {
-    requiredCostsOf(originalModel.provider, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString,
+    requiredCostsOf(originalModel.provider, originalModel.metadata, originalModel.models, opts.model, originalModel.config.at("options.model").asOptString,
       Seq(AiProvidersCatalog.Ocr)) match {
       case Left(err) => err.leftf
       case Right(_) => ocrModelClient.ocr(opts, rawBody, attrs)
@@ -746,11 +761,12 @@ object TokenBasedCosts {
   }
 
   // stores the cost where auditing reads it, so budgets, audit events and metrics all pick it up
-  def track(providerKind: String, model: Option[String], inputTokens: Long, outputTokens: Long, attrs: TypedMap)(using env: Env): Option[CostsOutput] = {
+  def track(providerKind: String, metadata: Map[String, String], model: Option[String], inputTokens: Long, outputTokens: Long, attrs: TypedMap)(using env: Env): Option[CostsOutput] = {
     val ext = env.adminExtensions.extension[AiExtension].get
+    val (pricingProvider, billedModel) = RequiredCosts.billedAs(providerKind, metadata, model)
     for {
-      provider <- RequiredCosts.pricingProvider(providerKind)
-      name <- model.filter(_.nonEmpty)
+      provider <- pricingProvider
+      name <- billedModel
       costs <- ext.costsTracking.computeCosts(provider, name, inputTokens, outputTokens, 0L).toOption
     } yield {
       attrs.put(ChatClientWithCostsTracking.key -> costs)
@@ -844,11 +860,12 @@ object ModalityCosts {
   }
 
   /** Stores the cost where auditing reads it, so budgets, audit events and metrics all pick it up. */
-  def track(providerKind: String, model: Option[String], attrs: TypedMap)(compute: CostModel => Option[CostsOutput])(using env: Env): Option[CostsOutput] = {
+  def track(providerKind: String, metadata: Map[String, String], model: Option[String], attrs: TypedMap)(compute: CostModel => Option[CostsOutput])(using env: Env): Option[CostsOutput] = {
     val ext = env.adminExtensions.extension[AiExtension].get
+    val (pricingProvider, billedModel) = RequiredCosts.billedAs(providerKind, metadata, model)
     for {
-      provider <- RequiredCosts.pricingProvider(providerKind)
-      name     <- model.map(_.trim).filter(_.nonEmpty)
+      provider <- pricingProvider
+      name     <- billedModel
       cost     <- ext.costsTracking.getModel(provider, name)
       output   <- compute(cost)
     } yield {
@@ -873,7 +890,7 @@ class EmbeddingModelClientWithCostsTracking(originalModel: EmbeddingModel, val e
         val model = Some(resp.model).filter(_.nonEmpty).orElse(opts.model).orElse(originalModel.config.at("options.model").asOptString)
         // embeddings are input only, and a provider that reports no usage yields -1: nothing to bill
         val tokens = math.max(0L, resp.metadata.tokenUsage)
-        val costs = TokenBasedCosts.track(originalModel.provider, model, tokens, 0L, attrs)
+        val costs = TokenBasedCosts.track(originalModel.provider, originalModel.metadata, model, tokens, 0L, attrs)
         if (TokenBasedCosts.embedInResponse(attrs)) {
           Right(resp.copy(metadata = resp.metadata.copy(costs = costs)))
         } else {
@@ -900,7 +917,7 @@ class ModerationModelClientWithCostsTracking(originalModel: ModerationModel, val
         // providers that only report a total put everything on the input side, which is how moderation bills
         val inputTokens = if (usage.input > 0 || usage.output > 0) math.max(0L, usage.input) else math.max(0L, usage.total)
         val outputTokens = math.max(0L, usage.output)
-        val costs = TokenBasedCosts.track(originalModel.provider, model, inputTokens, outputTokens, attrs)
+        val costs = TokenBasedCosts.track(originalModel.provider, originalModel.metadata, model, inputTokens, outputTokens, attrs)
         if (TokenBasedCosts.embedInResponse(attrs)) {
           Right(resp.copy(metadata = resp.metadata.copy(costs = costs)))
         } else {
@@ -959,7 +976,7 @@ class ImageModelClientWithCostsTracking(originalModel: ImageModel, val imageMode
 
   private def price(model: Option[String], slot: String, resp: ImagesGenResponse, attrs: TypedMap)(using env: Env): Option[CostsOutput] = {
     val name = model.orElse(originalModel.config.at(slot).asOptString)
-    ModalityCosts.track(originalModel.provider, name, attrs)(ModalityCosts.image(_, resp.metadata.usage, resp.images.size))
+    ModalityCosts.track(originalModel.provider, originalModel.metadata, name, attrs)(ModalityCosts.image(_, resp.metadata.usage, resp.images.size))
   }
 
   override def generate(opts: ImageModelClientGenerationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
@@ -994,7 +1011,7 @@ class AudioModelClientWithCostsTracking(originalModel: AudioModel, val audioMode
   private def configured(section: String): Option[String] = audioModelIn(originalModel.config, section)
 
   private def transcribed(model: Option[String], section: String, resp: AudioTranscriptionResponse, attrs: TypedMap)(using env: Env): Option[CostsOutput] = {
-    ModalityCosts.track(originalModel.provider, model.orElse(configured(section)), attrs)(ModalityCosts.transcription(_, resp.metadata.usage, None))
+    ModalityCosts.track(originalModel.provider, originalModel.metadata, model.orElse(configured(section)), attrs)(ModalityCosts.transcription(_, resp.metadata.usage, None))
   }
 
   override def textToSpeech(opts: AudioModelClientTextToSpeechInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (Source[ByteString, ?], String)]] = {
@@ -1002,7 +1019,7 @@ class AudioModelClientWithCostsTracking(originalModel: AudioModel, val audioMode
       case Left(err) => Left(err)
       case Right(result) => {
         // a voice answers with its audio and nothing else: what it read is the only thing to bill on
-        ModalityCosts.track(originalModel.provider, opts.model.orElse(configured("tts")), attrs) { cost =>
+        ModalityCosts.track(originalModel.provider, originalModel.metadata, opts.model.orElse(configured("tts")), attrs) { cost =>
           ModalityCosts.speech(cost, opts.input.length.toLong, None)
         }
         Right(result)
@@ -1044,7 +1061,7 @@ class OcrModelClientWithCostsTracking(originalModel: OcrModel, val ocrModelClien
       case Right(resp) => {
         val name = Some(resp.model).filter(_.nonEmpty).orElse(opts.model).orElse(originalModel.config.at("options.model").asOptString)
         // the pages the model read, which is how every ocr model of the table is billed
-        ModalityCosts.track(originalModel.provider, name, attrs)(ModalityCosts.ocr(_, resp.usage.pagesProcessed.toLong))
+        ModalityCosts.track(originalModel.provider, originalModel.metadata, name, attrs)(ModalityCosts.ocr(_, resp.usage.pagesProcessed.toLong))
         Right(resp)
       }
     }
@@ -1064,7 +1081,7 @@ class VideoModelClientWithCostsTracking(originalModel: VideoModel, val videoMode
       case Right(resp) => {
         val name = opts.model.orElse(originalModel.config.at("options.model").asOptString)
         val seconds = opts.duration.map(d => BigDecimal(d))
-        val costs = ModalityCosts.track(originalModel.provider, name, attrs)(ModalityCosts.video(_, resp.metadata.usage, seconds))
+        val costs = ModalityCosts.track(originalModel.provider, originalModel.metadata, name, attrs)(ModalityCosts.video(_, resp.metadata.usage, seconds))
         if (TokenBasedCosts.embedInResponse(attrs)) Right(resp.copy(metadata = resp.metadata.copy(costs = costs))) else Right(resp)
       }
     }
@@ -1111,8 +1128,10 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     if (allowConfigOverride) originalBody.select("model").asOptString.getOrElse(chatClient.computeModel(originalBody).getOrElse("--")) else chatClient.computeModel(originalBody).getOrElse("--")
   }
 
+  // the provider prices are looked up for: the one of the metadata of an api the gateway has no prices for
   def getProvider()(using env: Env): Option[String] = {
     env.adminExtensions.extension[AiExtension].flatMap(ext => ext.costsTracking.getProvider(originalProvider.provider))
+      .orElse(originalProvider.metadata.get("costs-tracking-provider").map(_.trim).filter(_.nonEmpty))
   }
 
   // A cost the provider itself reported for the call always wins over what we would derive from the price

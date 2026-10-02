@@ -729,7 +729,7 @@ object ModelsMetadata {
       val conversational = kinds.contains(AiProvidersCatalog.Text)
       val perToken = conversational || kinds.exists(k => k == AiProvidersCatalog.Embedding || k == AiProvidersCatalog.Moderation || k == AiProvidersCatalog.Decision)
       if (conversational) e.costsTracking.hasCost(provider, model)
-      else if (perToken) e.costsTracking.hasTokenCost(provider.provider, model)
+      else if (perToken) e.costsTracking.hasTokenCost(provider, model)
       else (e.costsTrackingSettings.enabled || provider.models.requireKnownCosts) &&
         prices.exists(c => ModalityCosts.canBill(c, kinds, knownEndpoints))
     }
