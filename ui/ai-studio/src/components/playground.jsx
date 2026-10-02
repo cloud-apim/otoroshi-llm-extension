@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from './icons';
 import { CopyButton, ErrorAlert, Segmented } from './ui';
 import { Markdown } from './Markdown';
+import { DecisionForm, Decisions } from './decisions';
+import { exampleQuestions, questionsReady, toQuestions } from '../lib/decisions';
 import { MAX_UPLOAD_BYTES, playgroundsOf, runPlayground } from '../lib/playgrounds';
 import { fmtBytes } from '../lib/attachments';
 import { fmtCost, fmtInt, fmtMs } from '../lib/format';
@@ -139,6 +141,8 @@ export function Playground({ model, workspace, providers }) {
   const [kind, setKind] = useState(kinds[0] ? kinds[0].id : null);
   const [text, setText] = useState('');
   const [file, setFile] = useState(null);
+  // a decision playground opens on questions ready to be asked, there to be rewritten
+  const [questions, setQuestions] = useState(exampleQuestions);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -159,6 +163,7 @@ export function Playground({ model, workspace, providers }) {
     clear();
     setText('');
     setFile(null);
+    setQuestions(exampleQuestions());
     setKind(kinds[0] ? kinds[0].id : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model.id, model.modality]);
@@ -167,14 +172,14 @@ export function Playground({ model, workspace, providers }) {
 
   if (!current) return null;
 
-  const ready = current.input === 'file' ? !!file : text.trim().length > 0;
+  const ready = current.input === 'file' ? !!file : text.trim().length > 0 && (current.input !== 'decision' || questionsReady(questions));
 
   const run = () => {
     clear();
     setBusy(true);
     const controller = new AbortController();
     abort.current = controller;
-    runPlayground(current.id, { workspace, model: current.model, text, file, signal: controller.signal })
+    runPlayground(current.id, { workspace, model: current.model, text, file, questions: current.input === 'decision' ? toQuestions(questions) : null, signal: controller.signal })
       .then((r) => {
         if (r.audio) audioUrl.current = r.audio.url;
         setResult(r);
@@ -193,6 +198,8 @@ export function Playground({ model, workspace, providers }) {
       {kinds.length > 1 && <Segmented value={current.id} onChange={(v) => { clear(); setKind(v); }} options={kinds.map((k) => ({ value: k.id, label: k.label }))} />}
       {current.input === 'file' ? (
         <DropZone file={file} accept={current.accept} hint={current.hint} disabled={busy} onPick={(f) => { clear(); setFile(f); }} />
+      ) : current.input === 'decision' ? (
+        <DecisionForm state={text} onState={setText} questions={questions} onQuestions={setQuestions} disabled={busy} />
       ) : (
         <textarea rows={4} placeholder={current.placeholder} value={text} onChange={(e) => setText(e.target.value)} />
       )}
@@ -236,6 +243,7 @@ export function Playground({ model, workspace, providers }) {
           )}
           {result.vectors && <Vectors result={result} />}
           {result.moderation !== undefined && <Moderation moderation={result.moderation} />}
+          {result.answers && <Decisions answers={result.answers} />}
           {/* a transcription or an extraction is the answer itself, a revised prompt only shows when the model sent one */}
           {['stt', 'ocr'].includes(current.id) ? <TextResult text={result.text} markdown={current.id === 'ocr'} /> : result.text ? <TextResult text={result.text} /> : null}
           <RunMeta result={result} />

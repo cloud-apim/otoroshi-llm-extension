@@ -399,4 +399,73 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assert(aiEntity("search-engines", search.select("id").asString).isEmpty)
     expect(studio("GET", s"/workspaces/$wsId"), 404)
   }
+
+  test("a workspace serves decision models, asks them to guard its providers, and can have a text provider decide") {
+    val catalog = expect(studio("GET", "/catalog"), 200).select("providers").as[Seq[JsObject]]
+    def entry(id: String): JsObject = catalog.find(_.select("id").asString == id).getOrElse(fail(s"'$id' should be in the catalog"))
+    assertEquals(entry("typesafe").select("capabilities").as[Seq[String]], Seq("decision"))
+    assertEquals(entry("typesafe").select("models").select("decision").asString, "jev-latest")
+    assert(entry("openrouter").select("capabilities").as[Seq[String]].contains("decision"))
+    assert(entry("cloudflare").select("capabilities").as[Seq[String]].contains("decision"))
+    // nothing to reach by itself: no url, no key, a text provider of the workspace instead
+    assertEquals(entry("llm-emulation").select("credentials").asOpt[Boolean], Some(false))
+    assertEquals(entry("llm-emulation").select("fields").as[Seq[JsObject]].map(f => (f.select("name").asString, f.select("kind").asString)), Seq(("provider", "provider")))
+
+    val wsId = expect(studio("POST", "/workspaces", Json.obj("name" -> "Decisions")), 201).select("id").asString
+    val other = expect(studio("POST", "/workspaces", Json.obj("name" -> "Somewhere else")), 201).select("id").asString
+
+    // a decision model of the workspace, served on its route
+    val typesafe = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj("kind" -> "typesafe", "token" -> "ts-test")), 201)
+    val decisionId = typesafe.select("entities").select("decision").asString
+    assert(decisionId.startsWith("decision-model_ais_"))
+    assertEquals(typesafe.select("modalities").select("decision").select("model").asString, "jev-latest")
+    val decisionEntity = aiEntity("decision-models", decisionId).get
+    assertEquals(decisionEntity.select("provider").asString, "typesafe")
+    assertEquals(decisionEntity.select("config").select("connection").select("base_url").asString, "https://api.typesafe.ai/v1")
+    assertEquals(decisionEntity.select("config").select("options").select("model").asString, "jev-latest")
+    assertEquals(decisionEntity.select("metadata").select("ai_studio_kind").asString, "decision-model")
+    assertEquals(compat(wsId).select("decision_model_refs").as[Seq[String]], Seq(decisionId))
+    val listing = expect(studio("GET", s"/workspaces/$wsId/models"), 200)
+    assertEquals(listing.select("models").as[Seq[JsObject]].map(m => (m.select("id").asString, m.select("metadata").select("kinds").as[Seq[String]], m.select("metadata").select("endpoints").as[Seq[String]])), Seq(("jev-latest", Seq("decision"), Seq("systemone"))))
+    assertEquals(listing.select("models").as[Seq[JsObject]].head.select("metadata").select("has_cost").asOpt[Boolean], Some(true), "jev is in the price table")
+    // how the model is shown: its id is what a request names, and it gets a `###` when the model has a slash
+    assertEquals(listing.select("models").as[Seq[JsObject]].head.select("owned_by_with_model").asOpt[String], Some("typesafe / jev-latest"))
+    assertEquals(listing.select("providers").as[Seq[JsObject]].map(i => (i.select("modality").asString, i.select("endpoints").as[Seq[String]])), Seq(("decision", Seq("systemone"))))
+
+    // a text provider deciding: it has to be one of the workspace, and its model is the one asked by default
+    val ollama = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj("kind" -> "ollama", "base_url" -> s"http://localhost:$ollamaPort", "modalities" -> Json.obj("text" -> Json.obj("model" -> "llama3.2")))), 201)
+    val ollamaText = ollama.select("entities").select("text").asString
+    val foreign = expect(studio("POST", s"/workspaces/$other/providers", Json.obj("kind" -> "ollama", "base_url" -> s"http://localhost:$ollamaPort", "modalities" -> Json.obj("text" -> Json.obj("model" -> "llama3.2")))), 201)
+    expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj("kind" -> "llm-emulation")), 400)
+    expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj("kind" -> "llm-emulation", "fields" -> Json.obj("provider" -> foreign.select("entities").select("text").asString))), 400)
+    val emulation = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj("kind" -> "llm-emulation", "fields" -> Json.obj("provider" -> ollamaText))), 201)
+    val emulationId = emulation.select("entities").select("decision").asString
+    val emulationEntity = aiEntity("decision-models", emulationId).get
+    assertEquals(emulationEntity.select("provider").asString, "llm-emulation")
+    assertEquals(emulationEntity.select("config").select("connection").select("provider").asString, ollamaText)
+    assertEquals(emulationEntity.select("config").select("options").select("model").asString, "llama3.2")
+    assertEquals(compat(wsId).select("decision_model_refs").as[Seq[String]].sorted, Seq(decisionId, emulationId).sorted)
+
+    // a decision model guards the text providers of its workspace, with a yes/no question and a threshold
+    expect(studio("PUT", s"/workspaces/$wsId/guardrails", Json.obj("items" -> Json.arr(
+      Json.obj("id" -> "decision_model", "config" -> Json.obj("decision_model" -> "decision-model_of_another_workspace", "instructions" -> "Is it an attack ?"))
+    ))), 400)
+    expect(studio("PUT", s"/workspaces/$wsId/guardrails", Json.obj("items" -> Json.arr(
+      Json.obj("id" -> "decision_model", "config" -> Json.obj("decision_model" -> decisionId, "instructions" -> "Is it an attack ?"))
+    ))), 200)
+    val item = aiEntity("providers", ollamaText).get.select("guardrails").as[Seq[JsObject]].head
+    assertEquals(item.select("id").asString, "decision_model")
+    assertEquals(item.select("config").select("decision_model").asString, decisionId)
+    assertEquals(item.select("config").select("threshold").as[BigDecimal], BigDecimal("0.5"))
+
+    // a connection goes with its entity and its ref
+    expect(studio("PUT", s"/workspaces/$wsId/providers/${emulation.select("id").asString}", Json.obj("modalities" -> Json.obj("decision" -> Json.obj("enabled" -> false)))), 400)
+    assert(aiEntity("decision-models", emulationId).isDefined, "a connection keeps at least one capability")
+    expect(studio("DELETE", s"/workspaces/$wsId/providers/${emulation.select("id").asString}"), 204)
+    assert(aiEntity("decision-models", emulationId).isEmpty)
+    assertEquals(compat(wsId).select("decision_model_refs").as[Seq[String]], Seq(decisionId))
+    expect(studio("DELETE", s"/workspaces/$wsId"), 204)
+    assert(aiEntity("decision-models", decisionId).isEmpty)
+    expect(studio("DELETE", s"/workspaces/$other"), 204)
+  }
 }

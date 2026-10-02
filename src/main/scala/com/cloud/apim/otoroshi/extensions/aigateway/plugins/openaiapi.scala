@@ -27,14 +27,16 @@ case class OpenAiCompatApiConfig(
   responseHeaders: Boolean,
   responseHeadersIncludeCosts: Boolean,
   // the MCP virtual server served on `/mcp`, if any. No ref, no MCP endpoint (404).
-  mcpServerRef: Option[String] = None
+  mcpServerRef: Option[String] = None,
+  // the decision models served on `/systemone` and `/decisions`
+  decisionModelRefs: Seq[String] = Seq.empty,
 ) extends NgPluginConfig {
   def json: JsValue = OpenAiCompatApiConfig.format.writes(this)
 }
 
 object OpenAiCompatApiConfig {
 
-  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "ocr_model_refs", "embedding_model_refs", "moderation_model_refs", "context_refs", "mcp_server_ref", "max_size_upload", "decode_images", "use_open_response_for_responses", "response_headers", "response_headers_include_costs")
+  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "ocr_model_refs", "embedding_model_refs", "moderation_model_refs", "decision_model_refs", "context_refs", "mcp_server_ref", "max_size_upload", "decode_images", "use_open_response_for_responses", "response_headers", "response_headers_include_costs")
 
   def configSchema: Option[JsObject] = Some(Json.obj(
     "language_model_refs" -> Json.obj(
@@ -103,6 +105,18 @@ object OpenAiCompatApiConfig {
       "label" -> "Moderation models",
       "props" -> Json.obj(
         "optionsFrom" -> "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/moderation-models",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      ),
+    ),
+    "decision_model_refs" -> Json.obj(
+      "type" -> "select",
+      "array" -> true,
+      "label" -> "Decision models",
+      "props" -> Json.obj(
+        "optionsFrom" -> "/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/decision-models",
         "optionsTransformer" -> Json.obj(
           "label" -> "name",
           "value" -> "id",
@@ -186,6 +200,7 @@ object OpenAiCompatApiConfig {
       "ocr_model_refs" -> o.ocrModelRefs,
       "embedding_model_refs" -> o.embeddingModelRefs,
       "moderation_model_refs" -> o.moderationModelRefs,
+      "decision_model_refs" -> o.decisionModelRefs,
       "context_refs" -> o.contextRefs,
       "max_size_upload" -> o.maxSizeUpload,
       "decode_images" -> o.decodeImages,
@@ -209,6 +224,7 @@ object OpenAiCompatApiConfig {
         responseHeaders = json.select("response_headers").asOpt[Boolean].getOrElse(false),
         responseHeadersIncludeCosts = json.select("response_headers_include_costs").asOpt[Boolean].getOrElse(true),
         mcpServerRef = json.select("mcp_server_ref").asOpt[String].map(_.trim).filter(_.nonEmpty),
+        decisionModelRefs = json.select("decision_model_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -278,7 +294,7 @@ class OpenAiCompatApi extends NgBackendCall {
 
     } else if (method == "GET" && path.endsWith("/providers")) {
       // Catalog of every provider type Otoroshi LLM supports, with its capabilities (text, audio,
-      // image, ocr, embedding, moderation, video). Filter with one or more `capabilities` query
+      // image, ocr, embedding, moderation, video, decision). Filter with one or more `capabilities` query
       // params (repeatable and/or comma-separated); a provider must expose ALL of them to match.
       LlmProvidersCatalog.handleRequest(ctx)
 
@@ -313,6 +329,12 @@ class OpenAiCompatApi extends NgBackendCall {
     } else if (method == "POST" && path.endsWith("/moderations")) {
       val moderationConfig = OpenAICompatModerationConfig(config.moderationModelRefs)
       OpenAICompatModeration.handleRequest(moderationConfig, ctx)
+
+    } else if (method == "POST" && (path.endsWith("/systemone") || path.endsWith("/decisions"))) {
+      // decision models speak the System One api of TypeSafe, whose sdks call `<base url>/v1/systemone`.
+      // `/decisions` is the same endpoint under the name of what it does
+      val decisionConfig = DecisionModelsConfig(config.decisionModelRefs)
+      DecisionModels.handleRequest(decisionConfig, ctx)
 
     } else if (method == "POST" && path.endsWith("/ocr")) {
       val ocrConfig = OpenAICompatOcrConfig(config.ocrModelRefs, config.maxSizeUpload)

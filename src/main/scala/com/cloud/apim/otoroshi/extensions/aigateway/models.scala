@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsOutput, ImpactsOutput}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsOutput, ImpactsOutput, ModelConstraints, RequiredCosts}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions}
 import otoroshi.env.Env
 import otoroshi.security.IdGenerator
@@ -1529,6 +1529,262 @@ trait ModerationModelClient {
 
 object ModerationModelClient {
   val ApiUsageKey = TypedKey[ModerationResponseMetadata]("otoroshi-extensions.cloud-apim.ai.llm.moderation.ApiUsage")
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/////////                                  Decision Models (System One)                                  ///////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// A decision model answers typed questions (noul, choice, score) about a state, with probabilities instead of
+// text. The api is the TypeSafe "System One" one, and it is kept as is from the caller to the provider: the
+// gateway only reads what it needs to route, bill and audit the call.
+
+case class DecisionResponseMetadataUsage(input: Long, output: Long) {
+  def total: Long = input + output
+  def json: JsObject = Json.obj("input_tokens" -> input, "output_tokens" -> output)
+}
+
+object DecisionResponseMetadataUsage {
+  val empty: DecisionResponseMetadataUsage = DecisionResponseMetadataUsage(0L, 0L)
+  // `input_tokens` / `output_tokens` is the System One usage, a server built on an OpenAI one may keep its names
+  def fromJson(usage: JsValue): DecisionResponseMetadataUsage = DecisionResponseMetadataUsage(
+    input = usage.select("input_tokens").asOpt[Long].orElse(usage.select("prompt_tokens").asOpt[Long]).getOrElse(0L).max(0L),
+    output = usage.select("output_tokens").asOpt[Long].orElse(usage.select("completion_tokens").asOpt[Long]).getOrElse(0L).max(0L),
+  )
+}
+
+case class DecisionResponseMetadata(
+  usage: DecisionResponseMetadataUsage,
+  rateLimit: ChatResponseMetadataRateLimit = ChatResponseMetadataRateLimit.empty,
+  impacts: Option[ImpactsOutput] = None,
+  costs: Option[CostsOutput] = None,
+  // the cost the provider itself reported for the call (OpenRouter `usage.cost`)
+  providerCosts: Option[CostsOutput] = None,
+  // the call was served by a text provider, which billed and audited it (llm emulation)
+  delegated: Boolean = false,
+)
+
+case class DecisionResponse(model: String, answers: JsObject, metadata: DecisionResponseMetadata, raw: JsObject = Json.obj()) {
+  // the System One body, with whatever the provider adds to the contract (`id`, `provider`, `usage.cost`)
+  def toJson(env: Env): JsObject = {
+    val usage = raw.select("usage").asOpt[JsObject].getOrElse(Json.obj()) ++ metadata.usage.json
+    (raw ++ Json.obj("model" -> model, "answers" -> answers, "usage" -> usage)).applyOnWithOpt(metadata.impacts) {
+      case (obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+    }.applyOnWithOpt(metadata.costs) {
+      case (obj, costs) => obj ++ Json.obj("costs" -> costs.json)
+    }
+  }
+}
+
+case class DecisionModelClientInputOptions(
+  state: JsValue,
+  questions: JsObject,
+  model: Option[String] = None,
+) {
+  def json: JsValue = DecisionModelClientInputOptions.format.writes(this)
+}
+
+object DecisionModelClientInputOptions {
+  val format = new Format[DecisionModelClientInputOptions] {
+    override def reads(json: JsValue): JsResult[DecisionModelClientInputOptions] = Try {
+      DecisionModelClientInputOptions(
+        state = json.select("state").asOpt[JsValue].getOrElse(JsNull),
+        questions = json.select("questions").asOpt[JsObject].getOrElse(Json.obj()),
+        model = json.select("model").asOptString.map(_.trim).filter(_.nonEmpty),
+      )
+    } match {
+      case Failure(e) => JsError(e.getMessage)
+      case Success(e) => JsSuccess(e)
+    }
+    override def writes(o: DecisionModelClientInputOptions): JsValue = Json.obj(
+      "state" -> o.state,
+      "questions" -> o.questions,
+    ).applyOnWithOpt(o.model) {
+      case (obj, model) => obj ++ Json.obj("model" -> model)
+    }
+  }
+}
+
+object DecisionRequests {
+
+  val Noul = "noul"
+  val Choice = "choice"
+  val Score = "score"
+  val knownTypes: Set[String] = Set(Noul, Choice, Score)
+
+  private def issue(kind: String, message: String, loc: String*): JsObject =
+    Json.obj("type" -> kind, "loc" -> ("body" +: loc), "msg" -> message)
+
+  /**
+   * What is wrong with a System One request, in the shape TypeSafe reports it. Only the structure every server
+   * expects is checked: the question types and their limits belong to the provider, so a type it adds later is
+   * not refused here. `strict` is for the llm emulation, which can only compute the types it knows.
+   */
+  def issues(body: JsValue, strict: Boolean = false): Seq[JsObject] = body match {
+    case obj: JsObject =>
+      val state = obj.value.get("state") match {
+        case None | Some(JsNull) => Seq(issue("missing", "Field required", "state"))
+        case _ => Seq.empty
+      }
+      val questions = obj.value.get("questions") match {
+        case None | Some(JsNull) => Seq(issue("missing", "Field required", "questions"))
+        case Some(JsObject(fields)) if fields.isEmpty => Seq(issue("too_short", "At least one question is required", "questions"))
+        case Some(JsObject(fields)) => fields.toSeq.flatMap {
+          case (name, question: JsObject) => questionIssues(name, question, strict)
+          case (name, _) => Seq(issue("dict_type", "Input should be a valid dictionary", "questions", name))
+        }
+        case Some(_) => Seq(issue("dict_type", "Input should be a valid dictionary", "questions"))
+      }
+      state ++ questions
+    case _ => Seq(issue("dict_type", "Input should be a valid dictionary"))
+  }
+
+  private def questionIssues(name: String, question: JsObject, strict: Boolean): Seq[JsObject] = {
+    val kind = question.select("type").asOptString
+    val typed = kind match {
+      case None => Seq(issue("missing", "Field required", "questions", name, "type"))
+      case Some(t) if strict && !knownTypes.contains(t) => Seq(issue("literal_error", s"Input should be ${knownTypes.toSeq.sorted.mkString(", ")}", "questions", name, "type"))
+      case _ => Seq.empty
+    }
+    val instructed = question.value.get("instructions") match {
+      case None | Some(JsNull) => Seq(issue("missing", "Field required", "questions", name, "instructions"))
+      case _ => Seq.empty
+    }
+    val criteria = if (!strict) Seq.empty else (kind, question.value.get("criteria")) match {
+      case (Some(Choice), Some(JsObject(options))) if options.size >= 2 => Seq.empty
+      case (Some(Choice), _) => Seq(issue("too_short", "A choice needs at least two options", "questions", name, "criteria"))
+      case (Some(Score), Some(JsArray(levels))) if levels.size >= 2 && levels.size <= 10 => Seq.empty
+      case (Some(Score), _) => Seq(issue("too_short", "A score needs two to ten levels", "questions", name, "criteria"))
+      case _ => Seq.empty
+    }
+    typed ++ instructed ++ criteria
+  }
+}
+
+/**
+ * The errors of a decision call. Clients and decorators keep the `Either[JsValue, _]` of every other model
+ * type, so the shared helpers (model restrictions, required costs, budgets, metrics, analytics) apply as is.
+ * An error that carries an http answer is `{"status", "body", "retry_after"}`: the plugins give it back
+ * untouched, which is what lets a TypeSafe sdk retry a 429 or a 529 the way it would against the provider.
+ */
+object DecisionErrors {
+
+  sealed trait Kind
+  object Kind {
+    case class Upstream(status: Int, body: JsValue, retryAfter: Option[String]) extends Kind
+    case class Budget(message: String) extends Kind
+    case object Denied extends Kind
+    case class NotBillable(message: String) extends Kind
+    case class Other(error: JsValue) extends Kind
+  }
+
+  def upstream(status: Int, body: JsValue, retryAfter: Option[String] = None): JsValue =
+    Json.obj("status" -> status, "body" -> body).applyOnWithOpt(retryAfter) {
+      case (obj, value) => obj ++ Json.obj("retry_after" -> value)
+    }
+
+  // the error envelope of the TypeSafe api
+  def detail(errorType: String, message: String): JsObject =
+    Json.obj("detail" -> Json.obj("error_type" -> errorType, "message" -> message))
+
+  def gateway(status: Int, errorType: String, message: String): JsValue = upstream(status, detail(errorType, message))
+
+  def invalid(issues: Seq[JsObject]): JsValue = upstream(422, Json.obj("detail" -> JsArray(issues)))
+
+  def classify(err: JsValue): Kind = {
+    if (err.select("budget_exceeded").asOpt[Boolean].contains(true)) {
+      Kind.Budget(err.select("error").asOptString.getOrElse("budget exceeded"))
+    } else if (ModelConstraints.isDenied(err)) {
+      Kind.Denied
+    } else err.select("error").asOptString match {
+      case Some(message) if message == RequiredCosts.errorMessage || message == RequiredCosts.unbillableMessage => Kind.NotBillable(message)
+      case _ => (err.select("status").asOpt[Int], err.select("body").asOpt[JsValue]) match {
+        case (Some(status), Some(body)) => Kind.Upstream(status, body, err.select("retry_after").asOptString)
+        case _ => Kind.Other(err)
+      }
+    }
+  }
+
+  // a technical failure: the request was fine, another model may well answer it
+  def retryable(err: JsValue): Boolean = classify(err) match {
+    case Kind.Upstream(status, _, _) => status == 408 || status == 429 || status >= 500
+    case _ => false
+  }
+}
+
+/**
+ * The answers of a decision model computed from probabilities, with the formulas TypeSafe documents: the
+ * confidence of a choice is how far its best option sits above an even split, the one of a score how tightly
+ * the probabilities gather around the most likely level. A noul has no confidence, its probability is the answer.
+ */
+object DecisionAnswers {
+
+  private def rounded(value: Double): JsNumber = JsNumber(BigDecimal(value).setScale(4, BigDecimal.RoundingMode.HALF_UP))
+
+  private def clamped(value: Double): Double = if (value.isNaN || value < 0.0) 0.0 else if (value > 1.0) 1.0 else value
+
+  // probabilities as a model states them: kept positive and summing to one, an empty statement being an even split
+  def normalized(values: Seq[Double]): Seq[Double] = {
+    val positive = values.map(v => if (v.isNaN || v.isInfinite || v < 0.0) 0.0 else v)
+    val sum = positive.sum
+    if (positive.isEmpty) positive else if (sum <= 0.0) positive.map(_ => 1.0 / positive.size) else positive.map(_ / sum)
+  }
+
+  def noul(probability: Double): JsObject = Json.obj("type" -> DecisionRequests.Noul, "noul" -> rounded(clamped(probability)))
+
+  def choice(options: Seq[(String, Double)]): JsObject = {
+    val names = options.map(_._1)
+    val probabilities = normalized(options.map(_._2))
+    val n = probabilities.size
+    val best = probabilities.indexOf(probabilities.max)
+    val even = 1.0 / n
+    val confidence = if (n < 2) 1.0 else ((probabilities(best) - even) / (1.0 - even)).max(0.0)
+    Json.obj(
+      "type" -> DecisionRequests.Choice,
+      "choice" -> names(best),
+      "confidence" -> rounded(confidence),
+      "probabilities" -> JsObject(names.zip(probabilities).map { case (name, p) => name -> rounded(p) }),
+    )
+  }
+
+  def score(levels: Seq[JsValue], stated: Seq[Double]): JsObject = {
+    val probabilities = normalized(stated)
+    val n = probabilities.size
+    val peak = probabilities.indexOf(probabilities.max)
+    val spread = probabilities.zipWithIndex.map { case (p, i) => p * math.abs(i - peak) }.sum
+    val evenSpread = (0 until n).map(i => math.abs(i - peak)).sum.toDouble / n
+    val confidence = if (evenSpread <= 0.0) 1.0 else (1.0 - spread / evenSpread).max(0.0)
+    Json.obj(
+      "type" -> DecisionRequests.Score,
+      "score" -> rounded(probabilities.zipWithIndex.map { case (p, i) => p * i }.sum),
+      "confidence" -> rounded(confidence),
+      "legend" -> JsObject(levels.zipWithIndex.map { case (level, i) => i.toString -> level }),
+      "probabilities" -> JsObject(probabilities.zipWithIndex.map { case (p, i) => i.toString -> rounded(p) }),
+    )
+  }
+}
+
+trait DecisionModelClient {
+  def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]]
+}
+
+object DecisionModelClient {
+  val ApiUsageKey = TypedKey[DecisionResponseMetadata]("otoroshi-extensions.cloud-apim.ai.llm.decision.ApiUsage")
+
+  /**
+   * The attributes of a call made on behalf of another one (a guardrail, a workflow, the llm emulation): who
+   * is calling, and nothing of what the decorators of the outer call wrote. Auditing a model sets the provider
+   * and the model a budget is scoped on, and a cost left behind would be billed again by the outer call.
+   */
+  def childAttrs(attrs: TypedMap): TypedMap = {
+    val child = TypedMap.empty
+    attrs.get(otoroshi.plugins.Keys.ApiKeyKey).foreach(v => child.put(otoroshi.plugins.Keys.ApiKeyKey -> v))
+    attrs.get(otoroshi.plugins.Keys.UserKey).foreach(v => child.put(otoroshi.plugins.Keys.UserKey -> v))
+    attrs.get(otoroshi.next.plugins.Keys.RouteKey).foreach(v => child.put(otoroshi.next.plugins.Keys.RouteKey -> v))
+    attrs.get(otoroshi.plugins.Keys.RequestKey).foreach(v => child.put(otoroshi.plugins.Keys.RequestKey -> v))
+    attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).foreach(v => child.put(otoroshi.plugins.Keys.SnowFlakeKey -> v))
+    child
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

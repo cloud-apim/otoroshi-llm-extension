@@ -15,7 +15,7 @@ import scala.concurrent.{ExecutionContext, Future}
 object LlmModelCapabilities {
 
   // Returns every model type (modality) Otoroshi LLM supports — text, audio, image, ocr,
-  // embedding, moderation, video — each with the provider ids exposing it.
+  // embedding, moderation, video, decision — each with the provider ids exposing it.
   def handleRequest(ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
       Results.Ok(Json.obj(
@@ -29,7 +29,7 @@ object LlmModelCapabilities {
 class LlmModelCapabilities extends NgBackendCall {
 
   override def name: String = "Cloud APIM - LLM Model Capabilities"
-  override def description: Option[String] = "Exposes the list of model types (modalities) Otoroshi LLM supports (text, audio, image, ocr, embedding, moderation, video), each with the providers exposing it.".some
+  override def description: Option[String] = "Exposes the list of model types (modalities) Otoroshi LLM supports (text, audio, image, ocr, embedding, moderation, video, decision), each with the providers exposing it.".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))

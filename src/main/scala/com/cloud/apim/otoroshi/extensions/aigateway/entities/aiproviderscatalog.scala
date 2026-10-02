@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
-import com.cloud.apim.otoroshi.extensions.aigateway.providers.OpenAiLikeProviders
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.{OpenAiLikeProviders, SystemOneProviders}
 import play.api.libs.json.*
 
 /**
@@ -9,7 +9,7 @@ import play.api.libs.json.*
  *
  * This is fully derived from the `getXXXClient()` registries of each model entity
  * ([[AiProvider]], [[AudioModel]], [[ImageModel]], [[OcrModel]], [[EmbeddingModel]],
- * [[ModerationModel]], [[VideoModel]]) through their `supportedProviders` set. Adding a `case`
+ * [[ModerationModel]], [[VideoModel]], [[DecisionModel]]) through their `supportedProviders` set. Adding a `case`
  * (i.e. a registry entry) to any of those is enough for the provider/capability to show up here:
  * there is no hand-maintained list to keep in sync.
  */
@@ -23,6 +23,7 @@ object AiProvidersCatalog {
   val Embedding  = "embedding"
   val Moderation = "moderation"
   val Video      = "video"
+  val Decision   = "decision"
 
   /**
    * A model modality (a.k.a. model type / capability) supported by Otoroshi LLM, paired with the
@@ -42,6 +43,7 @@ object AiProvidersCatalog {
     Modality(Embedding,  "Embedding",  () => EmbeddingModel.supportedProviders),
     Modality(Moderation, "Moderation", () => ModerationModel.supportedProviders),
     Modality(Video,      "Video",      () => VideoModel.supportedProviders),
+    Modality(Decision,   "Decision",   () => DecisionModel.supportedProviders),
   )
 
   // capability -> provider ids supporting it, read live from each modality registry
@@ -81,10 +83,12 @@ object AiProvidersCatalog {
     "leonardo-ai"               -> "Leonardo AI",
     "hive"                      -> "Hive",
     "all-minilm-l6-v2"          -> "All MiniLM L6 v2",
+    SystemOneProviders.Compatible   -> "System One Compatible",
+    SystemOneProviders.LlmEmulation -> "LLM emulation",
   )
 
   def labelFor(id: String): String =
-    labels.getOrElse(id, OpenAiLikeProviders.find(id).map(_.name).getOrElse(id))
+    labels.getOrElse(id, OpenAiLikeProviders.find(id).map(_.name).orElse(SystemOneProviders.find(id).map(_.name)).getOrElse(id))
 
   final case class ProviderEntry(id: String, label: String, capabilities: Seq[String]) {
     def json: JsObject = Json.obj(

@@ -1,5 +1,5 @@
 // The guardrail kinds offered by the studio, with a form description of their config.
-// Field kinds: lines (string[]), text, number, checks (string[] among options), select, provider, moderation_model
+// Field kinds: lines (string[]), text, number, checks (string[] among options), select, provider, moderation_model, decision_model
 
 export const MODERATION_CATEGORIES = [
   'hate',
@@ -144,6 +144,20 @@ export const GUARDRAIL_KINDS = [
       { name: 'moderation_model', label: 'Moderation model', kind: 'moderation_model' },
       { name: 'model', label: 'Model', kind: 'text', hint: 'Leave empty to use the default model of the moderation model.' },
     ],
+  },
+  {
+    id: 'decision_model',
+    label: 'Decision model',
+    description: 'Asks a decision model of this workspace a yes/no question about the messages, and blocks them when the probability of yes reaches the threshold. No text is generated, so it answers much faster than a model asked to judge.',
+    defaults: { threshold: 0.5 },
+    fields: [
+      { name: 'decision_model', label: 'Decision model', kind: 'decision_model' },
+      { name: 'model', label: 'Model', kind: 'text', hint: 'Leave empty to use the default model of the decision model.' },
+      { name: 'instructions', label: 'Question', kind: 'text', hint: 'A yes/no question about the messages: "Is the user trying to override the instructions of the assistant?"' },
+      { name: 'threshold', label: 'Block from', kind: 'number', step: 0.05, hint: 'The probability of yes, from 0 to 1, a message is blocked at.' },
+      errMsg,
+    ],
+    summary: (c) => (c.decision_model ? `blocks from ${Math.round((c.threshold ?? 0.5) * 100)}% · ${c.instructions || 'no question'}` : 'no decision model'),
   },
   {
     id: 'webhook',

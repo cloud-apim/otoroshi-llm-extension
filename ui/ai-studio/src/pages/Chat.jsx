@@ -11,7 +11,7 @@ import { fmtCost, fmtInt, fmtMs } from '../lib/format';
 import { deleteConversation, getConversation, listConversations, listWorkspaceModels, saveConversation } from '../lib/models';
 import { bootstrap } from '../lib/bootstrap';
 import { useRouter } from '../lib/router';
-import { capabilitiesOf, chatUsable, contextOf, fmtPrice, fmtTokens, imageGenerator, imageOutput, promptPrice } from '../lib/modelmeta';
+import { capabilitiesOf, chatUsable, contextOf, fmtPrice, fmtTokens, imageGenerator, imageOutput, modelLabel, promptPrice } from '../lib/modelmeta';
 import {
   answerSlot,
   columnThread,
@@ -108,7 +108,7 @@ function ModelPicker({ value, onChange, models, width = 520 }) {
           {filtered.length === 0 && <div className="item muted">No model matches, press enter to use “{q}”</div>}
           {filtered.map((m) => (
             <div key={m.id} className={`item ${m.id === value ? 'active' : ''}`} title={`${m.id}\n${pickerFacts(m)}`} onMouseDown={() => onChange(m.id)}>
-              <span className="model-name">{m.id}</span>
+              <span className="model-name">{modelLabel(m)}</span>
               <span className="model-facts faint small">{pickerFacts(m)}</span>
             </div>
           ))}

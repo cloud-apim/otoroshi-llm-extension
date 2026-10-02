@@ -936,7 +936,7 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .search-results.model-results { right: auto; width: 560px; min-width: 100%; max-width: calc(100vw - 32px); }
 .model-results .model-name { flex: 0 1 auto; max-width: 70%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-results .model-facts { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
-/* playgrounds: the small forms trying an image, audio, embedding, moderation or OCR model in the drawer */
+/* playgrounds: the small forms trying an image, audio, embedding, moderation, OCR or decision model in the drawer */
 .playground { gap: 10px; }
 .playground textarea { min-height: 96px; }
 .playground .segmented { align-self: flex-start; }
@@ -958,6 +958,17 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .playground-verdict { display: flex; align-items: center; gap: 6px; font-weight: 500; }
 .playground-verdict.flagged { color: var(--negative-text); }
 .playground-verdict.clean { color: var(--positive-text); }
+/* a decision: questions to write, then the probability of each of their outcomes */
+.decision-question { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+.decision-question .row > .input { flex: 1 1 0; min-width: 0; }
+.decision-question .row > .input.name { flex: 0 0 130px; }
+.decision-question .level { flex: 0 0 14px; text-align: right; }
+.decision-answer { display: flex; flex-direction: column; gap: 5px; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
+.decision-outcome { display: grid; grid-template-columns: minmax(0, 210px) minmax(0, 1fr) 42px; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; }
+.decision-outcome .num { text-align: right; }
+.decision-outcome .progress > i { background: var(--border-strong); }
+.decision-outcome.chosen { color: var(--ink); font-weight: 500; }
+.decision-outcome.chosen .progress > i { background: var(--grape); }
 /* the week of a workspace on its overview: a figure, the days behind it, and the models that made it */
 .chart-zero { fill: var(--border-strong); }
 .week-card { display: flex; flex-direction: column; gap: 2px; }

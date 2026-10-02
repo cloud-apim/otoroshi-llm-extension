@@ -57,12 +57,21 @@ export const api = {
  * The error of a failed call on the workspace endpoint, as an `Error` to throw. Providers answer in the
  * OpenAI shape (`error.message`), the other endpoints in the otoroshi one, where `error` is a code and
  * `error_details` says what actually happened — a reader only showing `error` would say `internal_error`.
+ * Decision models answer in the shape of the System One api: `detail` is a message, or what is wrong with
+ * each field of the request.
  */
+function detailMessage(detail) {
+  if (!detail) return null;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) return detail.map((d) => `${(d.loc || []).slice(1).join('.') || 'body'}: ${d.msg}`).join(', ');
+  return detail.message || null;
+}
+
 export function gatewayError(text, status, statusText) {
   let message = text;
   try {
     const json = JSON.parse(text);
-    const detail = json.error_details || json.error_description || json.message;
+    const detail = json.error_details || json.error_description || json.message || detailMessage(json.detail);
     const error = json.error && (json.error.message || json.error);
     const both = typeof error === 'string' && typeof detail === 'string' && detail ? `${error}: ${detail}` : null;
     message = both || detail || error || text;

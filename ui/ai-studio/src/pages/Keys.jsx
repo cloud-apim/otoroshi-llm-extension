@@ -8,6 +8,7 @@ import { bootstrap } from '../lib/bootstrap';
 import { budgetsOfKey, keyBudgetOf, listBudgets, periodLabel, PERIODS, periodOf, saveBudget } from '../lib/budgets';
 import { Resources, workspaceFilter } from '../lib/entities';
 import { fmtCost, fmtDate, fmtDay, fmtInt, fmtRelative } from '../lib/format';
+import { labelOfModelId, modelLabel } from '../lib/modelmeta';
 import { listWorkspaceModels } from '../lib/models';
 import { Link } from '../lib/router';
 
@@ -111,7 +112,7 @@ function ModelChecklist({ models, loading, value, onChange }) {
           return (
             <label key={id} className="check">
               <input type="checkbox" checked={value.includes(id)} onChange={(e) => toggle(id, e.target.checked)} />
-              <span className="mono truncate">{id}</span>
+              <span className="mono truncate" title={id}>{model ? modelLabel(model) : labelOfModelId(id)}</span>
               {model && model.modality !== 'text' && <span className="faint small">{model.modality}</span>}
               {!loading && !model && <Badge kind="warning">not listed</Badge>}
             </label>

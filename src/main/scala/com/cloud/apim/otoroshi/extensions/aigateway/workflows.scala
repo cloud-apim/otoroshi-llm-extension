@@ -29,6 +29,7 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.mcp_function_call", new CallMcpFunctionFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.call_a2a_agent", new CallA2aAgentFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.moderation_call", new ModerationCallFunction())
+    WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.decision_call", new DecisionCallFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.guardrail_call", new GuardrailCallFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.rampart_redact", new RampartRedactFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.vector_store_add", new VectorStoreAddFunction())
@@ -160,6 +161,7 @@ class AgentFunction extends WorkflowFunction {
               Json.obj("label" -> "No personal information", "value" -> "pif"),
               Json.obj("label" -> "Language moderation", "value" -> "moderation"),
               Json.obj("label" -> "Moderation model", "value" -> "moderation_model"),
+              Json.obj("label" -> "Decision model", "value" -> "decision_model"),
               Json.obj("label" -> "No toxic language", "value" -> "toxic_language"),
               Json.obj("label" -> "No racial bias", "value" -> "racial_bias"),
               Json.obj("label" -> "No gender bias", "value" -> "gender_bias"),
@@ -826,6 +828,101 @@ class VectorStoreSearchFunction extends WorkflowFunction {
           AiMetrics.around("embedding_store.search", provider.provider.toLowerCase, System.currentTimeMillis(), client.search(options, payload)) { _ => () }.map {
             case Left(error) => WorkflowError(s"error while calling embedding store", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) => response.json.right
+          }
+        }
+      }
+    }
+  }
+}
+
+class DecisionCallFunction extends WorkflowFunction {
+
+  override def documentationName: String                   = "extensions.com.cloud-apim.llm-extension.decision_call"
+  override def documentationDisplayName: String            = "Decision call"
+  override def documentationIcon: String                   = "fas fa-code-branch"
+  override def documentationDescription: String            = "This function asks typed questions (noul, choice, score) about a state to a decision model, and gets probabilities back"
+  override def documentationInputSchema: Option[JsObject]  = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("provider", "payload"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The decision model id"),
+      "payload" -> Json.obj("type" -> "object", "description" -> "The payload object", "required" -> Seq("state", "questions"), "properties" -> Json.obj(
+        "model" -> Json.obj("type" -> "string", "description" -> "The model to use, the one of the decision model when empty"),
+        "state" -> Json.obj("description" -> "What the questions are about: a string, an object or an array"),
+        "questions" -> Json.obj("type" -> "object", "description" -> "The questions, by name: each one has a type (noul, choice, score), instructions and criteria"),
+      ))
+    )
+  ))
+  override def documentationFormSchema: Option[JsObject]   = Some(Json.obj(
+    "provider" -> Json.obj(
+      "type" -> "select",
+      "description" -> "The decision model",
+      "props" -> Json.obj(
+        "description" -> "The decision model",
+        "optionsFrom" -> s"/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/decision-models",
+        "optionsTransformer" -> Json.obj(
+          "label" -> "name",
+          "value" -> "id",
+        ),
+      )
+    ),
+    "payload" -> Json.obj(
+      "type"  -> "any",
+      "label" -> "Payload",
+      "props" -> Json.obj(
+        "description" -> "The payload object",
+        "height" -> "200px"
+      )
+    )
+  ))
+  override def documentationCategory: Option[String]       = Some("Cloud APIM - LLM extension")
+  override def documentationOutputSchema: Option[JsObject] = Some(Json.obj(
+    "type"       -> "object",
+    "required"   -> Seq("answers", "model"),
+    "properties" -> Json.obj(
+      "model" -> Json.obj("type" -> "string", "description" -> "The model that answered"),
+      "answers" -> Json.obj("type" -> "object", "description" -> "The answers, by question name"),
+      "usage" -> Json.obj("type" -> "object", "description" -> "The tokens used", "properties" -> Json.obj(
+        "input_tokens" -> Json.obj("type" -> "integer", "description" -> "The number of input tokens"),
+        "output_tokens" -> Json.obj("type" -> "integer", "description" -> "The number of output tokens")
+      ))
+    )
+  ))
+  override def documentationExample: Option[JsObject]      = Some(Json.obj(
+    "kind" -> "call",
+    "function" -> "extensions.com.cloud-apim.llm-extension.decision_call",
+    "args" -> Json.obj(
+      "provider" -> "decision-model_f141df8b-2642-4fba-82c8-5e050f62c920",
+      "payload" -> Json.obj(
+        "state" -> "The checkout has been failing for every customer for the last hour.",
+        "questions" -> Json.obj(
+          "urgent" -> Json.obj("type" -> "noul", "instructions" -> "Is this support request urgent ?"),
+          "team" -> Json.obj("type" -> "choice", "instructions" -> "Which team should handle this request ?", "criteria" -> Json.obj(
+            "billing" -> "Invoices and payments",
+            "technical" -> "Outages, bugs and integrations",
+          )),
+        )
+      )
+    )
+  ))
+
+  override def callWithRun(args: JsObject)(using env: Env, ec: ExecutionContext, wfr: WorkflowRun): Future[Either[WorkflowError, JsValue]] = {
+    val provider = args.select("provider").asString
+    val payload = args.select("payload").asOpt[JsObject].getOrElse(Json.obj())
+    val extension = env.adminExtensions.extension[AiExtension].get
+    val issues = DecisionRequests.issues(payload)
+    if (issues.nonEmpty) {
+      WorkflowError(s"invalid decision payload", Some(Json.obj("issues" -> JsArray(issues))), None).leftf
+    } else extension.states.decisionModel(provider) match {
+      case None => WorkflowError(s"decision model not found", Some(Json.obj("provider_id" -> provider)), None).leftf
+      case Some(provider) => provider.getDecisionModelClient() match {
+        case None => WorkflowError(s"unable to instantiate client for decision model", Some(Json.obj("provider_id" -> provider.id)), None).leftf
+        case Some(client) => {
+          val options = DecisionModelClientInputOptions.format.reads(payload).get
+          // its own attributes: what auditing this call writes must not leak into the next call of the workflow
+          client.decide(options, payload, DecisionModelClient.childAttrs(wfr.attrs)).map {
+            case Left(error) => WorkflowError(s"error while calling decision model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+            case Right(response) => response.toJson(env).right
           }
         }
       }

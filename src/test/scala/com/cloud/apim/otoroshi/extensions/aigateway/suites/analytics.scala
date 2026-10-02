@@ -171,6 +171,23 @@ object AnalyticsSamples {
     "budgets"          -> Json.arr()
   )
 
+  val decision: JsObject = envelope("llm_decision", "LLMUsageAudit") ++ Json.obj(
+    "provider_kind"    -> "typesafe",
+    "provider"         -> "decision_1",
+    "duration"         -> 120,
+    "consumed_using"   -> "decision_model/decide",
+    "input_body"       -> Json.obj("model" -> "jev-latest", "state" -> "private state", "questions" -> Json.obj("urgent" -> Json.obj("type" -> "noul", "instructions" -> "urgent ?"))),
+    "output"           -> Json.obj("model" -> "jev-1.13.0", "answers" -> Json.obj("urgent" -> Json.obj("type" -> "noul", "noul" -> 0.95)), "usage" -> Json.obj("input_tokens" -> 350, "output_tokens" -> 58)),
+    "provider_details" -> providerDetails("decision_1", "typesafe"),
+    "error"            -> JsNull,
+    "impacts"          -> JsNull,
+    "costs"            -> costs(0.0000147),
+    "budgets"          -> Json.arr()
+  )
+
+  // the same decision, made by a text provider: its chat call is reported by that provider
+  val emulatedDecision: JsObject = decision ++ Json.obj("provider_kind" -> "llm-emulation", "provider_details" -> providerDetails("decision_1", "llm-emulation"))
+
   val image: JsObject = envelope("llm_image", "LLMUsageAudit") ++ Json.obj(
     "provider_kind"    -> "openai",
     "provider"         -> "img_1",
@@ -373,6 +390,11 @@ class AnalyticsProjectionsSuite extends munit.FunSuite {
     val a = row(LlmUsageProjection, audio)
     assertEquals((a("modality"), a("model"), a("total_tokens")), ("audio", "whisper-1", 12L))
     assertEquals(row(LlmUsageProjection, streaming)("streaming"), true)
+    // a decision is billed on what it reads, and says which model answered
+    val d = row(LlmUsageProjection, decision)
+    assertEquals((d("modality"), d("model"), d("input_tokens"), d("output_tokens"), d("delegated")), ("decision", "jev-1.13.0", 350L, 58L, false))
+    // answered by a text provider, it is the chat call of that provider that counts
+    assertEquals(row(LlmUsageProjection, emulatedDecision)("delegated"), true)
   }
 
   test("a call made with an owned api key carries its owner, and nothing else of the key metadata") {

@@ -54,6 +54,7 @@ object Guardrails {
     "wasm" -> new WasmGuardrail(),
     "quickjs" -> new QuickJsGuardrail(),
     "moderation_model" -> new ModerationGuardrail(),
+    "decision_model" -> new DecisionGuardrail(),
     "faithfulness" -> new FaithfulnessGuardrail(),
     "workflow" -> new WorkflowGuardrail(),
     "rampart" -> new RampartPiiGuardrail(),

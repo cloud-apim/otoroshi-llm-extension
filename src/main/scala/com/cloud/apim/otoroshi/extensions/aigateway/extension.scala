@@ -39,6 +39,7 @@ class AiGatewayExtensionDatastores(env: Env, extensionId: AdminExtensionId) {
   val mcpConnectorsDatastore: McpConnectorsDataStore = new KvMcpConnectorsDataStore(extensionId, env.datastores.redis, env)
   val mcpVirtualServersDataStore: McpVirtualServersDataStore = new KvMcpVirtualServersDataStore(extensionId, env.datastores.redis, env)
   val moderationModelsDataStore: ModerationModelsDataStore = new KvModerationModelsDataStore(extensionId, env.datastores.redis, env)
+  val decisionModelsDataStore: DecisionModelsDataStore = new KvDecisionModelsDataStore(extensionId, env.datastores.redis, env)
   val AudioModelsDataStore: AudioModelsDataStore = new KvAudioModelsDataStore(extensionId, env.datastores.redis, env)
   val ocrModelsDataStore: OcrModelsDataStore = new KvOcrModelsDataStore(extensionId, env.datastores.redis, env)
   val searchEnginesDataStore: SearchEnginesDataStore = new KvSearchEnginesDataStore(extensionId, env.datastores.redis, env)
@@ -167,6 +168,13 @@ class AiGatewayExtensionState(env: Env) {
   def allModerationModels(): Seq[ModerationModel]          = _moderationModels.values.toSeq
   def updateModerationModels(values: Seq[ModerationModel]): Unit = {
     _moderationModels.addAll(values.map(v => (v.id, v))).remAll(_moderationModels.keySet.toSeq.diff(values.map(_.id)))
+  }
+
+  private val _decisionModels = new UnboundedTrieMap[String, DecisionModel]()
+  def decisionModel(id: String): Option[DecisionModel] = _decisionModels.get(id)
+  def allDecisionModels(): Seq[DecisionModel]          = _decisionModels.values.toSeq
+  def updateDecisionModels(values: Seq[DecisionModel]): Unit = {
+    _decisionModels.addAll(values.map(v => (v.id, v))).remAll(_decisionModels.keySet.toSeq.diff(values.map(_.id)))
   }
 
   private val _audioModels = new UnboundedTrieMap[String, AudioModel]()
@@ -324,6 +332,7 @@ class AiExtension(val env: Env) extends AdminExtension {
   lazy val promptContextsPageCode = getResourceCode("cloudapim/extensions/ai/PromptContextsPage.js")
   lazy val aiProvidersPageCode = getResourceCode("cloudapim/extensions/ai/AiProvidersPage.js")
   lazy val moderationModelsPage = getResourceCode("cloudapim/extensions/ai/ModerationModelsPage.js")
+  lazy val decisionModelsPage = getResourceCode("cloudapim/extensions/ai/DecisionModelsPage.js")
   lazy val audioModelsPage = getResourceCode("cloudapim/extensions/ai/AudioModelsPage.js")
   lazy val ocrModelsPage = getResourceCode("cloudapim/extensions/ai/OcrModelsPage.js")
   lazy val searchEnginesPage = getResourceCode("cloudapim/extensions/ai/SearchEnginesPage.js")
@@ -720,6 +729,10 @@ class AiExtension(val env: Env) extends AdminExtension {
         val moderation_tokens = bodyJson.select("moderation_tokens").asObject.value
         val ocr_usd = bodyJson.select("ocr_usd").asObject.value
         val ocr_pages = bodyJson.select("ocr_pages").asObject.value
+        // a worker of a previous version sends no decision counters: reading them as an object, like the others,
+        // would reject every one of its deltas until it is upgraded
+        val decision_usd = bodyJson.select("decision_usd").asOpt[JsObject].map(_.value).getOrElse(Map.empty[String, JsValue])
+        val decision_tokens = bodyJson.select("decision_tokens").asOpt[JsObject].map(_.value).getOrElse(Map.empty[String, JsValue])
         total_usd.foreach {
           case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrTotalUsd(value.as[BigDecimal]))
         }
@@ -767,6 +780,12 @@ class AiExtension(val env: Env) extends AdminExtension {
         }
         ocr_pages.foreach {
           case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrOcrPages(value.as[Long]))
+        }
+        decision_usd.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrDecisionUsd(value.as[BigDecimal]))
+        }
+        decision_tokens.foreach {
+          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrDecisionTokens(value.as[Long]))
         }
         Results.Ok(Json.obj("done" -> true)).vfuture
       }
@@ -1020,6 +1039,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |      hugging: ''
             |    };
             |    const OpenAiLikeProviders = ${OpenAiLikeProviders.json.stringify};
+            |    const DecisionModelProviders = ${JsArray(DecisionModel.supportedProviders.toSeq.sorted.map(id => Json.obj("id" -> id, "label" -> AiProvidersCatalog.labelFor(id), "config" -> DecisionModel.defaultConfig(id)))).stringify};
             |    const ClientOptions = {
             |      anthropic: ${AnthropicChatClientOptions().json.stringify},
             |      openai: ${OpenAiChatClientOptions().json.stringify},
@@ -1059,6 +1079,7 @@ class AiExtension(val env: Env) extends AdminExtension {
             |    ${promptContextsPageCode}
             |    ${aiProvidersPageCode}
             |    ${moderationModelsPage}
+            |    ${decisionModelsPage}
             |    ${imagesModelsPage}
             |    ${videoModelsPage}
             |    ${audioModelsPage}
@@ -1324,6 +1345,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |            icon: () => 'fa-brain',
             |          },
             |          {
+            |            title: 'Decision Models',
+            |            description: 'All your Decision Models',
+            |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |            link: '/extensions/cloud-apim/ai-gateway/decision-models',
+            |            display: () => true,
+            |            icon: () => 'fa-brain',
+            |          },
+            |          {
             |            title: 'Image models',
             |            description: 'All your Image models',
             |            absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1487,6 +1516,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          icon: () => 'fa-brain',
             |        },
             |        {
+            |          title: 'Decision Models',
+            |          description: 'All your Decision models',
+            |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
+            |          link: '/extensions/cloud-apim/ai-gateway/decision-models',
+            |          display: () => true,
+            |          icon: () => 'fa-brain',
+            |        },
+            |        {
             |          title: 'Image models',
             |          description: 'All your Image models',
             |          absoluteImg: '/extensions/assets/cloud-apim/extensions/ai-extension/undraw_visionary_technology_re_jfp7.svg',
@@ -1614,6 +1651,12 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          title: 'Moderation Models',
             |          text: 'All your Moderation models',
             |          path: 'extensions/cloud-apim/ai-gateway/moderation-models',
+            |          icon: 'brain'
+            |        },
+            |        {
+            |          title: 'Decision Models',
+            |          text: 'All your Decision models',
+            |          path: 'extensions/cloud-apim/ai-gateway/decision-models',
             |          icon: 'brain'
             |        },
             |        {
@@ -1763,6 +1806,14 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          env: React.createElement('span', { className: "fas fa-brain" }, null),
             |          label: 'Moderation Models',
             |          value: 'moderation-models',
+            |        },
+            |        {
+            |          action: () => {
+            |            window.location.href = `/bo/dashboard/extensions/cloud-apim/ai-gateway/decision-models`
+            |          },
+            |          env: React.createElement('span', { className: "fas fa-brain" }, null),
+            |          label: 'Decision Models',
+            |          value: 'decision-models',
             |        },
             |        {
             |          action: () => {
@@ -2046,6 +2097,24 @@ class AiExtension(val env: Env) extends AdminExtension {
             |          }
             |        },
             |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/decision-models/:taction/:titem',
+            |          component: (props) => {
+            |            return React.createElement(DecisionModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/decision-models/:taction',
+            |          component: (props) => {
+            |            return React.createElement(DecisionModelsPage, props, null)
+            |          }
+            |        },
+            |        {
+            |          path: '/extensions/cloud-apim/ai-gateway/decision-models',
+            |          component: (props) => {
+            |            return React.createElement(DecisionModelsPage, props, null)
+            |          }
+            |        },
+            |        {
             |          path: '/extensions/cloud-apim/ai-gateway/image-models/:taction/:titem',
             |          component: (props) => {
             |            return React.createElement(ImageModelsPage, props, null)
@@ -2194,6 +2263,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       mcpConnectors <- datastores.mcpConnectorsDatastore.findAllAndFillSecrets()
       mcpVirtualServers <- datastores.mcpVirtualServersDataStore.findAllAndFillSecrets()
       moderationModels <- datastores.moderationModelsDataStore.findAllAndFillSecrets()
+      decisionModels <- datastores.decisionModelsDataStore.findAllAndFillSecrets()
       audioModels <- datastores.AudioModelsDataStore.findAllAndFillSecrets()
       ocrModels <- datastores.ocrModelsDataStore.findAllAndFillSecrets()
       searchEngines <- datastores.searchEnginesDataStore.findAllAndFillSecrets()
@@ -2214,6 +2284,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       states.updateMcpConnectors(mcpConnectors)
       states.updateMcpVirtualServers(mcpVirtualServers)
       states.updateModerationModels(moderationModels)
+      states.updateDecisionModels(decisionModels)
       states.updateAudioModel(audioModels)
       states.updateOcrModels(ocrModels)
       states.updateSearchEngines(searchEngines)
@@ -2257,6 +2328,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       AdminExtensionEntity(McpConnector.resource(env, datastores, states)),
       AdminExtensionEntity(McpVirtualServer.resource(env, datastores, states)),
       AdminExtensionEntity(ModerationModel.resource(env, datastores, states)),
+      AdminExtensionEntity(DecisionModel.resource(env, datastores, states)),
       AdminExtensionEntity(AudioModel.resource(env, datastores, states)),
       AdminExtensionEntity(OcrModel.resource(env, datastores, states)),
       AdminExtensionEntity(SearchEngine.resource(env, datastores, states)),

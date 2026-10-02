@@ -21,6 +21,7 @@ export const MODALITIES = [
   { id: 'moderation', label: 'Moderation', resource: 'moderationModels', refs: 'moderation_model_refs', kind: 'moderation-model' },
   { id: 'ocr', label: 'OCR', resource: 'ocrModels', refs: 'ocr_model_refs', kind: 'ocr-model' },
   { id: 'video', label: 'Video', resource: 'videoModels', refs: null, kind: 'video-model' },
+  { id: 'decision', label: 'Decision', resource: 'decisionModels', refs: 'decision_model_refs', kind: 'decision-model' },
 ];
 
 export const teamIdOf = (wsId) => `team_ai_studio_${wsId}`;
@@ -216,6 +217,7 @@ export async function createWorkspace({ name, description, slug }) {
         ocr_model_refs: [],
         embedding_model_refs: [],
         moderation_model_refs: [],
+        decision_model_refs: [],
         context_refs: [],
         max_size_upload: 104857600,
         decode_images: false,

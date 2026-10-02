@@ -4,8 +4,8 @@ import org.apache.pekko.http.scaladsl.util.FastFuture
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.redactedJson
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions, AiBudgetUsageKind, AiBudgetsDataStore, AiProvider, AudioModel, EmbeddingModel, ImageModel, ModerationModel, OcrModel, VideoModel}
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions, AiBudgetUsageKind, AiBudgetsDataStore, AiProvider, AudioModel, DecisionModel, EmbeddingModel, ImageModel, ModerationModel, OcrModel, VideoModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, DecisionModelClient, DecisionModelClientInputOptions, DecisionResponse, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.events.AuditEvent
@@ -944,6 +944,102 @@ class ModerationModelClientWithAuditing(originalModel: ModerationModel, val mode
                 "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
                 "route" -> route.map(_.json).getOrElse(JsNull).asValue,
                 "input_body" -> rawBody,
+                "output" -> _output,
+                "provider_details" -> originalModel.redactedJson,
+                "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,
+                "costs" -> costs.map(_.json).getOrElse(JsNull).asValue,
+                "budgets" -> budgetIds.json
+              )
+            }.toAnalytics()
+          }
+        }
+      }
+    )
+  }
+}
+
+object DecisionModelClientWithAuditing {
+  def applyIfPossible(tuple: (DecisionModel, DecisionModelClient, Env)): DecisionModelClient = {
+    new DecisionModelClientWithAuditing(tuple._1, tuple._2)
+  }
+
+  // the pictures a state comes with (Cloudflare `images`) are megabytes of base64: an event says how many there were
+  def auditedBody(rawBody: JsObject): JsObject = rawBody.select("images").asOpt[JsArray] match {
+    case Some(images) => rawBody ++ Json.obj("images" -> s"${images.value.size} image(s)")
+    case None => rawBody
+  }
+}
+
+class DecisionModelClientWithAuditing(originalModel: DecisionModel, val decisionModelClient: DecisionModelClient) extends DecoratorDecisionModelClient {
+
+  private val consumedUsing = "decision_model/decide"
+
+  override def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]] = {
+    val startTime = System.currentTimeMillis()
+    val user = attrs.get(otoroshi.plugins.Keys.UserKey)
+    val apikey = attrs.get(otoroshi.plugins.Keys.ApiKeyKey)
+    val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
+    val inputBody = DecisionModelClientWithAuditing.auditedBody(rawBody)
+    attrs.put(ChatClientWithAuding.ProviderKey -> originalModel)
+    attrs.put(ChatClientWithAuding.ModelKey -> opts.model.orElse(originalModel.defaultModel).getOrElse("--"))
+    def failure(error: JsValue): Unit = {
+      AuditEvent.generic("LLMUsageAudit") {
+        Json.obj(
+          "error" -> error,
+          "provider_kind" -> originalModel.provider.toLowerCase,
+          "provider" -> originalModel.id,
+          "duration" -> (System.currentTimeMillis() - startTime),
+          "consumed_using" -> consumedUsing,
+          "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
+          "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+          "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+          "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+          "input_body" -> inputBody,
+          "output" -> JsNull,
+          "provider_details" -> originalModel.redactedJson
+        )
+      }.toAnalytics()
+    }
+    AiBudgetsDataStore.handleWithinBudget(attrs)(
+      errStr => Json.obj("error" -> errStr, "budget_exceeded" -> true).leftf,
+      decisionModelClient.decide(opts, rawBody, attrs).andThen {
+        case Failure(exception) => failure(Json.obj("exception" -> exception.getMessage))
+        case Success(Left(err)) => failure(err)
+        case Success(Right(resp)) => {
+          val impacts = attrs.get(ChatClientWithEcoImpact.key)
+          val ext = env.adminExtensions.extension[AiExtension].get
+          // a decision made by a text provider was billed and counted against budgets by that provider
+          val costs = if (resp.metadata.delegated) None else attrs.get(ChatClientWithCostsTracking.key)
+          val totalCost = costs.map(_.totalCost)
+          val totalTokens: Option[Long] = if (resp.metadata.delegated) None else Some(resp.metadata.usage.total).filter(_ > 0L)
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Decision, attrs).map { budgetIds =>
+            val _output = resp.toJson(env)
+            val slug = Json.obj(
+              "provider_kind" -> originalModel.provider.toLowerCase,
+              "provider" -> originalModel.id,
+              "duration" -> (System.currentTimeMillis() - startTime),
+            ) ++ _output
+            attrs.update(DecisionModelClient.ApiUsageKey -> resp.metadata)
+            attrs.update(otoroshi.plugins.Keys.ExtraAnalyticsDataKey) {
+              case Some(obj@JsObject(_)) => {
+                val arr = obj.select("ai-decision").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+                val newArr = arr ++ Seq(slug)
+                obj ++ Json.obj("ai-decision" -> newArr)
+              }
+              case None => Json.obj("ai-decision" -> Seq(slug))
+            }
+            AuditEvent.generic("LLMUsageAudit") {
+              Json.obj(
+                "provider_kind" -> originalModel.provider.toLowerCase,
+                "provider" -> originalModel.id,
+                "duration" -> (System.currentTimeMillis() - startTime),
+                "error" -> JsNull,
+                "consumed_using" -> consumedUsing,
+                "request_id" -> attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).map(JsString.apply).getOrElse(JsNull).asValue,
+                "user" -> user.map(_.json).getOrElse(JsNull).asValue,
+                "apikey" -> apikey.map(_.json).getOrElse(JsNull).asValue,
+                "route" -> route.map(_.json).getOrElse(JsNull).asValue,
+                "input_body" -> inputBody,
                 "output" -> _output,
                 "provider_details" -> originalModel.redactedJson,
                 "impacts" -> impacts.map(_.json(ext.llmImpactsSettings.embedDescriptionInJson)).getOrElse(JsNull).asValue,

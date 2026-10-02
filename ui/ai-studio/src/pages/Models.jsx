@@ -20,6 +20,7 @@ import {
   KIND_LABELS,
   KIND_ORDER,
   kindsOf,
+  modelLabel,
   promptPrice,
 } from '../lib/modelmeta';
 import { HealthDetails, HealthDot, HealthSummary } from '../components/health';
@@ -103,7 +104,7 @@ function EstimatePanel({ value, onChange, cheapest, estimated, total }) {
       <p className="small muted" style={{ margin: 0 }}>
         {cheapest ? (
           <>
-            Cheapest: <b className="mono">{cheapest.model.id}</b> at <b>{fmtCost(cheapest.estimate.total)}</b> a month. {estimated} of {total} models have a token price.
+            Cheapest: <b className="mono">{modelLabel(cheapest.model)}</b> at <b>{fmtCost(cheapest.estimate.total)}</b> a month. {estimated} of {total} models have a token price.
           </>
         ) : (
           'None of these models has a token price.'
@@ -493,7 +494,7 @@ export function ModelsPage() {
               {shown.map((m) => (
                 <div key={`${m.modality}-${m.id}`} className="card model-card clickable" onClick={() => openModel(m)}>
                   <div className="row between">
-                    <div className="name truncate">{m.id}</div>
+                    <div className="name truncate" title={m.id}>{modelLabel(m)}</div>
                     <div className="row" onClick={(e) => e.stopPropagation()}>
                       <CopyButton text={m.id} />
                       <TryButton model={m} workspace={workspace} providers={infos} navigate={navigate} onPlayground={openPlayground} />
@@ -537,7 +538,7 @@ export function ModelsPage() {
                     {shown.map((m) => (
                       <tr key={`${m.modality}-${m.id}`} className="clickable" onClick={() => openModel(m)}>
                         <td className="mono truncate" style={{ maxWidth: 320 }} title={m.id}>
-                          {m.id}
+                          {modelLabel(m)}
                         </td>
                         <td>{m.provider}</td>
                         <td>{kindsOf(m).map((k) => KIND_LABELS[k] || k).join(', ')}</td>

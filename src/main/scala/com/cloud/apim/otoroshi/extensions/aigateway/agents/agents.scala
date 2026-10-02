@@ -976,6 +976,7 @@ class AiAgentNode(val json: JsObject) extends Node {
               Json.obj("label" -> "No personal information", "value" -> "pif"),
               Json.obj("label" -> "Language moderation", "value" -> "moderation"),
               Json.obj("label" -> "Moderation model", "value" -> "moderation_model"),
+              Json.obj("label" -> "Decision model", "value" -> "decision_model"),
               Json.obj("label" -> "No toxic language", "value" -> "toxic_language"),
               Json.obj("label" -> "No racial bias", "value" -> "racial_bias"),
               Json.obj("label" -> "No gender bias", "value" -> "gender_bias"),

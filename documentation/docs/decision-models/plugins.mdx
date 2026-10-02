@@ -1,0 +1,171 @@
+---
+sidebar_position: 3
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Plugins
+
+The **Decision models backend** plugin exposes decision models on any Otoroshi route. It speaks the System One API of TypeSafe, on the path of your choice.
+
+The same endpoint is also part of the [LLM OpenAI Compatible API](/docs/llm-gateway/openai-compat-api) plugin, on `/systemone` and `/decisions`, next to chat completions, embeddings and the rest.
+
+## Plugin configuration
+
+Add the plugin to your route:
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.DecisionModels",
+  "config": {
+    "refs": ["decision-model-entity-id"]
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refs` | array | `[]` | List of Decision Model entity IDs |
+
+## Usage
+
+```sh
+curl --request POST \
+  --url http://myroute.oto.tools:8080/v1/systemone \
+  --header 'content-type: application/json' \
+  --data '{
+  "state": "The checkout has been failing for every customer for the last hour.",
+  "questions": {
+    "urgent": {
+      "type": "noul",
+      "instructions": "Is this support request urgent?"
+    }
+  }
+}'
+```
+
+### Response
+
+```js
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "urgent": {
+      "type": "noul",
+      "noul": 0.95
+    }
+  },
+  "usage": {
+    "input_tokens": 84,
+    "output_tokens": 0
+  }
+}
+```
+
+## With the TypeSafe SDKs
+
+The official SDKs work against the gateway: give them the URL of your route as base URL and an Otoroshi API key. They call `<base url>/v1/systemone`.
+
+```python
+from typesafe_sdk import TypeSafeClient, Noul, Choice
+
+client = TypeSafeClient(
+    api_key="your-otoroshi-api-key",
+    base_url="https://decisions.my-domain.com",
+)
+
+result = client.system_one(
+    "The checkout has been failing for every customer for the last hour.",
+    {
+        "urgent": Noul(instructions="Is this support request urgent?"),
+        "team": Choice(
+            instructions="Which team should handle this request?",
+            criteria={"billing": "Invoices and payments", "technical": "Outages and bugs"},
+        ),
+    },
+)
+
+print(result.nouls["urgent"].noul)
+print(result.choices["team"].choice)
+```
+
+From there the provider is a gateway setting: [pin the model](/docs/decision-models/providers#pin-the-model) of the entity and the same code is served by Jev, Clef or a model you host.
+
+## Model routing
+
+When several decision models are configured in `refs`, the `model` field of the request picks one:
+
+```js
+{
+  "model": "providerName/modelName",
+  "state": "...",
+  "questions": { }
+}
+```
+
+The decision model can be referenced by:
+- **Entity ID**: `decision-model-id###jev-latest` — the form to prefer, since it cannot be read any other way
+- **Entity name** (slug): `my_jev/jev-latest`
+- **Its own model**: a request naming the very model an entity is configured with goes to that entity as it is. Model names with a slash of their own, like `typesafe/jev-1.13` on OpenRouter or `telnyx/decision-flash`, are therefore routed right without any prefix
+- **A `provider` field**: `"provider": "decision-model-id"` picks the entity and leaves `model` free
+
+If nothing matches, the first configured ref is used, and asked for the model of the request — or for its own when the request names none.
+
+## Errors
+
+A client written for the System One API gets the errors it expects, with the status the provider would have answered:
+
+| Status | When |
+|--------|------|
+| `422` | The request is not a System One request: no `state`, no `questions`, a question without `type` or `instructions`. Refused by the gateway, with the field at fault |
+| `401`, `422`, `429`, `529`... | What the provider answered, body included. A `Retry-After` header is passed along, so SDK retries behave as they do against the provider |
+| `402` | A [budget](/docs/cost-optimizations/budgets) is exhausted |
+| `403` | The model is not one the consumer may use, or it has no known price while the decision model requires one |
+| `504`, `502` | The provider did not answer in time, or could not be reached, and no [fallback](/docs/decision-models/providers#fallback) took over |
+
+Errors raised by the gateway use the envelope of the System One API:
+
+```js
+{
+  "detail": {
+    "error_type": "budget_exceeded",
+    "message": "budget exceeded"
+  }
+}
+```
+
+## Route example
+
+A complete route configuration exposing a decision endpoint:
+
+```js
+{
+  "frontend": {
+    "domains": ["decisions.my-domain.com"]
+  },
+  "backend": {
+    "targets": [
+      {
+        "hostname": "request.otoroshi.io",
+        "port": 443,
+        "tls": true
+      }
+    ]
+  },
+  "plugins": [
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi.next.plugins.OverrideHost",
+      "config": {}
+    },
+    {
+      "enabled": true,
+      "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.DecisionModels",
+      "config": {
+        "refs": ["decision-model-entity-id"]
+      }
+    }
+  ]
+}
+```

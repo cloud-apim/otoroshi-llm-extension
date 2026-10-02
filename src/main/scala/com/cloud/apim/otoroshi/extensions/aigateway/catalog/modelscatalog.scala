@@ -465,12 +465,12 @@ object ProviderInsights {
 }
 
 /**
- * The Otoroshi model types (text, audio, image, ocr, embedding, moderation, video) a listed model belongs to. A
+ * The Otoroshi model types (text, audio, image, ocr, embedding, moderation, video, decision) a listed model belongs to. A
  * model can have several: an omni model chats and speaks, an image model may answer with text too.
  */
 object ModelKinds {
 
-  import AiProvidersCatalog.{Audio, Embedding, Image, Moderation, Ocr, Text, Video}
+  import AiProvidersCatalog.{Audio, Decision, Embedding, Image, Moderation, Ocr, Text, Video}
 
   // providers whose chat client only extracts text from documents
   private val ocrProviders = Set("alphaedge")
@@ -487,6 +487,8 @@ object ModelKinds {
     case "embedding" => Seq(Embedding).some
     case "moderation" | "guardrail" => Seq(Moderation).some
     case "ocr" => Seq(Ocr).some
+    // what the price table calls the decision models (TypeSafe Jev and the like)
+    case "evaluation" => Seq(Decision).some
     case "audio_transcription" | "audio_speech" => Seq(Audio).some
     // rankers and search engines are none of the model types
     case "rerank" | "search" | "vector_store" => Seq.empty.some
@@ -547,12 +549,14 @@ object ModelKinds {
  */
 object ModelEndpoints {
 
-  import AiProvidersCatalog.{Audio, Embedding, Image, Moderation, Ocr, Text, Video}
+  import AiProvidersCatalog.{Audio, Decision, Embedding, Image, Moderation, Ocr, Text, Video}
 
   val Messages = "messages"
   val AudioSpeech = "audio_speech"
   val AudioTranscriptions = "audio_transcriptions"
   val AudioTranslations = "audio_translations"
+  // the System One api of the decision models, not an OpenAI endpoint either
+  val SystemOne = "systemone"
   val conversational = Set("chat_completions", "completions", "responses", Messages)
 
   private val paths = Map(
@@ -572,6 +576,7 @@ object ModelEndpoints {
     "/v1/realtime/transcription_sessions" -> "realtime",
     "/v1/videos" -> "videos",
     "/v1/messages" -> Messages,
+    "/v1/systemone" -> SystemOne,
   )
 
   private val modes = Map(
@@ -587,6 +592,7 @@ object ModelEndpoints {
     "ocr" -> "ocr",
     "realtime" -> "realtime",
     "video_generation" -> "videos",
+    "evaluation" -> SystemOne,
   )
 
   private val speechName = "(^|[^a-z])tts([^a-z]|$)".r
@@ -614,6 +620,7 @@ object ModelEndpoints {
     case Moderation => Seq("moderations")
     case Ocr => Seq("ocr")
     case Video => Seq("videos")
+    case Decision => Seq(SystemOne)
     case _ => Seq.empty
   }.distinct
 }
@@ -702,22 +709,25 @@ object ModelsMetadata {
     // through another sdk) and on an OpenAI endpoint. A router serves nothing itself.
     val kind = provider.provider.toLowerCase(Locale.ROOT)
     val servedByOpenAiSdk = served.forall(m => m.shape.isDefined || m.sdk.forall(ModelsCatalog.openAiSdks.contains))
+    // a decision model is called with the System One api, whoever serves it
+    val decides = kinds == Seq(AiProvidersCatalog.Decision)
     val openAiCompatible = Option.when(!AiProvider.routingProviders.contains(kind)) {
-      AiProvider.openAiCompatibleProviders.contains(kind) && servedByOpenAiSdk &&
+      AiProvider.openAiCompatibleProviders.contains(kind) && servedByOpenAiSdk && !decides &&
         (knownEndpoints.isEmpty || knownEndpoints.exists(_ != ModelEndpoints.Messages))
     }
-    val endpoints = if (!openAiCompatible.contains(true)) Seq.empty
+    val endpoints = if (decides) Seq(ModelEndpoints.SystemOne)
+      else if (!openAiCompatible.contains(true)) Seq.empty
       else if (knownEndpoints.nonEmpty) knownEndpoints.filterNot(_ == ModelEndpoints.Messages)
       else ModelEndpoints.ofKinds(kinds, names, input.getOrElse(Seq.empty))
     val cacheRead = catalog.flatMap(_.cost).map(_.cacheRead.isDefined).filter(identity)
     // What the gateway can actually bill for a call on this model, which decides whether its calls count
-    // against dollar budgets. Text, embeddings and moderations are billed per token; the other modalities by
+    // against dollar budgets. Text, embeddings, moderations and decisions are billed per token; the other modalities by
     // the unit the price table holds for them, and only when the gateway can measure it — a voice billed per
     // second of audio stays unpriced, whatever its price entry says. The kinds decide, not the entity that
     // lists the model, so an image model listed by an LLM connection answers like the image entity serving it.
     val hasCost = ext.exists { e =>
       val conversational = kinds.contains(AiProvidersCatalog.Text)
-      val perToken = conversational || kinds.exists(k => k == AiProvidersCatalog.Embedding || k == AiProvidersCatalog.Moderation)
+      val perToken = conversational || kinds.exists(k => k == AiProvidersCatalog.Embedding || k == AiProvidersCatalog.Moderation || k == AiProvidersCatalog.Decision)
       if (conversational) e.costsTracking.hasCost(provider, model)
       else if (perToken) e.costsTracking.hasTokenCost(provider.provider, model)
       else (e.costsTrackingSettings.enabled || provider.models.requireKnownCosts) &&

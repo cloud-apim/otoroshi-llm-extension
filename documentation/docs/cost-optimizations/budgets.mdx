@@ -29,7 +29,7 @@ A  budget is defined between a start date and an end date. Limits are applied fo
 
 ![](/img/budgets-duration.png)
 
-A budget can defined limits that can be global or per usage (inference, image, audio, video, embedding, moderation)
+A budget can defined limits that can be global or per usage (inference, image, audio, video, embedding, moderation, decision)
 
 Every modality feeds those counters, in tokens and in dollars: an image generation, a transcription, a voice
 and an extracted page are priced the way [cost tracking](/docs/cost-optimizations/cost-tracking) describes,
@@ -124,6 +124,8 @@ the first one will return a response like:
   "consumed_embedding_tokens": 0,
   "consumed_moderation_usd": 0,
   "consumed_moderation_tokens": 0,
+  "consumed_decision_usd": 0,
+  "consumed_decision_tokens": 0,
   "remaining_total_usd": 199.99811345,
   "remaining_total_tokens": 9991964,
   "remaining_inference_usd": 0,
@@ -138,6 +140,8 @@ the first one will return a response like:
   "remaining_embedding_tokens": 0,
   "remaining_moderation_usd": 0,
   "remaining_moderation_tokens": 0,
+  "remaining_decision_usd": 0,
+  "remaining_decision_tokens": 0,
   "allowed_total_usd": 200,
   "allowed_total_tokens": 10000000,
   "allowed_inference_usd": null,
@@ -151,7 +155,9 @@ the first one will return a response like:
   "allowed_embedding_usd": null,
   "allowed_embedding_tokens": null,
   "allowed_moderation_usd": null,
-  "allowed_moderation_tokens": null
+  "allowed_moderation_tokens": null,
+  "allowed_decision_usd": null,
+  "allowed_decision_tokens": null
 }
 ```
 
@@ -212,6 +218,8 @@ curl --request POST \
     "consumed_embedding_tokens": 0,
     "consumed_moderation_usd": 0,
     "consumed_moderation_tokens": 0,
+    "consumed_decision_usd": 0,
+    "consumed_decision_tokens": 0,
     "remaining_total_usd": 199.99605245,
     "remaining_total_tokens": 9991769,
     "remaining_inference_usd": 0,
@@ -226,6 +234,8 @@ curl --request POST \
     "remaining_embedding_tokens": 0,
     "remaining_moderation_usd": 0,
     "remaining_moderation_tokens": 0,
+    "remaining_decision_usd": 0,
+    "remaining_decision_tokens": 0,
     "allowed_total_usd": 200,
     "allowed_total_tokens": 10000000,
     "allowed_inference_usd": null,
@@ -239,7 +249,9 @@ curl --request POST \
     "allowed_embedding_usd": null,
     "allowed_embedding_tokens": null,
     "allowed_moderation_usd": null,
-    "allowed_moderation_tokens": null
+    "allowed_moderation_tokens": null,
+    "allowed_decision_usd": null,
+    "allowed_decision_tokens": null
   }
 }
 ```

@@ -1,0 +1,175 @@
+---
+sidebar_position: 2
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Supported providers
+
+A decision model entity connects the gateway to one provider. Every provider below answers the same System One requests: an application talks to the gateway, and the provider behind it is your choice.
+
+| Provider | `provider` | Default base URL | Example model |
+|----------|-----------|------------------|---------------|
+| TypeSafe | `typesafe` | `https://api.typesafe.ai/v1` | `jev-latest` |
+| OpenRouter | `openrouter` | `https://openrouter.ai/api/v1` | `typesafe/jev-1.13` |
+| Cloudflare Workers AI | `cloudflare` | `https://api.cloudflare.com/client/v4` | `@cf/cloudflare/clef-flash` |
+| Liquid AI | `liquid` | `https://api.liquid.ai/decisions/v1` | `d1:free` |
+| Telnyx | `telnyx` | `https://api.telnyx.com/v2/ai/typesafe/v1` | `telnyx/decision-flash` |
+| Prem AI | `prem` | `https://gateway.prem.io/typesafe/v1` | `dgemma` |
+| Vercel AI Gateway | `vercel` | `https://ai-gateway.vercel.sh/typesafe/v1` | `typesafe-ai/jev` |
+| Any System One server | `systemone-compatible` | yours | yours |
+| One of your text providers | `llm-emulation` | — | the model of the text provider |
+
+## Entity configuration
+
+```js
+{
+  "id": "decision-model_jev",
+  "name": "Jev",
+  "provider": "typesafe",
+  "config": {
+    "connection": {
+      "base_url": "https://api.typesafe.ai/v1",
+      "token": "${vault://local/typesafe-token}",
+      "timeout": 30000
+    },
+    "options": {
+      "model": "jev-latest"
+    }
+  }
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `config.connection.base_url` | Where the provider is reached. The gateway calls `<base_url>/systemone` |
+| `config.connection.token` | The API key of the provider. Several keys separated by commas are used in turn |
+| `config.connection.timeout` | How long to wait for the answer, in milliseconds |
+| `config.options.model` | The model used when a request names none |
+| `config.options.allow_config_override` | `true` by default: a request can name another model. Set it to `false` to [pin the model](#pin-the-model) |
+| `fallback_ref` | The decision model taking over when this one cannot answer. See [fallback](#fallback) |
+| `fallback_model` | The model asked to the fallback, its own default model when empty |
+| `models` | Model constraints: `include` / `exclude` patterns of the models consumers may use, and `require_known_costs` to refuse a model the gateway cannot price |
+
+## TypeSafe
+
+The reference implementation of the System One API, with the Jev models. Pin a versioned model such as `jev-1.13.0` when your thresholds must stay stable, or follow `jev-latest`.
+
+## OpenRouter
+
+OpenRouter serves Jev and other decision models (Liquid d1, Inception Mercury Decide...) on its own System One endpoint. Two things come with it:
+
+- the **routing preferences** of OpenRouter: a `provider` object in the request (`order`, `allow_fallbacks`...) is forwarded as it is
+- the **cost of each call**, reported by OpenRouter itself and used as is for [cost tracking](/docs/cost-optimizations/cost-tracking) and budgets, including for the models no price table knows
+
+## Cloudflare Workers AI
+
+Clef and Clef-flash, the open-weight decision models of Cloudflare. They take the same requests as Jev, with up to 64 questions, and can also look at pictures through an `images` array.
+
+```js
+{
+  "provider": "cloudflare",
+  "config": {
+    "connection": {
+      "account_id": "your-cloudflare-account-id",
+      "token": "${vault://local/cloudflare-token}"
+    },
+    "options": {
+      "model": "@cf/cloudflare/clef-flash"
+    }
+  }
+}
+```
+
+The model is named the way Workers AI names it (`@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash`).
+
+## Liquid AI, Telnyx, Prem AI, Vercel AI Gateway
+
+These providers expose the System One API under their own base URL, with their own models. Create the entity with the matching `provider` and your API key: the base URL of the table above is used unless you set another one.
+
+## Self-hosted and compatible servers
+
+`systemone-compatible` reaches any server speaking the System One API: an open-weight model served by Laya or vLLM, a LiteLLM proxy, an internal service.
+
+```js
+{
+  "provider": "systemone-compatible",
+  "config": {
+    "connection": {
+      "base_url": "http://vllm.internal:8000/v1",
+      "path": "/systemone",
+      "provider_name": "Internal vLLM",
+      "headers": {
+        "Authorization": "Bearer {api_key}"
+      },
+      "token": "${vault://local/vllm-token}"
+    },
+    "options": {
+      "model": "clef-flash"
+    }
+  }
+}
+```
+
+`path` is appended to `base_url` (`/systemone` by default) and `headers` are sent with every call, `{api_key}` being replaced by the token.
+
+To put a price on a self-hosted model, give the entity the `costs-tracking-provider` and `costs-tracking-model` metadata of the model it runs, or declare your own prices in the [cost tracking](/docs/cost-optimizations/cost-tracking) settings.
+
+## Decisions from a text provider
+
+`llm-emulation` lets one of your text providers answer System One requests. The gateway asks the chat model for the probability of every outcome and computes the answers — choice, score, confidence — exactly the way a decision model reports them. Your applications call the same endpoint and read the same response, whether a decision model or an LLM is behind it.
+
+```js
+{
+  "provider": "llm-emulation",
+  "config": {
+    "connection": {
+      "provider": "provider_xxxxxxxxx"
+    },
+    "options": {
+      "model": "gpt-4o-mini"
+    }
+  }
+}
+```
+
+- **`connection.provider`** — the LLM provider entity answering the questions
+- **`options.model`** — the model of that provider to use, its default model when omitted
+
+The call is a call of the text provider: its guardrails, its model constraints and its budgets apply, and it is billed, counted and logged as such — once.
+
+:::tip
+The probabilities of an emulated decision are the ones the chat model states. They are a good way to adopt the decision API with the models you already have, and a reason to tune your thresholds again when you later move to a model trained to decide.
+:::
+
+## Pin the model
+
+The TypeSafe SDKs always send a model name, `jev-latest` unless told otherwise. Set `allow_config_override` to `false` and the entity serves its own model whatever the request asks for:
+
+```js
+"options": {
+  "model": "@cf/cloudflare/clef-flash",
+  "allow_config_override": false
+}
+```
+
+Applications written for Jev keep running unchanged while the gateway serves Clef, a self-hosted model, or tomorrow's better one. The model becomes a deployment decision.
+
+## Fallback
+
+A decision is made to be waited for. Give a decision model a `fallback_ref` and another one takes over when it cannot answer:
+
+```js
+{
+  "id": "decision-model_jev",
+  "provider": "typesafe",
+  "fallback_ref": "decision-model_clef",
+  "fallback_model": "@cf/cloudflare/clef-flash"
+}
+```
+
+- The fallback is used on **technical failures**: no answer (timeout, connection), rate limiting (`429`) and server errors (`5xx`, `529`).
+- A request the provider refused as invalid is not sent elsewhere: it would be refused there too.
+- A low confidence is an answer, not a failure. Probabilities are not comparable between models, so the gateway never shops for a more confident one.
+- The call is priced and counted against budgets once, at the price of the model that served it.
+- Fallbacks can be chained, and two models falling back on each other are each tried once.

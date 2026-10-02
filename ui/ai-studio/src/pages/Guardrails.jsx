@@ -36,7 +36,7 @@ function FilterRow({ filter, onChange, onRemove }) {
   );
 }
 
-function GuardrailModal({ initial, providers, moderationModels, onClose, onSave }) {
+function GuardrailModal({ initial, providers, moderationModels, decisionModels, onClose, onSave }) {
   const [item, setItem] = useState(
     initial || { enabled: true, before: true, after: false, id: 'regex', config: {} }
   );
@@ -91,6 +91,9 @@ function GuardrailModal({ initial, providers, moderationModels, onClose, onSave 
               {f.kind === 'moderation_model' && (
                 <Select value={value} onChange={(v) => setConfig({ [f.name]: v })} placeholder={moderationModels.length ? 'Select a model' : 'No moderation model connected'} options={moderationModels.map((m) => ({ value: m.id, label: m.name }))} />
               )}
+              {f.kind === 'decision_model' && (
+                <Select value={value} onChange={(v) => setConfig({ [f.name]: v })} placeholder={decisionModels.length ? 'Select a model' : 'No decision model connected'} options={decisionModels.map((m) => ({ value: m.id, label: m.name }))} />
+              )}
             </Field>
           );
         })}
@@ -136,6 +139,7 @@ export function GuardrailsPage() {
 
   const providers = (data.data && data.data.byModality.text) || [];
   const moderationModels = (data.data && data.data.byModality.moderation) || [];
+  const decisionModels = (data.data && data.data.byModality.decision) || [];
   const allEntities = data.data ? MODALITIES.flatMap((m) => data.data.byModality[m.id].map((e) => ({ entity: e, resource: m.resource }))) : [];
 
   const [access, setAccess] = useState({ include: [], exclude: [] });
@@ -317,6 +321,7 @@ export function GuardrailsPage() {
           initial={editing.item}
           providers={providers}
           moderationModels={moderationModels}
+          decisionModels={decisionModels}
           onClose={() => setEditing(null)}
           onSave={(item) => {
             const items = editing.item ? policies.items.map((x, i) => (i === editing.idx ? item : x)) : [...policies.items, item];

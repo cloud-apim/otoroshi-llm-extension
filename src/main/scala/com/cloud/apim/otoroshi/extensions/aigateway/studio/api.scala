@@ -2,6 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.studio
 
 import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsMetadata
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ApikeyOwner}
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.SystemOneProviders
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
@@ -224,6 +225,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     Modality("moderation", new Entities(AiGroup, "moderation-models"), Some("moderation_model_refs"), "moderation-model"),
     Modality("ocr", new Entities(AiGroup, "ocr-models"), Some("ocr_model_refs"), "ocr-model"),
     Modality("video", new Entities(AiGroup, "video-models"), None, "video-model"),
+    Modality("decision", new Entities(AiGroup, "decision-models"), Some("decision_model_refs"), "decision-model"),
   )
 
   /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -458,6 +460,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
                 "ocr_model_refs" -> Json.arr(),
                 "embedding_model_refs" -> Json.arr(),
                 "moderation_model_refs" -> Json.arr(),
+                "decision_model_refs" -> Json.arr(),
                 "context_refs" -> Json.arr(),
                 "max_size_upload" -> 104857600,
                 "decode_images" -> false,
@@ -830,7 +833,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   // applies an api body on a connection, then checks it the way the provider form does
   private def connectionFromForm(base: Connection, form: JsObject, entry: Option[JsObject], initialName: Option[String], existingNames: Seq[String]): Connection = {
     val isNew = base.entities.isEmpty
-    val capabilities = entry.map(capabilitiesOf).getOrElse(Seq("text", "embedding", "image", "audio", "moderation", "ocr", "video"))
+    val capabilities = entry.map(capabilitiesOf).getOrElse(Seq("text", "embedding", "image", "audio", "moderation", "ocr", "video", "decision"))
     val formModalities = obj(form, "modalities").getOrElse(Json.obj())
     val mods = formModalities.value.foldLeft(base.modalities) { case (acc, (id, value)) =>
       if (!capabilities.contains(id)) throw badRequest(s"the provider '${base.kind}' does not support the '$id' capability")
@@ -879,7 +882,24 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       val names = existing.map(_.name)
       val fresh = newConnection(entry, names)
       val conn = connectionFromForm(fresh, form, Some(entry), Some(fresh.name), names)
-      saveConnection(ws, conn, Some(entry)).flatMap(_ => connection(ws.id, conn.id)).map(connectionJson)
+      emulated(ws, conn).flatMap(checked => saveConnection(ws, checked, Some(entry))).flatMap(_ => connection(ws.id, conn.id)).map(connectionJson)
+    }
+  }
+
+  /**
+   * A decision model answered by a text provider (`llm-emulation`) has no credentials of its own: its
+   * connection names a text provider, which has to be one of the workspace. The model it asks is the one of
+   * that provider, unless another one is given.
+   */
+  private def emulated(ws: Workspace, conn: Connection)(using call: AiStudioApiRequest): Future[Connection] = {
+    if (conn.kind != SystemOneProviders.LlmEmulation) conn.vfuture
+    else Providers.list(ws.id).map { providers =>
+      val ref = conn.fields.get("provider").flatMap(_.asOpt[String]).map(_.trim).filter(_.nonEmpty)
+        .getOrElse(throw badRequest("'fields.provider' is required: the text provider answering the questions"))
+      val provider = providers.find(p => Providers.idOf(p) == ref).getOrElse(throw badRequest(s"the provider '$ref' does not belong to this workspace"))
+      val mod = conn.modalities.getOrElse("decision", ModalityConf(true, "", None))
+      val model = if (mod.model.trim.nonEmpty) mod.model else provider.select("options").select("model").asOptString.getOrElse("")
+      conn.copy(modalities = conn.modalities + ("decision" -> mod.copy(model = model)))
     }
   }
 
@@ -889,7 +909,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       if (string(form, "kind").exists(_ != current.kind)) throw badRequest("the kind of a provider cannot be changed")
       val entry = catalogEntry(current.kind)
       val conn = connectionFromForm(current, form, entry, Some(current.name), existing.map(_.name))
-      saveConnection(ws, conn, entry).flatMap(_ => connection(ws.id, conn.id)).map(connectionJson)
+      emulated(ws, conn).flatMap(checked => saveConnection(ws, checked, entry)).flatMap(_ => connection(ws.id, conn.id)).map(connectionJson)
     }
 
   private def deleteConnection(ws: Workspace, connId: String)(using call: AiStudioApiRequest): Future[Unit] =
@@ -1343,6 +1363,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     "toxic_language" -> (Json.obj(), true),
     "gibberish" -> (Json.obj(), true),
     "moderation_model" -> (Json.obj(), false),
+    // a yes/no question asked to a decision model of the workspace: denied when the probability reaches the threshold
+    "decision_model" -> (Json.obj("threshold" -> 0.5), false),
     "webhook" -> (Json.obj(), false),
   )
 
@@ -1359,6 +1381,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     for {
       providers <- Providers.list(ws.id)
       moderationModels <- modalities.find(_.id == "moderation").get.entities.list(ws.id)
+      decisionModels <- modalities.find(_.id == "decision").get.entities.list(ws.id)
       current = guardrailsJson(providers)
       providerIds = providers.map(Providers.idOf)
       items = form.value.get("items") match {
@@ -1372,6 +1395,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
             val config = defaults ++ judge ++ provided
             if (llm) config.select("provider").asOptString.filterNot(providerIds.contains).foreach(p => throw badRequest(s"the provider '$p' of 'items[$idx]' does not belong to this workspace"))
             if (id == "moderation_model") config.select("moderation_model").asOptString.filterNot(moderationModels.map(_.select("id").asString).contains).foreach(m => throw badRequest(s"the moderation model '$m' of 'items[$idx]' does not belong to this workspace"))
+            if (id == "decision_model") config.select("decision_model").asOptString.filterNot(decisionModels.map(_.select("id").asString).contains).foreach(m => throw badRequest(s"the decision model '$m' of 'items[$idx]' does not belong to this workspace"))
             // the calls a guardrail applies to, none of them meaning every call (see GuardrailFilter)
             val filters: JsArray = item.value.get("filters") match {
               case None => Json.arr()

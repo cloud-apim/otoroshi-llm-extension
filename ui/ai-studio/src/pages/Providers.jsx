@@ -118,7 +118,7 @@ function ProviderFacts({ entry }) {
   );
 }
 
-export function ConnectionModal({ workspace, catalog, initial, existingNames, onClose, onSaved }) {
+export function ConnectionModal({ workspace, catalog, initial, existingNames, connections = [], onClose, onSaved }) {
   const toast = useToast();
   const [conn, setConn] = useState(() => withModelDefaults(initial, catalog.find((c) => c.id === initial.kind)));
   const [tab, setTab] = useState('connection');
@@ -142,7 +142,23 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
   };
   const nameTaken = existingNames.includes(conn.name) && conn.name !== initial.name;
   const anyModality = Object.values(conn.modalities).some((m) => m.enabled);
-  const valid = conn.name && !nameTaken && anyModality && (!entry.token_required || conn.token || !isNew) && (!entry.base_url_required || conn.base_url);
+  // a connection going through a text provider of the workspace (see the `provider` fields of the catalog)
+  // has no credentials of its own
+  const hasCredentials = entry.credentials !== false;
+  const textProviders = connections.filter((c) => c.id !== conn.id && c.entities && c.entities.text);
+  const providerPicked = (entry.fields || []).every((f) => f.kind !== 'provider' || (conn.fields || {})[f.name]);
+  const valid = conn.name && !nameTaken && anyModality && providerPicked && (!entry.token_required || conn.token || !isNew) && (!entry.base_url_required || conn.base_url);
+  // the text provider answers with its own model unless another one is asked for
+  const pickProvider = (field, id) => {
+    const picked = textProviders.find((c) => c.entities.text.id === id);
+    setConn((c) => {
+      const decision = c.modalities.decision || { enabled: true, model: '' };
+      const previous = textProviders.find((p) => p.entities.text.id === (c.fields || {})[field]);
+      const untouched = !decision.model || (previous && decision.model === (previous.modalities.text || {}).model);
+      const model = untouched && picked ? (picked.modalities.text || {}).model || '' : decision.model;
+      return { ...c, fields: { ...(c.fields || {}), [field]: id }, modalities: { ...c.modalities, decision: { ...decision, model } } };
+    });
+  };
 
   const changeKind = (kind) => {
     const next = catalog.find((c) => c.id === kind);
@@ -220,20 +236,37 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, on
           <Field label="Name" hint="Prefixes model ids when several providers are configured." error={nameTaken ? 'already used in this workspace' : null}>
             <TextInput value={conn.name} onChange={(v) => set({ name: connectionName(v) })} />
           </Field>
-          <Field className="full" label="Base URL" hint={entry.base_url_required ? 'Required for this provider.' : 'Leave the default unless you use a proxy or a self-hosted endpoint.'}>
-            <TextInput value={conn.base_url} onChange={(v) => set({ base_url: v })} placeholder={entry.base_url || 'https://...'} />
-          </Field>
-          {(entry.fields || []).map((f) => (
-            <Field key={f.name} label={f.label}>
-              <TextInput value={(conn.fields || {})[f.name]} placeholder={f.placeholder} onChange={(v) => set({ fields: { ...(conn.fields || {}), [f.name]: v } })} />
+          {hasCredentials && (
+            <Field className="full" label="Base URL" hint={entry.base_url_required ? 'Required for this provider.' : 'Leave the default unless you use a proxy or a self-hosted endpoint.'}>
+              <TextInput value={conn.base_url} onChange={(v) => set({ base_url: v })} placeholder={entry.base_url || 'https://...'} />
             </Field>
-          ))}
-          <Field label="API key" hint={isNew ? 'Stored in the gateway entity. You can also use a vault reference like ${vault://env/OPENAI_API_KEY}.' : 'A key is stored. Change it to rotate it.'}>
-            <SecretInput value={conn.token} onChange={(v) => set({ token: v })} placeholder={entry.token_required ? 'sk-…' : 'optional'} />
-          </Field>
-          <Field label="Timeout (ms)">
-            <NumberInput value={conn.timeout} onChange={(v) => set({ timeout: v })} />
-          </Field>
+          )}
+          {(entry.fields || []).map((f) =>
+            f.kind === 'provider' ? (
+              <Field key={f.name} className="full" label={f.label} hint="Its chat model answers the questions with the probability of each outcome. The calls are billed, budgeted and logged as calls of this provider.">
+                <Select
+                  value={(conn.fields || {})[f.name]}
+                  onChange={(v) => pickProvider(f.name, v)}
+                  placeholder={textProviders.length ? 'Select a provider' : 'Connect a text provider first'}
+                  options={textProviders.map((c) => ({ value: c.entities.text.id, label: `${c.name} (${(c.modalities.text || {}).model || 'default model'})` }))}
+                />
+              </Field>
+            ) : (
+              <Field key={f.name} label={f.label}>
+                <TextInput value={(conn.fields || {})[f.name]} placeholder={f.placeholder} onChange={(v) => set({ fields: { ...(conn.fields || {}), [f.name]: v } })} />
+              </Field>
+            )
+          )}
+          {hasCredentials && (
+            <Field label="API key" hint={isNew ? 'Stored in the gateway entity. You can also use a vault reference like ${vault://env/OPENAI_API_KEY}.' : 'A key is stored. Change it to rotate it.'}>
+              <SecretInput value={conn.token} onChange={(v) => set({ token: v })} placeholder={entry.token_required ? 'sk-…' : 'optional'} />
+            </Field>
+          )}
+          {hasCredentials && (
+            <Field label="Timeout (ms)">
+              <NumberInput value={conn.timeout} onChange={(v) => set({ timeout: v })} />
+            </Field>
+          )}
           <Field label="Enabled" hint="Disabled providers stay configured but are not served by the workspace.">
             <Toggle value={conn.enabled !== false} onChange={(v) => set({ enabled: v })} />
           </Field>
@@ -582,6 +615,7 @@ export function ProvidersPage() {
         <ConnectionModal
           workspace={workspace}
           catalog={cat}
+          connections={list}
           initial={editing}
           existingNames={names}
           onClose={() => setEditing(null)}

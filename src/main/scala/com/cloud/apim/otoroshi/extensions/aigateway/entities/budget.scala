@@ -54,6 +54,9 @@ object AiBudgetClusterAgent {
   val ocrUsdCounters = new TrieMap[String, DoubleAdder]()
   val ocrPagesCounters = new TrieMap[String, AtomicLong]()
 
+  val decisionUsdCounters = new TrieMap[String, DoubleAdder]()
+  val decisionTokensCounters = new TrieMap[String, AtomicLong]()
+
   private val schedulerRef = new AtomicReference[Cancellable]()
   private val counter = new AtomicInteger(0)
 
@@ -87,6 +90,8 @@ object AiBudgetClusterAgent {
     moderationTokensCounters.clear()
     ocrUsdCounters.clear()
     ocrPagesCounters.clear()
+    decisionUsdCounters.clear()
+    decisionTokensCounters.clear()
   }
 
   private def otoroshiUrl(env: Env): String = {
@@ -118,6 +123,8 @@ object AiBudgetClusterAgent {
         "moderation_tokens" -> JsObject(moderationTokensCounters.toMap.view.mapValues(_.get.json).toMap),
         "ocr_usd" -> JsObject(ocrUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
         "ocr_pages" -> JsObject(ocrPagesCounters.toMap.view.mapValues(_.get.json).toMap),
+        "decision_usd" -> JsObject(decisionUsdCounters.toMap.view.mapValues(_.sum.json).toMap),
+        "decision_tokens" -> JsObject(decisionTokensCounters.toMap.view.mapValues(_.get.json).toMap),
       )
       Retry
         .retry(
@@ -249,6 +256,18 @@ object AiBudgetUsageKind {
       }
     }
   }
+  case object Decision extends AiBudgetUsageKind {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
+      cost.foreach { c =>
+        budget.incrTotalUsd(c)
+        budget.incrDecisionUsd(c)
+      }
+      tokens.foreach { c =>
+        budget.incrTotalTokens(c)
+        budget.incrDecisionTokens(c)
+      }
+    }
+  }
 }
 
 sealed trait AiBudgetDurationUnit {
@@ -333,8 +352,18 @@ case class AiBudgetLimits(
 
   ocr_pages: Option[Long],
   ocr_usd: Option[BigDecimal],
+
+  decision_tokens: Option[Long] = None,
+  decision_usd: Option[BigDecimal] = None,
 ) {
   def json: JsValue = AiBudgetLimits.format.writes(this)
+
+  // whether the budget limits anything at all
+  def isEmpty: Boolean = Seq(
+    total_tokens, total_usd, inference_tokens, inference_usd, image_tokens, image_usd, audio_tokens, audio_usd,
+    video_tokens, video_usd, embedding_tokens, embedding_usd, moderation_tokens, moderation_usd, ocr_pages, ocr_usd,
+    decision_tokens, decision_usd,
+  ).forall(_.isEmpty)
 }
 
 object AiBudgetLimits {
@@ -356,6 +385,8 @@ object AiBudgetLimits {
       "moderation_usd" -> o.moderation_usd,
       "ocr_pages" -> o.ocr_pages,
       "ocr_usd" -> o.ocr_usd,
+      "decision_tokens" -> o.decision_tokens,
+      "decision_usd" -> o.decision_usd,
     )
     override def reads(json: JsValue): JsResult[AiBudgetLimits] = Try {
       AiBudgetLimits(
@@ -374,7 +405,9 @@ object AiBudgetLimits {
         moderation_tokens = (json \ "moderation_tokens").asOpt[Long].filter(_ > -1L),
         moderation_usd = (json \ "moderation_usd").asOpt[BigDecimal].filter(_ > -1L),
         ocr_pages = (json \ "ocr_pages").asOpt[Long].filter(_ > -1L),
-        ocr_usd = (json \ "ocr_usd").asOpt[BigDecimal].filter(_ > -1L)
+        ocr_usd = (json \ "ocr_usd").asOpt[BigDecimal].filter(_ > -1L),
+        decision_tokens = (json \ "decision_tokens").asOpt[Long].filter(_ > -1L),
+        decision_usd = (json \ "decision_usd").asOpt[BigDecimal].filter(_ > -1L),
       )
     } match {
       case Failure(ex) => JsError(ex.getMessage)
@@ -542,6 +575,8 @@ case class AiBudgetConsumptions(
   moderationTokens: Long,
   ocrUsd: BigDecimal,
   ocrPages: Long,
+  decisionUsd: BigDecimal = BigDecimal(0),
+  decisionTokens: Long = 0L,
 ) {
   def json: JsValue = Json.obj(
     "consumed_total_usd" -> totalUsd,
@@ -560,6 +595,8 @@ case class AiBudgetConsumptions(
     "consumed_moderation_tokens" -> moderationTokens,
     "consumed_ocr_usd" -> ocrUsd,
     "consumed_ocr_pages" -> ocrPages,
+    "consumed_decision_usd" -> decisionUsd,
+    "consumed_decision_tokens" -> decisionTokens,
   )
   def jsonWithRemaining(budget: AiBudget): JsValue = json.asObject ++ Json.obj(
     "remaining_total_usd" -> JsNumber(budget.limits.total_usd.map(v => v - totalUsd).getOrElse(BigDecimal(0))),
@@ -578,6 +615,8 @@ case class AiBudgetConsumptions(
     "remaining_moderation_tokens" -> JsNumber(BigDecimal(budget.limits.moderation_tokens.map(_ - moderationTokens).getOrElse(0L))),
     "remaining_ocr_usd" -> JsNumber(budget.limits.ocr_usd.map(_ - ocrUsd).getOrElse(BigDecimal(0))),
     "remaining_ocr_pages" -> JsNumber(BigDecimal(budget.limits.ocr_pages.map(_ - ocrPages).getOrElse(0L))),
+    "remaining_decision_usd" -> JsNumber(budget.limits.decision_usd.map(_ - decisionUsd).getOrElse(BigDecimal(0))),
+    "remaining_decision_tokens" -> JsNumber(BigDecimal(budget.limits.decision_tokens.map(_ - decisionTokens).getOrElse(0L))),
     "allowed_total_usd" -> budget.limits.total_usd,
     "allowed_total_tokens" -> budget.limits.total_tokens,
     "allowed_inference_usd" -> budget.limits.inference_usd,
@@ -594,6 +633,8 @@ case class AiBudgetConsumptions(
     "allowed_moderation_tokens" -> budget.limits.moderation_tokens,
     "allowed_ocr_usd" -> budget.limits.ocr_usd,
     "allowed_ocr_pages" -> budget.limits.ocr_pages,
+    "allowed_decision_usd" -> budget.limits.decision_usd,
+    "allowed_decision_tokens" -> budget.limits.decision_tokens,
   )
 }
 
@@ -695,6 +736,9 @@ case class AiBudget(
 
   def ocrUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:ocr-usd"
   def ocrPagesKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:ocr-pages"
+
+  def decisionUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:decision-usd"
+  def decisionTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:decision-tokens"
 
   def incrTotalUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {
@@ -808,6 +852,20 @@ case class AiBudget(
     env.datastores.rawDataStore.incrby(ocrPagesKey, by)
   }
 
+  def incrDecisionUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.decisionUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
+    }
+    env.datastores.rawDataStore.incrby(decisionUsdKey, by.*(BigDecimal(1000000000)).toLong)
+  }
+
+  def incrDecisionTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
+    if (env.clusterConfig.mode.isWorker) {
+      AiBudgetClusterAgent.decisionTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
+    }
+    env.datastores.rawDataStore.incrby(decisionTokensKey, by)
+  }
+
   def getTotalUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
     env.datastores.rawDataStore.get(totalUsdKey).map(_.map { strValue =>
       val lngValue = strValue.utf8String.toLong
@@ -896,6 +954,17 @@ case class AiBudget(
     env.datastores.rawDataStore.get(ocrPagesKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
   }
 
+  def getTotalDecisionUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
+    env.datastores.rawDataStore.get(decisionUsdKey).map(_.map { strValue =>
+      val lngValue = strValue.utf8String.toLong
+      BigDecimal(lngValue)./(BigDecimal(1000000000))
+    }.getOrElse(0L))
+  }
+
+  def getTotalDecisionTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
+    env.datastores.rawDataStore.get(decisionTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
+  }
+
   def resetCurrentCycle()(using ec: ExecutionContext, env: Env): Future[Unit] = {
     env.datastores.rawDataStore.keys(s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:*").flatMap { keys =>
       env.datastores.rawDataStore.del(keys).map { _ =>
@@ -929,7 +998,10 @@ case class AiBudget(
       moderationUsdKey,
       moderationTokensKey,
       ocrUsdKey,
-      ocrPagesKey
+      ocrPagesKey,
+      // new counters go last: the values are read back by position
+      decisionUsdKey,
+      decisionTokensKey
     )).map {
       case list =>
         AiBudgetConsumptions(
@@ -948,7 +1020,9 @@ case class AiBudget(
           moderationUsd = list(12).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
           moderationTokens = list(13).map(_.utf8String.toLong).getOrElse(0L),
           ocrUsd = list(14).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
-          ocrPages = list(15).map(_.utf8String.toLong).getOrElse(0L)
+          ocrPages = list(15).map(_.utf8String.toLong).getOrElse(0L),
+          decisionUsd = list(16).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
+          decisionTokens = list(17).map(_.utf8String.toLong).getOrElse(0L)
         )
     }
   }
@@ -1013,7 +1087,7 @@ case class AiBudget(
     val cycleValue = cycle.getOrElse(-1)
     if (cycleValue >= (renewals + 1)) {
       (false, None).vfuture
-    } else if (limits.total_tokens.isEmpty && limits.total_usd.isEmpty && limits.inference_tokens.isEmpty && limits.inference_usd.isEmpty && limits.image_tokens.isEmpty && limits.image_usd.isEmpty && limits.audio_tokens.isEmpty && limits.audio_usd.isEmpty && limits.video_tokens.isEmpty && limits.video_usd.isEmpty && limits.embedding_tokens.isEmpty && limits.embedding_usd.isEmpty) {
+    } else if (limits.isEmpty) {
       (true, None).vfuture
     } else {
       getConsumptions().map { consumptions =>
@@ -1050,6 +1124,10 @@ case class AiBudget(
           (false, consumptions.some)
         } else if (limits.ocr_pages.isDefined && consumptions.ocrPages >= limits.ocr_pages.get) {
           (false, consumptions.some)
+        } else if (limits.decision_usd.isDefined && consumptions.decisionUsd >= limits.decision_usd.get) {
+          (false, consumptions.some)
+        } else if (limits.decision_tokens.isDefined && consumptions.decisionTokens >= limits.decision_tokens.get) {
+          (false, consumptions.some)
         } else {
           val percentageConsumedTotalUsd: Double = limits.total_usd.map(tusd => consumptions.totalUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
           val percentageConsumedTotalTokens: Double = limits.total_tokens.map(ttokens => consumptions.totalTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
@@ -1067,8 +1145,10 @@ case class AiBudget(
           val percentageConsumedModerationTokens: Double = limits.moderation_tokens.map(ttokens => consumptions.moderationTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
           val percentageConsumedOcrUsd: Double = limits.ocr_usd.map(tusd => consumptions.ocrUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
           val percentageConsumedOcrPages: Double = limits.ocr_pages.map(tpages => consumptions.ocrPages.toDouble / tpages.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedDecisionUsd: Double = limits.decision_usd.map(tusd => consumptions.decisionUsd.toDouble / tusd.toDouble * 100.0).getOrElse(0.0)
+          val percentageConsumedDecisionTokens: Double = limits.decision_tokens.map(ttokens => consumptions.decisionTokens.toDouble / ttokens.toDouble * 100.0).getOrElse(0.0)
           val maxPercentage = actionOnExceed.alertOnAlmostExceedPercentage.toDouble
-          if (actionOnExceed.alertOnAlmostExceed && (percentageConsumedTotalUsd > maxPercentage || percentageConsumedTotalTokens > maxPercentage || percentageConsumedInferenceUsd > maxPercentage || percentageConsumedInferenceTokens > maxPercentage || percentageConsumedImageUsd > maxPercentage || percentageConsumedImageTokens > maxPercentage || percentageConsumedAudioUsd > maxPercentage || percentageConsumedAudioTokens > maxPercentage || percentageConsumedVideoUsd > maxPercentage || percentageConsumedVideoTokens > maxPercentage || percentageConsumedEmbeddingUsd > maxPercentage || percentageConsumedEmbeddingTokens > maxPercentage || percentageConsumedModerationUsd > maxPercentage || percentageConsumedModerationTokens > maxPercentage || percentageConsumedOcrUsd > maxPercentage || percentageConsumedOcrPages > maxPercentage)) {
+          if (actionOnExceed.alertOnAlmostExceed && (percentageConsumedTotalUsd > maxPercentage || percentageConsumedTotalTokens > maxPercentage || percentageConsumedInferenceUsd > maxPercentage || percentageConsumedInferenceTokens > maxPercentage || percentageConsumedImageUsd > maxPercentage || percentageConsumedImageTokens > maxPercentage || percentageConsumedAudioUsd > maxPercentage || percentageConsumedAudioTokens > maxPercentage || percentageConsumedVideoUsd > maxPercentage || percentageConsumedVideoTokens > maxPercentage || percentageConsumedEmbeddingUsd > maxPercentage || percentageConsumedEmbeddingTokens > maxPercentage || percentageConsumedModerationUsd > maxPercentage || percentageConsumedModerationTokens > maxPercentage || percentageConsumedOcrUsd > maxPercentage || percentageConsumedOcrPages > maxPercentage || percentageConsumedDecisionUsd > maxPercentage || percentageConsumedDecisionTokens > maxPercentage)) {
              AlertEvent.generic("AiBudgetAlmostExceeded", "otoroshi")(Json.obj(
               "budget" -> json,
               "consumption" -> consumptions.json,
@@ -1088,7 +1168,9 @@ case class AiBudget(
                 "moderation_usd" -> percentageConsumedModerationUsd,
                 "moderation_tokens" -> percentageConsumedModerationTokens,
                 "ocr_usd" -> percentageConsumedOcrUsd,
-                "ocr_pages" -> percentageConsumedOcrPages
+                "ocr_pages" -> percentageConsumedOcrPages,
+                "decision_usd" -> percentageConsumedDecisionUsd,
+                "decision_tokens" -> percentageConsumedDecisionTokens
               )
             )).toAnalytics()
           }

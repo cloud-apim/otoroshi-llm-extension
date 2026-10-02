@@ -3,8 +3,8 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.AiMetrics
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel, ModelSettings, ModerationModel, OcrModel, VideoModel}
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, DecisionModel, EmbeddingModel, ImageModel, ModelSettings, ModerationModel, OcrModel, VideoModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, DecisionModelClient, DecisionModelClientInputOptions, DecisionResponse, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import play.api.libs.typedmap.TypedKey
@@ -69,9 +69,14 @@ object ModelConstraints {
   // `from` hands the call it received for `fromModel` over to `to`, with `toBody`. Only a call its consumers
   // were allowed to make is handed over: otherwise `to` checks them as for any call
   def delegate(attrs: TypedMap, from: ModelTarget, fromModel: Option[String], to: AiProvider, toClient: ChatClient, toBody: JsValue): Unit = {
+    delegate(attrs, from, fromModel, ModelTarget.of(to), requestedModel(toClient, toBody))
+  }
+
+  // the same hand over between two entities of any model type
+  def delegate(attrs: TypedMap, from: ModelTarget, fromModel: Option[String], to: ModelTarget, toModel: Option[String]): Unit = {
     if (consumersAllow(from, fromModel, attrs)) {
       attrs.putIfAbsent(DelegatedKey -> java.util.concurrent.ConcurrentHashMap.newKeySet[String]())
-      attrs.get(DelegatedKey).foreach(_.add(delegationOf(ModelTarget.of(to), requestedModel(toClient, toBody))))
+      attrs.get(DelegatedKey).foreach(_.add(delegationOf(to, toModel)))
     }
   }
 
@@ -199,6 +204,35 @@ class ModerationModelClientWithModels(originalModel: ModerationModel, val modera
     ModelConstraints.check(ModelTarget(originalModel.id, originalModel.slugName, originalModel.models), opts.model, attrs) {
       moderationModelClient.moderate(opts, rawBody, attrs)
     }
+  }
+}
+
+object DecisionModelClientWithModels {
+  def applyIfPossible(tuple: (DecisionModel, DecisionModelClient, Env)): DecisionModelClient = {
+    new DecisionModelClientWithModels(tuple._1, tuple._2)
+  }
+}
+
+class DecisionModelClientWithModels(originalModel: DecisionModel, val decisionModelClient: DecisionModelClient) extends DecoratorDecisionModelClient {
+  override def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]] = {
+    ModelConstraints.check(originalModel.target, opts.model, attrs) {
+      decisionModelClient.decide(opts, rawBody, attrs)
+    }
+  }
+}
+
+object DecisionModelClientWithPinnedModel {
+  def applyIfPossible(tuple: (DecisionModel, DecisionModelClient, Env)): DecisionModelClient = {
+    if (tuple._1.allowConfigOverride) tuple._2 else new DecisionModelClientWithPinnedModel(tuple._1, tuple._2)
+  }
+}
+
+// An entity that does not let a request choose the model serves its own, whatever the request names.
+class DecisionModelClientWithPinnedModel(originalModel: DecisionModel, val decisionModelClient: DecisionModelClient) extends DecoratorDecisionModelClient {
+  override def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]] = {
+    val model = originalModel.defaultModel
+    val body = model.map(m => rawBody ++ Json.obj("model" -> m)).getOrElse(rawBody - "model")
+    decisionModelClient.decide(opts.copy(model = model), body, attrs)
   }
 }
 

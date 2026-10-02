@@ -32,7 +32,7 @@ object LlmProvidersCatalog {
 class LlmProvidersCatalog extends NgBackendCall {
 
   override def name: String = "Cloud APIM - LLM Providers Catalog"
-  override def description: Option[String] = "Exposes the catalog of every provider type Otoroshi LLM supports with their capabilities (text, audio, image, ocr, embedding, moderation, video). Filter with one or more `capabilities` query params.".some
+  override def description: Option[String] = "Exposes the catalog of every provider type Otoroshi LLM supports with their capabilities (text, audio, image, ocr, embedding, moderation, video, decision). Filter with one or more `capabilities` query params.".some
   override def core: Boolean = false
   override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
   override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))

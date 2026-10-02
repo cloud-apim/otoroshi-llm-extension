@@ -73,7 +73,7 @@ object AiGatewayQueries {
       "modality",
       "string",
       JsNull,
-      "Only count calls of one modality: chat, responses, completion, embedding, image, audio, video, moderation or ocr"
+      "Only count calls of one modality: chat, responses, completion, embedding, image, audio, video, moderation, ocr or decision"
     )
 
     private val UserParam = QueryParam("user", "string", JsNull, "Only count calls of one user (email): the calls they made and the calls of the API keys they own")
@@ -147,7 +147,7 @@ object AiGatewayQueries {
     }
     val ByProviderKind  = pieOf("by_provider_kind", "Calls by provider type", "OpenAI, Anthropic, Mistral, Ollama… which vendors the traffic actually goes to.", "provider_kind")
     val ByProvider      = pieOf("by_provider", "Calls by provider", "Distribution across the configured provider entities.", Provider)
-    val ByModality      = pieOf("by_modality", "Calls by modality", "Chat, responses, embeddings, images, audio, video, moderation, ocr.", "modality")
+    val ByModality      = pieOf("by_modality", "Calls by modality", "Chat, responses, embeddings, images, audio, video, moderation, ocr, decisions.", "modality")
     val ByOperation     = pieOf("by_operation", "Calls by operation", "The exact endpoint family (`consumed_using`).", "consumed_using", widget = "pie")
     val StreamingRatio  = pieOf("streaming_ratio", "Streaming vs blocking", "How chat traffic is consumed.", "CASE WHEN streaming THEN 'streaming' ELSE 'blocking' END", extra = "modality IN ('chat', 'completion', 'responses')")
     val TopModels       = top("top_models", "Top models", "Models by number of calls.", "model")

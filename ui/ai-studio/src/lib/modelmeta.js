@@ -1,7 +1,7 @@
 // What the gateway knows of a model (`metadata` of the workspace models listing, `details` of a provider models
 // listing): types, cost, api, capabilities, modalities, limits and prices. See `catalog/modelscatalog.scala`.
 
-export const KIND_ORDER = ['text', 'image', 'audio', 'embedding', 'moderation', 'ocr', 'video'];
+export const KIND_ORDER = ['text', 'image', 'audio', 'embedding', 'moderation', 'ocr', 'video', 'decision'];
 
 export const KIND_LABELS = {
   text: 'Text',
@@ -11,6 +11,7 @@ export const KIND_LABELS = {
   moderation: 'Moderation',
   ocr: 'OCR',
   video: 'Video',
+  decision: 'Decision',
 };
 
 export const ENDPOINT_LABELS = {
@@ -28,9 +29,21 @@ export const ENDPOINT_LABELS = {
   ocr: 'OCR',
   realtime: 'Realtime',
   videos: 'Videos',
+  systemone: 'Decisions',
 };
 
 export const MODALITY_NAMES = { text: 'text', image: 'images', pdf: 'PDF', audio: 'audio', video: 'video' };
+
+// The id of a model is what a request names. It carries the connection when several of them serve the same
+// kind of model, as `<connection>/<model>`, or `<connection>###<model>` when the model has a slash of its own:
+// that last form is one to send, not one to read, so the model is shown as `connection / model` instead.
+export const labelOfModelId = (id) => (id || '').replace('###', ' / ');
+
+export function modelLabel(model) {
+  const id = (model && model.id) || '';
+  if (!id.includes('###')) return id;
+  return model.owned_by_with_model || labelOfModelId(id);
+}
 
 export function metaOf(model) {
   return (model && (model.metadata || model.details)) || {};
@@ -113,14 +126,14 @@ const perToken = (value) => {
 
 // What a workload costs on a model at its list prices, null when the model has no token price. `cached` is the
 // share (0 to 1) of the input read from the prompt cache, billed at the cache price when the model has one.
-// Embedding and moderation models only bill their input.
+// Embedding, moderation and decision models only bill their input.
 export function estimateCost(model, { input = 0, output = 0, cached = 0, requests = 1 }) {
   const pricing = metaOf(model).pricing;
   if (!pricing) return null;
   const prompt = perToken(pricing.prompt);
   if (prompt === null) return null;
   const kinds = kindsOf(model);
-  const inputOnly = kinds.length > 0 && kinds.every((k) => k === 'embedding' || k === 'moderation');
+  const inputOnly = kinds.length > 0 && kinds.every((k) => k === 'embedding' || k === 'moderation' || k === 'decision');
   const completion = inputOnly ? 0 : perToken(pricing.completion);
   if (completion === null) return null;
   const cacheRead = perToken(pricing.input_cache_read);

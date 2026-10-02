@@ -16,6 +16,7 @@ export const MODALITY_LABELS = {
   moderation: 'Moderation',
   ocr: 'OCR',
   video: 'Video',
+  decision: 'Decision',
 };
 
 // connection names become the model prefix (`<name>/<model>`), keep them simple
@@ -127,6 +128,7 @@ const ID_PREFIX = {
   moderation: 'moderation-model',
   ocr: 'ocr-model',
   video: 'video-model',
+  decision: 'decision-model',
 };
 
 export function buildEntity(modality, wsId, conn, catalogEntry, existing) {

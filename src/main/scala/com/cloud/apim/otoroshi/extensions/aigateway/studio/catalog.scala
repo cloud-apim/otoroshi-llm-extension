@@ -24,10 +24,13 @@ object AiStudioCatalog {
     fields: Seq[JsObject] = Seq.empty,
     tokenRequired: Boolean = true,
     baseUrlRequired: Boolean = false,
+    // a connection with nothing to reach by itself (no base url, no api key): it goes through another one
+    credentials: Boolean = true,
   )
 
-  private def field(name: String, label: String, placeholder: String, default: String = ""): JsObject =
-    Json.obj("name" -> name, "label" -> label, "placeholder" -> placeholder, "default" -> default)
+  // `kind` is what the field holds when it is not free text: `provider` is a text provider of the workspace
+  private def field(name: String, label: String, placeholder: String, default: String = "", kind: String = "text"): JsObject =
+    Json.obj("name" -> name, "label" -> label, "placeholder" -> placeholder, "default" -> default, "kind" -> kind)
 
   // virtual or local providers that make no sense as a BYOK connection
   private val excluded = Set("loadbalancer", "otoroshi", "jlama", "all-minilm-l6-v2")
@@ -58,6 +61,7 @@ object AiStudioCatalog {
     "openrouter" -> Blueprint(OpenRouterApi.baseUrl.some, Map(
       "text" -> "openai/gpt-4o-mini", "embedding" -> "openai/text-embedding-3-small", "image" -> "google/gemini-2.5-flash-image",
       "audio_tts" -> "openai/gpt-4o-mini-tts-2025-12-15", "audio_stt" -> "openai/whisper-1", "video" -> "google/veo-3.1",
+      "decision" -> SystemOneProviders.find("openrouter").map(_.defaultModel).getOrElse(""),
     )),
     "scaleway" -> Blueprint(ScalewayApi.baseUrl.some, Map("text" -> "llama-3.1-8b-instruct", "embedding" -> "qwen3-embedding-8b", "audio_stt" -> "whisper-large-v3")),
     "deepseek" -> Blueprint(DeepSeekApi.baseUrl.some, Map("text" -> "deepseek-chat")),
@@ -66,7 +70,7 @@ object AiStudioCatalog {
     "ollama-openai" -> Blueprint(OllamaAiApi.baseUrlOAI.some, Map("text" -> "llama3.2", "embedding" -> "nomic-embed-text"), tokenRequired = false),
     "cohere" -> Blueprint(CohereAiApi.baseUrl.some, Map("text" -> "command-r-plus-08-2024", "embedding" -> "embed-v4.0", "audio_stt" -> "cohere-transcribe-03-2026")),
     "anthropic" -> Blueprint(AnthropicApi.baseUrl.some, Map("text" -> "claude-haiku-4-5")),
-    "cloudflare" -> Blueprint(None, Map("text" -> ""), fields = Seq(
+    "cloudflare" -> Blueprint(None, Map("text" -> "", "decision" -> SystemOneProviders.cloudflareDefaultModel), fields = Seq(
       field("account_id", "Account id", "your cloudflare account id"),
       field("model_name", "Model", "@cf/meta/llama-3.1-8b-instruct-fp8", "@cf/meta/llama-3.1-8b-instruct-fp8"),
     )),
@@ -74,6 +78,12 @@ object AiStudioCatalog {
     "luma" -> Blueprint(LumaApi.baseUrl.some, Map("image" -> "photon-1", "video" -> "ray-flash-2")),
     "leonardo-ai" -> Blueprint(LeonardoAIApi.baseUrl.some, Map("image" -> "6b645e3a-d64f-4341-a6d8-7a3690fbf042")),
     "hive" -> Blueprint(HiveApi.baseUrl.some, Map("image" -> "black-forest-labs/flux-schnell")),
+    // any server speaking the System One api of the decision models (Laya, vLLM, a LiteLLM proxy...)
+    SystemOneProviders.Compatible -> Blueprint(None, Map("decision" -> ""), tokenRequired = false, baseUrlRequired = true),
+    // decisions made by a text provider of the workspace, picked in the form
+    SystemOneProviders.LlmEmulation -> Blueprint(None, Map("decision" -> ""), fields = Seq(
+      field("provider", "Text provider", "the provider answering the questions", kind = "provider"),
+    ), tokenRequired = false, credentials = false),
   )
 
   // suggested models of the non text capabilities of OpenAI-like providers (from their documentation)
@@ -111,6 +121,9 @@ object AiStudioCatalog {
 
   private def blueprintFor(id: String): Blueprint = blueprints.get(id).orElse {
     OpenAiLikeProviders.find(id).map(d => Blueprint(d.baseUrl.some, Map("text" -> "") ++ likeModels.getOrElse(id, Map.empty)))
+  }.orElse {
+    // the providers of decision models, which serve nothing else
+    SystemOneProviders.find(id).map(d => Blueprint(d.baseUrl.some, Map("decision" -> d.defaultModel)))
   }.getOrElse(Blueprint())
 
   def json: JsArray = JsArray(AiProvidersCatalog.all.filterNot(e => excluded.contains(e.id)).map { entry =>
@@ -122,6 +135,7 @@ object AiStudioCatalog {
       "base_url" -> bp.baseUrl.map(JsString.apply).getOrElse(JsNull).as[JsValue],
       "base_url_required" -> bp.baseUrlRequired,
       "token_required" -> bp.tokenRequired,
+      "credentials" -> bp.credentials,
       "models" -> bp.models,
       "audio_modes" -> audioModesOf(entry.id),
       "fields" -> JsArray(bp.fields),

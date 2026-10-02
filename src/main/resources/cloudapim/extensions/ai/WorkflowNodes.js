@@ -389,6 +389,9 @@ const workflowNodes = [
                 "label": "Moderation model",
                 "value": "moderation_model"
               }, {
+                "label": "Decision model",
+                "value": "decision_model"
+              }, {
                 "label": "No toxic language",
                 "value": "toxic_language"
               }, {

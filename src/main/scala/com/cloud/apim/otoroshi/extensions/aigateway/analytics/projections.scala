@@ -116,7 +116,8 @@ object LlmUsageProjection extends AnalyticsProjection {
   override val id: String = "cloud-apim.llm-usage"
 
   /** Providers that only route to other providers, each of which reports its own call. */
-  val RoutingProviderKinds: Set[String] = Set("loadbalancer", "otoroshi")
+  // `llm-emulation` is a decision model answered by a text provider, whose chat call is the one reported
+  val RoutingProviderKinds: Set[String] = Set("loadbalancer", "otoroshi", "llm-emulation")
 
   override def accepts(event: JsValue): Boolean =
     (event \ "@type").asOpt[String].contains("AuditEvent") && (event \ "audit").asOpt[String].contains("LLMUsageAudit")

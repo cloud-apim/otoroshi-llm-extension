@@ -13,6 +13,7 @@ import {
   kindsOf,
   metaOf,
   MODALITY_NAMES,
+  modelLabel,
   pricedButNotBilled,
   outputsOf,
   perMillion,
@@ -161,9 +162,11 @@ export function ModelDetails({ model, baseUrl }) {
   const reasoningOptions = caps.reasoning_options || [];
   const kinds = kindsOf(model);
   const endpoint = (meta.endpoints || [])[0];
-  const path = endpoint === 'responses' ? '/responses' : endpoint === 'embeddings' ? '/embeddings' : '/chat/completions';
+  const path = endpoint === 'systemone' ? '/systemone' : endpoint === 'responses' ? '/responses' : endpoint === 'embeddings' ? '/embeddings' : '/chat/completions';
   const body =
-    path === '/embeddings'
+    path === '/systemone'
+      ? { model: model.id, state: 'The checkout is failing.', questions: { urgent: { type: 'noul', instructions: 'Is it urgent?' } } }
+      : path === '/embeddings'
       ? { model: model.id, input: 'Hello!' }
       : path === '/responses'
       ? { model: model.id, input: 'Hello!' }
@@ -172,7 +175,7 @@ export function ModelDetails({ model, baseUrl }) {
   return (
     <div className="stack">
       <div className="row between">
-        <span className="mono truncate">{model.id}</span>
+        <span className="mono truncate" title={model.id}>{modelLabel(model)}</span>
         <CopyButton text={model.id} />
       </div>
       <ModelLabels model={model} />
@@ -184,9 +187,16 @@ export function ModelDetails({ model, baseUrl }) {
           <Row label="Provider model">
             <span className="mono">{model.model || model.id}</span>
           </Row>
+          {modelLabel(model) !== model.id && (
+            <Row label="Model id">
+              <span className="mono" title="What a request names this model with">{model.id}</span>
+            </Row>
+          )}
           <Row label="Types">{kinds.map((k) => KIND_LABELS[k] || k).join(', ') || <span className="faint">None</span>}</Row>
           <Row label="API">
-            {meta.openai_compatible === true ? (
+            {kinds.includes('decision') ? (
+              <span title="A decision model answers typed questions with probabilities, it does not chat">System One, on /systemone and /decisions</span>
+            ) : meta.openai_compatible === true ? (
               (meta.endpoints || []).map((e) => ENDPOINT_LABELS[e] || e).join(', ') || 'OpenAI compatible'
             ) : meta.openai_compatible === false ? (
               <span title="The gateway translates the OpenAI requests for this provider">Native provider api, translated by the gateway</span>
@@ -205,7 +215,7 @@ export function ModelDetails({ model, baseUrl }) {
             )}
           </Row>
         </div>
-        {kinds.includes('text') || kinds.includes('embedding') ? <pre className="mt">{snippet}</pre> : null}
+        {kinds.includes('text') || kinds.includes('embedding') || kinds.includes('decision') ? <pre className="mt">{snippet}</pre> : null}
       </div>
 
       <div className="details-section">

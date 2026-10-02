@@ -2,10 +2,10 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import org.apache.pekko.stream.scaladsl.{Sink, Source, StreamConverters}
 import org.apache.pekko.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioTranscriptionResponseMetadataUsage, ImagesGenResponseMetadataUsage, VideosGenResponseMetadataUsage, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioTranscriptionResponseMetadataUsage, ImagesGenResponseMetadataUsage, VideosGenResponseMetadataUsage, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, DecisionModelClient, DecisionModelClientInputOptions, DecisionResponse, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import com.cloud.apim.otoroshi.extensions.aigateway.AiMetrics
 import com.cloud.apim.otoroshi.extensions.aigateway.catalog.{ModelEndpoints, ModelKinds, ModelsCatalog}
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AiProvidersCatalog, AudioModel, EmbeddingModel, ImageModel, ModelSettings, ModerationModel, OcrModel, VideoModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AiProvidersCatalog, AudioModel, DecisionModel, EmbeddingModel, ImageModel, ModelSettings, ModerationModel, OcrModel, VideoModel}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -667,6 +667,45 @@ class ModerationModelClientWithRequiredCosts(originalModel: ModerationModel, val
   }
 }
 
+// What a call on a decision model is billed as. Unlike the other model types, a decision model honours the
+// `costs-tracking-provider` / `costs-tracking-model` metadata, the way a text provider does: a self hosted
+// server has no price of its own, and can be given the one of the model it runs.
+object DecisionCosts {
+
+  def pricingProvider(model: DecisionModel)(using env: Env): Option[String] =
+    model.metadata.get("costs-tracking-provider").map(_.trim).filter(_.nonEmpty).orElse(RequiredCosts.pricingProvider(model.provider))
+
+  // the names the call can be priced under, the most accurate first: the model the provider says it ran (a
+  // dated version the price table may not know), then the one that was asked for
+  def models(model: DecisionModel, answered: Option[String], requested: Option[String]): Seq[String] =
+    model.metadata.get("costs-tracking-model").map(_.trim).filter(_.nonEmpty) match {
+      case Some(billed) => Seq(billed)
+      case None => (answered.toSeq ++ requested.toSeq ++ model.defaultModel.toSeq).map(_.trim).filter(_.nonEmpty).distinct
+    }
+}
+
+object DecisionModelClientWithRequiredCosts {
+  // an emulated decision is a call of its text provider, which applies its own requirement
+  def applyIfPossible(tuple: (DecisionModel, DecisionModelClient, Env)): DecisionModelClient =
+    if (tuple._1.models.requireKnownCosts && !tuple._1.isEmulated) new DecisionModelClientWithRequiredCosts(tuple._1, tuple._2) else tuple._2
+}
+
+class DecisionModelClientWithRequiredCosts(originalModel: DecisionModel, val decisionModelClient: DecisionModelClient) extends DecoratorDecisionModelClient {
+  override def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]] = {
+    val provider = DecisionCosts.pricingProvider(originalModel)
+    val ext = env.adminExtensions.extension[AiExtension].get
+    val names = DecisionCosts.models(originalModel, None, opts.model)
+    // a provider reporting the cost of its calls bills whatever it serves, known to the price table or not
+    val billable = provider.exists(ext.costsTracking.providerReportsCosts) || names.exists(name => RequiredCosts.hasKnownCosts(provider, name))
+    if (billable) {
+      decisionModelClient.decide(opts, rawBody, attrs)
+    } else {
+      AiMetrics.markModelConstraintDenied()
+      RequiredCosts.error(names.headOption).leftf
+    }
+  }
+}
+
 object OcrModelClientWithRequiredCosts {
   def applyIfPossible(tuple: (OcrModel, OcrModelClient, Env)): OcrModelClient =
     if (tuple._1.models.requireKnownCosts) new OcrModelClientWithRequiredCosts(tuple._1, tuple._2) else tuple._2
@@ -851,6 +890,44 @@ class ModerationModelClientWithCostsTracking(originalModel: ModerationModel, val
         val inputTokens = if (usage.input > 0 || usage.output > 0) math.max(0L, usage.input) else math.max(0L, usage.total)
         val outputTokens = math.max(0L, usage.output)
         val costs = TokenBasedCosts.track(originalModel.provider, model, inputTokens, outputTokens, attrs)
+        if (TokenBasedCosts.embedInResponse(attrs)) {
+          Right(resp.copy(metadata = resp.metadata.copy(costs = costs)))
+        } else {
+          Right(resp)
+        }
+      }
+    }
+  }
+}
+
+object DecisionModelClientWithCostsTracking {
+  def applyIfPossible(tuple: (DecisionModel, DecisionModelClient, Env)): DecisionModelClient = {
+    if (TokenBasedCosts.settings(using tuple._3).enabled && !tuple._1.isEmulated) new DecisionModelClientWithCostsTracking(tuple._1, tuple._2) else tuple._2
+  }
+}
+
+// A decision is billed per token like text, on the input side for all we know of these models. A cost the
+// provider reports itself wins over the price table: it is exact, and the only one there is for a model the
+// table does not know.
+class DecisionModelClientWithCostsTracking(originalModel: DecisionModel, val decisionModelClient: DecisionModelClient) extends DecoratorDecisionModelClient {
+  override def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]] = {
+    decisionModelClient.decide(opts, rawBody, attrs).map {
+      case Left(err) => Left(err)
+      // served and billed by a text provider
+      case Right(resp) if resp.metadata.delegated => Right(resp)
+      case Right(resp) => {
+        val ext = env.adminExtensions.extension[AiExtension].get
+        val usage = resp.metadata.usage
+        val costs = resp.metadata.providerCosts.orElse {
+          for {
+            provider <- DecisionCosts.pricingProvider(originalModel)
+            // looked up first, so that a model without a price is not a warning on every call
+            name     <- DecisionCosts.models(originalModel, Some(resp.model), opts.model).find(n => ext.costsTracking.canHandle(provider, n))
+            computed <- ext.costsTracking.computeCosts(provider, name, usage.input, usage.output, 0L).toOption
+          } yield computed
+        }
+        // stored where auditing reads it, so budgets, audit events and metrics all pick it up
+        costs.foreach(c => attrs.put(ChatClientWithCostsTracking.key -> c))
         if (TokenBasedCosts.embedInResponse(attrs)) {
           Right(resp.copy(metadata = resp.metadata.copy(costs = costs)))
         } else {

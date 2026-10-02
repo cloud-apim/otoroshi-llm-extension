@@ -4,6 +4,7 @@
 
 import { gatewayError } from './api';
 import { currentTenant } from './bootstrap';
+import { stateOf } from './decisions';
 import { generateImage } from './images';
 import { endpointsOf, KIND_LABELS, kindsOf } from './modelmeta';
 import { billedProxyUrl } from './models';
@@ -75,6 +76,15 @@ export const PLAYGROUNDS = [
     accept: 'application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp,.tiff',
     action: 'Extract',
     hint: 'Drop a PDF or a picture of a document.',
+  },
+  {
+    id: 'decision',
+    label: 'Decision',
+    endpoint: 'systemone',
+    modality: 'decision',
+    input: 'decision',
+    action: 'Decide',
+    hint: 'Every question is answered with the probability of each of its outcomes.',
   },
 ];
 
@@ -204,11 +214,18 @@ async function runOcr({ workspace, model, file, signal }) {
   };
 }
 
-const RUNNERS = { image: runImage, tts: runSpeech, stt: runTranscription, embedding: runEmbedding, moderation: runModeration, ocr: runOcr };
+// a decision model speaks the System One api: a state, typed questions, and probabilities back
+async function runDecision({ workspace, model, text, questions, signal }) {
+  const { res, duration } = await call(workspace, '/systemone', { body: { model, state: stateOf(text), questions }, signal });
+  const json = await res.json();
+  return { answers: json.answers || {}, usage: usageOf(json), costs: costsOf(json), duration, raw: json };
+}
 
-/** Runs one playground, `input` being `{ text }` or `{ file }`. Throws what to show the user. */
-export function runPlayground(id, { workspace, model, text = '', file = null, signal }) {
+const RUNNERS = { image: runImage, tts: runSpeech, stt: runTranscription, embedding: runEmbedding, moderation: runModeration, ocr: runOcr, decision: runDecision };
+
+/** Runs one playground, `input` being `{ text }`, `{ file }` or `{ text, questions }`. Throws what to show the user. */
+export function runPlayground(id, { workspace, model, text = '', file = null, questions = null, signal }) {
   const runner = RUNNERS[id];
   if (!runner) return Promise.reject(new Error('unknown playground'));
-  return runner({ workspace, model, text, file, signal });
+  return runner({ workspace, model, text, file, questions, signal });
 }

@@ -15,12 +15,16 @@
  * part of the title of the conversation shown in the chat, and of the comparison shown side by side, the
  * most recent ones otherwise), OTO_TENANT (default `default`), ONLY=overview,logs (a subset),
  * PLAYGROUND_PROMPT (the prompt of the playground shot, empty to capture the form without running it),
- * PLAYGROUND_MODEL (the model that playground tries, an image model of the workspace otherwise).
+ * PLAYGROUND_MODEL (the model that playground tries, an image model of the workspace otherwise),
+ * DECISION_STATE (the state of the decision playground shot, empty to capture the form without running
+ * it), DECISION_MODEL (the decision model that playground tries, the first one of the workspace otherwise).
  *
  * The chat shots show conversations of the signed-in user: have a plain conversation and a comparison of
  * two or three models in the workspace before running the script.
  *
  * Note: the `models-playground` shot runs the playground it opens, so the provider bills that one image.
+ * The `models-decision` shot does the same with a decision model: one call, a few hundred input tokens.
+ * It needs a provider with the Decision capability in the workspace.
  */
 const path = require('path');
 
@@ -51,6 +55,11 @@ const WIDTH = 1393;
 const HEIGHT = 911;
 const ONLY = (process.env.ONLY || '').split(',').map((s) => s.trim()).filter(Boolean);
 const PLAYGROUND_PROMPT = process.env.PLAYGROUND_PROMPT === undefined ? 'A red panda coding on a laptop, watercolor' : process.env.PLAYGROUND_PROMPT;
+
+const DECISION_STATE =
+  process.env.DECISION_STATE === undefined
+    ? 'Our payment page returns an error since this morning. We are an enterprise customer and we lose orders every minute.'
+    : process.env.DECISION_STATE;
 
 const studio = (p) => `${BASE}/extensions/cloud-apim/ai-studio${p}`;
 const ws = (p) => studio(`/workspaces/${WS}${p}`);
@@ -144,6 +153,31 @@ const openPlayground = async (page) => {
   await page.waitForTimeout(800);
 };
 
+// The playground of a decision model: a state, the three kinds of questions the form opens on, and the
+// probability of each of their outcomes — that one decision is billed by the provider. The answers sit
+// under the questions: the shot is taken in a taller viewport and framed on the playground itself, so the
+// state, the questions and the answers are all in the picture.
+const openDecisionPlayground = async (page) => {
+  const wanted = process.env.DECISION_MODEL;
+  if (wanted) {
+    await page.locator('.filters input.search').fill(wanted);
+  } else {
+    const decision = page.locator('.filters .check.facet:has(span.grow:text-is("Decision")) input');
+    if ((await decision.count()) === 0) throw new Error('no decision model in this workspace: connect a provider with the Decision capability');
+    await decision.check();
+  }
+  await page.waitForTimeout(800);
+  await page.locator('.model-card button:has-text("Playground")').first().click();
+  await page.waitForTimeout(900);
+  if (!DECISION_STATE) return;
+  await page.locator('.drawer .playground textarea').first().fill(DECISION_STATE);
+  await page.locator('.drawer .playground button.primary').click();
+  const result = page.locator('.drawer .playground-result');
+  await result.waitFor({ timeout: 60000 }).catch(() => console.warn('  the decision model did not answer, capturing the form'));
+  if (await result.count()) await result.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(800);
+};
+
 // The details of one call: the session of SESSION_ID when the period still holds it, the most recent call
 // of the log otherwise — a demo conversation ages out of the log long before the log itself.
 const openLogCall = async (page) => {
@@ -180,7 +214,8 @@ const editKey = async (page) => {
 };
 
 // `element` narrows the capture to one block of the page; `viewport` keeps an overlay (modal, drawer)
-// in frame instead of capturing the whole scrolled page
+// in frame instead of capturing the whole scrolled page; `height` gives the shot a viewport of its own
+// height, for an overlay taller than the default one
 const SHOTS = [
   { name: 'workspaces', url: studio('/'), viewport: true },
   { name: 'overview', url: ws('/overview') },
@@ -191,6 +226,8 @@ const SHOTS = [
   { name: 'models-health', url: ws('/models'), viewport: true, before: sortModels('calls') },
   // what a model that does not chat is tried with: image, embedding, speech, transcription, moderation, OCR
   { name: 'models-playground', url: ws('/models'), viewport: true, before: openPlayground },
+  // a decision model: typed questions about a state, answered with probabilities
+  { name: 'models-decision', url: ws('/models'), height: 1400, element: '.drawer .playground', before: openDecisionPlayground },
   // the estimate stays on for the next visits of the page (local storage): keep this shot after the other models ones
   {
     name: 'models-estimate',
@@ -255,6 +292,7 @@ async function settle(page) {
     const file = path.join(OUT, `ai-studio-${shot.name}.png`);
     process.stdout.write(`${shot.name.padEnd(18)} `);
     try {
+      await page.setViewportSize({ width: WIDTH, height: shot.height || HEIGHT });
       await goTo(page, shot.url);
       if (shot.before) {
         await shot.before(page);

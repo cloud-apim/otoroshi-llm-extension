@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.*
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, EmbeddingModel, ImageModel, ModerationModel, VideoModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, DecisionModel, EmbeddingModel, ImageModel, ModerationModel, VideoModel}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import play.api.libs.json.{JsObject, JsValue}
@@ -112,6 +112,23 @@ class ModerationModelClientWithMetrics(originalModel: ModerationModel, val moder
 
 object ModerationModelClientWithMetrics {
   def applyIfPossible(tuple: (ModerationModel, ModerationModelClient, Env)): ModerationModelClient = new ModerationModelClientWithMetrics(tuple._1, tuple._2)
+}
+
+class DecisionModelClientWithMetrics(originalModel: DecisionModel, val decisionModelClient: DecisionModelClient) extends DecoratorDecisionModelClient {
+  override def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]] = {
+    val start = System.currentTimeMillis()
+    AiMetrics.around("decision_model.decide", originalModel.provider.toLowerCase, start, decisionModelClient.decide(opts, rawBody, attrs)) { resp =>
+      // the tokens and the cost of an emulated decision are the ones of a chat call, counted by its provider
+      if (!resp.metadata.delegated) {
+        AiMetrics.markTokens(resp.metadata.usage.input.toInt, resp.metadata.usage.output.toInt, 0)
+        attrs.get(ChatClientWithCostsTracking.key).foreach(c => AiMetrics.markCost(c.totalCost.toDouble))
+      }
+    }
+  }
+}
+
+object DecisionModelClientWithMetrics {
+  def applyIfPossible(tuple: (DecisionModel, DecisionModelClient, Env)): DecisionModelClient = new DecisionModelClientWithMetrics(tuple._1, tuple._2)
 }
 
 class VideoModelClientWithMetrics(originalModel: VideoModel, val videoModelClient: VideoModelClient) extends DecoratorVideoModelClient {

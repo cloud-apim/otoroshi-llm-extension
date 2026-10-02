@@ -168,6 +168,8 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     // rankers are none of them
     assertEquals(kinds(Seq("bge-reranker-v2-m3"), output = text), Seq.empty)
     assertEquals(kinds(Seq("some-ranker"), mode = Some("rerank")), Seq.empty)
+    // a decision model answers questions with probabilities: its own kind, whatever its name
+    assertEquals(kinds(Seq("jev-1.13.0"), mode = Some("evaluation")), Seq("decision"))
     // nothing known: the name, then text
     assertEquals(kinds(Seq("dall-e-3")), Seq("image"))
     assertEquals(kinds(Seq("sora-2")), Seq("video"))

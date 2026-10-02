@@ -1,9 +1,9 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import org.apache.pekko.stream.scaladsl.Source
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, DecisionModel}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.{ProviderQuotas, QuotaEpisode}
-import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, DecisionErrors, DecisionModelClient, DecisionModelClientInputOptions, DecisionResponse}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
@@ -11,6 +11,7 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.{JsObject, JsValue, Json}
 
 import scala.concurrent.{ExecutionContext, Future}
+import scala.util.{Failure, Success}
 
 object ChatClientWithProviderFallback {
   def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
@@ -105,5 +106,54 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
 
   override def invokeStream(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     withFallback(originalBody, attrs)((client, body) => client.invokeStream(kind, originalPrompt, attrs, body))
+  }
+}
+object DecisionModelClientWithFallback {
+  // no fallback towards a model already tried for this call: two models falling back on each other stop there
+  def applyIfPossible(model: DecisionModel, client: DecisionModelClient, visited: Set[String]): DecisionModelClient = {
+    model.fallbackRef.filterNot(ref => ref == model.id || visited.contains(ref)) match {
+      case Some(ref) => new DecisionModelClientWithFallback(model, client, ref, visited + model.id)
+      case None => client
+    }
+  }
+}
+
+/**
+ * Another decision model takes over when this one cannot answer for a technical reason: no answer at all
+ * (timeout, connection), 408, 429 or a server error. A request the provider refused (4xx), a budget, a model
+ * restriction are no reason to ask elsewhere, and neither is an answer the model is not sure of: probabilities
+ * are not comparable from a model to another, so a low confidence is an answer like any other.
+ */
+class DecisionModelClientWithFallback(originalModel: DecisionModel, val decisionModelClient: DecisionModelClient, fallbackRef: String, visited: Set[String]) extends DecoratorDecisionModelClient {
+
+  private def fallbackClient()(using env: Env): Option[(DecisionModel, DecisionModelClient)] = {
+    env.adminExtensions.extension[AiExtension]
+      .flatMap(_.states.decisionModel(fallbackRef))
+      .flatMap(m => m.getDecisionModelClient(visited).map(c => (m, c)))
+  }
+
+  override def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]] = {
+
+    def callFallback(otherwise: => Future[Either[JsValue, DecisionResponse]]): Future[Either[JsValue, DecisionResponse]] = {
+      fallbackClient() match {
+        case None => otherwise
+        case Some((fallback, client)) =>
+          AiMetrics.markFallback()
+          // the model that was asked for is the one of the primary: a model id means nothing from a provider to another
+          val model = originalModel.fallbackModel
+          val body = (rawBody - "model") ++ model.map(m => Json.obj("model" -> m)).getOrElse(Json.obj())
+          // the caller chose the primary model, where the call then goes is the choice of the operator. A
+          // fallback that keeps its own model is checked for that one
+          val served = if (fallback.allowConfigOverride) model else fallback.defaultModel
+          ModelConstraints.delegate(attrs, originalModel.target, opts.model, fallback.target, served)
+          client.decide(opts.copy(model = model), body, attrs)
+      }
+    }
+
+    decisionModelClient.decide(opts, rawBody, attrs).transformWith {
+      case Success(Left(err)) if DecisionErrors.retryable(err) => callFallback(err.leftf)
+      case Success(result) => result.vfuture
+      case Failure(exception) => callFallback(Future.failed(exception))
+    }
   }
 }

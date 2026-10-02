@@ -5,6 +5,7 @@ import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsMetadata
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.SystemOneProviders
 import otoroshi.env.Env
 import otoroshi.models.{BackOfficeUser, EntityLocation, PrivateAppsUser}
 import otoroshi.next.models.NgTarget
@@ -346,6 +347,7 @@ class AiStudio(env: Env, ext: AiExtension) {
     "moderation" -> "moderations",
     "ocr" -> "ocr",
     "video" -> "videos",
+    "decision" -> "systemone",
   )
 
   /**
@@ -423,6 +425,13 @@ class AiStudio(env: Env, ext: AiExtension) {
     ext.modelsCatalog.load().flatMap(_ => listWorkspaceModels(config, force))
   }
 
+  // How a model is shown, as in the `/models` listings of the gateway. Its `id` is what a request names, and it
+  // is `<connection>###<model>` when the model has a slash of its own: an id to send, not one to read.
+  private def ownedBy(name: String, model: String): JsObject = Json.obj(
+    "owned_by" -> name,
+    "owned_by_with_model" -> s"${name} / ${model}",
+  )
+
   // a model of the listing with what the gateway knows of it: types, cost, api, capabilities, limits, prices
   private def described(model: JsObject, provider: AiProvider, modality: String, endpoints: Seq[String] = Seq.empty): JsObject = {
     val metadata = ModelsMetadata.describe(provider, model.select("model").asString, modality).metadata
@@ -455,7 +464,7 @@ class AiStudio(env: Env, ext: AiExtension) {
             provider.options.select(s"${model.replace("-", "_")}_refs").asOpt[JsArray].exists(_.value.nonEmpty)
           def toModels(models: Seq[String]): Seq[JsObject] = models.filter(usable).map { model =>
             val id = if (textRefs.size == 1) model else if (model.contains("/")) s"${provider.slugName}###$model" else s"${provider.slugName}/$model"
-            described(Json.obj("id" -> id, "model" -> model, "provider" -> provider.slugName, "provider_id" -> provider.id, "provider_kind" -> provider.provider, "modality" -> "text", "created" -> now), provider, "text")
+            described(Json.obj("id" -> id, "model" -> model, "provider" -> provider.slugName, "provider_id" -> provider.id, "provider_kind" -> provider.provider, "modality" -> "text", "created" -> now) ++ ownedBy(provider.name, model), provider, "text")
           }
           val token = provider.connection.select("token").asOptString.getOrElse("--")
           // the listing is filtered by the model settings of the provider (access, known costs)
@@ -486,6 +495,7 @@ class AiStudio(env: Env, ext: AiExtension) {
       ("audio", "audio_model_refs", id => ext.datastores.AudioModelsDataStore.findById(id).map(_.map(_.json))),
       ("moderation", "moderation_model_refs", id => ext.datastores.moderationModelsDataStore.findById(id).map(_.map(_.json))),
       ("ocr", "ocr_model_refs", id => ext.datastores.ocrModelsDataStore.findById(id).map(_.map(_.json))),
+      ("decision", "decision_model_refs", id => ext.datastores.decisionModelsDataStore.findById(id).map(_.map(_.json))),
     )
     val fuOthers: Future[Seq[(JsObject, Seq[JsObject])]] = Future.sequence(others.flatMap { case (modality, key, find) =>
       val all = refs(key)
@@ -507,13 +517,17 @@ class AiStudio(env: Env, ext: AiExtension) {
               "endpoints" -> JsArray(endpointsOf(config, modality).map(JsString.apply)),
             )
             val kind = entity.select("provider").asOptString.getOrElse("--")
+            // a decision made by a text provider is billed as the chat call it is: the model is described, and
+            // priced, the way that provider serves it
+            val billedKind = Option.when(kind == SystemOneProviders.LlmEmulation)(config.at("connection.provider").asOptString).flatten
+              .flatMap(textRef => ext.states.provider(textRef)).map(_.provider).getOrElse(kind)
             // enough of a provider to describe the model: its kind and the metadata costs tracking reads
-            val provider = AiProvider(id = ref, name = name, provider = kind, metadata = entity.select("metadata").asOpt[Map[String, String]].getOrElse(Map.empty), connection = Json.obj(), options = Json.obj())
+            val provider = AiProvider(id = ref, name = name, provider = billedKind, metadata = entity.select("metadata").asOpt[Map[String, String]].getOrElse(Map.empty), connection = Json.obj(), options = Json.obj())
             // one entry per model, with every endpoint it is served on (the same model can do both ways of audio)
             val models = served.map(_._1).distinct.map { m =>
               val endpoints = served.collect { case (model, endpoint) if model == m && endpoint.nonEmpty => endpoint }.distinct
               val id = if (all.size == 1) m else if (m.contains("/")) s"$slug###$m" else s"$slug/$m"
-              described(Json.obj("id" -> id, "model" -> m, "provider" -> slug, "provider_id" -> ref, "provider_kind" -> kind, "modality" -> modality, "created" -> now), provider, modality, endpoints)
+              described(Json.obj("id" -> id, "model" -> m, "provider" -> slug, "provider_id" -> ref, "provider_kind" -> kind, "modality" -> modality, "created" -> now) ++ ownedBy(name, m), provider, modality, endpoints)
             }
             (info, models)
         }

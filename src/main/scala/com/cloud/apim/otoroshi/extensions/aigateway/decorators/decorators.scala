@@ -154,6 +154,31 @@ object ModerationModelClientDecorators {
   }
 }
 
+trait DecoratorDecisionModelClient extends DecisionModelClient {
+  def decisionModelClient: DecisionModelClient
+  override def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]] = decisionModelClient.decide(opts, rawBody, attrs)
+}
+
+object DecisionModelClientDecorators {
+  val possibleDecorators: Seq[Function[(DecisionModel, DecisionModelClient, Env), DecisionModelClient]] = Seq(
+    DecisionModelClientWithModels.applyIfPossible,
+    DecisionModelClientWithRequiredCosts.applyIfPossible,
+    DecisionModelClientWithCostsTracking.applyIfPossible,
+    DecisionModelClientWithAuditing.applyIfPossible,
+    DecisionModelClientWithMetrics.applyIfPossible,
+    DecisionModelClientWithPinnedModel.applyIfPossible, // last: everything inside sees the model actually served
+  )
+
+  def apply(provider: DecisionModel, client: DecisionModelClient, env: Env, visited: Set[String] = Set.empty): DecisionModelClient = {
+    val decorated = possibleDecorators.foldLeft(client) {
+      case (client, predicate) => predicate((provider, client, env))
+    }
+    // outermost on purpose: the model that could not answer has audited its own failure by then, and the one
+    // taking over runs its whole chain, so the call is priced and counted against budgets once, by who served it
+    DecisionModelClientWithFallback.applyIfPossible(provider, decorated, visited)
+  }
+}
+
 trait DecoratorVideoModelClient extends VideoModelClient {
   def videoModelClient: VideoModelClient
   override def supportsTextToVideo: Boolean = videoModelClient.supportsTextToVideo

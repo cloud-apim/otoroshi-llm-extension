@@ -24,5 +24,35 @@
       "search_context_size_high": 0.0000
     },
     "deprecation_date": "date when the model becomes deprecated in the format YYYY-MM-DD"
+  },
+  "cloudflare/@cf/cloudflare/clef": {
+    "input_cost_per_token": 2.4e-7,
+    "output_cost_per_token": 0,
+    "litellm_provider": "cloudflare",
+    "max_input_tokens": 65536,
+    "mode": "evaluation",
+    "source": "https://developers.cloudflare.com/workers-ai/models/clef/"
+  },
+  "cloudflare/@cf/cloudflare/clef-flash": {
+    "input_cost_per_token": 9e-8,
+    "output_cost_per_token": 0,
+    "litellm_provider": "cloudflare",
+    "max_input_tokens": 65536,
+    "mode": "evaluation",
+    "source": "https://developers.cloudflare.com/workers-ai/models/clef-flash/"
+  },
+  "telnyx/telnyx/decision-flash": {
+    "input_cost_per_token": 3.5e-8,
+    "output_cost_per_token": 0,
+    "litellm_provider": "telnyx",
+    "mode": "evaluation",
+    "source": "https://telnyx.com/pricing/inference-api"
+  },
+  "telnyx/telnyx/decision-pro": {
+    "input_cost_per_token": 2e-7,
+    "output_cost_per_token": 0,
+    "litellm_provider": "telnyx",
+    "mode": "evaluation",
+    "source": "https://telnyx.com/pricing/inference-api"
   }
 }

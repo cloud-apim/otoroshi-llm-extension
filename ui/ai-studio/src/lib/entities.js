@@ -68,6 +68,7 @@ export const Resources = {
   moderationModels: resource(Groups.ai, 'moderation-models'),
   ocrModels: resource(Groups.ai, 'ocr-models'),
   videoModels: resource(Groups.ai, 'video-models'),
+  decisionModels: resource(Groups.ai, 'decision-models'),
   contexts: resource(Groups.ai, 'prompt-contexts'),
   functions: resource(Groups.ai, 'tool-functions'),
   mcpConnectors: resource(Groups.ai, 'mcp-connectors'),

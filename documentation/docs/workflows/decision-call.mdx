@@ -1,0 +1,71 @@
+---
+sidebar_position: 19
+---
+
+# Decision Call
+
+The `decision_call` function asks typed questions about a state to a [decision model](/docs/decision-models/overview), and gets probabilities back. It is the function to branch a workflow on: a yes/no probability, an option among several or a score, instead of a sentence to parse.
+
+- **Function name**: `extensions.com.cloud-apim.llm-extension.decision_call`
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The decision model id |
+| `payload` | object | yes | The payload object |
+| `payload.state` | string, object or array | yes | What the questions are about |
+| `payload.questions` | object | yes | The questions, by name: each one has a `type` (`noul`, `choice`, `score`), `instructions` and, for a choice or a score, `criteria` |
+| `payload.model` | string | no | The model to use, the one of the decision model when omitted |
+
+## Output
+
+Returns the answers in the System One format:
+
+```json
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "urgent": { "type": "noul", "noul": 0.95 },
+    "team": {
+      "type": "choice",
+      "choice": "technical",
+      "confidence": 0.78,
+      "probabilities": { "billing": 0.15, "technical": 0.85 }
+    }
+  },
+  "usage": { "input_tokens": 350, "output_tokens": 58 }
+}
+```
+
+## Example
+
+```json
+{
+  "kind": "call",
+  "function": "extensions.com.cloud-apim.llm-extension.decision_call",
+  "args": {
+    "provider": "decision-model_xxxxx",
+    "payload": {
+      "state": "${input.ticket}",
+      "questions": {
+        "urgent": {
+          "type": "noul",
+          "instructions": "Is this support request urgent?"
+        },
+        "team": {
+          "type": "choice",
+          "instructions": "Which team should handle this request?",
+          "criteria": {
+            "billing": "Invoices and payments",
+            "technical": "Outages, bugs and integrations"
+          }
+        }
+      }
+    }
+  },
+  "result": "decision"
+}
+```
+
+The answers are then read like any other workflow value: `${decision.answers.urgent.noul}`, `${decision.answers.team.choice}`.
