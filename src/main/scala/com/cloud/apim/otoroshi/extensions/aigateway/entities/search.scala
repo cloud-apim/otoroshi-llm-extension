@@ -2,6 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import com.cloud.apim.otoroshi.extensions.aigateway.{SearchEngineClient, SearchEngineSearchOptions}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ChildCall
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
 import otoroshi.api.*
 import otoroshi.env.Env
@@ -256,7 +257,9 @@ object SearchEngineSupport {
       case Some(client) => {
         val args: JsObject = Try(Json.parse(argsJson).asOpt[JsObject].getOrElse(Json.obj())).getOrElse(Json.obj())
         val options = SearchEngineSearchOptions.format.reads(args).getOrElse(SearchEngineSearchOptions(args.select("query").asOptString.getOrElse("")))
-        client.search(options, args, attrs).map {
+        // A search made for the model is a call of its own: a knowledge base embeds the query with an embedding
+        // model, whose auditing would otherwise write its provider and its usage over those of the chat call
+        client.search(options, args, ChildCall.attrs(attrs)).map {
           case Left(err) => Json.obj("error" -> err).stringify
           case Right(resp) => resp.toJson.stringify
         }

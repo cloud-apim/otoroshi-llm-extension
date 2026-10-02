@@ -99,4 +99,6 @@ A **RAG knowledge base** uses the same entity, but instead of a `connection` blo
 }
 ```
 
+When a model searches a knowledge base, the embedding of its query is a call of its own: it is priced, logged and counted against the [budgets](/docs/cost-optimizations/budgets) of the embedding model, while the chat call keeps counting for its own provider.
+
 See [Providers](./providers) for the per-provider configuration, [Plugins](./plugins) for the HTTP API, and [Search as an LLM tool](./as-llm-tool) to wire search into your providers and agents.
