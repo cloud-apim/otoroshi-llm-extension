@@ -1,51 +1,19 @@
 import { useState } from 'react';
 import { useWorkspace } from '../App';
-import { Badge, CopyButton, Tabs, useAsync } from '../components/ui';
+import { Badge, CopyButton, useAsync } from '../components/ui';
+import { Snippets } from '../components/snippets';
 import { WeekUsage } from '../components/usage';
+import { QUICKSTARTS, servingOf, snippetsOf } from '../lib/apidocs';
 import { Resources, workspaceFilter } from '../lib/entities';
+import { modelLabel } from '../lib/modelmeta';
 import { Link, useRouter } from '../lib/router';
 import { listWorkspaceModels } from '../lib/models';
-
-function snippets(baseUrl, model) {
-  return {
-    curl: `curl ${baseUrl}/chat/completions \\
-  -H "Authorization: Bearer $API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "${model}",
-    "messages": [{"role": "user", "content": "What is the meaning of life?"}]
-  }'`,
-    python: `from openai import OpenAI
-
-client = OpenAI(
-    base_url="${baseUrl}",
-    api_key="$API_KEY",
-)
-
-completion = client.chat.completions.create(
-    model="${model}",
-    messages=[{"role": "user", "content": "What is the meaning of life?"}],
-)
-print(completion.choices[0].message.content)`,
-    typescript: `import OpenAI from 'openai';
-
-const client = new OpenAI({
-  baseURL: '${baseUrl}',
-  apiKey: process.env.API_KEY,
-});
-
-const completion = await client.chat.completions.create({
-  model: '${model}',
-  messages: [{ role: 'user', content: 'What is the meaning of life?' }],
-});
-console.log(completion.choices[0].message.content);`,
-  };
-}
 
 export function OverviewPage() {
   const { workspace } = useWorkspace();
   const { navigate } = useRouter();
   const [lang, setLang] = useState('curl');
+  const [quickstart, setQuickstart] = useState(QUICKSTARTS[0].id);
   const filter = workspaceFilter(workspace.id);
   const data = useAsync(async () => {
     const [providers, keys] = await Promise.all([Resources.providers.list(filter), Resources.apikeys.list(filter)]);
@@ -55,8 +23,11 @@ export function OverviewPage() {
 
   const providers = (data.data && data.data.providers) || [];
   const modelList = (models.data && models.data.models) || [];
-  const exampleModel = (modelList[0] && modelList[0].id) || 'provider/model';
-  const code = snippets(workspace.baseUrl, exampleModel)[lang];
+  // the quickstart shows the endpoints this workspace serves, the chat one whatever happens
+  const quickstarts = QUICKSTARTS.filter((e, idx) => idx === 0 || servingOf(e, workspace, models.data).available);
+  const endpoint = quickstarts.find((e) => e.id === quickstart) || quickstarts[0];
+  const snippets = snippetsOf(endpoint, workspace, servingOf(endpoint, workspace, models.data).model);
+  const apiPath = `/workspaces/${workspace.id}/api`;
 
   return (
     <div className="content">
@@ -64,7 +35,10 @@ export function OverviewPage() {
         <h1>One API for every model</h1>
         <p>
           Route requests to {providers.length} provider{providers.length === 1 ? '' : 's'} and {modelList.length} model{modelList.length === 1 ? '' : 's'} through{' '}
-          <code>{workspace.baseUrl.replace(/^https?:\/\//, '')}</code>.
+          <span className="hero-url">
+            <code>{workspace.baseUrl.replace(/^https?:\/\//, '')}</code>
+            <CopyButton text={workspace.baseUrl} title="Copy the base URL" />
+          </span>
         </p>
         <div className="row">
           <button className="btn primary" onClick={() => navigate(`/workspaces/${workspace.id}/chat`)}>
@@ -101,7 +75,8 @@ export function OverviewPage() {
         <div className="card">
           <h3>3 · Call the API</h3>
           <p className="muted" style={{ marginTop: 6 }}>
-            Drop-in OpenAI compatibility: change the base URL, keep your SDK.
+            Drop-in OpenAI compatibility: change the base URL, keep your SDK.{' '}
+            <Link className="link" to={apiPath}>See what the API serves</Link>
           </p>
         </div>
       </div>
@@ -109,20 +84,30 @@ export function OverviewPage() {
       <div className="card mb">
         <div className="card-title">
           <h2>Quickstart</h2>
-          <CopyButton text={code} className="btn sm" label="Copy" />
+          <div className="row">
+            {quickstarts.length > 1 && (
+              <select className="sm" value={endpoint.id} onChange={(e) => setQuickstart(e.target.value)} title="What to call">
+                {quickstarts.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.quickstart}
+                  </option>
+                ))}
+              </select>
+            )}
+            <CopyButton text={workspace.baseUrl} className="btn sm" label="Copy URL" title="Copy the base URL" />
+            <CopyButton text={() => snippets[snippets[lang] ? lang : 'curl']} className="btn sm" label="Copy code" title="Copy the code" />
+          </div>
         </div>
-        <Tabs
-          value={lang}
-          onChange={setLang}
-          tabs={[
-            { value: 'curl', label: 'curl' },
-            { value: 'python', label: 'Python' },
-            { value: 'typescript', label: 'TypeScript' },
-          ]}
-        />
-        <pre>
-          <code>{code}</code>
-        </pre>
+        <Snippets snippets={snippets} lang={lang} onLang={setLang} copy={false} />
+        <p className="muted small" style={{ marginTop: 10 }}>
+          <span className="mono">
+            {endpoint.method} {endpoint.path}
+          </span>{' '}
+          · {endpoint.summary}{' '}
+          <Link className="link" to={`${apiPath}?endpoint=${endpoint.id}`}>
+            See everything the API serves
+          </Link>
+        </p>
       </div>
 
       <WeekUsage workspace={workspace} href={`/workspaces/${workspace.id}/activity`} />
@@ -140,7 +125,7 @@ export function OverviewPage() {
         {modelList.slice(0, 6).map((m) => (
           <div key={m.id} className="card tight row between">
             <span className="truncate" title={m.id}>
-              {m.id}
+              {modelLabel(m)}
             </span>
             <Badge kind="accent">{m.provider}</Badge>
           </div>

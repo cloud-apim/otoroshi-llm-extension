@@ -339,13 +339,13 @@ export function copyToClipboard(text, anchor) {
   return copied ? Promise.resolve() : Promise.reject(new Error('unable to copy'));
 }
 
-export function CopyButton({ text, className = 'copy-btn', label }) {
+export function CopyButton({ text, className = 'copy-btn', label, title = 'Copy' }) {
   const [done, setDone] = useState(false);
   return (
     <button
       type="button"
       className={className}
-      title="Copy"
+      title={title}
       onClick={(e) => {
         e.stopPropagation();
         copyToClipboard(typeof text === 'function' ? text() : text, e.currentTarget)

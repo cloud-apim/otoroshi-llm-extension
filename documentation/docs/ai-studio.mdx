@@ -13,7 +13,7 @@ where tokens and dollars go.
 
 ![The overview of an AI Studio workspace: base URL, quickstart snippets and featured models](/img/ai-studio-overview.png)
 
-*The home page of a workspace: its OpenAI-compatible base URL, a quickstart in curl, Python and TypeScript, the week it just had and the models ready to use.*
+*The home page of a workspace: its OpenAI-compatible base URL, ready to copy, a quickstart in curl, Python and TypeScript for each kind of call the workspace serves, the week it just had and the models ready to use.*
 
 The home page also shows the week the workspace just had — what it spent, how many calls it served and
 how many tokens it moved, day by day, with the models behind each figure — so the first thing a team
@@ -219,6 +219,37 @@ workspace endpoint. Guardrails, fallbacks, routers, costs and analytics apply as
 applications, and so do the budgets of the workspace and the budgets of that user. What is checked at the
 door of the route for applications (API key, IP addresses, key quotas and key budgets) does not apply to
 the chat.
+
+### Call the API
+
+**API** is the page your developers open first: everything the workspace endpoint serves, on one screen.
+The base URL, the header the API key goes in and a model id are there to copy, and every endpoint comes
+with what it is for, what a request can carry, and a snippet already filled with your base URL and one of
+your models — in curl, and in Python or TypeScript with the SDK that speaks that format.
+
+| Family | Endpoints |
+|--------|-----------|
+| Text | `/chat/completions` (OpenAI chat), `/responses` (OpenAI Responses), `/messages` (Anthropic, Claude Code included) |
+| Embeddings | `/embeddings` |
+| Images | `/images/generations`, `/images/edits` |
+| Audio | `/audio/speech`, `/audio/transcriptions`, `/audio/translations` |
+| Moderation | `/moderations` |
+| Documents | `/ocr` |
+| Decisions | `/systemone`, `/decisions` |
+| Tools | `/mcp` |
+| Discovery | `/models`, `/contexts`, `/providers` |
+
+The page reads your workspace: an endpoint is shown with a model you actually have, and one that no
+provider serves yet tells which capability to turn on to open it. Each endpoint links to its section of
+the [OpenAI Compatible API](/docs/llm-gateway/openai-compat-api) reference for the full request and
+response formats.
+
+The quickstart of the home page offers the same snippets: pick what to call — a chat, an embedding, an
+image, a decision — and copy the code, or just the base URL.
+
+![The API page of a workspace: base URL, authentication, and every endpoint with its snippet](/img/ai-studio-api.png)
+
+*Everything the endpoint of the workspace serves, each call with what it can carry and a snippet to start from.*
 
 ### Manage API keys
 

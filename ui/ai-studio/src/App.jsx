@@ -6,6 +6,7 @@ import { useTheme } from './lib/theme';
 import { getWorkspace, listWorkspaces, routeNeedsRepair, updateWorkspaceRoute } from './lib/workspaces';
 import { WorkspacesPage } from './pages/Workspaces';
 import { OverviewPage } from './pages/Overview';
+import { ApiPage } from './pages/Api';
 import { KeysPage } from './pages/Keys';
 import { ProvidersPage } from './pages/Providers';
 import { ModelsPage } from './pages/Models';
@@ -30,6 +31,7 @@ export const useWorkspace = () => useContext(WorkspaceContext);
 const PAGES = {
   home: OverviewPage,
   overview: OverviewPage,
+  api: ApiPage,
   activity: ActivityPage,
   logs: LogsPage,
   keys: KeysPage,

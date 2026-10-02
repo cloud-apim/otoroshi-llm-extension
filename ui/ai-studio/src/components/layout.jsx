@@ -6,6 +6,7 @@ import { Icon } from './icons';
 
 export const WORKSPACE_PAGES = [
   { id: 'overview', label: 'Overview', icon: 'grid' },
+  { id: 'api', label: 'API', icon: 'book' },
   { id: 'activity', label: 'Activity', icon: 'chart' },
   { id: 'logs', label: 'Logs', icon: 'list' },
   { id: 'keys', label: 'API Keys', icon: 'key' },

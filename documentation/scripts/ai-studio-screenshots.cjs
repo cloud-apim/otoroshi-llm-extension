@@ -237,6 +237,8 @@ const SHOTS = [
   },
   { name: 'chat', url: ws('/chat'), viewport: true, before: openConversation({ compare: false, title: process.env.CHAT_TITLE }) },
   { name: 'chat-compare', url: ws('/chat'), viewport: true, before: openConversation({ compare: true, title: process.env.COMPARE_TITLE }) },
+  // what the endpoint of the workspace serves: every endpoint, the first one open on its snippet
+  { name: 'api', url: ws('/api') },
   { name: 'api-keys', url: ws('/keys') },
   { name: 'api-key-edit', url: ws('/keys'), viewport: true, before: steps(clickFirst('td.actions button:text-is("Edit")'), editKey) },
   { name: 'guardrails', url: ws('/guardrails') },
