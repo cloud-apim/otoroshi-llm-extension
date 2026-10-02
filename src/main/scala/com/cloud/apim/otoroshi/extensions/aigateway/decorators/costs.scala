@@ -283,15 +283,25 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
   // reads stay O(1) - `models` is hit on every single call.
   private val dynamicModelsRef = new AtomicReference[Map[String, CostModel]](Map.empty)
   private val allModelsRef = new AtomicReference[Map[String, CostModel]](staticModels)
+  // The same models by their key in lower case. A provider serving `Qwen3-32B` under that name also takes
+  // `qwen3-32b`, and the sources do not agree on the spelling: a model is found whatever its case, the entry
+  // spelled as asked first
+  private val lowerCaseModelsRef = new AtomicReference[Map[String, CostModel]](lowerCased(staticModels))
   private val openRouterSchedulerRef = new AtomicReference[Cancellable]()
 
   def dynamicModels: Map[String, CostModel] = dynamicModelsRef.get()
   def models: Map[String, CostModel] = allModelsRef.get()
 
+  // entries only differing by their case are sorted so that the one kept is always the same
+  private def lowerCased(all: Map[String, CostModel]): Map[String, CostModel] =
+    all.toSeq.sortBy(_._1).reverse.map { case (key, model) => (key.toLowerCase, model) }.toMap
+
   private def setDynamicModels(newModels: Map[String, CostModel]): Unit = {
     dynamicModelsRef.set(newModels)
     // static entries win: they are curated, and a user provided price must not be overridden by a sync
-    allModelsRef.set(newModels ++ staticModels)
+    val all = newModels ++ staticModels
+    allModelsRef.set(all)
+    lowerCaseModelsRef.set(lowerCased(all))
   }
 
   def getResourceCode(path: String): String = {
@@ -319,8 +329,9 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
 
   def lookupModel(provider: String, modelName: String): Option[CostModel] = {
     val all = models
+    val lowerCase = lowerCaseModelsRef.get()
     val names = modelName +: fallbackModelNames(provider, modelName)
-    names.iterator.flatMap(name => all.get(s"${provider}-${name}")).nextOption() match {
+    names.iterator.flatMap(name => all.get(s"${provider}-${name}").orElse(lowerCase.get(s"${provider}-${name}".toLowerCase))).nextOption() match {
       case Some(model) => inDollars(model, settings.priceCurrencies.get(provider))
       case None if settings.modelsCatalogEnabled =>
         names.iterator.flatMap(name => catalog.lookupCost(provider, name)).nextOption()

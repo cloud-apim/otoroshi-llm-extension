@@ -200,6 +200,26 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assert(!ModelsMetadata.describe(provider("openai", Map("costs-tracking-provider" -> "nowhere")), "gpt-4o").hasCost)
   }
 
+  // OVHcloud serves `Meta-Llama-3_3-70B-Instruct` under that name and in lower case. The price table spells it
+  // the first way, models.dev the second: it is one model, and it has one price
+  test("a model is priced the same whatever the case of its name") {
+    ext.modelsCatalog.load().awaitf(30.seconds)
+    // models come and go in the price table: the one checked is whichever OVHcloud model has capitals today
+    val listed = ext.costsTracking.models.values.toSeq.sortBy(_.name)
+      .filter(m => m.litellm_provider == "ovhcloud" && m.input_cost_per_token > 0 && m.nameWithoutProvider != m.nameWithoutProvider.toLowerCase)
+    assert(listed.nonEmpty, "the price table has no OVHcloud model with capitals in its name")
+    listed.foreach { model =>
+      val name = model.nameWithoutProvider
+      val priced = ext.costsTracking.lookupModel("ovhcloud", name).get
+      val lowerCase = ext.costsTracking.lookupModel("ovhcloud", name.toLowerCase)
+      assertEquals(lowerCase.map(_.input_cost_per_token), Some(priced.input_cost_per_token), s"${name.toLowerCase} should cost what ${name} costs")
+      assertEquals(lowerCase.map(_.output_cost_per_token), Some(priced.output_cost_per_token), s"${name.toLowerCase} should cost what ${name} costs")
+    }
+    // the name as the table spells it is still the first one looked for
+    assertEquals(ext.costsTracking.lookupModel("ovhcloud", listed.head.nameWithoutProvider).map(_.name), Some(listed.head.name))
+    assertEquals(ext.costsTracking.lookupModel("ovhcloud", "a model nobody knows"), None)
+  }
+
   test("prices published in euros are billed in dollars") {
     given env: Env = otoroshi.env
     ext.modelsCatalog.load().awaitf(30.seconds)
@@ -216,8 +236,9 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     // the models.dev prices of OVHcloud are already in dollars. The price table is asked first, and the models
     // of both come and go with every refresh: the model checked is one of the catalog the table does not know,
     // whichever it is today
+    val inTheTable = ext.costsTracking.models.keySet.map(_.toLowerCase)
     val catalogOnly = ext.modelsCatalog.index.toSeq.flatMap(_.models("ovhcloud")).sortBy(_.id)
-      .find(m => m.cost.exists(_.input > 0) && !ext.costsTracking.models.contains(s"ovhcloud-${m.id}"))
+      .find(m => m.cost.exists(_.input > 0) && !inTheTable.contains(s"ovhcloud-${m.id}".toLowerCase))
       .getOrElse(fail("the price table knows every OVHcloud model of the models.dev catalog: none is left to be priced from the catalog"))
     val ovhCatalog = ext.costsTracking.lookupModel("ovhcloud", catalogOnly.id).get
     assertEquals(ovhCatalog.raw.select(CostModel.currencyField).asOptString, None)
