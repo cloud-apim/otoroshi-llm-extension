@@ -267,6 +267,8 @@ class ChatClientWithStreamUsage(originalProvider: AiProvider, val chatClient: Ch
   override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     chatClient.invokeStream(kind, prompt, attrs, originalBody).map {
       case Left(err) => Left(err)
+      // the provider this call was handed over to ended its stream with that chunk already
+      case Right(resp) if HandOver.by(attrs, originalProvider) => Right(resp)
       case Right(resp) => {
         val promise = Promise.apply[Option[ChatResponseChunk]]()
         val ref = new AtomicReference[String](null)

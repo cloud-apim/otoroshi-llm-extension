@@ -297,6 +297,25 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(streamAttrs.get(ChatClientWithEcoImpact.key).map(_.json(false)), None, "nor for a stream")
   }
 
+  // the chunks of a stream, as the caller gets them
+  def chunks(provider: AiProvider): Seq[JsValue] = {
+    given env: Env = otoroshi.env
+    val source = ext.states.provider(provider.id).flatMap(_.getChatClient()).get.stream(prompt, TypedMap.empty, Json.obj())(using ec, env).awaitf(30.seconds)
+    source.toOption.get.runWith(Sink.seq)(using mat).awaitf(30.seconds).map(_.json(env))
+  }
+
+  test("a stream served by another provider ends as one served directly: one chunk with the usage and the finish reason") {
+    setup
+    val direct = chunks(fallback)
+    Seq(primary, balancer, router).foreach { p =>
+      val handedOver = chunks(p)
+      assertEquals(handedOver.count(_.select("usage").asOpt[JsObject].isDefined), 1, s"${p.name}: the usage is given once")
+      assertEquals(handedOver.flatMap(_.at("choices.0.finish_reason").asOptString), Seq("stop"), s"${p.name}: the stream ends once")
+      assertEquals(handedOver.last.select("usage").asOpt[JsObject], direct.last.select("usage").asOpt[JsObject], s"${p.name}: by its last chunk")
+      assertEquals(handedOver.size, direct.size, s"${p.name}: with the chunks of a stream served directly")
+    }
+  }
+
   test("a fallback that fails is asked once") {
     setup
     val resp = Try(call(shaky))
