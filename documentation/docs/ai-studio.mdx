@@ -301,6 +301,18 @@ keys. Workspace keys belong to no one in particular, which suits shared applicat
 
 *Fallback chains, load balancers, Otoroshi routers and the default provider of the workspace.*
 
+A router can leave the choice of the model to a [decision model](/docs/decision-models/overview) of the workspace.
+The **smart router** has it rate how demanding each request is, and answers with the cheapest model that is good
+enough for it. The **intent router** has it pick, among the candidates you described, the one that fits the request.
+
+![The smart router: candidates, the decision model that rates the requests and the quality floors](/img/ai-studio-router-smart.png)
+
+*A smart router: trivial requests go to the cheapest candidate, the most demanding ones to the best.*
+
+![The intent router: each candidate with its model and what it is good at](/img/ai-studio-router-intent.png)
+
+*An intent router: you say what each candidate is good at, the decision model sends each request to the right one.*
+
 ### Give models tools and prompts
 
 **Presets** are reusable system prompts. Pick one in the chat, or name it in the `context` field of a

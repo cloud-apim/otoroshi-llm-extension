@@ -152,6 +152,7 @@ Add `?embed_costs=true` to a request to get what it cost in a `costs` field.
 - **Guardrails** — ask a yes/no question about a prompt or an answer as a [guardrail](/docs/guardrails/decision_model), without the latency of an LLM judge
 - **Workflows** — branch a [workflow](/docs/workflows/decision-call) on a probability rather than on a parsed sentence
 - **Routing** — send a [workflow](/docs/workflows/decision-router) down the path a decision model picks, and only when it is sure of it
+- **Model routing** — let a decision model choose the LLM that answers each request, with the [smart-router and the intent-router](/docs/llm-gateway/otoroshi-router)
 
 :::tip
 A probability is only comparable with the ones of the same model. When you move a decision to another model, tune its thresholds again on your own data rather than carrying them over.

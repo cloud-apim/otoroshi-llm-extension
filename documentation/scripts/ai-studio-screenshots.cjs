@@ -190,6 +190,16 @@ const openLogCall = async (page) => {
   await page.waitForTimeout(1200);
 };
 
+// The edit dialog of the first router of the workspace, on one of its routing models. The workspace needs a
+// router with candidates for that model and a decision model: `smart_router_refs`, `intent_router_refs` with
+// their descriptions, `decision_model_ref`
+const editRouter = (mode) => async (page) => {
+  await page.locator('.table tr:has(code:has-text("-router")) button:text-is("Edit")').first().click();
+  await page.waitForTimeout(900);
+  await page.locator(`dialog.modal button:has-text("${mode}")`).first().click();
+  await page.waitForTimeout(600);
+};
+
 // the editor of a content policy, narrowed to the calls of two api keys, closed without saving
 const editGuardrail = async (page) => {
   await page.locator('.table button:text-is("Edit")').first().click();
@@ -244,6 +254,9 @@ const SHOTS = [
   { name: 'guardrails', url: ws('/guardrails') },
   { name: 'guardrail-filters', url: ws('/guardrails'), viewport: true, before: editGuardrail },
   { name: 'routing', url: ws('/routing') },
+  // the dialog alone, in a viewport tall enough for it to show its whole form without scrolling
+  { name: 'router-smart', url: ws('/routing'), height: 1900, element: 'dialog.modal', before: editRouter('Smart router') },
+  { name: 'router-intent', url: ws('/routing'), height: 1900, element: 'dialog.modal', before: editRouter('Intent router') },
   { name: 'tools', url: ws('/tools') },
   { name: 'presets', url: ws('/presets') },
   { name: 'mcp-server', url: ws('/mcp-server') },

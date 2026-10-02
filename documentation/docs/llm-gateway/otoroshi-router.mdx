@@ -1,7 +1,7 @@
 ---
 sidebar_position: 8.5
 title: Otoroshi Router
-description: Let the gateway pick the model for each request - the cheapest model that codes well enough, the best model for each prompt, or a panel of models answering together.
+description: Let the gateway pick the model for each request - the cheapest model that codes well enough, the best model for each prompt, the model a decision model picks, or a panel of models answering together.
 ---
 
 import Terminal from '@site/src/components/Terminal';
@@ -15,6 +15,11 @@ model name, and the router decides, request after request, which of your provide
   coding benchmark index, price from the gateway's cost catalog.
 - **`auto-router`** reads each prompt and sends it to the **best suited model** (coding, reasoning, writing,
   long context…), following the cost / quality tradeoff you choose.
+- **`smart-router`** has a [decision model](/docs/decision-models/overview) rate **how demanding each request is**, and
+  answers with the cheapest model that is good enough for it: trivial requests go to your cheapest model, hard
+  ones to your best.
+- **`intent-router`** sends each request to **the model you described for it**: you say what each candidate is good
+  at, and a decision model picks the one that fits.
 - **`fusion-router`** asks **a panel of models in parallel**. A judge compares their answers, and a
   synthesizer writes one final answer from the best of each.
 
@@ -29,7 +34,7 @@ it has no connection of its own. It references existing providers, called **cand
 candidate is called with **its own default model** (`options.model`). This means you control exactly
 which models can be picked, and with which settings, guardrails and credentials.
 
-A single router exposes the three routing models. Configure candidates only for the ones you want to
+A single router exposes all the routing models. Configure candidates only for the ones you want to
 use: a routing model without candidates answers with an explicit error.
 
 Everything the gateway does for a provider still applies to the models picked by the router: costs,
@@ -55,6 +60,16 @@ and all the configuration goes in `options`:
     "auto_router_classifier_ref": "provider_gpt_nano",
     "cost_quality_tradeoff": 7,
     "allowed_models": [],
+
+    "decision_model_ref": "decision-model_jev",
+
+    "smart_router_refs": ["provider_claude_sonnet", "provider_gpt_mini", "provider_mistral_small"],
+
+    "intent_router_refs": [
+      { "ref": "provider_gpt_mini", "description": "Everyday questions and conversation" },
+      { "ref": "provider_claude_sonnet", "description": "Software development, code review and debugging" },
+      { "ref": "provider_mistral_small", "model": "mistral-small-latest", "description": "Translation and rewriting, in any European language" }
+    ],
 
     "fusion_router_refs": ["provider_claude_sonnet", "provider_gpt", "provider_gemini"],
     "fusion_router_judge_ref": "provider_gpt_mini",
@@ -147,6 +162,65 @@ Callers can override all three settings on a request:
 }
 ```
 
+## smart-router
+
+`smart-router` spends on a request what the request deserves. A greeting and a research question do not need
+the same model: the router tells them apart, and you only pay for your best model when it is needed.
+
+1. A [decision model](/docs/decision-models/overview) (`decision_model_ref`) rates **how demanding the request
+   is**, on a five level scale going from trivial to expert. It answers in a fraction of a second, for a fraction
+   of the cost of the request it routes.
+2. The rating sets the **quality floor** of the request, relative to your best candidate: no floor for a
+   trivial request, your best candidate for the most demanding one, and a floor in between for the others.
+3. The router calls the **cheapest candidate above that floor**, from the coding quality index and the price of each
+   model, exactly like the `code-router` does. If it fails, the next candidates are tried in the same order.
+
+The choice is yours to read and to tune: the same request always gets the same floor, and two settings move
+the floors. `smart_router_min_score` is the floor of a trivial request (`0` by default: your cheapest model answers),
+`smart_router_max_score` the floor of the most demanding one (`1` by default: only your best model answers). With
+`0.4` and `0.8`, even a greeting gets a decent model, and your best one is kept for requests nothing else can
+answer.
+
+The router keeps answering when the decision model does not: a request it could not rate is routed as a request
+of average difficulty.
+
+![The smart router of a workspace in AI Studio: its candidates, its decision model and its two quality floors](/img/ai-studio-router-smart.png)
+
+*In AI Studio: the candidates, the decision model that rates the requests, and the two quality floors.*
+
+## intent-router
+
+`intent-router` routes on **what the request is about**, with rules you write in plain words. Each candidate
+comes with a description of what it is good at, and a decision model picks the candidate whose description fits
+the request: your coding model for code, your multilingual model for translations, a small and fast model for
+everything else.
+
+```js
+"intent_router_refs": [
+  { "ref": "provider_gpt_mini", "description": "Everyday questions and conversation" },
+  { "ref": "provider_claude_sonnet", "description": "Software development, code review and debugging" },
+  { "ref": "provider_mistral_small", "model": "mistral-small-latest", "description": "Translation and rewriting, in any European language" }
+]
+```
+
+1. The [decision model](/docs/decision-models/overview) (`decision_model_ref`) is asked which candidate is the best
+   suited to answer the request, and gives the probability of each one.
+2. The **most probable candidate answers**. If it fails, the other ones are tried from the most to the least
+   probable.
+3. With a **minimum confidence** (`intent_router_min_confidence`, from `0` to `1`), an answer the decision model is not
+   sure enough of is not followed: the **first candidate** of the list answers. Put your default model first.
+
+Write a description the way you would brief someone doing the routing by hand: what the model is for, not how
+it works. `intent_router_instructions` replaces the question asked to the decision model, when your candidates call
+for a more specific one.
+
+Like the `smart-router`, the `intent-router` keeps answering when the decision model does not: the candidates are
+then tried in the order of the list.
+
+![The intent router of a workspace in AI Studio: each candidate with its model and the description of what it is good at](/img/ai-studio-router-intent.png)
+
+*In AI Studio: each candidate with the model it serves and what it is good at, then the decision model that picks.*
+
 ## fusion-router
 
 `fusion-router` trades latency and tokens for the most reliable answer. It is useful for high-stakes
@@ -177,6 +251,14 @@ A fusion request costs the sum of its calls: every panel member, the judge and t
 | `auto_router_classifier_model` | auto-router | default model of the judge | Model of the judge provider |
 | `cost_quality_tradeoff` | auto-router | `7` | `0` = best quality, `10` = cheapest |
 | `allowed_models` | auto-router | `[]` (all) | Wildcard patterns restricting the candidates |
+| `decision_model_ref` | smart-router, intent-router | none | Id of the decision model that reads the requests |
+| `decision_model_model` | smart-router, intent-router | default model of the decision model | Model of the decision model |
+| `smart_router_refs` | smart-router | `[]` | Candidates: provider ids or `{ "ref", "model" }` objects |
+| `smart_router_min_score` | smart-router | `0` | Quality floor of a trivial request, from `0` to `1`, relative to the best candidate |
+| `smart_router_max_score` | smart-router | `1` | Quality floor of the most demanding request, from `0` to `1`, relative to the best candidate |
+| `intent_router_refs` | intent-router | `[]` | Candidates: `{ "ref", "model", "description" }` objects, the default candidate first |
+| `intent_router_instructions` | intent-router | which option suits the request best | The question asked to the decision model |
+| `intent_router_min_confidence` | intent-router | none | From `0` to `1`: below it, the first candidate answers |
 | `fusion_router_refs` | fusion-router | `[]` | Panel: provider ids or `{ "ref", "model" }` objects (up to 8) |
 | `fusion_router_judge_ref` | fusion-router | best panel member | Provider id of the judge comparing the answers |
 | `fusion_router_judge_model` | fusion-router | default model of the judge | Model of the judge provider |

@@ -458,6 +458,31 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(item.select("config").select("decision_model").asString, decisionId)
     assertEquals(item.select("config").select("threshold").as[BigDecimal], BigDecimal("0.5"))
 
+    // a decision model routes the requests of its workspace: it rates them for the smart router, and picks among
+    // the candidates the workspace described for the intent router
+    expect(studio("POST", s"/workspaces/$wsId/routers", Json.obj("smart_router_refs" -> Json.arr(ollamaText), "decision_model_ref" -> "decision-model_of_another_workspace")), 400)
+    val router = expect(studio("POST", s"/workspaces/$wsId/routers", Json.obj(
+      "decision_model_ref" -> decisionId,
+      "smart_router_refs" -> Json.arr(ollamaText), "smart_router_min_score" -> 0.25, "smart_router_max_score" -> 3,
+      "intent_router_refs" -> Json.arr(Json.obj("ref" -> ollamaText, "model" -> "llama3.2", "description" -> " Everyday questions "), Json.obj("ref" -> ollamaText, "description" -> "")),
+      "intent_router_min_confidence" -> 0.4,
+    )), 201)
+    assertEquals(router.select("modes").as[Seq[String]], Seq("smart", "intent"))
+    val routerId = router.select("id").asString
+    val routerOptions = aiEntity("providers", routerId).get.select("options")
+    assertEquals(routerOptions.select("decision_model_ref").asString, decisionId)
+    assertEquals(routerOptions.select("smart_router_refs").as[Seq[String]], Seq(ollamaText))
+    assertEquals((routerOptions.select("smart_router_min_score").as[BigDecimal], routerOptions.select("smart_router_max_score").as[BigDecimal]), (BigDecimal("0.25"), BigDecimal(1)), "a floor stays between 0 and 1")
+    assertEquals(routerOptions.select("intent_router_refs").as[Seq[JsObject]], Seq(Json.obj("ref" -> ollamaText, "model" -> "llama3.2", "description" -> "Everyday questions"), Json.obj("ref" -> ollamaText)))
+    assertEquals(routerOptions.select("intent_router_min_confidence").as[BigDecimal], BigDecimal("0.4"))
+    expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("intent_router_refs" -> Json.arr(Json.obj("description" -> "a candidate without a provider")))), 400)
+    expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("intent_router_refs" -> Json.arr(Json.obj("ref" -> foreign.select("entities").select("text").asString, "description" -> "a provider of another workspace")))), 400)
+    // what is not given is kept
+    val renamed = expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("intent_router_instructions" -> "Which assistant should answer ?")), 200)
+    assertEquals(renamed.select("intent_router_refs").as[Seq[JsObject]].size, 2)
+    assertEquals(renamed.select("decision_model_ref").asString, decisionId)
+    expect(studio("DELETE", s"/workspaces/$wsId/routers/$routerId"), 204)
+
     // a connection goes with its entity and its ref
     expect(studio("PUT", s"/workspaces/$wsId/providers/${emulation.select("id").asString}", Json.obj("modalities" -> Json.obj("decision" -> Json.obj("enabled" -> false)))), 400)
     assert(aiEntity("decision-models", emulationId).isDefined, "a connection keeps at least one capability")

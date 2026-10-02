@@ -122,7 +122,7 @@ function LoadBalancerModal({ workspace, balancer, providers, existingNames, onCl
   );
 }
 
-// The three models exposed by an Otoroshi router (provider kind `otoroshi`), with the options each one reads
+// The models exposed by an Otoroshi router (provider kind `otoroshi`), with the options each one reads
 export const ROUTER_MODES = [
   {
     id: 'code',
@@ -137,6 +137,20 @@ export const ROUTER_MODES = [
     label: 'Auto router',
     refs: 'auto_router_refs',
     description: 'A judge model reads each prompt and picks the best suited candidate, following your cost / quality tradeoff.',
+  },
+  {
+    id: 'smart',
+    model: 'smart-router',
+    label: 'Smart router',
+    refs: 'smart_router_refs',
+    description: 'A decision model rates how demanding each request is, and the cheapest candidate that is good enough for it answers.',
+  },
+  {
+    id: 'intent',
+    model: 'intent-router',
+    label: 'Intent router',
+    refs: 'intent_router_refs',
+    description: 'You describe what each candidate is good at, and a decision model picks the one that fits each request.',
   },
   {
     id: 'fusion',
@@ -154,7 +168,10 @@ const keepEntries = (previous, ids) => ids.map((id) => (previous || []).find((r)
 
 export const configuredModes = (router) => ROUTER_MODES.filter((m) => refsOf((router.options || {})[m.refs]).length > 0);
 
-function RouterModal({ workspace, router, providers, existingNames, onClose, onSaved }) {
+// the candidates of the intent router as the form edits them: a provider, the model it serves, what it is good at
+const describedOf = (value) => (value || []).map((r) => (typeof r === 'string' ? { ref: r, model: '', description: '' } : { ...r, ref: r.ref || '', model: r.model || '', description: r.description || '' }));
+
+function RouterModal({ workspace, router, providers, decisionModels, existingNames, onClose, onSaved }) {
   const toast = useToast();
   const o = (router && router.options) || {};
   const [mode, setMode] = useState((router && (configuredModes(router)[0] || {}).id) || 'auto');
@@ -166,6 +183,13 @@ function RouterModal({ workspace, router, providers, existingNames, onClose, onS
     auto_router_classifier_ref: o.auto_router_classifier_ref || '',
     cost_quality_tradeoff: o.cost_quality_tradeoff ?? 7,
     allowed_models: o.allowed_models || [],
+    decision_model_ref: o.decision_model_ref || '',
+    smart_router_refs: refsOf(o.smart_router_refs),
+    smart_router_min_score: o.smart_router_min_score ?? 0,
+    smart_router_max_score: o.smart_router_max_score ?? 1,
+    intent_router_refs: describedOf(o.intent_router_refs),
+    intent_router_instructions: o.intent_router_instructions || '',
+    intent_router_min_confidence: o.intent_router_min_confidence ?? '',
     fusion_router_refs: refsOf(o.fusion_router_refs),
     fusion_router_judge_ref: o.fusion_router_judge_ref || '',
     fusion_router_synthesizer_ref: o.fusion_router_synthesizer_ref || '',
@@ -173,7 +197,11 @@ function RouterModal({ workspace, router, providers, existingNames, onClose, onS
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const nameTaken = existingNames.includes(form.name) && (!router || router.name !== form.name);
-  const hasCandidates = ROUTER_MODES.some((m) => form[m.refs].length > 0);
+  // a candidate of the intent router counts once it names a provider
+  const countOf = (m) => form[m.refs].filter((r) => (typeof r === 'string' ? r : r.ref)).length;
+  const hasCandidates = ROUTER_MODES.some((m) => countOf(m) > 0);
+  const decisionOptions = (decisionModels || []).map((d) => ({ value: d.id, label: d.name }));
+  const setIntent = (idx, patch) => set({ intent_router_refs: form.intent_router_refs.map((c, i) => (i === idx ? { ...c, ...patch } : c)) });
   const candidateOptions = providers.map((p) => ({ value: p.id, label: `${p.name} (${(p.options || {}).model || 'default model'})` }));
   const providerOptions = providers.map((p) => ({ value: p.id, label: p.name }));
 
@@ -203,6 +231,15 @@ function RouterModal({ workspace, router, providers, existingNames, onClose, onS
           auto_router_classifier_ref: form.auto_router_classifier_ref || null,
           cost_quality_tradeoff: Math.min(10, Math.max(0, num(form.cost_quality_tradeoff, 7))),
           allowed_models: form.allowed_models.map((m) => m.trim()).filter(Boolean),
+          decision_model_ref: form.decision_model_ref || null,
+          smart_router_refs: keepEntries(o.smart_router_refs, form.smart_router_refs),
+          smart_router_min_score: Math.min(1, Math.max(0, num(form.smart_router_min_score, 0))),
+          smart_router_max_score: Math.min(1, Math.max(0, num(form.smart_router_max_score, 1))),
+          intent_router_refs: form.intent_router_refs
+            .filter((c) => c.ref)
+            .map((c) => ({ ...c, model: (c.model || '').trim() || undefined, description: (c.description || '').trim() || undefined })),
+          intent_router_instructions: form.intent_router_instructions.trim() || null,
+          intent_router_min_confidence: form.intent_router_min_confidence === '' || form.intent_router_min_confidence === null ? null : Math.min(1, Math.max(0, num(form.intent_router_min_confidence, 0))),
           fusion_router_refs: keepEntries(o.fusion_router_refs, form.fusion_router_refs.slice(0, 8)),
           fusion_router_judge_ref: form.fusion_router_judge_ref || null,
           fusion_router_synthesizer_ref: form.fusion_router_synthesizer_ref || null,
@@ -238,14 +275,14 @@ function RouterModal({ workspace, router, providers, existingNames, onClose, onS
         </>
       }
     >
-      <Field label="Name" hint="One router serves the three models below: configure the ones you want to use." error={nameTaken ? 'already used in this workspace' : null}>
+      <Field label="Name" hint="One router serves the models below: configure the ones you want to use." error={nameTaken ? 'already used in this workspace' : null}>
         <TextInput value={form.name} onChange={(v) => set({ name: connectionName(v) })} />
       </Field>
       <div className="row between wrap">
         <Segmented
           value={mode}
           onChange={setMode}
-          options={ROUTER_MODES.map((m) => ({ value: m.id, label: `${m.label}${form[m.refs].length ? ` · ${form[m.refs].length}` : ''}` }))}
+          options={ROUTER_MODES.map((m) => ({ value: m.id, label: `${m.label}${countOf(m) ? ` · ${countOf(m)}` : ''}` }))}
         />
         <span className="row">
           <code>
@@ -288,6 +325,63 @@ function RouterModal({ workspace, router, providers, existingNames, onClose, onS
         </>
       )}
 
+      {mode === 'smart' && (
+        <>
+          <Field label="Candidates" hint="Each candidate is called with its own default model. Models missing from the quality index are only used when no ranked candidate answers.">
+            <Checks options={candidateOptions} value={form.smart_router_refs} onChange={(v) => set({ smart_router_refs: v })} />
+          </Field>
+          <Field label="Decision model" hint="Rates how demanding each request is, from trivial to expert. Without it, every request is of average difficulty.">
+            <Select value={form.decision_model_ref} onChange={(v) => set({ decision_model_ref: v })} placeholder={decisionOptions.length ? 'Select a decision model' : 'No decision model in this workspace'} options={decisionOptions} />
+          </Field>
+          <div className="form-grid">
+            <Field label="Quality for a trivial request" hint="From 0 to 1, relative to your best candidate. 0 lets the cheapest candidate answer trivial requests.">
+              <NumberInput value={form.smart_router_min_score} onChange={(v) => set({ smart_router_min_score: v })} min="0" max="1" step="0.05" />
+            </Field>
+            <Field label="Quality for the most demanding request" hint="From 0 to 1, relative to your best candidate. 1 keeps the most demanding requests for your best candidate.">
+              <NumberInput value={form.smart_router_max_score} onChange={(v) => set({ smart_router_max_score: v })} min="0" max="1" step="0.05" />
+            </Field>
+          </div>
+        </>
+      )}
+
+      {mode === 'intent' && (
+        <>
+          <Field label="Candidates" hint="Say what each candidate is good at, the way you would brief someone doing the routing by hand. The first candidate answers when the decision model is not sure, or does not answer.">
+            <div className="stack tight">
+              {form.intent_router_refs.map((c, idx) => (
+                <div key={idx} className="intent-candidate">
+                  <div className="row">
+                    <Select className="grow" value={c.ref} onChange={(v) => setIntent(idx, { ref: v })} placeholder="Select a provider" options={candidateOptions} />
+                    <div style={{ width: 200 }}>
+                      <TextInput value={c.model} onChange={(v) => setIntent(idx, { model: v })} placeholder="Default model" />
+                    </div>
+                    <button className="copy-btn" onClick={() => set({ intent_router_refs: form.intent_router_refs.filter((_, i) => i !== idx) })} title="Remove">
+                      <Icon name="trash" />
+                    </button>
+                  </div>
+                  <TextInput value={c.description} onChange={(v) => setIntent(idx, { description: v })} placeholder="What it is good at" />
+                </div>
+              ))}
+              <button className="btn sm" style={{ alignSelf: 'flex-start' }} onClick={() => set({ intent_router_refs: [...form.intent_router_refs, { ref: '', model: '', description: '' }] })}>
+                <Icon name="plus" />
+                Add candidate
+              </button>
+            </div>
+          </Field>
+          <div className="form-grid">
+            <Field label="Decision model" hint="Picks the candidate whose description fits each request.">
+              <Select value={form.decision_model_ref} onChange={(v) => set({ decision_model_ref: v })} placeholder={decisionOptions.length ? 'Select a decision model' : 'No decision model in this workspace'} options={decisionOptions} />
+            </Field>
+            <Field label="Minimum confidence" hint="From 0 to 1, optional. Below it, the first candidate answers.">
+              <NumberInput value={form.intent_router_min_confidence} onChange={(v) => set({ intent_router_min_confidence: v === null ? '' : v })} min="0" max="1" step="0.05" />
+            </Field>
+          </div>
+          <Field label="Question" hint="Optional: the question asked to the decision model about each request.">
+            <TextInput value={form.intent_router_instructions} onChange={(v) => set({ intent_router_instructions: v })} placeholder="Which of these options is the best suited to answer this request ?" />
+          </Field>
+        </>
+      )}
+
       {mode === 'fusion' && (
         <>
           <Field label="Panel" hint="Up to 8 models asked in parallel. The ones that fail are left out of the deliberation.">
@@ -314,8 +408,12 @@ export function RoutingPage() {
   const [editing, setEditing] = useState(null);
   const [editingRouter, setEditingRouter] = useState(null);
   const data = useAsync(async () => {
-    const [providers, route] = await Promise.all([Resources.providers.list(workspaceFilter(workspace.id)), Resources.routes.get(routeIdOf(workspace.id))]);
-    return { providers, route };
+    const [providers, route, decisionModels] = await Promise.all([
+      Resources.providers.list(workspaceFilter(workspace.id)),
+      Resources.routes.get(routeIdOf(workspace.id)),
+      Resources.decisionModels.list(workspaceFilter(workspace.id)),
+    ]);
+    return { providers, route, decisionModels };
   }, [workspace.id]);
 
   const all = (data.data && data.data.providers) || [];
@@ -488,7 +586,7 @@ export function RoutingPage() {
             <div className="card-head">
               <div>
                 <h2>Smart routing</h2>
-                <p>Let the gateway pick the model: the cheapest good coder, the best model for each prompt, or a panel of models answering together.</p>
+                <p>Let the gateway pick the model: the cheapest good coder, the best model for each prompt, the one a decision model picks, or a panel of models answering together.</p>
               </div>
               <button className="btn sm primary" disabled={real.length === 0} onClick={() => setEditingRouter({})}>
                 New router
@@ -578,6 +676,7 @@ export function RoutingPage() {
           workspace={workspace}
           router={editingRouter.router}
           providers={real}
+          decisionModels={(data.data && data.data.decisionModels) || []}
           existingNames={all.map((p) => p.name)}
           onClose={() => setEditingRouter(null)}
           onSaved={() => {

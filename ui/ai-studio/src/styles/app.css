@@ -716,6 +716,8 @@ dialog.modal::backdrop { background: rgba(3, 8, 10, 0.35); }
 .room .title { flex: 1; min-width: 0; }
 .room .del { visibility: hidden; }
 .room:hover .del { visibility: visible; }
+/* a candidate of the intent router: who answers, then what it is good at */
+.intent-candidate { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
 .chat-settings { border-left: 1px solid var(--border); background: var(--surface); overflow: auto; display: flex; flex-direction: column; gap: 14px; width: 320px; padding: 18px 16px; }
 .chat-settings .field label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .chat-settings .field label .faint { font-weight: 400; }

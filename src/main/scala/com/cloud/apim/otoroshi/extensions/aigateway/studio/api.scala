@@ -1447,7 +1447,10 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
   private final case class RouterMode(id: String, refs: String)
 
-  private val routerModes = Seq(RouterMode("code", "code_router_refs"), RouterMode("auto", "auto_router_refs"), RouterMode("fusion", "fusion_router_refs"))
+  private val routerModes = Seq(
+    RouterMode("code", "code_router_refs"), RouterMode("auto", "auto_router_refs"), RouterMode("smart", "smart_router_refs"),
+    RouterMode("intent", "intent_router_refs"), RouterMode("fusion", "fusion_router_refs"),
+  )
 
   private def refsOf(value: JsLookupResult): Seq[String] = value.asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
     case JsString(s) => Some(s)
@@ -1461,6 +1464,15 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     case JsString(s) if s.nonEmpty => Some(JsString(s))
     case o: JsObject => o.select("ref").asOptString.filter(_.nonEmpty).map { ref =>
       o.select("model").asOptString.map(_.trim).filter(_.nonEmpty).map(m => Json.obj("ref" -> ref, "model" -> m)).getOrElse(JsString(ref))
+    }
+    case _ => None
+  }
+
+  // the candidates of the intent router: a provider, the model it serves, what it is good at and the name of its option
+  private def describedEntries(value: JsLookupResult): Seq[JsObject] = value.asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
+    case JsString(s) if s.nonEmpty => Some(Json.obj("ref" -> s))
+    case o: JsObject => o.select("ref").asOptString.filter(_.nonEmpty).map { ref =>
+      Json.obj("ref" -> ref) ++ JsObject(Seq("model", "description", "name").flatMap(k => o.select(k).asOptString.map(_.trim).filter(_.nonEmpty).map(v => k -> JsString(v))))
     }
     case _ => None
   }
@@ -1511,6 +1523,14 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       "auto_router_classifier_model" -> optString(nonEmptyString(o.select("auto_router_classifier_model"))),
       "cost_quality_tradeoff" -> o.select("cost_quality_tradeoff").asOpt[BigDecimal].getOrElse(BigDecimal(7)),
       "allowed_models" -> stringsOf(o.select("allowed_models")),
+      "decision_model_ref" -> optString(nonEmptyString(o.select("decision_model_ref"))),
+      "decision_model_model" -> optString(nonEmptyString(o.select("decision_model_model"))),
+      "smart_router_refs" -> candidateEntries(o.select("smart_router_refs")),
+      "smart_router_min_score" -> o.select("smart_router_min_score").asOpt[BigDecimal].getOrElse(BigDecimal(0)),
+      "smart_router_max_score" -> o.select("smart_router_max_score").asOpt[BigDecimal].getOrElse(BigDecimal(1)),
+      "intent_router_refs" -> describedEntries(o.select("intent_router_refs")),
+      "intent_router_instructions" -> optString(nonEmptyString(o.select("intent_router_instructions"))),
+      "intent_router_min_confidence" -> o.select("intent_router_min_confidence").asOpt[BigDecimal].map(JsNumber.apply).getOrElse(JsNull).as[JsValue],
       "fusion_router_refs" -> candidateEntries(o.select("fusion_router_refs")),
       "fusion_router_judge_ref" -> optString(nonEmptyString(o.select("fusion_router_judge_ref"))),
       "fusion_router_judge_model" -> optString(nonEmptyString(o.select("fusion_router_judge_model"))),
@@ -1631,7 +1651,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     }
 
   private def saveRouter(ws: Workspace, form: JsObject, existing: Option[JsObject])(using call: AiStudioApiRequest): Future[JsObject] =
-    Providers.list(ws.id).flatMap { providers =>
+    modalities.find(_.id == "decision").get.entities.list(ws.id).zip(Providers.list(ws.id)).flatMap { case (decisionModels, providers) =>
       val real = providers.filterNot(p => p.select("provider").asOptString.exists(VirtualKinds.contains)).map(Providers.idOf)
       val current = existing.map(routerJson).getOrElse(Json.obj(
         "name" -> "router", "code_router_refs" -> Json.arr(), "min_coding_score" -> 0.5, "auto_router_refs" -> Json.arr(), "auto_router_classifier_ref" -> JsNull,
@@ -1658,10 +1678,24 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       val code = refs("code_router_refs")
       val auto = refs("auto_router_refs")
       val fusion = refs("fusion_router_refs").take(8)
+      val smart = refs("smart_router_refs")
+      val intent: Seq[JsObject] = form.value.get("intent_router_refs") match {
+        case None => describedEntries(current.select("intent_router_refs"))
+        case Some(JsNull) => Seq.empty
+        case Some(values: JsArray) =>
+          val entries = describedEntries(JsDefined(values))
+          if (entries.size != values.value.size) throw badRequest("'intent_router_refs' entries need a 'ref'")
+          entries
+        case Some(_) => throw badRequest("'intent_router_refs' must be an array of { ref, model, description } objects")
+      }
+      val decisionModel = ref("decision_model_ref")
+      decisionModel.filterNot(decisionModels.map(_.select("id").asString).contains).foreach(m => throw badRequest(s"the decision model '$m' does not belong to this workspace"))
+      val minConfidence = (if (has(form, "intent_router_min_confidence")) number(form, "intent_router_min_confidence") else current.select("intent_router_min_confidence").asOpt[BigDecimal])
+        .map(_.max(BigDecimal(0)).min(BigDecimal(1)))
       val singles = Seq("auto_router_classifier_ref", "fusion_router_judge_ref", "fusion_router_synthesizer_ref").map(k => k -> ref(k))
       checkVirtualName(name, providers, existing)
-      if (code.isEmpty && auto.isEmpty && fusion.isEmpty) throw badRequest("a router needs candidates in 'code_router_refs', 'auto_router_refs' or 'fusion_router_refs'")
-      ((code ++ auto ++ fusion).map(entryRef) ++ singles.flatMap(_._2)).filterNot(real.contains).headOption.foreach(r => throw badRequest(s"'$r' is not a provider of this workspace"))
+      if (code.isEmpty && auto.isEmpty && fusion.isEmpty && smart.isEmpty && intent.isEmpty) throw badRequest("a router needs candidates in 'code_router_refs', 'auto_router_refs', 'smart_router_refs', 'intent_router_refs' or 'fusion_router_refs'")
+      ((code ++ auto ++ fusion ++ smart ++ intent).map(entryRef) ++ singles.flatMap(_._2)).filterNot(real.contains).headOption.foreach(r => throw badRequest(s"'$r' is not a provider of this workspace"))
       val entity = virtualEntity(ws, existing, name, "Otoroshi router", "otoroshi", Json.obj(
         "code_router_refs" -> code,
         "min_coding_score" -> clamped("min_coding_score", 0, 1, BigDecimal(0.5)),
@@ -1670,6 +1704,14 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         "auto_router_classifier_model" -> optString(ref("auto_router_classifier_model")),
         "cost_quality_tradeoff" -> clamped("cost_quality_tradeoff", 0, 10, BigDecimal(7)),
         "allowed_models" -> strings(form, "allowed_models").getOrElse(stringsOf(current.select("allowed_models"))).map(_.trim).filter(_.nonEmpty),
+        "decision_model_ref" -> optString(decisionModel),
+        "decision_model_model" -> optString(ref("decision_model_model")),
+        "smart_router_refs" -> smart,
+        "smart_router_min_score" -> clamped("smart_router_min_score", 0, 1, BigDecimal(0)),
+        "smart_router_max_score" -> clamped("smart_router_max_score", 0, 1, BigDecimal(1)),
+        "intent_router_refs" -> intent,
+        "intent_router_instructions" -> optString(ref("intent_router_instructions")),
+        "intent_router_min_confidence" -> minConfidence.map(JsNumber.apply).getOrElse(JsNull).as[JsValue],
         "fusion_router_refs" -> fusion,
         "fusion_router_judge_ref" -> optString(singles(1)._2),
         "fusion_router_judge_model" -> optString(ref("fusion_router_judge_model")),

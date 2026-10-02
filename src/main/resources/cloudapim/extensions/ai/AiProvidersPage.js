@@ -505,6 +505,39 @@ class ProviderRefWithModel extends Component {
   }
 }
 
+// a candidate of the intent-router: a provider, the model it serves, and what it is good at
+class ProviderRefWithDescription extends Component {
+  render() {
+    const raw = this.props.itemValue;
+    const item = typeof raw === 'string' ? { ref: raw } : (raw || {});
+    return (
+      React.createElement(Form, {
+        flow: ['ref', 'model', 'description', 'name'],
+        schema: {
+          ref: { type: 'select', props: {
+            label: 'Provider',
+            placeholder: 'Select a provider',
+            valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/providers',
+            transformer: (a) => ({ value: a.id, label: a.name }),
+          } },
+          model: { type: 'string', props: { label: 'Model', placeholder: 'Default model of the provider' } },
+          description: { type: 'string', props: { label: 'Description', placeholder: 'What this candidate is good at, as the decision model reads it' } },
+          name: { type: 'string', props: { label: 'Name', placeholder: 'Optional, the name of the option given to the decision model' } },
+        },
+        value: { ...item, model: item.model || '', description: item.description || '', name: item.name || '' },
+        onChange: (i) => {
+          const next = { ...i };
+          ['model', 'description', 'name'].forEach((field) => {
+            if (!next[field] || !String(next[field]).trim()) delete next[field];
+          });
+          this.props.value[this.props.idx] = next;
+          this.props.onChange(this.props.value);
+        }
+      }, null)
+    );
+  }
+}
+
 class AiProvidersPage extends Component {
 
   state = {
@@ -1120,6 +1153,83 @@ class AiProvidersPage extends Component {
         help: 'Auto-router: restrict routing to candidates matching these wildcard patterns (e.g. "anthropic/*", "openai/gpt-5*", "openai/gpt-5.1"). Matched against "<provider>/<model>" or the bare model. Empty = all candidates. Overridable per request via the "allowed_models" body field.',
       }
     },
+    'options.decision_model_ref': {
+      type: 'select',
+      props: {
+        label: 'Decision model',
+        placeholder: 'Select a decision model',
+        isClearable: true,
+        valuesFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/decision-models',
+        transformer: (a) => ({
+          value: a.id,
+          label: a.name,
+        }),
+        help: 'The decision model that reads each request for the smart-router and the intent-router. Without it, or when it does not answer, both routers still answer: a request is of average difficulty for the smart-router, the first candidate answers for the intent-router.',
+      }
+    },
+    'options.decision_model_model': {
+      type: 'string',
+      props: { label: 'Decision model model', placeholder: 'Default model of the decision model' },
+    },
+    'options.smart_router_refs': {
+      type: 'array',
+      props: {
+        label: 'Smart Router Providers',
+        help: 'each candidate uses the model set here, or the default model of its provider. The decision model rates how demanding a request is, and the cheapest candidate that is good enough for it answers',
+        defaultValue: '',
+        component: ProviderRefWithModel,
+      }
+    },
+    'options.smart_router_min_score': {
+      type: 'number',
+      props: {
+        label: 'Min score',
+        placeholder: '0',
+        step: 0.05,
+        min: 0,
+        max: 1,
+        help: 'Quality floor of a trivial request (0-1), relative to your best candidate. 0 = the cheapest candidate answers trivial requests.',
+      }
+    },
+    'options.smart_router_max_score': {
+      type: 'number',
+      props: {
+        label: 'Max score',
+        placeholder: '1',
+        step: 0.05,
+        min: 0,
+        max: 1,
+        help: 'Quality floor of the most demanding request (0-1), relative to your best candidate. 1 = only the best candidate answers the most demanding requests.',
+      }
+    },
+    'options.intent_router_refs': {
+      type: 'array',
+      props: {
+        label: 'Intent Router Providers',
+        help: 'each candidate is a provider, the model it serves and the description of what it is good at. The decision model picks the candidate whose description fits the request. The first candidate is the default one.',
+        defaultValue: '',
+        component: ProviderRefWithDescription,
+      }
+    },
+    'options.intent_router_instructions': {
+      type: 'string',
+      props: {
+        label: 'Instructions',
+        placeholder: 'Which of these options is the best suited to answer this request ?',
+        help: 'The question asked to the decision model about each request.',
+      }
+    },
+    'options.intent_router_min_confidence': {
+      type: 'number',
+      props: {
+        label: 'Min confidence',
+        placeholder: '0',
+        step: 0.05,
+        min: 0,
+        max: 1,
+        help: 'Between 0 and 1. Below it, the answer of the decision model is not followed and the first candidate answers.',
+      }
+    },
     'options.fusion_router_refs': {
       type: 'array',
       props: {
@@ -1381,6 +1491,17 @@ class AiProvidersPage extends Component {
         'options.auto_router_classifier_model',
         'options.cost_quality_tradeoff',
         'options.allowed_models',
+        '<<<smart-router and intent-router (decision model)',
+        'options.decision_model_ref',
+        'options.decision_model_model',
+        '<<<smart-router (candidates + quality floors)',
+        'options.smart_router_refs',
+        'options.smart_router_min_score',
+        'options.smart_router_max_score',
+        '<<<intent-router (described candidates)',
+        'options.intent_router_refs',
+        'options.intent_router_instructions',
+        'options.intent_router_min_confidence',
         '<<<fusion-router (panel + judge + synthesizer)',
         'options.fusion_router_refs',
         'options.fusion_router_judge_ref',
