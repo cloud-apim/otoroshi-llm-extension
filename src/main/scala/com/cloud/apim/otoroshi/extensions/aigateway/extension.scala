@@ -713,26 +713,27 @@ class AiExtension(val env: Env) extends AdminExtension {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         val bodyJson = bodyRaw.utf8String.parseJson
-        val total_usd = bodyJson.select("total_usd").asObject.value
-        val total_tokens = bodyJson.select("total_tokens").asObject.value
-        val inference_usd = bodyJson.select("inference_usd").asObject.value
-        val inference_tokens = bodyJson.select("inference_tokens").asObject.value
-        val image_usd = bodyJson.select("image_usd").asObject.value
-        val image_tokens = bodyJson.select("image_tokens").asObject.value
-        val audio_usd = bodyJson.select("audio_usd").asObject.value
-        val audio_tokens = bodyJson.select("audio_tokens").asObject.value
-        val video_usd = bodyJson.select("video_usd").asObject.value
-        val video_tokens = bodyJson.select("video_tokens").asObject.value
-        val embedding_usd = bodyJson.select("embedding_usd").asObject.value
-        val embedding_tokens = bodyJson.select("embedding_tokens").asObject.value
-        val moderation_usd = bodyJson.select("moderation_usd").asObject.value
-        val moderation_tokens = bodyJson.select("moderation_tokens").asObject.value
-        val ocr_usd = bodyJson.select("ocr_usd").asObject.value
-        val ocr_pages = bodyJson.select("ocr_pages").asObject.value
-        // a worker of a previous version sends no decision counters: reading them as an object, like the others,
-        // would reject every one of its deltas until it is upgraded
-        val decision_usd = bodyJson.select("decision_usd").asOpt[JsObject].map(_.value).getOrElse(Map.empty[String, JsValue])
-        val decision_tokens = bodyJson.select("decision_tokens").asOpt[JsObject].map(_.value).getOrElse(Map.empty[String, JsValue])
+        // the counters grew over time, and a worker of a previous version does not send the ones it does not know:
+        // a missing one is an empty one, or every delta of that worker would be rejected until it is upgraded
+        def deltas(counter: String): scala.collection.Map[String, JsValue] = bodyJson.select(counter).asOpt[JsObject].map(_.value).getOrElse(Map.empty[String, JsValue])
+        val total_usd = deltas("total_usd")
+        val total_tokens = deltas("total_tokens")
+        val inference_usd = deltas("inference_usd")
+        val inference_tokens = deltas("inference_tokens")
+        val image_usd = deltas("image_usd")
+        val image_tokens = deltas("image_tokens")
+        val audio_usd = deltas("audio_usd")
+        val audio_tokens = deltas("audio_tokens")
+        val video_usd = deltas("video_usd")
+        val video_tokens = deltas("video_tokens")
+        val embedding_usd = deltas("embedding_usd")
+        val embedding_tokens = deltas("embedding_tokens")
+        val moderation_usd = deltas("moderation_usd")
+        val moderation_tokens = deltas("moderation_tokens")
+        val ocr_usd = deltas("ocr_usd")
+        val ocr_pages = deltas("ocr_pages")
+        val decision_usd = deltas("decision_usd")
+        val decision_tokens = deltas("decision_tokens")
         total_usd.foreach {
           case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrTotalUsd(value.as[BigDecimal]))
         }
