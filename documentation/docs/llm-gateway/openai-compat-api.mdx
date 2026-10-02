@@ -628,7 +628,7 @@ The plugin handles all format translation automatically:
 - `tool_use` / `tool_result` messages are translated bidirectionally
 - Top-level `system` field is converted to a system message
 - `thinking` parameters are mapped to `reasoning_effort`
-- `max_tokens` is mapped to `max_completion_tokens`
+- `max_tokens` is sent under the name the provider knows (`max_completion_tokens` for OpenAI and Azure OpenAI)
 - Streaming uses the full Anthropic SSE protocol
 
 #### Using Claude Code

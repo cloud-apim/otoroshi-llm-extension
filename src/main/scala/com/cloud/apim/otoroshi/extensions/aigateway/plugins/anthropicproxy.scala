@@ -104,7 +104,13 @@ object AnthropicCompatProxy {
     s"event: message_stop\ndata: ${json.stringify}\n\n".byteString
   }
 
-  private def fixBody(_jsonBody: JsObject, client: ChatClient, reqId: Long): JsObject = {
+  // The name the limit of an answer is sent under. `max_tokens` is the one about every api knows, and the clients
+  // translate it when theirs wants another: the OpenAI one renames it for OpenAI. Azure OpenAI has a client of
+  // its own that translates nothing, and its reasoning models refuse `max_tokens`: it keeps the name of OpenAI
+  private def maxTokensParam(provider: Option[AiProvider]): String =
+    if (provider.exists(_.provider.toLowerCase == "azure-openai")) "max_completion_tokens" else "max_tokens"
+
+  private def fixBody(_jsonBody: JsObject, client: ChatClient, provider: Option[AiProvider], reqId: Long): JsObject = {
     if (client.isAnthropic) {
       _jsonBody - "system"
     } else if (client.isCohere) {
@@ -152,7 +158,7 @@ object AnthropicCompatProxy {
         }
       }
       _jsonBody.select("max_tokens").asOpt[Long].foreach {
-        case tokens if tokens > 1 =>  additionalProperties = additionalProperties ++ Json.obj("max_completion_tokens" -> tokens)
+        case tokens if tokens > 1 =>  additionalProperties = additionalProperties ++ Json.obj(maxTokensParam(provider) -> tokens)
         case _ =>
       }
       _jsonBody.select("thinking").asOpt[JsObject].foreach { thinking =>
@@ -249,7 +255,7 @@ object AnthropicCompatProxy {
       )))).vfuture
       case Some(client) => {
         val stream = ctx.request.queryParam("stream").contains("true") || ctx.request.header("x-stream").contains("true") || jsonBody.select("stream").asOpt[Boolean].contains(true)
-        val finalJsonBody = fixBody(jsonBody.asObject, client, reqId)
+        val finalJsonBody = fixBody(jsonBody.asObject, client, provider, reqId)
 
         val systemMessage: Option[JsObject] = jsonBody.select("system").asOpt[String].map { sys =>
           Json.obj("role" -> "system", "content" -> sys)
