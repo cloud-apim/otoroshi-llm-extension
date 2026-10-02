@@ -6,11 +6,14 @@ import com.cloud.apim.otoroshi.extensions.aigateway.domains.LlmProviderUtils
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmToolFunction}
 import otoroshi.models.WasmPlugin
 import otoroshi.utils.syntax.implicits.*
-import play.api.libs.json.Json
+import play.api.libs.json.{JsObject, Json}
 import reactor.core.publisher.Mono
 
+import java.net.URI
+import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.util.UUID
 import scala.concurrent.duration.DurationInt
+import scala.util.Try
 
 class QuickJsGuardrailSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
@@ -221,7 +224,38 @@ class PromptInjectionGuardrailSuite extends LlmExtensionOneOtoroshiServerPerSuit
            |}""".stripMargin))
   }))
 
-  test("llm provider can detect prompt injection") {
+  // a judge giving the score the guardrail asks for: high for the message trying to take over, low otherwise
+  val (judgePort, _) = createTestServerWithRoutes("prompt-injection-judge", routes => routes.post("/api/chat", (req, response) => {
+    req.receive().aggregate().asString().flatMap { body =>
+      val score = if (body.contains("Ignore the above")) "95" else "10"
+      response
+        .status(200)
+        .addHeader("Content-Type", "application/json")
+        .sendString(Mono.just(Json.obj(
+          "model" -> "judge",
+          "created_at" -> "2023-12-12T14:13:43.416799Z",
+          "message" -> Json.obj("role" -> "assistant", "content" -> score),
+          "done" -> true,
+          "prompt_eval_count" -> 26,
+          "eval_count" -> 2,
+        ).stringify)).`then`()
+    }
+  }))
+
+  // the model judging for real, on the Ollama of the machine running the tests
+  val ollamaUrl: String = sys.env.getOrElse("OLLAMA_URL", "http://localhost:11434")
+  val ollamaModel: String = sys.env.getOrElse("OLLAMA_GUARDRAIL_MODEL", "gemma4")
+
+  // the models the local Ollama serves, none when it is not running
+  def ollamaModels(): Seq[String] = Try {
+    val http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(2)).build()
+    val request = HttpRequest.newBuilder(URI.create(s"${ollamaUrl}/api/tags")).timeout(java.time.Duration.ofSeconds(5)).GET().build()
+    Json.parse(http.send(request, HttpResponse.BodyHandlers.ofString()).body()).select("models").asOpt[Seq[JsObject]].getOrElse(Seq.empty).flatMap(_.select("name").asOptString)
+  }.getOrElse(Seq.empty)
+
+  // A provider guarded against prompt injections by `judge`: a plain message is answered, a message trying to
+  // take over is refused with the message of the guardrail
+  def checkPromptInjectionGuardrail(judgeUrl: String, judgeModel: String, judgeTokens: Int = 256): Unit = {
     val routeChatId = s"route_${UUID.randomUUID().toString}"
 
     val ollama = AiProvider(
@@ -229,12 +263,12 @@ class PromptInjectionGuardrailSuite extends LlmExtensionOneOtoroshiServerPerSuit
       name = s"test provider",
       provider = "ollama",
       connection = Json.obj(
-        "base_url" -> s"http://localhost:11434",
+        "base_url" -> judgeUrl,
         "timeout" -> 30000
       ),
       options = Json.obj(
-        "model" -> "llama3.2",
-        "num_predict" -> 256,
+        "model" -> judgeModel,
+        "num_predict" -> judgeTokens,
       )
     )
 
@@ -347,6 +381,20 @@ class PromptInjectionGuardrailSuite extends LlmExtensionOneOtoroshiServerPerSuit
     client.forLlmEntity("providers").deleteEntity(llmprovider)
     client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteRaw(routeChatId)
     await(1300.millis)
+  }
+
+  test("the prompt injection guardrail blocks a message when the score of its judge reaches the limit") {
+    checkPromptInjectionGuardrail(s"http://localhost:${judgePort}", "judge")
+  }
+
+  test("a real model detects a prompt injection") {
+    val models = ollamaModels()
+    val served = models.exists(name => name == ollamaModel || name.startsWith(s"${ollamaModel}:"))
+    if (!served) println(s"[ollama] ${ollamaModel} is not served by ${ollamaUrl} (${if (models.isEmpty) "not running" else models.mkString(", ")}), skipping the real model test")
+    assume(served, s"needs ${ollamaModel} on ${ollamaUrl}, set OLLAMA_URL / OLLAMA_GUARDRAIL_MODEL to use another one")
+    // a model that thinks before it answers needs room for both: a judgement cut short is an empty one, which the
+    // guardrail refuses whatever the message
+    checkPromptInjectionGuardrail(ollamaUrl, ollamaModel, judgeTokens = 2048)
   }
 
 }
