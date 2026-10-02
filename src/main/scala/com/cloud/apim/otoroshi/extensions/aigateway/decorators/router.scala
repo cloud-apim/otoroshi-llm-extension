@@ -188,7 +188,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
     }
   }
 
-  private def pickWithJudge(prompt: ChatPrompt, cands: Seq[RouterCandidate], tradeoff: Double)(using ec: ExecutionContext, env: Env): Future[Option[RouterCandidate]] = {
+  private def pickWithJudge(prompt: ChatPrompt, attrs: TypedMap, cands: Seq[RouterCandidate], tradeoff: Double)(using ec: ExecutionContext, env: Env): Future[Option[RouterCandidate]] = {
     judgeClient(cands) match {
       case None => Future.successful(None)
       case Some(jclient) =>
@@ -210,14 +210,14 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
           ChatMessage.userStrInput("User prompt to route:\n" + promptText)
         ))
         val jbody = Json.obj("temperature" -> 0, "max_tokens" -> 16)
-        jclient.call(classifierPrompt, TypedMap.empty, jbody).map {
+        jclient.call(classifierPrompt, ChildCall.attrs(attrs), jbody).map {
           case Right(resp) => parseIndex(resp.headGeneration.message.content, cands.size).map(cands.apply)
           case Left(_) => None
         }.recover { case _ => None }
     }
   }
 
-  private def autoOrderedCandidates(prompt: ChatPrompt, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Seq[AiProvider]] = {
+  private def autoOrderedCandidates(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Seq[AiProvider]] = {
     val allCands = resolveCandidates("auto_router_refs", "auto_router_ref")
     // optional allowed_models filter (wildcard patterns), from the request body or the provider config
     val allowed = originalBody.select("allowed_models").asOpt[Seq[String]]
@@ -232,7 +232,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
         .getOrElse(7.0)
       val tradeoff = math.max(0.0, math.min(10.0, rawTradeoff))
       val fallbackOrder = tradeoffOrdered(cands, tradeoff)
-      pickWithJudge(prompt, cands, tradeoff).map {
+      pickWithJudge(prompt, attrs, cands, tradeoff).map {
         case Some(chosen) => chosen.provider +: fallbackOrder.filterNot(c => c.provider.id == chosen.provider.id && c.model == chosen.model).map(_.provider)
         case None => fallbackOrder.map(_.provider)
       }
@@ -257,7 +257,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
 
   // run the whole fusion pipeline up to (but excluding) the final synthesis call, returning the
   // synthesizer client + the synthesis prompt + the body to call it with.
-  private def prepareFusion(prompt: ChatPrompt, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (AiProvider, ChatClient, ChatPrompt, JsObject)]] = {
+  private def prepareFusion(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, (AiProvider, ChatClient, ChatPrompt, JsObject)]] = {
     val panel = resolveCandidates("fusion_router_refs", "fusion_router_ref").take(8)
     if (panel.isEmpty) {
       Json.obj("error" -> "no panel provider configured for the otoroshi fusion-router (set options.fusion_router_refs)").leftf
@@ -268,7 +268,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
       val panelF: Future[Seq[(String, String)]] = Future.sequence(panel.map { c =>
         c.provider.getChatClient() match {
           case None => Future.successful(Option.empty[(String, String)])
-          case Some(client) => client.call(prompt, TypedMap.empty, cleanBody).map {
+          case Some(client) => client.call(prompt, ChildCall.attrs(attrs), cleanBody).map {
             case Right(resp) => Some((s"${c.provider.provider}/${c.model}", resp.headGeneration.message.content))
             case Left(_) => None
           }.recover { case _ => None }
@@ -291,7 +291,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
                 ChatMessage.input("system", jsys, None, Json.obj("role" -> "system", "content" -> jsys)),
                 ChatMessage.userStrInput(juser)
               ))
-              judge.call(jprompt, TypedMap.empty, cleanBody ++ Json.obj("temperature" -> 0)).map {
+              judge.call(jprompt, ChildCall.attrs(attrs), cleanBody ++ Json.obj("temperature" -> 0)).map {
                 case Right(resp) => resp.headGeneration.message.content
                 case Left(_) => panelText
               }.recover { case _ => panelText }
@@ -317,7 +317,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   }
 
   private def fusionCall(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    prepareFusion(prompt, originalBody).flatMap {
+    prepareFusion(prompt, attrs, originalBody).flatMap {
       case Left(err) => err.leftf
       case Right((synth, client, synthPrompt, body)) =>
         delegate(attrs, originalBody, synth, client, body)
@@ -326,7 +326,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   }
 
   private def fusionStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
-    prepareFusion(prompt, originalBody).flatMap {
+    prepareFusion(prompt, attrs, originalBody).flatMap {
       case Left(err) => err.leftf
       case Right((synth, client, synthPrompt, body)) =>
         delegate(attrs, originalBody, synth, client, body)
@@ -350,7 +350,7 @@ class OtoroshiRouterChatClient(provider: AiProvider) extends KindBasedChatClient
   private def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: (ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val requestedModel = originalBody.select("model").asOptString.getOrElse("code-router").toLowerCase
     val orderedF: Future[Seq[AiProvider]] =
-      if (requestedModel.contains("auto")) autoOrderedCandidates(prompt, originalBody)
+      if (requestedModel.contains("auto")) autoOrderedCandidates(prompt, attrs, originalBody)
       else Future.successful(codeOrderedCandidates(originalBody))
     orderedF.flatMap { ordered =>
       if (ordered.isEmpty) {
