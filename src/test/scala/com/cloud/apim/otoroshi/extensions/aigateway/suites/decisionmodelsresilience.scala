@@ -91,6 +91,7 @@ class DecisionModelsResilienceSuite extends LlmExtensionOneOtoroshiServerPerSuit
   lazy val strict = decisionModel("strict", fallbackUrl, "a-model-without-a-price", models = ModelSettings(requireKnownCosts = true))
 
   val budgetName = "decisions budget"
+  val primaryBudgetName = "budget of the model that was asked"
 
   def budget(name: String, providers: Seq[String], limits: JsObject, mode: String): JsObject = Json.obj(
     "id" -> s"budget_${UUID.randomUUID()}",
@@ -109,6 +110,8 @@ class DecisionModelsResilienceSuite extends LlmExtensionOneOtoroshiServerPerSuit
     }
     // both the model that fails and the one taking over are in the scope: the call must count once all the same
     client.forLlmEntity("ai-budgets").createRaw(budget(budgetName, Seq(budgeted.id, fallback.id), Json.obj("total_usd" -> 10, "decision_usd" -> 10), "soft")).awaitf(10.seconds)
+    // the model that fails alone: its budget is the budget of what it was asked, whoever answered
+    client.forLlmEntity("ai-budgets").createRaw(budget(primaryBudgetName, Seq(budgeted.id), Json.obj("total_usd" -> 10, "decision_usd" -> 10), "soft")).awaitf(10.seconds)
     // a budget limiting decisions and nothing else, already spent
     client.forLlmEntity("ai-budgets").createRaw(budget("no decision left", Seq(blocked.id), Json.obj("decision_tokens" -> 0), "block")).awaitf(10.seconds)
     await(10.seconds)
@@ -160,7 +163,9 @@ class DecisionModelsResilienceSuite extends LlmExtensionOneOtoroshiServerPerSuit
     setup
     given env: Env = otoroshi.env
     val budget = ext.states.allBudgets().find(_.name == budgetName).get
+    val primaryBudget = ext.states.allBudgets().find(_.name == primaryBudgetName).get
     val before = budget.getConsumptions().awaitf(10.seconds)
+    val primaryBefore = primaryBudget.getConsumptions().awaitf(10.seconds)
     val attrs = TypedMap.empty
     val resp = decide(budgeted, attrs)
     assert(resp.isRight, s"the fallback should have answered, got ${resp}")
@@ -171,6 +176,9 @@ class DecisionModelsResilienceSuite extends LlmExtensionOneOtoroshiServerPerSuit
     assertEquals(after.totalUsd - before.totalUsd, expectedCost)
     assertEquals(after.decisionTokens - before.decisionTokens, inputTokens + outputTokens, "and by the tokens of one call")
     assertEquals(after.totalTokens - before.totalTokens, inputTokens + outputTokens)
+    val primaryAfter = primaryBudget.getConsumptions().awaitf(10.seconds)
+    assertEquals(primaryAfter.decisionUsd - primaryBefore.decisionUsd, expectedCost, "the budget of the model that was asked counts the call too")
+    assertEquals(primaryAfter.decisionTokens - primaryBefore.decisionTokens, inputTokens + outputTokens)
   }
 
   test("a budget, a model restriction and an unknown price are refused before the provider, each with its status") {

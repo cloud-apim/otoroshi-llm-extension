@@ -14,6 +14,8 @@ The load balancer is a **virtual provider** of type `loadbalancer`. Instead of c
 
 It supports all LLM operations: chat completion (blocking and streaming) and text completion (blocking and streaming).
 
+A request counts against the [budgets](/docs/cost-optimizations/budgets) of the load balancer and against those of the provider that served it: a budget on the load balancer caps everything going through it.
+
 ![lb](../../static/img/lb.png)
 
 ## Creating a load balancer provider

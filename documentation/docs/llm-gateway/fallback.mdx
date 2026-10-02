@@ -101,7 +101,7 @@ A chain always ends. A provider that already failed for a request is not asked f
 
 ## Costs and budgets
 
-A request served by a fallback is priced and counted against your [budgets](/docs/cost-optimizations/budgets) once, at the price of the provider and the model that actually answered it. The same goes for the cost reported to the caller, in the response and in its headers.
+A request served by a fallback is priced at the price of the provider and the model that actually answered it, and that is the cost reported to the caller, in the response and in its headers. It counts against the [budgets](/docs/cost-optimizations/budgets) of both providers, the primary and its fallback, and once in a budget that has both in its scope.
 
 ## Combining with load balancing
 

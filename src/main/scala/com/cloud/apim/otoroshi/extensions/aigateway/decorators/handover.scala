@@ -23,6 +23,17 @@ object HandOver {
 
   // whether `provider` handed the call at hand over, the provider that took it being the one that accounts for it
   def by(attrs: TypedMap, provider: AiProvider): Boolean = attrs.get(Key).exists(_.contains(provider.id))
+
+  private val ClaimsKey = TypedKey[java.util.Map[AnyRef, java.util.Set[String]]]("cloud-apim.ai-gateway.HandedOverClaims")
+
+  // The budgets `usage` was already counted against. A call handed over counts for the budgets of the provider
+  // that served it and for those of the provider that received it, and a budget both are in the scope of counts
+  // it once: whoever gets to a budget first claims it. Kept by usage, the very object the provider client wrote
+  // for the call, so the calls sharing these attributes do not see the claims of one another
+  def claims(attrs: TypedMap, usage: AnyRef): java.util.Set[String] = {
+    attrs.putIfAbsent(ClaimsKey -> java.util.Collections.synchronizedMap(new java.util.IdentityHashMap[AnyRef, java.util.Set[String]]()))
+    attrs.get(ClaimsKey).get.computeIfAbsent(usage, _ => java.util.concurrent.ConcurrentHashMap.newKeySet[String]())
+  }
 }
 
 // The opposite of a hand over: a call made on behalf of another one, which stays the call of its provider. A

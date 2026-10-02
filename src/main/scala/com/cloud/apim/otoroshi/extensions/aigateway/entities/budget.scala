@@ -1311,7 +1311,9 @@ object AiBudget {
 
 trait AiBudgetsDataStore extends BasicStore[AiBudget] {
   def findMatchingBudgets(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String]): Future[Seq[AiBudget]]
-  def updateUsage(totalCost: Option[BigDecimal], totalTokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Future[WithingBudgetConsumptions]
+  // `scope` is the provider and the model the usage counts for, the ones of the attributes otherwise. `claims` is
+  // the budgets the usage was already counted against: a budget in it is left alone, the others are added to it
+  def updateUsage(totalCost: Option[BigDecimal], totalTokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap, scope: Option[(Entity, String)] = None, claims: Option[java.util.Set[String]] = None): Future[WithingBudgetConsumptions]
 }
 
 object AiBudgetsDataStore {
@@ -1399,7 +1401,7 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
 
   override def extractId(value: AiBudget): String = value.id
 
-  def updateUsage(cost: Option[BigDecimal], tokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap): Future[WithingBudgetConsumptions] = {
+  def updateUsage(cost: Option[BigDecimal], tokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap, scope: Option[(Entity, String)] = None, claims: Option[java.util.Set[String]] = None): Future[WithingBudgetConsumptions] = {
     val ext = _env.adminExtensions.extension[AiExtension].get
     if (ext.budgetsEnabled) {
       if (ext.states.hasBudgets && ((cost.isDefined && cost.get.>(BigDecimal(0))) || (tokens.isDefined && tokens.get > 0L))) {
@@ -1410,8 +1412,8 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
         val snowflake = attrs.get(otoroshi.plugins.Keys.SnowFlakeKey)
         val request = attrs.get(otoroshi.plugins.Keys.RequestKey).map(r => JsonHelpers.requestToJson(r, attrs))
         val route = attrs.get(otoroshi.next.plugins.Keys.RouteKey)
-        val provider = attrs.get(ChatClientWithAuding.ProviderKey)
-        val model = attrs.get(ChatClientWithAuding.ModelKey)
+        val provider = scope.map(_._1).orElse(attrs.get(ChatClientWithAuding.ProviderKey))
+        val model = scope.map(_._2).orElse(attrs.get(ChatClientWithAuding.ModelKey))
         val ctx = Json.obj(
           "match" -> "all",
           "snowflake" -> snowflake,
@@ -1425,7 +1427,9 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
           "model" -> model.map(_.json).getOrElse(JsNull).as[JsValue],
           //"attrs" -> attrs.json
         )
-        findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { budgets =>
+        findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { matching =>
+          // claimed here, as soon as the budgets are known: whoever else counts the same usage finds them taken
+          val budgets = matching.filter(budget => claims.forall(_.add(budget.id)))
           budgets.mapAsync { budget =>
             budget.isWithinBudgetWithConsumption(attrs).map {
               case (withinBudget, consumption) =>

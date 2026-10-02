@@ -18,9 +18,9 @@ import scala.concurrent.duration.DurationInt
 import scala.util.Try
 
 // A provider that hands the call it received over to another one (a fallback, the target of a load balancer, the
-// candidate of a router) runs the whole chain of that provider inside its own. The call is priced and counted
-// against budgets once, by the provider that served it, and two providers falling back on each other do not call
-// each other for ever.
+// candidate of a router) runs the whole chain of that provider inside its own. The call is priced by the provider
+// that served it, and counted once by every budget either of the two is in the scope of. Two providers falling back
+// on each other do not call each other for ever.
 class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
   val servedModel = "gpt-4o-mini"
@@ -145,6 +145,7 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   )
 
   val fallbackBudget = "chat fallback budget"
+  def budgetOf(provider: AiProvider): String = s"budget of ${provider.name}"
   val routingBudget = "chat routing budget"
 
   // both the provider that received the call and the one that served it are in the scope: it counts once all the same
@@ -165,6 +166,10 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     }
     client.forLlmEntity("ai-budgets").createRaw(budget(fallbackBudget, Seq(primary.id, flaky.id, fallback.id))).awaitf(10.seconds)
     client.forLlmEntity("ai-budgets").createRaw(budget(routingBudget, Seq(balancer.id, router.id, target.id))).awaitf(10.seconds)
+    // and a budget for each of them alone: the one of a load balancer is the budget of what goes through it
+    Seq(primary, fallback, balancer, router, target).foreach { p =>
+      client.forLlmEntity("ai-budgets").createRaw(budget(budgetOf(p), Seq(p.id))).awaitf(10.seconds)
+    }
     await(10.seconds)
   }
 
@@ -199,34 +204,39 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       .map(_.runWith(Sink.seq)(using mat).awaitf(30.seconds).size)
   }
 
-  def assertCountedOnce(name: String, before: AiBudgetConsumptions, attrs: TypedMap): Unit = {
+  // Runs a call, then checks that each of these budgets moved by exactly that call, at the price of the provider
+  // that served it
+  def assertCountedOnceBy(budgets: String*)(run: TypedMap => Unit): Unit = {
+    val before = budgets.map(name => name -> consumptions(name)).toMap
+    val attrs = TypedMap.empty
+    run(attrs)
     await(5.seconds)
-    val after = consumptions(name)
-    assertEquals(after.inferenceTokens - before.inferenceTokens, tokens, "the budget should have moved by the tokens of one call")
-    assertEquals(after.totalTokens - before.totalTokens, tokens)
-    assertEquals(after.inferenceUsd - before.inferenceUsd, servedCost, "and by the cost of one call")
-    assertEquals(after.totalUsd - before.totalUsd, servedCost)
+    budgets.foreach { name =>
+      val after = consumptions(name)
+      assertEquals(after.inferenceTokens - before(name).inferenceTokens, tokens, s"'${name}' should have moved by the tokens of one call")
+      assertEquals(after.totalTokens - before(name).totalTokens, tokens, s"'${name}'")
+      assertEquals(after.inferenceUsd - before(name).inferenceUsd, servedCost, s"'${name}' should have moved by the cost of one call")
+      assertEquals(after.totalUsd - before(name).totalUsd, servedCost, s"'${name}'")
+    }
     // what the caller is told the call cost, in the response and its headers
     assertEquals(attrs.get(ChatClientWithCostsTracking.key).map(_.totalCost), servedCost.some, "the call is priced as the provider that served it prices it")
   }
 
-  test("a call served by a fallback is priced and counted against budgets once, at the price of who served it") {
+  test("a call served by a fallback is priced by who served it, and counted once by the budgets of both providers") {
     setup
-    val before = consumptions(fallbackBudget)
-    val attrs = TypedMap.empty
-    val resp = call(primary, attrs)
-    assert(resp.isRight, s"the fallback should have answered, got ${resp}")
-    assertEquals(primaryCalls.get(), 1, "the primary provider was tried first")
-    assertCountedOnce(fallbackBudget, before, attrs)
+    assertCountedOnceBy(fallbackBudget, budgetOf(primary), budgetOf(fallback)) { attrs =>
+      val resp = call(primary, attrs)
+      assert(resp.isRight, s"the fallback should have answered, got ${resp}")
+      assertEquals(primaryCalls.get(), 1, "the primary provider was tried first")
+    }
   }
 
-  test("a stream served by a fallback is priced and counted against budgets once too") {
+  test("a stream served by a fallback is priced and counted the same way") {
     setup
-    val before = consumptions(fallbackBudget)
-    val attrs = TypedMap.empty
-    val resp = stream(primary, attrs)
-    assert(resp.isRight, s"the fallback should have answered, got ${resp}")
-    assertCountedOnce(fallbackBudget, before, attrs)
+    assertCountedOnceBy(fallbackBudget, budgetOf(primary), budgetOf(fallback)) { attrs =>
+      val resp = stream(primary, attrs)
+      assert(resp.isRight, s"the fallback should have answered, got ${resp}")
+    }
   }
 
   test("a provider that handed a call over accounts for the next one, which it serves itself") {
@@ -245,22 +255,20 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(after.inferenceUsd - before.inferenceUsd, servedCost * 2)
   }
 
-  test("a call served through a load balancer is priced and counted against budgets once") {
+  test("a call served through a load balancer is counted once by the budget of the load balancer and by the one of its target") {
     setup
-    val before = consumptions(routingBudget)
-    val attrs = TypedMap.empty
-    val resp = call(balancer, attrs)
-    assert(resp.isRight, s"the target should have answered, got ${resp}")
-    assertCountedOnce(routingBudget, before, attrs)
+    assertCountedOnceBy(routingBudget, budgetOf(balancer), budgetOf(target)) { attrs =>
+      val resp = call(balancer, attrs)
+      assert(resp.isRight, s"the target should have answered, got ${resp}")
+    }
   }
 
-  test("a call served through a router is priced and counted against budgets once") {
+  test("a call served through a router is counted once by the budget of the router and by the one of its candidate") {
     setup
-    val before = consumptions(routingBudget)
-    val attrs = TypedMap.empty
-    val resp = call(router, attrs)
-    assert(resp.isRight, s"the candidate should have answered, got ${resp}")
-    assertCountedOnce(routingBudget, before, attrs)
+    assertCountedOnceBy(routingBudget, budgetOf(router), budgetOf(target)) { attrs =>
+      val resp = call(router, attrs)
+      assert(resp.isRight, s"the candidate should have answered, got ${resp}")
+    }
   }
 
   test("a fallback that fails is asked once") {

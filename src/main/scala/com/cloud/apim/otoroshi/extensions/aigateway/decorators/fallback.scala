@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import org.apache.pekko.stream.scaladsl.Source
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, DecisionModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudgetUsageKind, AiProvider, DecisionModel}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.{ProviderQuotas, QuotaEpisode}
 import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, DecisionErrors, DecisionModelClient, DecisionModelClientInputOptions, DecisionResponse}
 import otoroshi.env.Env
@@ -171,7 +171,28 @@ class DecisionModelClientWithFallback(originalModel: DecisionModel, val decision
           // fallback that keeps its own model is checked for that one
           val served = if (fallback.allowConfigOverride) model else fallback.defaultModel
           ModelConstraints.delegate(attrs, originalModel.target, opts.model, fallback.target, served)
-          client.decide(opts.copy(model = model), body, attrs)
+          client.decide(opts.copy(model = model), body, attrs).flatMap {
+            case Right(resp) => countForPrimary(resp, opts, attrs).map(_ => Right(resp))
+            case left => left.vfuture
+          }
+      }
+    }
+
+    // The fallback counted the call against the budgets it is in the scope of. It counts for the budgets of the
+    // model that was asked too: those the fallback did not count already. A decision made by a text provider is
+    // counted by that provider, and by nothing here
+    def countForPrimary(resp: DecisionResponse, opts: DecisionModelClientInputOptions, attrs: TypedMap): Future[Unit] = {
+      if (resp.metadata.delegated) {
+        ().vfuture
+      } else {
+        env.adminExtensions.extension[AiExtension].get.datastores.budgetsDataStore.updateUsage(
+          attrs.get(ChatClientWithCostsTracking.key).map(_.totalCost),
+          Some(resp.metadata.usage.total).filter(_ > 0L),
+          AiBudgetUsageKind.Decision,
+          attrs,
+          scope = (originalModel, opts.model.orElse(originalModel.defaultModel).getOrElse("--")).some,
+          claims = HandOver.claims(attrs, resp.metadata).some,
+        ).map(_ => ())
       }
     }
 

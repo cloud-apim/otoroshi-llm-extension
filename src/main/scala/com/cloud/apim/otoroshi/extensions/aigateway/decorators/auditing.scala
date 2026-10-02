@@ -147,10 +147,17 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     val costs = attrs.get(ChatClientWithCostsTracking.key)
     val ext = env.adminExtensions.extension[AiExtension].get
     val totalCost = costs.map(_.totalCost)
-    val totalTokens = attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens)
-    // a call handed over to another provider was counted against budgets by that provider, which served it
-    val counted = if (HandOver.by(attrs, originalProvider)) WithingBudgetConsumptions().vfuture
-      else ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs)
+    // A call handed over to another provider counts for the budgets of both: the provider that served it counted it
+    // against the budgets it is in the scope of, this one counts it against those it is alone in the scope of. A
+    // usage is what tells a call from another, without one there is no telling what was already counted
+    val usage = attrs.get(ChatClient.ApiUsageKey)
+    val totalTokens = usage.map(_.usage.totalTokens)
+    val scope = (originalProvider, modelOf(originalBody))
+    val counted = usage match {
+      case Some(served) => ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs, scope.some, HandOver.claims(attrs, served).some)
+      case None if HandOver.by(attrs, originalProvider) => WithingBudgetConsumptions().vfuture
+      case None => ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Inference, attrs, scope.some)
+    }
     counted.map { budgetIds =>
       AuditEvent.generic("LLMUsageAudit") {
         usageSlug ++ commonFields(consumedUsing, prompt, attrs, originalBody) ++ output ++ Json.obj(
@@ -165,11 +172,15 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     }
   }
 
+  // the model a call on this provider is about, as budgets are scoped on it
+  private def modelOf(originalBody: JsValue): String =
+    originalBody.select("model").asOptString.orElse(originalProvider.options.select("model").asOptString).getOrElse("--")
+
   // the budget check needs the provider and the model in the attrs
   private def prepare(attrs: TypedMap, originalBody: JsValue): Unit = {
     HandOver.start(attrs, originalProvider)
     attrs.put(ChatClientWithAuding.ProviderKey -> originalProvider)
-    attrs.put(ChatClientWithAuding.ModelKey -> originalBody.select("model").asOptString.orElse(originalProvider.options.select("model").asOptString).getOrElse("--"))
+    attrs.put(ChatClientWithAuding.ModelKey -> modelOf(originalBody))
   }
 
   override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
@@ -1016,7 +1027,7 @@ class DecisionModelClientWithAuditing(originalModel: DecisionModel, val decision
           val costs = if (resp.metadata.delegated) None else attrs.get(ChatClientWithCostsTracking.key)
           val totalCost = costs.map(_.totalCost)
           val totalTokens: Option[Long] = if (resp.metadata.delegated) None else Some(resp.metadata.usage.total).filter(_ > 0L)
-          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Decision, attrs).map { budgetIds =>
+          ext.datastores.budgetsDataStore.updateUsage(totalCost, totalTokens, AiBudgetUsageKind.Decision, attrs, claims = HandOver.claims(attrs, resp.metadata).some).map { budgetIds =>
             val _output = resp.toJson(env)
             val slug = Json.obj(
               "provider_kind" -> originalModel.provider.toLowerCase,

@@ -171,5 +171,5 @@ A decision is made to be waited for. Give a decision model a `fallback_ref` and 
 - The fallback is used on **technical failures**: no answer (timeout, connection), rate limiting (`429`) and server errors (`5xx`, `529`).
 - A request the provider refused as invalid is not sent elsewhere: it would be refused there too.
 - A low confidence is an answer, not a failure. Probabilities are not comparable between models, so the gateway never shops for a more confident one.
-- The call is priced and counted against budgets once, at the price of the model that served it.
+- The call is priced at the price of the model that served it. It counts against the budgets of both models, the one that was asked and its fallback, and once in a budget that has both in its scope.
 - Fallbacks can be chained, and two models falling back on each other are each tried once.
