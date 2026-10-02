@@ -155,7 +155,7 @@ class GuardrailsAccountingSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(attrs.get(ChatClient.ApiUsageKey).map(_.usage.totalTokens), Some(chatTokens._1 + chatTokens._2), "with the usage of its own model")
   }
 
-  test("a call guarded by a moderation model counts for its provider, not for the moderation model") {
+  test("a call guarded by a moderation model counts for its provider, the moderation for the moderation model") {
     setup
     val guarded = consumptions(moderated.id)
     val moderating = consumptions(moderation.id)
@@ -164,7 +164,8 @@ class GuardrailsAccountingSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     await(5.seconds)
     assertChatCounted(moderated, guarded, attrs)
     val after = consumptions(moderation.id)
-    assertEquals(after.inferenceTokens - moderating.inferenceTokens, 0L, "the chat call does not count for the moderation model")
+    assertEquals(after.moderationTokens - moderating.moderationTokens, moderationTokens, "the moderation counts for the moderation model")
+    assertEquals(after.inferenceTokens - moderating.inferenceTokens, 0L, "the chat call does not")
   }
 
   test("a call judged by a chat model before it is made counts for its provider, the judgement for the judge") {

@@ -87,7 +87,7 @@ curl --request POST \
 | `results[].categories` | object | Boolean flags for each category |
 | `results[].category_scores` | object | Confidence scores for each category (0.0 to 1.0) |
 | `model` | string | The model used for moderation |
-| `usage` | object | Token usage information |
+| `usage` | object | The tokens the provider reports for the call. They are priced when the model has a price and counted against your [budgets](/docs/cost-optimizations/budgets). OpenAI and Mistral report none for their moderation models: the usage is then `0` |
 
 ## Use cases
 

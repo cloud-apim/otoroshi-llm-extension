@@ -1384,6 +1384,15 @@ object ModerationResponseMetadataUsage {
   val empty: ModerationResponseMetadataUsage = ModerationResponseMetadataUsage(
     input = 0L, output = 0L, total = 0L
   )
+
+  // The `usage` of a moderation response, in the vocabulary of the provider: `prompt_tokens` or `input_tokens`,
+  // `completion_tokens` or `output_tokens`, `total_tokens`. Not every provider reports one: OpenAI and Mistral
+  // answer without it, and there is then nothing to count
+  def fromJson(usage: JsValue): ModerationResponseMetadataUsage = {
+    val input = usage.select("prompt_tokens").asOpt[Long].orElse(usage.select("input_tokens").asOpt[Long]).getOrElse(0L)
+    val output = usage.select("completion_tokens").asOpt[Long].orElse(usage.select("output_tokens").asOpt[Long]).getOrElse(0L)
+    ModerationResponseMetadataUsage(input, output, usage.select("total_tokens").asOpt[Long].getOrElse(input + output))
+  }
 }
 
 case class ModerationResponseMetadataUsage(input: Long, output: Long, total: Long) {

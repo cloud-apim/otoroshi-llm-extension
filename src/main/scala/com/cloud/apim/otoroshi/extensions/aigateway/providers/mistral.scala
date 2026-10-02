@@ -653,7 +653,7 @@ class MistralAiModerationModelClient(val api: MistralAiApi, val options: Mistral
             o.select("category_scores").asOpt[JsObject].getOrElse(Json.obj())
           )),
           metadata = ModerationResponseMetadata(
-            usage = ModerationResponseMetadataUsage.empty,
+            usage = ModerationResponseMetadataUsage.fromJson(resp.json.select("usage").asOpt[JsValue].getOrElse(Json.obj())),
             rateLimit = ChatResponseMetadataRateLimit(
               requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
               requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
