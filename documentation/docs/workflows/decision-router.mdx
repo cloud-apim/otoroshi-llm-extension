@@ -1,0 +1,129 @@
+---
+sidebar_position: 20
+---
+
+# Decision Router
+
+The Decision Router node sends a workflow down one of its paths, chosen by a [decision model](/docs/decision-models/overview). Each path is an option of a question about a state: the decision model names the option that fits, the node runs the path, and you know how sure the model was.
+
+- **Node kind**: `extensions.com.cloud-apim.llm-extension.decision_router`
+
+## How it works
+
+1. The router takes a state, a question and its paths: each path has a name and a description of what it stands for
+2. The decision model is asked the question as a `choice`, with one option per path
+3. It answers with the option that fits best, its confidence and the probability of every option
+4. The path of that option runs, and its result is the result of the router
+
+A decision model always names one of the options it was given, in a fraction of a second and for a fraction of the cost of a text model. Routing no longer depends on a model choosing to call a tool, nor on a sentence to parse.
+
+## Configuration
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `provider` | string | yes | The decision model id |
+| `paths` | array | yes | The paths to choose from, at least two. Each one has an `id`, a `description` and the `node` to run |
+| `state` | string, object or array | no | What the decision is about. The input of the workflow when omitted |
+| `instructions` | string | no | The question asked to the decision model |
+| `model` | string | no | The model to use, the one of the decision model when omitted |
+| `min_confidence` | number | no | Between 0 and 1. Below it, the answer of the decision model is not followed |
+| `default_path` | string | no | The `id` of the path to follow when the decision model is not confident enough |
+| `decision_result` | string | no | The name of the workflow memory that receives the answer of the decision model |
+
+The `description` of a path is what the decision model reads to choose: say what the path is for, the way you would brief someone doing the routing by hand.
+
+## Example
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.decision_router",
+  "provider": "decision-model_xxxxx",
+  "state": "${input.ticket}",
+  "instructions": "Which team should handle this support request?",
+  "paths": [
+    {
+      "id": "billing",
+      "description": "Invoices, payments and refunds",
+      "node": {
+        "kind": "call",
+        "function": "extensions.com.cloud-apim.llm-extension.llm_call",
+        "args": {
+          "provider": "provider_xxxxx",
+          "payload": {
+            "messages": [
+              { "role": "system", "content": "You answer billing questions." },
+              { "role": "user", "content": "${input.ticket}" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "technical",
+      "description": "Outages, bugs and integrations",
+      "node": {
+        "kind": "call",
+        "function": "extensions.com.cloud-apim.llm-extension.llm_call",
+        "args": {
+          "provider": "provider_xxxxx",
+          "payload": {
+            "messages": [
+              { "role": "system", "content": "You troubleshoot technical issues." },
+              { "role": "user", "content": "${input.ticket}" }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "result": "answer"
+}
+```
+
+A path can also be the node itself, carrying its own `id` and `description`, the way the paths of the [AI Agent Router](/docs/agents/router-node) are written.
+
+## Only follow an answer the model is sure of
+
+The decision model tells how confident it is in its choice, between 0 and 1. With `min_confidence`, an answer below that confidence is not followed: the `default_path` runs instead, a human review queue for instance. Without a default path, no path runs and the router returns `null`, like a `switch` without a match.
+
+```json
+{
+  "kind": "extensions.com.cloud-apim.llm-extension.decision_router",
+  "provider": "decision-model_xxxxx",
+  "state": "${input.ticket}",
+  "instructions": "Which team should handle this support request?",
+  "min_confidence": 0.6,
+  "default_path": "human",
+  "decision_result": "routing",
+  "paths": [
+    { "id": "billing", "description": "Invoices, payments and refunds", "node": { "kind": "value", "value": "billing" } },
+    { "id": "technical", "description": "Outages, bugs and integrations", "node": { "kind": "value", "value": "technical" } },
+    { "id": "human", "description": "Anything else, to be read by a person", "node": { "kind": "value", "value": "human" } }
+  ],
+  "result": "team"
+}
+```
+
+## Keep the decision
+
+With `decision_result`, the answer of the decision model is stored in the workflow memory under that name, for the nodes that follow: to log it, to explain a routing, or to act on the probabilities.
+
+```json
+{
+  "type": "choice",
+  "choice": "technical",
+  "confidence": 0.78,
+  "probabilities": { "billing": 0.1, "technical": 0.85, "human": 0.05 }
+}
+```
+
+## Decision Router vs AI Agent Router
+
+| | Decision Router | [AI Agent Router](/docs/agents/router-node) |
+|---|---|---|
+| Who chooses | A decision model | A text model, by calling a tool |
+| Answer | Always one of the paths, with its confidence and the probability of each path | The tool the model decides to call |
+| Speed and cost | A fraction of a second, a fraction of the cost of a text model | Those of a chat completion |
+| Use it when | The paths are known and you want a fast, measurable choice | The choice needs the reasoning of a text model |
+
+The call to the decision model is accounted for like any other: it is audited, priced and counted against the budgets of the decision model.

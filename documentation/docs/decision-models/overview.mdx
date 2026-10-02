@@ -22,7 +22,7 @@ The Otoroshi LLM extension makes decision models a first-class model type. It sp
 - **Cost tracking and budgets** — every decision is priced per input token and counts against your [budgets](/docs/cost-optimizations/budgets)
 - **Model constraints** — restrict which models consumers can use, per API key or per user
 - **Guardrail integration** — use a decision model as a [guardrail](/docs/guardrails/decision_model) on your LLM providers
-- **Workflows** — decide inside a [workflow](/docs/workflows/decision-call)
+- **Workflows** — decide inside a [workflow](/docs/workflows/decision-call), or let a decision model [route it](/docs/workflows/decision-router) to one of its paths
 
 ## API endpoints
 
@@ -151,6 +151,7 @@ Add `?embed_costs=true` to a request to get what it cost in a `costs` field.
 - **Scoring** — rate urgency, severity, sentiment or quality on your own scale
 - **Guardrails** — ask a yes/no question about a prompt or an answer as a [guardrail](/docs/guardrails/decision_model), without the latency of an LLM judge
 - **Workflows** — branch a [workflow](/docs/workflows/decision-call) on a probability rather than on a parsed sentence
+- **Routing** — send a [workflow](/docs/workflows/decision-router) down the path a decision model picks, and only when it is sure of it
 
 :::tip
 A probability is only comparable with the ones of the same model. When you move a decision to another model, tune its thresholds again on your own data rather than carrying them over.

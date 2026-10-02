@@ -41,6 +41,7 @@ object WorkflowFunctionsInitializer {
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.agent", new AgentFunction())
     WorkflowFunction.registerFunction("extensions.com.cloud-apim.llm-extension.content_to_markdown", new ContentToMarkdownFunction())
     Node.registerNode("extensions.com.cloud-apim.llm-extension.router", json => new RouterNode(json))
+    Node.registerNode(DecisionRouterNode.nodeKind, json => new DecisionRouterNode(json))
     Node.registerNode("extensions.com.cloud-apim.llm-extension.ai_agent", json => new AiAgentNode(json))
     Node.registerNode("extensions.com.cloud-apim.llm-extension.ai_agent_mcp_tools", json => new AiAgentMcpToolsNode(json))
     // text chunking ;)
@@ -923,6 +924,140 @@ class DecisionCallFunction extends WorkflowFunction {
           client.decide(options, payload, ChildCall.attrs(wfr.attrs)).map {
             case Left(error) => WorkflowError(s"error while calling decision model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) => response.toJson(env).right
+          }
+        }
+      }
+    }
+  }
+}
+
+// One of the paths a decision router chooses from: an option of the question asked to the decision model
+case class DecisionRouterPath(name: String, description: String, node: Node, index: Int)
+
+object DecisionRouterNode {
+  // not `kind`: inside the node that name is the kind its json carries, which the documentation of the nodes
+  // reads on a node made of an empty json
+  val nodeKind = "extensions.com.cloud-apim.llm-extension.decision_router"
+  // the name of the question asked to the decision model, and of its answer
+  val question = "route"
+  val defaultInstructions = "Which of these options fits the state best ?"
+
+  // a number, or the text of one: the designer only has integers in its number fields
+  def minConfidence(json: JsObject): Option[Double] = json.select("min_confidence").asOpt[JsValue].flatMap {
+    case JsNumber(value) => Some(value.toDouble)
+    case JsString(value) => scala.util.Try(value.trim.replace(',', '.').toDouble).toOption
+    case _ => None
+  }
+
+  // A path is `{ id, description, node }`, the way the designer writes the paths of a switch, or a node that
+  // carries its own id and description, the way the paths of the agent router are written by hand
+  def paths(json: JsObject): Seq[DecisionRouterPath] = {
+    json.select("paths").asOpt[Seq[JsObject]].getOrElse(Seq.empty).zipWithIndex.map { case (path, idx) =>
+      val name = path.select("id").asOptString.map(_.trim).filter(_.nonEmpty).getOrElse(s"path_${idx}")
+      val description = path.select("description").asOptString.map(_.trim).filter(_.nonEmpty).getOrElse(name)
+      DecisionRouterPath(name, description, Node.from(path.select("node").asOpt[JsObject].getOrElse(path)), idx)
+    }
+  }
+}
+
+// Routes a workflow to one of its paths, as the agent router does, on the answer of a decision model: each path is
+// an option of a `choice` question about the state, and the most probable one is run. Where a text model is asked
+// to call a tool and may call none, a decision model always names one of the options, and says how sure it is.
+class DecisionRouterNode(val json: JsObject) extends Node {
+
+  import DecisionRouterNode.*
+
+  override def subNodes: Seq[NodeLike]                    = paths(json).map(_.node)
+  override def documentationName: String                  = nodeKind
+  override def documentationDisplayName: String           = "Decision router"
+  override def documentationIcon: String                  = "fas fa-code-branch"
+  override def documentationDescription: String           = "This node uses a decision model to choose which path to follow"
+  override def documentationCategory: Option[String]      = Some("Cloud APIM - LLM extension")
+  override def documentationInputSchema: Option[JsObject] = Some(Json.obj(
+    "type" -> "object",
+    "required" -> Json.arr("provider", "paths"),
+    "properties" -> Json.obj(
+      "provider" -> Json.obj("type" -> "string", "description" -> "The decision model id"),
+      "model" -> Json.obj("type" -> "string", "description" -> "The model to use, the one of the decision model when empty"),
+      "state" -> Json.obj("description" -> "What the decision is about: a string, an object or an array. The input of the workflow when empty"),
+      "instructions" -> Json.obj("description" -> "The question asked to the decision model"),
+      "min_confidence" -> Json.obj("type" -> "number", "description" -> "Between 0 and 1: below it, the answer of the decision model is not followed"),
+      "default_path" -> Json.obj("type" -> "string", "description" -> "The id of the path to follow when the decision model is not confident enough"),
+      "decision_result" -> Json.obj("type" -> "string", "description" -> "The name of the memory that will hold the answer of the decision model"),
+      "paths" -> Json.obj(
+        "type" -> "array",
+        "description" -> "The paths to choose from, at least two",
+        "items" -> Json.obj(
+          "type" -> "object",
+          "required" -> Json.arr("id", "description"),
+          "properties" -> Json.obj(
+            "id" -> Json.obj("type" -> "string", "description" -> "The name of the option"),
+            "description" -> Json.obj("type" -> "string", "description" -> "What the option stands for, as the decision model reads it"),
+            "node" -> Json.obj("type" -> "object", "description" -> "The node to run (optional - if absent, the path object itself is treated as the node)"),
+          )
+        )
+      )
+    )
+  ))
+  override def documentationExample: Option[JsObject]     = Some(Json.obj(
+    "kind" -> nodeKind,
+    "provider" -> "decision-model_f141df8b-2642-4fba-82c8-5e050f62c920",
+    "state" -> "${input.request}",
+    "instructions" -> "Which team should handle this support request ?",
+    "min_confidence" -> 0.5,
+    "default_path" -> "technical",
+    "decision_result" -> "routing",
+    "paths" -> Json.arr(
+      Json.obj("id" -> "billing", "description" -> "Invoices and payments", "node" -> Json.obj("kind" -> "value", "value" -> "billing team")),
+      Json.obj("id" -> "technical", "description" -> "Outages, bugs and integrations", "node" -> Json.obj("kind" -> "value", "value" -> "technical team")),
+    ),
+    "result" -> "team"
+  ))
+
+  override def run(wfr: WorkflowRun, prefix: Seq[Int], from: Seq[Int])(using env: Env, ec: ExecutionContext): Future[Either[WorkflowError, JsValue]] = {
+    val options = paths(json)
+    def processed(field: String): Option[JsValue] = json.select(field).asOpt[JsValue].filterNot(_ == JsNull).map(v => WorkflowOperator.processOperators(v, wfr, env))
+    if (from.nonEmpty) {
+      WorkflowError(s"Decision Router Node (${prefix.mkString(".")}) does not support resume: ${from.mkString(".")}", None, None).leftf
+    } else if (options.size < 2) {
+      WorkflowError("a decision router needs at least two paths to choose from", Some(Json.obj("paths" -> options.size)), None).leftf
+    } else if (options.map(_.name).distinct.size != options.size) {
+      WorkflowError("the paths of a decision router must have distinct ids", Some(Json.obj("ids" -> options.map(_.name))), None).leftf
+    } else processed("state").orElse(wfr.memory.get("input")) match {
+      case None => WorkflowError("a decision router needs a state to decide about", None, None).leftf
+      case Some(state) => {
+        val extension = env.adminExtensions.extension[AiExtension].get
+        val ref = json.select("provider").asOptString.getOrElse("--")
+        extension.states.decisionModel(ref) match {
+          case None => WorkflowError("decision model not found", Some(Json.obj("provider_id" -> ref)), None).leftf
+          case Some(decision) => decision.withModel(json.select("model").asOptString.map(_.trim).filter(_.nonEmpty)).getDecisionModelClient() match {
+            case None => WorkflowError("unable to instantiate client for decision model", Some(Json.obj("provider_id" -> decision.id)), None).leftf
+            case Some(client) => {
+              val opts = DecisionModelClientInputOptions(state, Json.obj(question -> Json.obj(
+                "type" -> DecisionRequests.Choice,
+                "instructions" -> processed("instructions").getOrElse(JsString(defaultInstructions)),
+                "criteria" -> JsObject(options.map(path => path.name -> JsString(path.description))),
+              )))
+              // its own attributes: what auditing this call writes must not leak into the next call of the workflow
+              client.decide(opts, opts.json.asObject, ChildCall.attrs(wfr.attrs)).flatMap {
+                case Left(error) => WorkflowError("error while calling decision model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).leftf
+                case Right(response) => {
+                  val answer = response.answers.select(question).asOpt[JsObject].getOrElse(Json.obj())
+                  json.select("decision_result").asOptString.foreach(name => wfr.memory.set(name, answer))
+                  val confident = minConfidence(json).forall(min => answer.select("confidence").asOpt[Double].exists(_ >= min))
+                  val chosen = answer.select("choice").asOptString.flatMap(choice => options.find(_.name == choice))
+                  val fallback = json.select("default_path").asOptString.flatMap(id => options.find(_.name == id))
+                  (if (confident) chosen.orElse(fallback) else fallback) match {
+                    // not sure enough, and nowhere to go by default: no path is followed, as a switch without a match
+                    case None if !confident => JsNull.rightf
+                    case None => WorkflowError("the decision model named none of the paths", Some(Json.obj("answer" -> answer)), None).leftf
+                    case Some(path) => path.node.internalRun(wfr, prefix :+ path.index, from).recover { case t: Throwable =>
+                      WorkflowError(s"caught exception on task '${id}' at path: '${path.name}'", None, Some(t)).left
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }

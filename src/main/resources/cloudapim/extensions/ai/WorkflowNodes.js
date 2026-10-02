@@ -842,5 +842,193 @@ const workflowNodes = [
 
       return { nodes, edges }
     }
+  },
+  {
+    // routes to one of its paths, as a switch does, on the answer of a decision model: each path is an option
+    // of the question (its name and what it stands for), and leads to the node plugged on its handle
+    name: 'extensions.com.cloud-apim.llm-extension.decision_router',
+    kind: 'extensions.com.cloud-apim.llm-extension.decision_router',
+    description: 'Decision router',
+    display_name: "Decision router",
+    icon: 'fas fa-code-branch',
+    type: 'group',
+    flow: ['provider', 'model', 'state', 'instructions', 'paths', 'min_confidence', 'default_path', 'decision_result'],
+    form_schema: {
+      provider: {
+        type: 'select',
+        label: 'Decision model',
+        props: {
+          description: 'The decision model that chooses the path',
+          optionsFrom: '/bo/api/proxy/apis/ai-gateway.extensions.cloud-apim.com/v1/decision-models',
+          optionsTransformer: {
+            label: 'name',
+            value: 'id',
+          },
+        },
+      },
+      model: {
+        type: 'string',
+        label: 'Model',
+        props: {
+          description: 'Override the default model declared on the decision model (optional)'
+        }
+      },
+      state: {
+        type: 'any',
+        label: 'State',
+        props: {
+          height: '200px',
+          description: 'What the decision is about. The input of the workflow when empty'
+        }
+      },
+      instructions: {
+        type: 'any',
+        label: 'Instructions',
+        props: {
+          height: '200px',
+          description: 'The question asked to the decision model'
+        }
+      },
+      paths: {
+        type: 'array',
+        label: 'Paths',
+        array: true,
+        props: {
+          disableActions: true,
+        },
+        format: 'form',
+        flow: ['id', 'description'],
+        schema: {
+          id: {
+            type: 'string',
+            label: 'Name',
+            props: {
+              description: 'The name of the option'
+            }
+          },
+          description: {
+            type: 'string',
+            label: 'Description',
+            props: {
+              description: 'What the option stands for, as the decision model reads it'
+            }
+          },
+        },
+      },
+      // a text field: the number field of the designer only keeps integers
+      min_confidence: {
+        type: 'string',
+        label: 'Min. confidence',
+        props: {
+          placeholder: '0.5',
+          description: 'Between 0 and 1. Below it, the answer of the decision model is not followed (optional)'
+        }
+      },
+      default_path: {
+        type: 'string',
+        label: 'Default path',
+        props: {
+          description: 'The name of the path to follow when the decision model is not confident enough (optional)'
+        }
+      },
+      decision_result: {
+        type: 'string',
+        label: 'Decision result',
+        props: {
+          description: 'The name of the memory that will hold the answer of the decision model (optional)'
+        }
+      },
+    },
+    sourcesIsArray: true,
+    handlePrefix: "path",
+    sources: [],
+    height: (data) => `${110 + 20 * data?.sourceHandles?.length}px`,
+    // the designer expects the json of the node, and the nodes that were walked through to build it
+    nodeToJson: ({
+                   nodes,
+                   node,
+                   alreadySeen,
+                   connections,
+                   nodeToJson,
+                   removeReturnedFromWorkflow,
+                   emptyWorkflow }) => {
+      const { kind } = node.data;
+      const out = node.data.sourceHandles.reduce(
+        (acc, source, idx) => {
+          const connection = connections.find((conn) => conn.sourceHandle === source.id);
+          // what the path stands for, without the node it led to before
+          const path = Object.fromEntries(
+            Object.entries((node.data.content.paths || [])[idx] || {}).filter(([key]) => key !== 'node')
+          );
+
+          if (!connection) {
+            return {
+              ...acc,
+              paths: [...acc.paths, path],
+            };
+          }
+
+          const target = nodes.find((n) => n.id === connection.target);
+          const [pathNode, seen] = removeReturnedFromWorkflow(
+            nodeToJson(target, emptyWorkflow, false, alreadySeen)
+          );
+
+          alreadySeen = alreadySeen.concat([seen]).flat();
+
+          const isSubFlowEmpty = pathNode.kind === 'workflow' && pathNode.steps.length === 0;
+          const isOneNodeSubFlow = pathNode.kind === 'workflow' && pathNode.steps.length === 1;
+
+          return {
+            ...acc,
+            paths: [
+              ...acc.paths,
+              {
+                ...path,
+                node: isSubFlowEmpty ? undefined : isOneNodeSubFlow ? pathNode.steps[0] : pathNode,
+              },
+            ],
+          };
+        },
+        {
+          ...node.data.content,
+          paths: [],
+          kind,
+          id: node.id,
+        }
+      );
+      return [out, alreadySeen]
+    },
+    buildGraph: ({ workflow, addInformationsToNode, targetId, handleId, buildGraph, current, me }) => {
+      let nodes = []
+      let edges = []
+
+      const paths = workflow.paths || [];
+
+      current.customSourceHandles = paths.map((_, i) => ({
+        id: `path-${i}`,
+      }));
+
+      paths.forEach((path, idx) => {
+        // the node of a path, or the path itself when it was written by hand as a node with an id and a description
+        const subflow = path.node || (path.kind ? path : undefined);
+        if (!subflow) return;
+        const nestedPath = buildGraph([subflow], addInformationsToNode, targetId, handleId);
+        if (nestedPath.nodes.length > 0) {
+          edges.push({
+            id: `${me}-path-${idx}`,
+            source: me,
+            sourceHandle: `path-${idx}`,
+            target: nestedPath.nodes[0].id,
+            targetHandle: `input-${nestedPath.nodes[0].id}`,
+            type: 'customEdge',
+            animated: true,
+          });
+        }
+        nodes = nodes.concat(nestedPath.nodes);
+        edges = edges.concat(nestedPath.edges);
+      })
+
+      return { nodes, edges }
+    }
   }
 ]
