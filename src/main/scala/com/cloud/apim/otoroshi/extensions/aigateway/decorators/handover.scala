@@ -24,3 +24,21 @@ object HandOver {
   // whether `provider` handed the call at hand over, the provider that took it being the one that accounts for it
   def by(attrs: TypedMap, provider: AiProvider): Boolean = attrs.get(Key).exists(_.contains(provider.id))
 }
+
+// The opposite of a hand over: a call made on behalf of another one, which stays the call of its provider. A
+// guardrail asking a model what it thinks of the messages, a workflow, a model emulated by another one. Auditing
+// a model writes the provider and the model budgets are scoped on, its usage and its cost in the attributes of
+// its call: with the attributes of the outer call, the outer call would be counted for the inner model.
+object ChildCall {
+
+  // who is calling, and nothing of what the decorators of the outer call wrote
+  def attrs(outer: TypedMap): TypedMap = {
+    val child = TypedMap.empty
+    outer.get(otoroshi.plugins.Keys.ApiKeyKey).foreach(v => child.put(otoroshi.plugins.Keys.ApiKeyKey -> v))
+    outer.get(otoroshi.plugins.Keys.UserKey).foreach(v => child.put(otoroshi.plugins.Keys.UserKey -> v))
+    outer.get(otoroshi.next.plugins.Keys.RouteKey).foreach(v => child.put(otoroshi.next.plugins.Keys.RouteKey -> v))
+    outer.get(otoroshi.plugins.Keys.RequestKey).foreach(v => child.put(otoroshi.plugins.Keys.RequestKey -> v))
+    outer.get(otoroshi.plugins.Keys.SnowFlakeKey).foreach(v => child.put(otoroshi.plugins.Keys.SnowFlakeKey -> v))
+    child
+  }
+}

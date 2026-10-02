@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChildCall, Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmValidationSettings}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt, InputChatMessage, OutputChatMessage}
 import otoroshi.env.Env
@@ -44,7 +44,7 @@ class LLMGuardrail extends Guardrail {
                   }
                   validationClient.call(ChatPrompt(Seq(
                     ChatMessage.input("system", prompt.prompt, None, Json.obj())
-                  ) ++ messages), attrs, Json.obj()).flatMap {
+                  ) ++ messages), ChildCall.attrs(attrs), Json.obj()).flatMap {
                     case Left(_) => fail(2)
                     case Right(resp) => {
                       val content = resp.headGeneration.message.content.toLowerCase().trim.replace("\n", " ")

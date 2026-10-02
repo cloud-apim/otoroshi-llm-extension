@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ModerationModelClientInputOptions}
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChildCall, Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -30,7 +30,8 @@ class ModerationGuardrail extends Guardrail {
           case None => GuardrailResult.GuardrailError("Moderation client not found").vfuture
           case Some(client) => {
             val opts = ModerationModelClientInputOptions.textArray(messages.map(_.wholeTextContent))
-            client.moderate(opts, Json.obj(), attrs).map {
+            // its own attributes: the call being guarded stays the call of its provider
+            client.moderate(opts, Json.obj(), ChildCall.attrs(attrs)).map {
               case Left(err) => GuardrailResult.GuardrailError(err.stringify)
               case Right(res) => {
                 if (res.moderationResults.exists(_.isFlagged)) {

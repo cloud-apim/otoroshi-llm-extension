@@ -1770,21 +1770,6 @@ trait DecisionModelClient {
 
 object DecisionModelClient {
   val ApiUsageKey = TypedKey[DecisionResponseMetadata]("otoroshi-extensions.cloud-apim.ai.llm.decision.ApiUsage")
-
-  /**
-   * The attributes of a call made on behalf of another one (a guardrail, a workflow, the llm emulation): who
-   * is calling, and nothing of what the decorators of the outer call wrote. Auditing a model sets the provider
-   * and the model a budget is scoped on, and a cost left behind would be billed again by the outer call.
-   */
-  def childAttrs(attrs: TypedMap): TypedMap = {
-    val child = TypedMap.empty
-    attrs.get(otoroshi.plugins.Keys.ApiKeyKey).foreach(v => child.put(otoroshi.plugins.Keys.ApiKeyKey -> v))
-    attrs.get(otoroshi.plugins.Keys.UserKey).foreach(v => child.put(otoroshi.plugins.Keys.UserKey -> v))
-    attrs.get(otoroshi.next.plugins.Keys.RouteKey).foreach(v => child.put(otoroshi.next.plugins.Keys.RouteKey -> v))
-    attrs.get(otoroshi.plugins.Keys.RequestKey).foreach(v => child.put(otoroshi.plugins.Keys.RequestKey -> v))
-    attrs.get(otoroshi.plugins.Keys.SnowFlakeKey).foreach(v => child.put(otoroshi.plugins.Keys.SnowFlakeKey -> v))
-    child
-  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

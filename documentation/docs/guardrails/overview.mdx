@@ -50,6 +50,8 @@ You can now choose from the list of available Guardrails.
 
 The guardrails that ask a model to judge the messages (personal information, secrets leakage, prompt injection, toxic language, moderation, and so on) take a validation `provider` and an optional `model`. Keep the default model of the provider, or pick a smaller and faster one dedicated to validation: a provider can even judge its own messages with another of its models.
 
+The judgement is a call of its own: it is priced, logged and counted against the budgets of the model that judges, while the guarded call keeps counting for its own provider, with its own tokens and its own price. The same goes for a [moderation model](/docs/guardrails/moderation_model) or a [decision model](/docs/guardrails/decision_model) guarding a provider.
+
 ### Apply a guardrail to some calls only
 
 A guardrail applies to every call its provider serves. Add **consumer filters** to it, and it only applies

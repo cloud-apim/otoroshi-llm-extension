@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 import com.cloud.apim.otoroshi.extensions.aigateway.*
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientWithCostsTracking, CostsOutput, ModelConstraints, ModelTarget, TokenBasedCosts}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientWithCostsTracking, ChildCall, CostsOutput, ModelConstraints, ModelTarget, TokenBasedCosts}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
@@ -223,7 +223,7 @@ class LlmDecisionModelClient(
         case None => DecisionErrors.gateway(500, "api_error", "the text provider of this decision model was not found").leftf
         case Some((textProvider, client)) =>
           val body = Json.obj()
-          val inner = DecisionModelClient.childAttrs(attrs)
+          val inner = ChildCall.attrs(attrs)
           // the caller was allowed to ask this entity for a decision: the text provider behind it is not its choice
           ModelConstraints.delegate(inner, target, opts.model, textProvider, client, body)
           client.call(prompt(opts), inner, body).map {

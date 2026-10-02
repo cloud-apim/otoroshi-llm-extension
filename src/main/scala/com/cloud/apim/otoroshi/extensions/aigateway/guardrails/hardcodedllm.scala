@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt, InputChatMessage, OutputChatMessage}
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChildCall, Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, LlmValidationSettings}
 import org.apache.commons.lang3.math.NumberUtils
 import otoroshi.env.Env
@@ -270,7 +270,7 @@ abstract class HardCodedLLMGuardrail extends Guardrail {
                   .orElse(config.select("moderation_items").asOpt[Seq[String]])
                   .orElse(config.select("secrets_leakage_items").asOpt[Seq[String]])
                   .getOrElse(Seq.empty)), None, Json.obj())
-            ) ++ messages), attrs, Json.obj()).flatMap {
+            ) ++ messages), ChildCall.attrs(attrs), Json.obj()).flatMap {
               case Left(err) => GuardrailResult.GuardrailDenied(err.stringify).vfuture
               case Right(resp) => {
                 val content = resp.headGeneration.message.content.toLowerCase().trim.replace("\n", " ").trim

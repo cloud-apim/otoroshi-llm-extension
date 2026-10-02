@@ -1,8 +1,8 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChildCall, Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, DecisionModelClient, DecisionModelClientInputOptions, DecisionRequests}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, DecisionModelClientInputOptions, DecisionRequests}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
@@ -77,7 +77,7 @@ class DecisionGuardrail extends Guardrail {
             val opts = DecisionModelClientInputOptions(stateOf(messages), Json.obj(questionName -> question))
             // its own attributes: auditing the decision sets the provider and the model budgets are scoped on,
             // and those of the chat call being guarded must stay the ones of that call
-            client.decide(opts, opts.json.asObject, DecisionModelClient.childAttrs(attrs)).map {
+            client.decide(opts, opts.json.asObject, ChildCall.attrs(attrs)).map {
               case Left(err) => GuardrailResult.GuardrailError(err.stringify)
               case Right(res) => {
                 if (denies(config, res.answers.select(questionName).asOpt[JsValue].getOrElse(Json.obj()))) {

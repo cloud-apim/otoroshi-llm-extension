@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway
 import org.apache.pekko.stream.scaladsl.FileIO
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.agents.*
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{GuardrailResult, Guardrails}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChildCall, GuardrailResult, Guardrails}
 import com.cloud.apim.otoroshi.extensions.aigateway.guardrails.{PlaceholderAllocator, RampartEngine, RampartPiiGuardrail}
 import otoroshi.env.Env
 import otoroshi.next.workflow.*
@@ -920,7 +920,7 @@ class DecisionCallFunction extends WorkflowFunction {
         case Some(client) => {
           val options = DecisionModelClientInputOptions.format.reads(payload).get
           // its own attributes: what auditing this call writes must not leak into the next call of the workflow
-          client.decide(options, payload, DecisionModelClient.childAttrs(wfr.attrs)).map {
+          client.decide(options, payload, ChildCall.attrs(wfr.attrs)).map {
             case Left(error) => WorkflowError(s"error while calling decision model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
             case Right(response) => response.toJson(env).right
           }

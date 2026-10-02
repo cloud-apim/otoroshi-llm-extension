@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.guardrails
 
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{Guardrail, GuardrailResult}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChildCall, Guardrail, GuardrailResult}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt}
 import otoroshi.env.Env
@@ -36,7 +36,7 @@ class FaithfulnessGuardrail extends Guardrail {
         validationClient.call(ChatPrompt(Seq(
           ChatMessage.input("system", instructions, None, Json.obj()),
           ChatMessage.input("user", userInput, None, Json.obj()),
-        )), attrs, Json.obj()).flatMap {
+        )), ChildCall.attrs(attrs), Json.obj()).flatMap {
           case Left(err) => Future.failed(new RuntimeException(err.stringify))
           case Right(resp) => {
             val content = resp.headGeneration.message.content
@@ -71,7 +71,7 @@ class FaithfulnessGuardrail extends Guardrail {
         validationClient.call(ChatPrompt(Seq(
           ChatMessage.input("system", instructions, None, Json.obj()),
           ChatMessage.input("user", s"<context>${context}</context>\n\n<statements>${statements.map(s => s"<statement>${s}</statement>").mkString("\n")}</statements>", None, Json.obj()),
-        )), attrs, Json.obj()).flatMap {
+        )), ChildCall.attrs(attrs), Json.obj()).flatMap {
           case Left(err) => Future.failed(new RuntimeException(err.stringify))
           case Right(resp) => {
             val content = resp.headGeneration.message.content
