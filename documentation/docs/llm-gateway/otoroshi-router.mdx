@@ -101,9 +101,9 @@ Streaming, tool calling and every other chat completion parameter are passed to 
 `code-router` is built for coding agents and IDE assistants. It gives you a strong coder without
 paying for the most expensive model on every request.
 
-1. Each candidate model gets a **coding quality score** from a curated snapshot of the
-   [Artificial Analysis](https://artificialanalysis.ai/) Coding Index, and a **price** from the gateway's cost
-   catalog. The price is weighted towards output (1 × input + 3 × output per token), since code
+1. Each candidate model gets a **coding quality score** from the
+   [Artificial Analysis](https://artificialanalysis.ai/) Coding Index, bundled with the gateway and refreshed with
+   its price catalogs, and a **price** from the gateway's cost catalog. The price is weighted towards output (1 × input + 3 × output per token), since code
    generation writes much more than it reads.
 2. The **minimum coding score** (`min_coding_score`, from `0` to `1`) sets the quality floor, **relative to your
    best candidate**: with `0.6`, any model scoring at least 60% of your best candidate's score qualifies.

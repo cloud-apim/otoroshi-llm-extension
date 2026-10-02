@@ -1,6 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import org.apache.pekko.stream.scaladsl.Source
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.CodingIndex
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, KindBasedChatClient}
 import otoroshi.env.Env
@@ -15,7 +16,7 @@ import scala.concurrent.{ExecutionContext, Future}
 // providers, but instead of round-robin it routes automatically to the "best" candidate. It exposes two
 // models:
 //   - "code-router" (à la openrouter/pareto-code): a strong coder without overspending. Quality comes from
-//     a curated coding-index table (Artificial Analysis), cost from the litellm price catalog. Picks the
+//     the Coding Index of Artificial Analysis (bundled data file), cost from the litellm price catalog. Picks the
 //     cheapest candidate above a quality floor (min_coding_score). Candidates: options.code_router_refs.
 //   - "auto-router" (à la openrouter/auto): prompt-aware per-request routing. A judge LLM reads the prompt
 //     and the candidate list (quality + cost) and picks the best-suited model, honoring a
@@ -23,45 +24,8 @@ import scala.concurrent.{ExecutionContext, Future}
 // Both cascade to the next-best candidate on failure, like the provider-fallback decorator.
 object OtoroshiRouterChatClient {
 
-  // Artificial Analysis Coding Index (curated snapshot). Keys are alphanumeric-normalized model-id
-  // fragments (lowercase, only [a-z0-9]); a candidate matches a key if its normalized model contains it.
-  // Sorted at use-time by descending key length so the most specific fragment wins.
-  val codingScores: Seq[(String, Double)] = Seq(
-    "gpt55" -> 59.1,
-    "claudeopus48" -> 56.7,
-    "gemini31pro" -> 55.5,
-    "claudeopus47" -> 52.5,
-    "gpt54mini" -> 51.5,
-    "claudesonnet46" -> 50.9,
-    "qwen37max" -> 50.1,
-    "deepseekv4pro" -> 47.5,
-    "musespark" -> 47.5,
-    "kimik26" -> 47.1,
-    "mimov25pro" -> 45.5,
-    "gemini35flash" -> 45.0,
-    "minimaxm3" -> 43.4,
-    "glm51" -> 43.4,
-    "minimaxm27" -> 41.9,
-    "qwen35397b" -> 41.3,
-    "grok43" -> 41.0,
-    "gemma431b" -> 38.7,
-    "deepseekv4flash" -> 38.7,
-    "nemotron3ultra" -> 37.6,
-    "mistralmedium35" -> 35.4,
-    "claudehaiku45" -> 32.6,
-    "nova20pro" -> 30.4,
-    "gptoss120b" -> 28.6,
-    "gptoss20b" -> 18.5,
-    "k2thinkv2" -> 15.5,
-    "solarpro3" -> 13.3,
-  ).sortBy(-_._1.length)
-
-  def normalize(s: String): String = s.toLowerCase.replaceAll("[^a-z0-9]", "")
-
-  def codingScoreFor(model: String): Option[Double] = {
-    val n = normalize(model)
-    if (n.isEmpty) None else codingScores.collectFirst { case (pat, score) if n.contains(pat) => score }
-  }
+  // the Coding Index of Artificial Analysis, bundled in `data/coding-index.json` (see `CodingIndex`)
+  def codingScoreFor(model: String): Option[Double] = CodingIndex.bundled.scoreFor(model)
 }
 
 case class RouterCandidate(provider: AiProvider, model: String, score: Option[Double], cost: Option[BigDecimal])
