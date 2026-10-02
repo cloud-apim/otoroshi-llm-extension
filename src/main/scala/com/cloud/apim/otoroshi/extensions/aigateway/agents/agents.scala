@@ -600,6 +600,9 @@ class AgentRunner(env: Env) {
   }
 }
 
+// One of the paths the agent router chooses from, offered to the model as a tool
+case class RouterPath(name: String, description: String, node: Node, index: Int)
+
 class RouterNode(val json: JsObject) extends Node {
 
   def from(json: JsObject): Node = {
@@ -610,8 +613,19 @@ class RouterNode(val json: JsObject) extends Node {
     }
   }
 
-  override def subNodes: Seq[NodeLike]                    =
-    json.select("paths").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(v => from(v))
+  // A path is the node to run, carrying its own id and description, or `{ id, description, node }`, the way the
+  // designer writes it. Its id and its description are what the model reads to choose: the ones of the path, the
+  // ones of its node otherwise
+  private def paths: Seq[RouterPath] = {
+    json.select("paths").asOpt[Seq[JsObject]].getOrElse(Seq.empty).zipWithIndex.map { case (path, idx) =>
+      val node = from(path.select("node").asOpt[JsObject].getOrElse(path))
+      val name = path.select("id").asOptString.map(_.trim).filter(_.nonEmpty).getOrElse(node.id)
+      val description = path.select("description").asOptString.map(_.trim).filter(_.nonEmpty).getOrElse(node.description)
+      RouterPath(name, description, node, idx)
+    }
+  }
+
+  override def subNodes: Seq[NodeLike]                    = paths.map(_.node)
   override def documentationName: String                  = "extensions.com.cloud-apim.llm-extension.router"
   override def documentationDisplayName: String           = "AI Agent Router"
   override def documentationIcon: String                  = "fas fa-exchange-alt"
@@ -691,7 +705,8 @@ class RouterNode(val json: JsObject) extends Node {
         None
       ).leftf
     } else {
-      val paths: Seq[Node] = subNodes.map(_.asInstanceOf[Node])
+      // once: a node without an id is given a new one each time it is read
+      val paths: Seq[RouterPath] = this.paths
       val ext = env.adminExtensions.extension[AiExtension].get
       val input = json.select("input")
         .asOpt[JsValue]
@@ -715,12 +730,12 @@ class RouterNode(val json: JsObject) extends Node {
                 .applyOnWithOpt(model) {
                   case (obj, model) => obj ++ Json.obj("model" -> model)
                 }
-              val tools = paths.map { node =>
+              val tools = paths.map { path =>
                 Json.obj(
                   "type" -> "function",
                   "function" -> Json.obj(
-                    "name" -> node.id,
-                    "description" -> node.description,
+                    "name" -> path.name,
+                    "description" -> path.description,
                     "parameters" -> Json.obj(
                       "additionalProperties" -> false,
                       "type" -> "object",
@@ -750,7 +765,7 @@ class RouterNode(val json: JsObject) extends Node {
                         case None => WorkflowError("no generated message").leftf
                         case Some(gen) => {
                           if (gen.message.has_tool_calls) {
-                            val possibleNames = paths.map(_.id)
+                            val possibleNames = paths.map(_.name)
                             val handoff_call = gen.message.tool_calls.get.zipWithIndex.map {
                               case (tool_call, idx) =>
                                 val functionName = tool_call.select("function").select("name").asOpt[String].orElse(
@@ -762,10 +777,10 @@ class RouterNode(val json: JsObject) extends Node {
                             }.find(tuple => possibleNames.contains(tuple._1))
                             handoff_call match {
                               case None => WorkflowError("no handoff found").leftf
-                              case Some((name, _, idx)) => {
-                                val handoff = paths.find(_.id == name).get
-                                handoff.internalRun(wfr, prefix :+ idx, from).recover { case t: Throwable =>
-                                  WorkflowError(s"caught exception on task '${id}' at path: '${handoff.id}'", None, Some(t)).left
+                              case Some((name, _, _)) => {
+                                val handoff = paths.find(_.name == name).get
+                                handoff.node.internalRun(wfr, prefix :+ handoff.index, from).recover { case t: Throwable =>
+                                  WorkflowError(s"caught exception on task '${id}' at path: '${handoff.name}'", None, Some(t)).left
                                 }
                               }
                             }

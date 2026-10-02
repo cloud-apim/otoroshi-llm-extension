@@ -1,3 +1,123 @@
+// The paths of a router node (agent router, decision router), the way the designer writes the paths of a switch:
+// each path is `{ id, description, node }`, what it stands for and the node plugged on its handle.
+
+// the json of the node, and the nodes that were walked through to build it: the designer expects both
+const routerPathsToJson = ({
+                             nodes,
+                             node,
+                             alreadySeen,
+                             connections,
+                             nodeToJson,
+                             removeReturnedFromWorkflow,
+                             emptyWorkflow }) => {
+  const { kind } = node.data;
+  const out = node.data.sourceHandles.reduce(
+    (acc, source, idx) => {
+      const connection = connections.find((conn) => conn.sourceHandle === source.id);
+      // what the path stands for: not the node it led to before, nor the fields of a path written by hand as a node
+      const path = Object.fromEntries(
+        Object.entries((node.data.content.paths || [])[idx] || {}).filter(([key]) => key === 'id' || key === 'description')
+      );
+
+      if (!connection) {
+        return {
+          ...acc,
+          paths: [...acc.paths, path],
+        };
+      }
+
+      const target = nodes.find((n) => n.id === connection.target);
+      const [pathNode, seen] = removeReturnedFromWorkflow(
+        nodeToJson(target, emptyWorkflow, false, alreadySeen)
+      );
+
+      alreadySeen = alreadySeen.concat([seen]).flat();
+
+      const isSubFlowEmpty = pathNode.kind === 'workflow' && pathNode.steps.length === 0;
+      const isOneNodeSubFlow = pathNode.kind === 'workflow' && pathNode.steps.length === 1;
+
+      return {
+        ...acc,
+        paths: [
+          ...acc.paths,
+          {
+            ...path,
+            node: isSubFlowEmpty ? undefined : isOneNodeSubFlow ? pathNode.steps[0] : pathNode,
+          },
+        ],
+      };
+    },
+    {
+      ...node.data.content,
+      paths: [],
+      kind,
+      id: node.id,
+    }
+  );
+  return [out, alreadySeen]
+};
+
+const routerPathsGraph = ({ workflow, addInformationsToNode, targetId, handleId, buildGraph, current, me }) => {
+  let nodes = []
+  let edges = []
+
+  const paths = workflow.paths || [];
+
+  current.customSourceHandles = paths.map((_, i) => ({
+    id: `path-${i}`,
+  }));
+
+  paths.forEach((path, idx) => {
+    // the node of a path, or the path itself when it was written by hand as a node with an id and a description
+    const subflow = path.node || (path.kind ? path : undefined);
+    if (!subflow) return;
+    const nestedPath = buildGraph([subflow], addInformationsToNode, targetId, handleId);
+    if (nestedPath.nodes.length > 0) {
+      edges.push({
+        id: `${me}-path-${idx}`,
+        source: me,
+        sourceHandle: `path-${idx}`,
+        target: nestedPath.nodes[0].id,
+        targetHandle: `input-${nestedPath.nodes[0].id}`,
+        type: 'customEdge',
+        animated: true,
+      });
+    }
+    nodes = nodes.concat(nestedPath.nodes);
+    edges = edges.concat(nestedPath.edges);
+  })
+
+  return { nodes, edges }
+};
+
+// what a path of a router stands for: the name and the description the model reads to choose
+const routerPathsForm = {
+  type: 'array',
+  label: 'Paths',
+  array: true,
+  props: {
+    disableActions: true,
+  },
+  format: 'form',
+  flow: ['id', 'description'],
+  schema: {
+    id: {
+      type: 'string',
+      label: 'Name',
+      props: {
+        description: 'The name of the path'
+      }
+    },
+    description: {
+      type: 'string',
+      label: 'Description',
+      props: {
+        description: 'What the path stands for, as the model reads it'
+      }
+    },
+  },
+};
+
 const workflowNodes = [
   {
     name: 'extensions.com.cloud-apim.llm-extension.ai_agent',
@@ -713,7 +833,7 @@ const workflowNodes = [
     display_name: "AI agent router",
     icon: 'fas fa-robot',
     type: 'group',
-    flow: ['provider', 'input', 'instructions'],
+    flow: ['provider', 'input', 'instructions', 'paths'],
     form_schema: {
       provider: {
         type: 'select',
@@ -739,109 +859,15 @@ const workflowNodes = [
         props: {
           height: '200px'
         }
-      }
+      },
+      paths: routerPathsForm,
     },
     sourcesIsArray: true,
-    handlePrefix: "Path",
+    handlePrefix: "path",
     sources: [],
     height: (data) => `${110 + 20 * data?.sourceHandles?.length}px`,
-    nodeToJson: ({
-                   edges,
-                   nodes,
-                   node,
-                   alreadySeen,
-                   connections,
-                   nodeToJson,
-                   removeReturnedFromWorkflow,
-                   emptyWorkflow }) => {
-      const { kind } = node.data;
-      return node.data.sourceHandles.reduce(
-        (acc, source, idx) => {
-          const connection = connections.find((conn) => conn.sourceHandle === source.id);
-
-          if (!connection) {
-            // keep all fields except previous node
-            const rest = Object.fromEntries(
-              Object.entries(node.data.content.paths[idx])
-            );
-            return {
-              ...acc,
-              paths: [...acc.paths, rest],
-            };
-          }
-
-          const target = nodes.find((n) => n.id === connection.target);
-          const [pathNode, seen] = removeReturnedFromWorkflow(
-            nodeToJson(target, emptyWorkflow, false, alreadySeen)
-          );
-
-          alreadySeen = alreadySeen.concat([seen]);
-
-          const isSubFlowEmpty = pathNode.kind === 'workflow' && pathNode.steps.length === 0;
-          const isOneNodeSubFlow = pathNode.kind === 'workflow' && pathNode.steps.length === 1;
-
-          return {
-            ...acc,
-            paths: [
-              ...acc.paths,
-              {
-                ...node.data.content.paths[idx],
-                node: isSubFlowEmpty ? undefined : isOneNodeSubFlow ? pathNode.steps[0] : pathNode,
-              },
-            ],
-          };
-        },
-        {
-          ...node.data.content,
-          paths: [],
-          kind,
-          id: node.id,
-        }
-      );
-    },
-    buildGraph: ({ workflow, addInformationsToNode, targetId, handleId, buildGraph, current, me }) => {
-      let nodes = []
-      let edges = []
-
-      let paths = [];
-
-      if (workflow.paths) {
-        for (let i = 0; i < workflow.paths.length; i++) {
-          const subflow = workflow.paths[i];
-
-          if (subflow) {
-            const nestedPath = buildGraph([subflow], addInformationsToNode, targetId, handleId);
-
-            paths.push({
-              idx: i,
-              nestedPath,
-            });
-          }
-        }
-
-        current.customSourceHandles = [...Array(workflow.paths.length)].map((_, i) => ({
-          id: `path-${i}`,
-        }));
-
-        paths.forEach((path) => {
-          if (path.nestedPath.nodes.length > 0)
-            edges.push({
-              id: `${me}-path-${path.idx}`,
-              source: me,
-              sourceHandle: `path-${path.idx}`,
-              target: path.nestedPath.nodes[0].id,
-              targetHandle: `input-${path.nestedPath.nodes[0].id}`,
-              type: 'customEdge',
-              animated: true,
-            });
-
-          nodes = nodes.concat(path.nestedPath.nodes);
-          edges = edges.concat(path.nestedPath.edges);
-        })
-      }
-
-      return { nodes, edges }
-    }
+    nodeToJson: routerPathsToJson,
+    buildGraph: routerPathsGraph
   },
   {
     // routes to one of its paths, as a switch does, on the answer of a decision model: each path is an option
@@ -889,32 +915,7 @@ const workflowNodes = [
           description: 'The question asked to the decision model'
         }
       },
-      paths: {
-        type: 'array',
-        label: 'Paths',
-        array: true,
-        props: {
-          disableActions: true,
-        },
-        format: 'form',
-        flow: ['id', 'description'],
-        schema: {
-          id: {
-            type: 'string',
-            label: 'Name',
-            props: {
-              description: 'The name of the option'
-            }
-          },
-          description: {
-            type: 'string',
-            label: 'Description',
-            props: {
-              description: 'What the option stands for, as the decision model reads it'
-            }
-          },
-        },
-      },
+      paths: routerPathsForm,
       // a text field: the number field of the designer only keeps integers
       min_confidence: {
         type: 'string',
@@ -943,92 +944,7 @@ const workflowNodes = [
     handlePrefix: "path",
     sources: [],
     height: (data) => `${110 + 20 * data?.sourceHandles?.length}px`,
-    // the designer expects the json of the node, and the nodes that were walked through to build it
-    nodeToJson: ({
-                   nodes,
-                   node,
-                   alreadySeen,
-                   connections,
-                   nodeToJson,
-                   removeReturnedFromWorkflow,
-                   emptyWorkflow }) => {
-      const { kind } = node.data;
-      const out = node.data.sourceHandles.reduce(
-        (acc, source, idx) => {
-          const connection = connections.find((conn) => conn.sourceHandle === source.id);
-          // what the path stands for, without the node it led to before
-          const path = Object.fromEntries(
-            Object.entries((node.data.content.paths || [])[idx] || {}).filter(([key]) => key !== 'node')
-          );
-
-          if (!connection) {
-            return {
-              ...acc,
-              paths: [...acc.paths, path],
-            };
-          }
-
-          const target = nodes.find((n) => n.id === connection.target);
-          const [pathNode, seen] = removeReturnedFromWorkflow(
-            nodeToJson(target, emptyWorkflow, false, alreadySeen)
-          );
-
-          alreadySeen = alreadySeen.concat([seen]).flat();
-
-          const isSubFlowEmpty = pathNode.kind === 'workflow' && pathNode.steps.length === 0;
-          const isOneNodeSubFlow = pathNode.kind === 'workflow' && pathNode.steps.length === 1;
-
-          return {
-            ...acc,
-            paths: [
-              ...acc.paths,
-              {
-                ...path,
-                node: isSubFlowEmpty ? undefined : isOneNodeSubFlow ? pathNode.steps[0] : pathNode,
-              },
-            ],
-          };
-        },
-        {
-          ...node.data.content,
-          paths: [],
-          kind,
-          id: node.id,
-        }
-      );
-      return [out, alreadySeen]
-    },
-    buildGraph: ({ workflow, addInformationsToNode, targetId, handleId, buildGraph, current, me }) => {
-      let nodes = []
-      let edges = []
-
-      const paths = workflow.paths || [];
-
-      current.customSourceHandles = paths.map((_, i) => ({
-        id: `path-${i}`,
-      }));
-
-      paths.forEach((path, idx) => {
-        // the node of a path, or the path itself when it was written by hand as a node with an id and a description
-        const subflow = path.node || (path.kind ? path : undefined);
-        if (!subflow) return;
-        const nestedPath = buildGraph([subflow], addInformationsToNode, targetId, handleId);
-        if (nestedPath.nodes.length > 0) {
-          edges.push({
-            id: `${me}-path-${idx}`,
-            source: me,
-            sourceHandle: `path-${idx}`,
-            target: nestedPath.nodes[0].id,
-            targetHandle: `input-${nestedPath.nodes[0].id}`,
-            type: 'customEdge',
-            animated: true,
-          });
-        }
-        nodes = nodes.concat(nestedPath.nodes);
-        edges = edges.concat(nestedPath.edges);
-      })
-
-      return { nodes, edges }
-    }
+    nodeToJson: routerPathsToJson,
+    buildGraph: routerPathsGraph
   }
 ]

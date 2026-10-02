@@ -26,7 +26,7 @@ This is similar to a `switch` node, but the routing decision is made by an LLM r
 | `instructions` | array | yes | System instructions that guide the routing decision |
 | `model` | string | no | Override the model used by the provider |
 | `model_options` | object | no | Override model options |
-| `paths` | array | yes | The sub-nodes to choose from. Each must have an `id` and `description` |
+| `paths` | array | yes | The paths to choose from. Each one is a node with an `id` and a `description`, or `{ id, description, node }`, the way the workflow designer writes it |
 
 ## Example
 
@@ -87,6 +87,10 @@ This is similar to a `switch` node, but the routing decision is made by an LLM r
   "result": "router_result"
 }
 ```
+
+## Paths in the workflow designer
+
+In the designer, the router shows one handle per path: plug the node, or the chain of nodes, the path leads to, and give the path its name and description in the form of the router. The designer saves each path as `{ id, description, node }`. A path left without a name takes the `id` and the `description` of its node.
 
 ## Example with AI Agent nodes as paths
 
