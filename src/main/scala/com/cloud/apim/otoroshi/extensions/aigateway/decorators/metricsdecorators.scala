@@ -16,7 +16,8 @@ import scala.concurrent.{ExecutionContext, Future}
 
 class ChatClientWithMetrics(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  private def markChatTokensAndCost(attrs: TypedMap)(using env: Env): Unit = {
+  // a call handed over to another provider was counted by the metrics of that provider, which served it
+  private def markChatTokensAndCost(attrs: TypedMap)(using env: Env): Unit = if (!HandOver.by(attrs, originalProvider)) {
     attrs.get(ChatClient.ApiUsageKey).foreach(m => AiMetrics.markTokens(m.usage.promptTokens.toInt, m.usage.generationTokens.toInt, m.usage.reasoningTokens.toInt))
     attrs.get(ChatClientWithCostsTracking.key).foreach(c => AiMetrics.markCost(c.totalCost.toDouble))
   }

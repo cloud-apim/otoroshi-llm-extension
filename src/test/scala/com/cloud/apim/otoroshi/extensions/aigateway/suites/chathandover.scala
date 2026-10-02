@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ChatClientWithCostsTracking
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientWithCostsTracking, ChatClientWithEcoImpact}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudgetConsumptions, AiProvider}
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, ChatResponse, LlmExtensionOneOtoroshiServerPerSuite}
 import org.apache.pekko.stream.scaladsl.Sink
@@ -19,8 +19,9 @@ import scala.util.Try
 
 // A provider that hands the call it received over to another one (a fallback, the target of a load balancer, the
 // candidate of a router) runs the whole chain of that provider inside its own. The call is priced by the provider
-// that served it, and counted once by every budget either of the two is in the scope of. Two providers falling back
-// on each other do not call each other for ever.
+// that served it, and counted once by every budget either of the two is in the scope of, and once by the metrics
+// of the gateway. Its footprint is the one of the model that ran. Two providers falling back on each other do not
+// call each other for ever.
 class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
   val servedModel = "gpt-4o-mini"
@@ -115,6 +116,10 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   // a more expensive model than the one of the fallback: a call priced as the primary would cost more
   lazy val primary = openai("primary", s"http://localhost:${failingPort}/primary/v1", "gpt-4o", fallback.id.some)
   lazy val target = openai("routing target", servingUrl, servedModel)
+  // a model whose footprint is known, falling back on one nobody measured
+  val unmeasuredModel = "a-model-nobody-measured"
+  lazy val unmeasured = openai("unmeasured", servingUrl, unmeasuredModel)
+  lazy val measured = openai("measured", s"http://localhost:${failingPort}/primary/v1", "gpt-4o", unmeasured.id.some)
   lazy val balancer = AiProvider(
     id = s"provider_${UUID.randomUUID()}",
     name = "load balancer",
@@ -161,7 +166,7 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   )
 
   lazy val setup: Unit = {
-    Seq(fallback, primary, target, balancer, router, cycleA, cycleB, flaky, broken, shaky, selfish, pooled, pool).foreach { p =>
+    Seq(fallback, primary, target, balancer, router, unmeasured, measured, cycleA, cycleB, flaky, broken, shaky, selfish, pooled, pool).foreach { p =>
       assert(client.forLlmEntity("providers").upsertEntity(p).awaitf(10.seconds).createdOrUpdated, s"${p.name} should be saved")
     }
     client.forLlmEntity("ai-budgets").createRaw(budget(fallbackBudget, Seq(primary.id, flaky.id, fallback.id))).awaitf(10.seconds)
@@ -204,13 +209,21 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       .map(_.runWith(Sink.seq)(using mat).awaitf(30.seconds).size)
   }
 
+  // a counter of the metrics of the gateway, exported under its name followed by its tags
+  def counter(name: String): Long = otoroshi.env.metrics.jsonRawExport(None).select("counters").asOpt[JsObject].toSeq
+    .flatMap(_.value.collect { case (key, value) if key == name || key.startsWith(s"${name} ") => value.select("count").asOpt[Long].getOrElse(0L) }).sum
+
   // Runs a call, then checks that each of these budgets moved by exactly that call, at the price of the provider
-  // that served it
+  // that served it, and that the metrics of the gateway counted it once
   def assertCountedOnceBy(budgets: String*)(run: TypedMap => Unit): Unit = {
     val before = budgets.map(name => name -> consumptions(name)).toMap
+    val tokensBefore = counter("ai.tokens.total")
+    val costBefore = counter("ai.cost.micro_usd")
     val attrs = TypedMap.empty
     run(attrs)
     await(5.seconds)
+    assertEquals(counter("ai.tokens.total") - tokensBefore, tokens, "the metrics should have counted the tokens of one call")
+    assertEquals(counter("ai.cost.micro_usd") - costBefore, (servedCost * 1000000).toLong, "and the cost of one call")
     budgets.foreach { name =>
       val after = consumptions(name)
       assertEquals(after.inferenceTokens - before(name).inferenceTokens, tokens, s"'${name}' should have moved by the tokens of one call")
@@ -269,6 +282,19 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       val resp = call(router, attrs)
       assert(resp.isRight, s"the candidate should have answered, got ${resp}")
     }
+  }
+
+  test("the footprint of a call served by a fallback is the one of the model that ran") {
+    setup
+    assert(ext.llmImpacts.canHandle("openai", "gpt-4o"), "precondition: the footprint of the model that was asked is known")
+    assert(!ext.llmImpacts.canHandle("openai", unmeasuredModel), "precondition: the one of the model that answered is not")
+    val attrs = TypedMap.empty
+    assert(call(measured, attrs).isRight, "the fallback should have answered")
+    assertEquals(attrs.get(ChatClientWithEcoImpact.key).map(_.json(false)), None, "no footprint is known for the model that ran")
+    val streamAttrs = TypedMap.empty
+    assert(stream(measured, streamAttrs).isRight, "the fallback should have answered")
+    await(1.second)
+    assertEquals(streamAttrs.get(ChatClientWithEcoImpact.key).map(_.json(false)), None, "nor for a stream")
   }
 
   test("a fallback that fails is asked once") {

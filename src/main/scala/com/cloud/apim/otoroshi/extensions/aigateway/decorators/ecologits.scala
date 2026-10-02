@@ -856,6 +856,8 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
         val start = System.currentTimeMillis()
         f.map {
           case Left(err) => Left(err)
+          // the provider this call was handed over to measured it, for the model that ran
+          case Right(resp) if HandOver.by(attrs, originalProvider) => Right(resp)
           case Right(resp) => {
             val promise = Promise.apply[Option[ChatResponseChunk]]()
             val ext = env.adminExtensions.extension[AiExtension].get
@@ -921,6 +923,8 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
         val start = System.currentTimeMillis()
         chatClient.invoke(kind, prompt, attrs, originalBody).map {
           case Left(err) => Left(err)
+          // the provider this call was handed over to measured it, for the model that ran
+          case Right(resp) if HandOver.by(attrs, originalProvider) => Right(resp)
           case Right(resp) => {
             val usage = resp.metadata.usage
             val ext = env.adminExtensions.extension[AiExtension].get
