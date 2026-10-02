@@ -77,9 +77,17 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   val selfCalls = new AtomicInteger(0)
   val pooledCalls = new AtomicInteger(0)
   val flakyCalls = new AtomicInteger(0)
+  val shakyCalls = new AtomicInteger(0)
+  val brokenCalls = new AtomicInteger(0)
   val (roundsPort, _) = createTestServerWithRoutes("chat-handover-rounds", routes => routes
     .post("/flaky/v1/chat/completions", (req, response) => req.receive().aggregate().asString().flatMap { _ =>
       if (flakyCalls.incrementAndGet() == 1) send(response, 500, failure) else send(response, 200, completion)
+    })
+    // a provider that fails, and the fallback it is given: one that answers something no client can read
+    .post("/shaky/v1/chat/completions", (req, response) => req.receive().aggregate().asString().flatMap { _ => shakyCalls.incrementAndGet(); send(response, 500, failure) })
+    .post("/broken/v1/chat/completions", (req, response) => req.receive().aggregate().asString().flatMap { _ =>
+      brokenCalls.incrementAndGet()
+      response.status(200).addHeader("Content-Type", "application/json").sendString(Mono.just("this is not json")).`then`()
     })
     .post("/self/v1/chat/completions", (req, response) => req.receive().aggregate().asString().flatMap { _ => selfCalls.incrementAndGet(); send(response, 500, failure) })
     .post("/pooled/v1/chat/completions", (req, response) => req.receive().aggregate().asString().flatMap { _ => pooledCalls.incrementAndGet(); send(response, 500, failure) })
@@ -124,6 +132,8 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   lazy val cycleA = openai("cycle a", s"http://localhost:${failingPort}/a/v1", servedModel, bId.some, id = aId)
   lazy val cycleB = openai("cycle b", s"http://localhost:${failingPort}/b/v1", servedModel, aId.some, id = bId)
   lazy val flaky = openai("flaky", s"http://localhost:${roundsPort}/flaky/v1", servedModel, fallback.id.some)
+  lazy val broken = openai("broken", s"http://localhost:${roundsPort}/broken/v1", servedModel)
+  lazy val shaky = openai("shaky", s"http://localhost:${roundsPort}/shaky/v1", servedModel, broken.id.some)
   lazy val selfish = openai("its own fallback", s"http://localhost:${roundsPort}/self/v1", servedModel, selfId.some, id = selfId)
   lazy val pooled = openai("pooled", s"http://localhost:${roundsPort}/pooled/v1", servedModel, poolId.some, id = pooledId)
   lazy val pool = AiProvider(
@@ -150,7 +160,7 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   )
 
   lazy val setup: Unit = {
-    Seq(fallback, primary, target, balancer, router, cycleA, cycleB, flaky, selfish, pooled, pool).foreach { p =>
+    Seq(fallback, primary, target, balancer, router, cycleA, cycleB, flaky, broken, shaky, selfish, pooled, pool).foreach { p =>
       assert(client.forLlmEntity("providers").upsertEntity(p).awaitf(10.seconds).createdOrUpdated, s"${p.name} should be saved")
     }
     client.forLlmEntity("ai-budgets").createRaw(budget(fallbackBudget, Seq(primary.id, flaky.id, fallback.id))).awaitf(10.seconds)
@@ -251,6 +261,14 @@ class ChatHandOverSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val resp = call(router, attrs)
     assert(resp.isRight, s"the candidate should have answered, got ${resp}")
     assertCountedOnce(routingBudget, before, attrs)
+  }
+
+  test("a fallback that fails is asked once") {
+    setup
+    val resp = Try(call(shaky))
+    assert(resp.isFailure || resp.get.isLeft, s"the call cannot succeed, got ${resp}")
+    assertEquals(shakyCalls.get(), 1)
+    assertEquals(brokenCalls.get(), 1, "the fallback failed: asking it again would only fail again")
   }
 
   test("two providers falling back on each other are tried once each") {

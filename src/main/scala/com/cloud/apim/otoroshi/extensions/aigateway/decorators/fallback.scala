@@ -108,16 +108,17 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
     if (settings.active && ProviderCircuitBreaker.isOpen(originalProvider.id, System.currentTimeMillis())) {
       callFallback(Json.obj("error" -> "primary provider circuit is open"))
     } else {
-      op(chatClient, originalBody).flatMap {
-        case Left(err) if ModelConstraints.isDenied(err) => err.leftf
-        case Left(err) =>
+      // only what the primary did decides: a fallback that fails is not asked again, and its failure is not
+      // counted as one more of the primary
+      op(chatClient, originalBody).transformWith {
+        case Success(Left(err)) if ModelConstraints.isDenied(err) => err.leftf
+        case Success(Left(err)) =>
           recordFailure()
           callFallback(err)
-        case Right(resp) =>
+        case Success(Right(resp)) =>
           if (settings.active) ProviderCircuitBreaker.recordSuccess(originalProvider.id)
           resp.rightf
-      }.recoverWith {
-        case _: Throwable =>
+        case Failure(_) =>
           recordFailure()
           callFallback(Json.obj("error" -> "fallback provider not found"))
       }
