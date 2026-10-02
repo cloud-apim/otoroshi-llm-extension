@@ -143,7 +143,7 @@ Each request will use the next token in a round-robin fashion, helping to distri
 | `supports_streaming` | boolean | Whether the API supports streaming (default: `true`) |
 | `supports_completion` | boolean | Whether the API supports text completions (default: `true`) |
 | `models_path` | string | Path to the models endpoint (default: `"/models"`) |
-| `param_mappings` | object | Map of parameter name overrides |
+| `param_mappings` | object | Map of parameter name overrides, for instance `{"max_completion_tokens": "max_tokens"}`. The limit of an answer reaches the API under the name the request gave it, `max_tokens` or `max_completion_tokens`: map one to the other when your API only knows one of them |
 | `headers` | object | Custom headers (default: `{"Authorization": "Bearer {api_key}"}`) |
 | `additional_body_params` | object | Extra parameters to include in every request body |
 | `acc_stream_consumptions` | boolean | Accumulate token usage across streaming chunks (default: `false`) |

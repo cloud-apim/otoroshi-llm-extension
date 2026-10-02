@@ -548,10 +548,13 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = completion //api.supportsCompletion
 
+  // OpenAI calls the limit of an answer `max_completion_tokens`, and its reasoning models refuse `max_tokens`. The
+  // other providers this client serves are sent what they were given: `max_tokens` is the name about every
+  // openai compatible api knows, and many of them know no other
   override def transformOpenAIInputBodyToProviderInputBody(inputBody: JsObject): JsObject = {
     inputBody.select("max_tokens").asOpt[Long] match {
-      case None => inputBody
-      case Some(maxTokens) => inputBody - "max_tokens" ++ Json.obj("max_completion_tokens" -> maxTokens)
+      case Some(maxTokens) if providerName == "openai" => inputBody - "max_tokens" ++ Json.obj("max_completion_tokens" -> maxTokens)
+      case _ => inputBody
     }
   }
 
