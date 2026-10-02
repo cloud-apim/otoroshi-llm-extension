@@ -13,7 +13,8 @@ import scala.concurrent.duration.DurationInt
 
 // In a cluster, a worker counts what its calls consume and pushes it to the leaders, one object by counter. The
 // counters grew over time: a worker of a previous version does not send the ones it does not know. What it does
-// send is counted, or the budgets would miss every call it serves for as long as it is not upgraded.
+// send is counted, or the budgets would miss every call it serves for as long as it is not upgraded. It is counted
+// in the cycle of the budget it was consumed in, which may be over by the time the push comes in.
 class BudgetClusterDeltasSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
   def ext: AiExtension = otoroshi.env.adminExtensions.extension[AiExtension].get
@@ -40,9 +41,11 @@ class BudgetClusterDeltasSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     ext.states.budget(budgetId).get.getConsumptions().awaitf(10.seconds)
   }
 
-  // what a worker pushes: for each counter, what was consumed on each budget since its last push
-  def deltas(counters: (String, BigDecimal)*): JsObject =
-    JsObject(counters.map { case (name, value) => name -> Json.obj(s"${budgetId}:cycle" -> JsNumber(value)) })
+  def currentCycle: String = ext.states.budget(budgetId).get.cycleId
+
+  // what a worker pushes: for each counter, what was consumed on each budget, in which of its cycles, since its last push
+  def deltas(cycle: String, counters: (String, BigDecimal)*): JsObject =
+    JsObject(counters.map { case (name, value) => name -> Json.obj(s"${budgetId}:${cycle}" -> JsNumber(value)) })
 
   def push(payload: JsObject): (Int, JsValue) = {
     val basic = Base64.getEncoder.encodeToString("admin-api-apikey-id:admin-api-apikey-secret".getBytes(StandardCharsets.UTF_8))
@@ -65,7 +68,7 @@ class BudgetClusterDeltasSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   test("what a worker of the current version pushes is counted") {
     setup
     val before = consumptions()
-    val (status, body) = push(deltas((firstCounters ++ Seq[(String, BigDecimal)](
+    val (status, body) = push(deltas(currentCycle, (firstCounters ++ Seq[(String, BigDecimal)](
       "ocr_usd" -> BigDecimal("0.125"), "ocr_pages" -> 3,
       "decision_usd" -> BigDecimal("0.125"), "decision_tokens" -> 200,
     ))*))
@@ -83,7 +86,7 @@ class BudgetClusterDeltasSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   test("what a worker of a previous version pushes is counted too, without the counters it does not know") {
     setup
     val before = consumptions()
-    val (status, body) = push(deltas(firstCounters*))
+    val (status, body) = push(deltas(currentCycle, firstCounters*))
     assertEquals((status, body.select("done").asOpt[Boolean]), (200, Some(true)), s"the deltas should be accepted, got ${body}")
     await(2.seconds)
     val after = consumptions()
@@ -93,5 +96,22 @@ class BudgetClusterDeltasSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(after.embeddingTokens - before.embeddingTokens, 500L)
     assertEquals(after.totalUsd - before.totalUsd, BigDecimal("0.5"))
     assertEquals(after.ocrPages - before.ocrPages, 0L)
+  }
+
+  test("what a worker consumed in a cycle that is over is counted in that cycle, not in the one that followed") {
+    setup
+    given env: Env = otoroshi.env
+    val budget = ext.states.budget(budgetId).get
+    val over = "a-cycle-that-is-over"
+    def counted(counter: String): Long = env.datastores.rawDataStore.get(budget.counterKey(over, counter)).awaitf(10.seconds).map(_.utf8String.toLong).getOrElse(0L)
+    val before = consumptions()
+    val (status, body) = push(deltas(over, "total_usd" -> BigDecimal("0.5"), "total_tokens" -> 1500, "inference_usd" -> BigDecimal("0.5"), "inference_tokens" -> 1500))
+    assertEquals((status, body.select("done").asOpt[Boolean]), (200, Some(true)), s"the deltas should be accepted, got ${body}")
+    await(2.seconds)
+    val after = consumptions()
+    assertEquals(after.totalTokens - before.totalTokens, 0L, "the current cycle did not consume these tokens")
+    assertEquals(after.totalUsd - before.totalUsd, BigDecimal(0), "nor these dollars")
+    assertEquals((counted("total-tokens"), counted("inference-tokens")), (1500L, 1500L), "the cycle they were consumed in did")
+    assertEquals(counted("total-usd"), 500000000L, "dollars are counted in billionths")
   }
 }

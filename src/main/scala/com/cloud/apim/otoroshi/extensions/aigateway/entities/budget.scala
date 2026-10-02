@@ -84,6 +84,9 @@ object AiBudgetClusterAgent {
     "moderation_tokens" -> moderationTokensCounters, "ocr_pages" -> ocrPagesCounters, "decision_tokens" -> decisionTokensCounters,
   )
 
+  // the counters a worker pushes, as a push names them
+  val counters: Seq[String] = usdCounters.map(_._1) ++ unitCounters.map(_._1)
+
   // a counter the leaders are up to date with. Dollars are added as doubles: taking off what was pushed may leave
   // dust, far below the billionth of a dollar the leaders count in
   private def settled(usd: Double): Boolean = math.abs(usd) < 1e-10
@@ -716,32 +719,42 @@ case class AiBudget(
 
   def cycleId: String = cycle.map(_.toString).getOrElse("single")
 
-  def totalUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:total-usd"
-  def totalTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:total-tokens"
+  // a counter of this budget, in one of its cycles
+  def counterKey(cycle: String, counter: String)(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycle:$counter"
 
-  def inferenceUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:inference-usd"
-  def inferenceTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:inference-tokens"
+  // What a worker pushed for one of its counters (`total_usd`, `ocr_pages`...), counted in the cycle it was consumed
+  // in: a push that comes in once that cycle is over is not what the next one consumed
+  def countFromWorker(counter: String, cycle: String, by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
+    val amount = if (counter.endsWith("_usd")) by.*(BigDecimal(1000000000)).toLong else by.toLong
+    env.datastores.rawDataStore.incrby(counterKey(cycle, counter.replace('_', '-')), amount)
+  }
 
-  def imageUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:image-usd"
-  def imageTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:image-tokens"
+  def totalUsdKey(using env: Env): String = counterKey(cycleId, "total-usd")
+  def totalTokensKey(using env: Env): String = counterKey(cycleId, "total-tokens")
 
-  def audioUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:audio-usd"
-  def audioTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:audio-tokens"
+  def inferenceUsdKey(using env: Env): String = counterKey(cycleId, "inference-usd")
+  def inferenceTokensKey(using env: Env): String = counterKey(cycleId, "inference-tokens")
 
-  def videoUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:video-usd"
-  def videoTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:video-tokens"
+  def imageUsdKey(using env: Env): String = counterKey(cycleId, "image-usd")
+  def imageTokensKey(using env: Env): String = counterKey(cycleId, "image-tokens")
 
-  def embeddingUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:embedding-usd"
-  def embeddingTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:embedding-tokens"
+  def audioUsdKey(using env: Env): String = counterKey(cycleId, "audio-usd")
+  def audioTokensKey(using env: Env): String = counterKey(cycleId, "audio-tokens")
 
-  def moderationUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:moderation-usd"
-  def moderationTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:moderation-tokens"
+  def videoUsdKey(using env: Env): String = counterKey(cycleId, "video-usd")
+  def videoTokensKey(using env: Env): String = counterKey(cycleId, "video-tokens")
 
-  def ocrUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:ocr-usd"
-  def ocrPagesKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:ocr-pages"
+  def embeddingUsdKey(using env: Env): String = counterKey(cycleId, "embedding-usd")
+  def embeddingTokensKey(using env: Env): String = counterKey(cycleId, "embedding-tokens")
 
-  def decisionUsdKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:decision-usd"
-  def decisionTokensKey(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:decision-tokens"
+  def moderationUsdKey(using env: Env): String = counterKey(cycleId, "moderation-usd")
+  def moderationTokensKey(using env: Env): String = counterKey(cycleId, "moderation-tokens")
+
+  def ocrUsdKey(using env: Env): String = counterKey(cycleId, "ocr-usd")
+  def ocrPagesKey(using env: Env): String = counterKey(cycleId, "ocr-pages")
+
+  def decisionUsdKey(using env: Env): String = counterKey(cycleId, "decision-usd")
+  def decisionTokensKey(using env: Env): String = counterKey(cycleId, "decision-tokens")
 
   def incrTotalUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
     if (env.clusterConfig.mode.isWorker) {

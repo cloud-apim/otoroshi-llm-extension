@@ -713,80 +713,16 @@ class AiExtension(val env: Env) extends AdminExtension {
       case None => Results.Ok(Json.obj("done" -> false, "error" -> "no body")).vfuture
       case Some(bodySource) => bodySource.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
         val bodyJson = bodyRaw.utf8String.parseJson
-        // the counters grew over time, and a worker of a previous version does not send the ones it does not know:
-        // a missing one is an empty one, or every delta of that worker would be rejected until it is upgraded
-        def deltas(counter: String): scala.collection.Map[String, JsValue] = bodyJson.select(counter).asOpt[JsObject].map(_.value).getOrElse(Map.empty[String, JsValue])
-        val total_usd = deltas("total_usd")
-        val total_tokens = deltas("total_tokens")
-        val inference_usd = deltas("inference_usd")
-        val inference_tokens = deltas("inference_tokens")
-        val image_usd = deltas("image_usd")
-        val image_tokens = deltas("image_tokens")
-        val audio_usd = deltas("audio_usd")
-        val audio_tokens = deltas("audio_tokens")
-        val video_usd = deltas("video_usd")
-        val video_tokens = deltas("video_tokens")
-        val embedding_usd = deltas("embedding_usd")
-        val embedding_tokens = deltas("embedding_tokens")
-        val moderation_usd = deltas("moderation_usd")
-        val moderation_tokens = deltas("moderation_tokens")
-        val ocr_usd = deltas("ocr_usd")
-        val ocr_pages = deltas("ocr_pages")
-        val decision_usd = deltas("decision_usd")
-        val decision_tokens = deltas("decision_tokens")
-        total_usd.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrTotalUsd(value.as[BigDecimal]))
-        }
-        total_tokens.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrTotalTokens(value.as[Long]))
-        }
-        inference_usd.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrInferenceUsd(value.as[BigDecimal]))
-        }
-        inference_tokens.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrInferenceTokens(value.as[Long]))
-        }
-        image_usd.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrImageUsd(value.as[BigDecimal]))
-        }
-        image_tokens.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrImageTokens(value.as[Long]))
-        }
-        audio_usd.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrAudioUsd(value.as[BigDecimal]))
-        }
-        audio_tokens.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrAudioTokens(value.as[Long]))
-        }
-        video_usd.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrVideoUsd(value.as[BigDecimal]))
-        }
-        video_tokens.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrVideoTokens(value.as[Long]))
-        }
-        embedding_usd.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrEmbeddingUsd(value.as[BigDecimal]))
-        }
-        embedding_tokens.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrEmbeddingTokens(value.as[Long]))
-        }
-        moderation_usd.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrModerationUsd(value.as[BigDecimal]))
-        }
-        moderation_tokens.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrModerationTokens(value.as[Long]))
-        }
-        ocr_usd.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrOcrUsd(value.as[BigDecimal]))
-        }
-        ocr_pages.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrOcrPages(value.as[Long]))
-        }
-        decision_usd.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrDecisionUsd(value.as[BigDecimal]))
-        }
-        decision_tokens.foreach {
-          case (key, value) => states.budget(key.split(":").apply(0)).foreach(_.incrDecisionTokens(value.as[Long]))
+        // One object by counter, of what was consumed by budget and cycle (`<budget>:<cycle>`). The counters grew over
+        // time, and a worker of a previous version does not send the ones it does not know: a missing one is an
+        // empty one, or every delta of that worker would be rejected until it is upgraded
+        AiBudgetClusterAgent.counters.foreach { counter =>
+          bodyJson.select(counter).asOpt[JsObject].map(_.value).getOrElse(Map.empty[String, JsValue]).foreach { case (key, value) =>
+            val cycleAt = key.lastIndexOf(":")
+            states.budget(if (cycleAt < 0) key else key.take(cycleAt)).foreach { budget =>
+              budget.countFromWorker(counter, if (cycleAt < 0) budget.cycleId else key.drop(cycleAt + 1), value.as[BigDecimal])
+            }
+          }
         }
         Results.Ok(Json.obj("done" -> true)).vfuture
       }
