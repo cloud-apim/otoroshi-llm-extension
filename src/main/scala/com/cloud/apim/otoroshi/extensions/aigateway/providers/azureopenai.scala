@@ -159,6 +159,12 @@ object AzureOpenAiApi {
       urlPreV1(resourceName, deploymentId, version, path)
     }
   }
+  // the api version of a provider that names none
+  val defaultVersion = "2024-02-01"
+  def versionOf(connection: JsValue): String = connection.select("api_version").asOpt[String].getOrElse(defaultVersion)
+  // `max_completion_tokens` came with the api version 2024-09-01-preview: the dated ones before it refuse a request
+  // that carries it. `v1` is not a date, and knows it
+  def knowsMaxCompletionTokens(version: String): Boolean = !version.matches("\\d{4}-\\d{2}-\\d{2}.*") || version.take(10) >= "2024-09-01"
   // the `v1` api is the one of OpenAI, whose reasoning models only take how long an answer may be as
   // `max_completion_tokens`. A dated api version is sent what the caller said: the oldest ones only know `max_tokens`
   def withTokenLimit(version: String, body: JsObject): JsObject = body.select("max_tokens").asOpt[Long] match {

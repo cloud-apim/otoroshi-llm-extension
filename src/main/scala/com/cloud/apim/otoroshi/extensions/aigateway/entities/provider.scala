@@ -396,7 +396,7 @@ object AiProvider {
         import c.*
         val resourceName = connection.select("resource_name").as[String]
         val deploymentId = connection.select("deployment_id").as[String]
-        val version = connection.select("api_version").asOpt[String].getOrElse("2024-02-01")
+        val version = AzureOpenAiApi.versionOf(connection)
         val apikey = connection.select("api_key").asOpt[String]
         val bearer = Some(token).filterNot(_ == "xxx")
         val api = new AzureOpenAiApi(resourceName, deploymentId, version, apikey, bearer, timeout.getOrElse(3.minutes), env = env, providerId = id.some)

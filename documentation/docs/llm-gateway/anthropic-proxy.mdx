@@ -170,7 +170,7 @@ The plugin translates Anthropic's `output_config` with `json_schema` format to O
 
 ### Max tokens
 
-The `max_tokens` field from the Anthropic request reaches the provider under the name its API knows: `max_tokens` for most providers, `max_completion_tokens` for OpenAI and Azure OpenAI.
+The `max_tokens` field from the Anthropic request reaches the provider under the name its API knows: `max_tokens` for most providers, `max_completion_tokens` for OpenAI and for Azure OpenAI. Azure OpenAI knows that name from the API version `2024-09-01-preview` on: a provider set on an earlier version is sent `max_tokens`.
 
 ## Calling the API directly
 

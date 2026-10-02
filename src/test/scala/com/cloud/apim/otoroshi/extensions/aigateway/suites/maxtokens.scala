@@ -147,4 +147,20 @@ class MaxTokensSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(AzureOpenAiApi.withTokenLimit("2024-06-01", Json.obj("max_tokens" -> 50)), Json.obj("max_tokens" -> 50))
     assertEquals(AzureOpenAiApi.withTokenLimit("2025-04-01-preview", Json.obj("max_completion_tokens" -> 50)), Json.obj("max_completion_tokens" -> 50))
   }
+
+  test("a request in the Anthropic format reaches Azure OpenAI with the limit under the name its api version knows") {
+    def azure(version: Option[String]): Option[AiProvider] = Some(AiProvider(
+      id = "provider_azure", name = "azure", provider = "azure-openai", options = Json.obj(),
+      connection = Json.obj("resource_name" -> "a-resource", "deployment_id" -> "a-deployment") ++ version.map(v => Json.obj("api_version" -> v)).getOrElse(Json.obj()),
+    ))
+    // `max_completion_tokens` came with the api version 2024-09-01-preview, and is the only name reasoning models take
+    Seq("v1", "2025-04-01-preview", "2024-10-21", "2024-09-01-preview").foreach { version =>
+      assertEquals(AnthropicCompatProxy.maxTokensParam(azure(Some(version))), "max_completion_tokens", version)
+    }
+    // the api versions before it refuse a request that carries it
+    Seq("2024-08-01-preview", "2024-06-01", "2024-02-01").foreach { version =>
+      assertEquals(AnthropicCompatProxy.maxTokensParam(azure(Some(version))), "max_tokens", version)
+    }
+    assertEquals(AnthropicCompatProxy.maxTokensParam(azure(None)), "max_tokens", "the api version of a provider that names none is one of them")
+  }
 }

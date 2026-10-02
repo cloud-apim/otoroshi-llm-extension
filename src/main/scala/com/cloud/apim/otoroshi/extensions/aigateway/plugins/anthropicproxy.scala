@@ -5,6 +5,7 @@ import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.AzureOpenAiApi
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, InputChatMessage}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.*
@@ -105,10 +106,12 @@ object AnthropicCompatProxy {
   }
 
   // The name the limit of an answer is sent under. `max_tokens` is the one about every api knows, and the clients
-  // translate it when theirs wants another: the OpenAI one renames it for OpenAI. Azure OpenAI has a client of
-  // its own that translates nothing, and its reasoning models refuse `max_tokens`: it keeps the name of OpenAI
-  private def maxTokensParam(provider: Option[AiProvider]): String =
-    if (provider.exists(_.provider.toLowerCase == "azure-openai")) "max_completion_tokens" else "max_tokens"
+  // translate it when theirs wants another: the OpenAI one renames it for OpenAI. Azure OpenAI is sent
+  // `max_completion_tokens`, the only name its reasoning models take, when the api version of the provider knows it
+  def maxTokensParam(provider: Option[AiProvider]): String = provider match {
+    case Some(azure) if azure.provider.toLowerCase == "azure-openai" && AzureOpenAiApi.knowsMaxCompletionTokens(AzureOpenAiApi.versionOf(azure.connection)) => "max_completion_tokens"
+    case _ => "max_tokens"
+  }
 
   private def fixBody(_jsonBody: JsObject, client: ChatClient, provider: Option[AiProvider], reqId: Long): JsObject = {
     if (client.isAnthropic) {
