@@ -383,7 +383,9 @@ class ResponsesSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     Seq("input", "instructions", "previous_response_id", "store", "truncation", "max_output_tokens").foreach { param =>
       assert(sent.select(param).asOpt[JsValue].isEmpty, s"'${param}' should not have been forwarded: ${sent.stringify}")
     }
-    assertEquals(sent.select("max_tokens").asOpt[Int], Some(100), s"max_output_tokens should become max_tokens: ${sent.stringify}")
+    // the output limit of a chat call is `max_tokens`, which the OpenAI client sends under its current name
+    assertEquals(sent.select("max_completion_tokens").asOpt[Int], Some(100), s"max_output_tokens should become max_completion_tokens: ${sent.stringify}")
+    assert(sent.select("max_tokens").asOpt[JsValue].isEmpty, s"the limit should be sent once: ${sent.stringify}")
     assertEquals(sent.select("reasoning_effort").asOptString, Some("low"), s"reasoning.effort should become reasoning_effort: ${sent.stringify}")
     // messages are rebuilt from the prompt: instructions first, then the input items
     val messages = sent.select("messages").as[Seq[JsObject]]
