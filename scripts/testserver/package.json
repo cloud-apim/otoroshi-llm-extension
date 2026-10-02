@@ -6,11 +6,10 @@
   "license": "Apache-2.0",
   "type": "module",
   "dependencies": {
-    "mcp-js-server": "^0.1.2",
-    "node-fetch": "2.7.0",
-    "@modelcontextprotocol/sdk": "1.0.1",
-    "express": "^4.21.1",
-    "zod": "^3.23.8",
-    "zod-to-json-schema": "^3.23.5"
+    "@modelcontextprotocol/sdk": "1.32.0",
+    "express": "^5.2.1",
+    "mcp-js-server": "^0.1.4",
+    "node-fetch": "3.3.2",
+    "zod": "^4.6.5"
   }
 }

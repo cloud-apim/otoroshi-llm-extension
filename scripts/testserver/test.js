@@ -3,7 +3,6 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import express from "express";
 
 ///////////////////////////////////////////////////////
@@ -55,7 +54,7 @@ sseserver.setRequestHandler(ListToolsRequestSchema, async () => {
     {
       name: "add",
       description: "Adds two numbers",
-      inputSchema: zodToJsonSchema(AddSchema),
+      inputSchema: z.toJSONSchema(AddSchema, { target: "draft-7" }),
     }
   ];
   return { tools };

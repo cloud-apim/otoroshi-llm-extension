@@ -12,8 +12,8 @@
     "test": "bun run test.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.4",
-    "express": "^4.21.0",
-    "zod": "^3.23.8"
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "express": "^5.2.1",
+    "zod": "^4.6.5"
   }
 }
