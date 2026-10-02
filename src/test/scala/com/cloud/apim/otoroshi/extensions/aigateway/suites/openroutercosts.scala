@@ -1,15 +1,17 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.suites
 
 import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServerPerSuite
-import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsOutput, OpenRouterCatalog}
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostsOutput, CostsTracking, CostsTrackingSettings, OpenRouterCatalog}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudgetConsumptions, AiProvider}
 import otoroshi.models.EntityLocation
 import otoroshi.next.models.*
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy
+import play.api.Configuration
 import play.api.libs.json.{JsObject, Json}
 import play.api.libs.ws.WSResponse
+import reactor.core.publisher.Mono
 
 import java.util.UUID
 import scala.concurrent.duration.DurationInt
@@ -34,14 +36,27 @@ class OpenRouterCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     "completion_tokens_details" -> Json.obj("reasoning_tokens" -> 0),
   )
 
-  // a model OpenRouter serves and prices, that the static table does not know under that exact name
-  val modelMissingFromPriceTable = "upstage/solar-pro4"
+  // A cheap model OpenRouter serves, for the real calls. The static table did not know it when these tests were
+  // written and has caught up since: the cost OpenRouter reports for a call is the one billed either way
+  val realModel = "upstage/solar-pro4"
+  // a model no price table can know
+  val modelMissingFromPriceTable = "made-up-vendor/made-up-model"
   // a model the static price table knows. The variant suffix is made up on purpose: a real one would also be
   // in the synced catalog, and the test would no longer exercise the fallback.
   val staticModel = "mistralai/mistral-7b-instruct"
   val modelVariant = s"${staticModel}:made-up-variant"
 
   lazy val apiKey: Option[String] = sys.env.get("OPENROUTER_API_KEY").filter(_.trim.nonEmpty)
+
+  // The catalog OpenRouter publishes, as the sync reads it: a model the static table does not know, and one it
+  // curates, with a price of its own. The real catalog cannot say which models the table misses: every refresh
+  // of the table catches up with it
+  val (catalogPort, _) = createTestServerWithRoutes("openrouter-catalog", routes => routes.get("/api/v1/models", (_, response) => {
+    response.status(200).addHeader("Content-Type", "application/json").sendString(Mono.just(Json.obj("data" -> Json.arr(
+      Json.obj("id" -> modelMissingFromPriceTable, "context_length" -> 131072, "pricing" -> Json.obj("prompt" -> "0.000001", "completion" -> "0.000002")),
+      Json.obj("id" -> staticModel, "context_length" -> 32768, "pricing" -> Json.obj("prompt" -> "0.5", "completion" -> "0.5")),
+    )).stringify))
+  }))
 
   def ext: AiExtension = otoroshi.env.adminExtensions.extension[AiExtension].get
 
@@ -76,21 +91,21 @@ class OpenRouterCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   }
 
   test("the openrouter catalog sync prices models the static table is missing") {
-    // checked against the static table: the sync started with the extension may already have run
-    assertEquals(ext.costsTracking.staticModels.get(s"openrouter-${modelMissingFromPriceTable}"), None, "precondition: model absent from the static table")
-    val count = ext.costsTracking.refreshOpenRouterCatalog()(using ec).awaitf(60.seconds)
-    assert(count > 300, s"the catalog should price hundreds of models, got ${count}")
-    val model = ext.costsTracking.lookupModel("openrouter", modelMissingFromPriceTable)
+    val settings = CostsTrackingSettings(Configuration("openrouter-catalog.url" -> s"http://localhost:${catalogPort}/api/v1/models"))
+    val tracking = new CostsTracking(settings, otoroshi.env, ext.modelsCatalog)
+    assertEquals(tracking.lookupModel("openrouter", modelMissingFromPriceTable), None, "precondition: nothing prices the model before the sync")
+    val count = tracking.refreshOpenRouterCatalog()(using ec).awaitf(30.seconds)
+    assertEquals(count, 2, "every model of the catalog with a pricing is kept")
+    val model = tracking.lookupModel("openrouter", modelMissingFromPriceTable)
     assert(model.isDefined, s"${modelMissingFromPriceTable} should be priced after the sync")
-    assert(model.get.input_cost_per_token > 0, "the synced model should have a non zero input price")
-    assert(model.get.output_cost_per_token > 0, "the synced model should have a non zero output price")
+    assertEquals(model.get.input_cost_per_token, BigDecimal("0.000001"))
+    assertEquals(model.get.output_cost_per_token, BigDecimal("0.000002"))
     // a synced price must never override a curated one
     val curatedKey = s"openrouter-${staticModel}"
-    assert(ext.costsTracking.staticModels.contains(curatedKey), "precondition: the model is curated")
-    assertEquals(ext.costsTracking.lookupModel("openrouter", staticModel).map(_.name), ext.costsTracking.staticModels.get(curatedKey).map(_.name), "curated entries must win over synced ones")
-    val costs = ext.costsTracking.computeCosts("openrouter", modelMissingFromPriceTable, 1000L, 1000L, 0L)
-    assert(costs.isRight, "a synced model must be priceable")
-    assert(costs.toOption.get.totalCost > 0, "a synced model must yield a non zero cost")
+    assert(tracking.staticModels.contains(curatedKey), "precondition: the model is curated")
+    assertEquals(tracking.lookupModel("openrouter", staticModel).map(_.input_cost_per_token), tracking.staticModels.get(curatedKey).map(_.input_cost_per_token), "curated entries must win over synced ones")
+    val costs = tracking.computeCosts("openrouter", modelMissingFromPriceTable, 1000L, 1000L, 0L)
+    assertEquals(costs.toOption.map(_.totalCost), Some(BigDecimal("0.003")), "a synced model is billed the prices of the catalog")
   }
 
   test("a catalog entry keeps the prices openrouter publishes") {
@@ -117,7 +132,7 @@ class OpenRouterCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       name = "openrouter test provider",
       provider = "openrouter",
       connection = Json.obj("token" -> key, "timeout" -> 60000),
-      options = Json.obj("model" -> modelMissingFromPriceTable, "max_tokens" -> 5),
+      options = Json.obj("model" -> realModel, "max_tokens" -> 5),
     )
     val route = NgRoute(
       location = EntityLocation.default,
@@ -160,13 +175,13 @@ class OpenRouterCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     budget.getConsumptions()(using ec, otoroshi.env).awaitf(10.seconds)
   }
 
-  test("a real openrouter call on a model missing from the price table decrements the budget") {
+  test("a real openrouter call is billed the cost openrouter reports, and decrements the budget") {
     realSetup match {
       case None => println("[openrouter] OPENROUTER_API_KEY is not set, skipping the real call test")
       case Some((_, budgetName)) => {
         val before = consumptions(budgetName)
         val resp: WSResponse = client.call("POST", s"http://openrouter.oto.tools:${port}/chat?embed_costs=true", Map.empty, Some(Json.obj(
-          "model" -> modelMissingFromPriceTable,
+          "model" -> realModel,
           "max_tokens" -> 5,
           "messages" -> Json.arr(Json.obj("role" -> "user", "content" -> "hi")),
         ))).awaitf(60.seconds)
@@ -185,13 +200,13 @@ class OpenRouterCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     }
   }
 
-  test("a real streamed openrouter call on a model missing from the price table decrements the budget") {
+  test("a real streamed openrouter call is billed the cost openrouter reports, and decrements the budget") {
     realSetup match {
       case None => println("[openrouter] OPENROUTER_API_KEY is not set, skipping the real streaming test")
       case Some((_, budgetName)) => {
         val before = consumptions(budgetName)
         val resp = client.stream("POST", s"http://openrouter.oto.tools:${port}/chat?stream=true&embed_costs=true", Map.empty, Some(Json.obj(
-          "model" -> modelMissingFromPriceTable,
+          "model" -> realModel,
           "max_tokens" -> 5,
           "messages" -> Json.arr(Json.obj("role" -> "user", "content" -> "hi")),
         ))).awaitf(60.seconds)

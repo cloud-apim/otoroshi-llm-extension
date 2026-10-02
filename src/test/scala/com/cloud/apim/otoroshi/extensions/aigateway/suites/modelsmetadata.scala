@@ -213,10 +213,15 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val ovh = ext.costsTracking.lookupModel("ovhcloud", "gpt-oss-120b").get
     assertEquals(ovh.raw.select(CostModel.currencyField).asOptString, Some("eur"))
     assertEquals(ovh.input_cost_per_token, ext.costsTracking.models("ovhcloud-gpt-oss-120b").input_cost_per_token * rate)
-    // the models.dev prices of OVHcloud are already in dollars
-    val ovhCatalog = ext.costsTracking.lookupModel("ovhcloud", "qwen3-32b").get
+    // the models.dev prices of OVHcloud are already in dollars. The price table is asked first, and the models
+    // of both come and go with every refresh: the model checked is one of the catalog the table does not know,
+    // whichever it is today
+    val catalogOnly = ext.modelsCatalog.index.toSeq.flatMap(_.models("ovhcloud")).sortBy(_.id)
+      .find(m => m.cost.exists(_.input > 0) && !ext.costsTracking.models.contains(s"ovhcloud-${m.id}"))
+      .getOrElse(fail("the price table knows every OVHcloud model of the models.dev catalog: none is left to be priced from the catalog"))
+    val ovhCatalog = ext.costsTracking.lookupModel("ovhcloud", catalogOnly.id).get
     assertEquals(ovhCatalog.raw.select(CostModel.currencyField).asOptString, None)
-    assertEquals(ovhCatalog.input_cost_per_token, ext.modelsCatalog.lookup("ovhcloud", "qwen3-32b").flatMap(_.model.cost).get.input / BigDecimal(1000000))
+    assertEquals(ovhCatalog.input_cost_per_token, catalogOnly.cost.get.input / BigDecimal(1000000))
     // what the listings show is what is billed, and they say so
     val listed = ModelsMetadata.describe(AiProvider(id = "scw", name = "scw", provider = "scaleway", connection = Json.obj(), options = Json.obj()), "gpt-oss-120b")
     assert(listed.hasCost)
@@ -475,7 +480,15 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val mistral = AiProvider(id = "provider_costs_mistral", name = "mistral", provider = "mistral", connection = Json.obj(), options = Json.obj())
     def billed(provider: AiProvider, model: String, modality: String): Boolean = ModelsMetadata.describe(provider, model, modality).hasCost
     assert(billed(openai, "gpt-image-2", "image"), "an image model counting its tokens is billed")
-    assert(billed(openai, "dall-e-3", "image"), "an image model billed by the image is billed")
+    // the models billed by the image come and go in the price table (dall-e-3 was the one of OpenAI): the model
+    // checked is whichever one xAI is given there today
+    val xai = AiProvider(id = "provider_costs_xai", name = "xai", provider = "x-ai", connection = Json.obj(), options = Json.obj())
+    val byTheImage = ext.costsTracking.models.values.toSeq.sortBy(_.name)
+      // the entries of a model for each size and quality are no model one can call
+      .find(m => m.name.startsWith("xai/") && !m.nameWithoutProvider.contains("/") && m.mode == "image_generation" && m.input_cost_per_token == 0 && m.output_cost_per_token == 0 &&
+        m.input_cost_per_image_token == 0 && m.output_cost_per_image_token == 0 && (m.input_cost_per_image > 0 || m.output_cost_per_image > 0))
+      .getOrElse(fail("the price table has no xAI image model billed by the image only: pick another provider for this check"))
+    assert(billed(xai, byTheImage.nameWithoutProvider, "image"), s"an image model billed by the image is billed (${byTheImage.name})")
     assert(billed(openai, "tts-1", "audio"), "a voice billed per character is billed")
     assert(!billed(openai, "gpt-4o-mini-tts", "audio"), "a voice billed per second of audio cannot be measured")
     assert(billed(openai, "gpt-4o-mini-transcribe", "audio"), "a transcription counting its tokens is billed")

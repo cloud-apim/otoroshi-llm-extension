@@ -190,7 +190,7 @@ async function main() {
   });
   if (!args.check && written > 0) {
     console.log('\nprices and catalogs changed: run the costs and metadata suites before committing:');
-    console.log('  sbt "testOnly *ModelsMetadataSuite *CostsTestSuite *RequiredCostsSuite *OpenRouterCostsSuite *NonTextCostsSuite *StudioApiSuite"');
+    console.log('  sbt "testOnly *ModelsMetadataSuite *CostsTestSuite *RequiredCostsSuite *OpenRouterCostsSuite *NonTextCostsSuite *StudioApiSuite *ChatHandOverSuite *GuardrailsAccountingSuite *ModerationUsageSuite *DecisionModelsSuite *DecisionModelsResilienceSuite"');
   }
   process.exit(failures ? 1 : 0);
 }
