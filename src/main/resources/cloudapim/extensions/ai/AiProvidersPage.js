@@ -1169,7 +1169,11 @@ class AiProvidersPage extends Component {
     },
     'options.decision_model_model': {
       type: 'string',
-      props: { label: 'Decision model model', placeholder: 'Default model of the decision model' },
+      props: {
+        label: 'Decision model override',
+        placeholder: 'Default model of the decision model',
+        help: 'Optional: the model the decision model answers with, instead of its default one (e.g. "jev-latest", "typesafe/jev-1.13"). Same for the smart-router and the intent-router.',
+      },
     },
     'options.smart_router_refs': {
       type: 'array',

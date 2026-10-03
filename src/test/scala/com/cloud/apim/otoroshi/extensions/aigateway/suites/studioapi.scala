@@ -462,7 +462,7 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     // the candidates the workspace described for the intent router
     expect(studio("POST", s"/workspaces/$wsId/routers", Json.obj("smart_router_refs" -> Json.arr(ollamaText), "decision_model_ref" -> "decision-model_of_another_workspace")), 400)
     val router = expect(studio("POST", s"/workspaces/$wsId/routers", Json.obj(
-      "decision_model_ref" -> decisionId,
+      "decision_model_ref" -> decisionId, "decision_model_model" -> " jev-for-routing ",
       "smart_router_refs" -> Json.arr(ollamaText), "smart_router_min_score" -> 0.25, "smart_router_max_score" -> 3,
       "intent_router_refs" -> Json.arr(Json.obj("ref" -> ollamaText, "model" -> "llama3.2", "description" -> " Everyday questions "), Json.obj("ref" -> ollamaText, "description" -> "")),
       "intent_router_min_confidence" -> 0.4,
@@ -471,6 +471,7 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val routerId = router.select("id").asString
     val routerOptions = aiEntity("providers", routerId).get.select("options")
     assertEquals(routerOptions.select("decision_model_ref").asString, decisionId)
+    assertEquals(routerOptions.select("decision_model_model").asOptString, Some("jev-for-routing"), "the decision model answers with the model the router names")
     assertEquals(routerOptions.select("smart_router_refs").as[Seq[String]], Seq(ollamaText))
     assertEquals((routerOptions.select("smart_router_min_score").as[BigDecimal], routerOptions.select("smart_router_max_score").as[BigDecimal]), (BigDecimal("0.25"), BigDecimal(1)), "a floor stays between 0 and 1")
     assertEquals(routerOptions.select("intent_router_refs").as[Seq[JsObject]], Seq(Json.obj("ref" -> ollamaText, "model" -> "llama3.2", "description" -> "Everyday questions"), Json.obj("ref" -> ollamaText)))
@@ -481,6 +482,10 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val renamed = expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("intent_router_instructions" -> "Which assistant should answer ?")), 200)
     assertEquals(renamed.select("intent_router_refs").as[Seq[JsObject]].size, 2)
     assertEquals(renamed.select("decision_model_ref").asString, decisionId)
+    assertEquals(renamed.select("decision_model_model").asOptString, Some("jev-for-routing"))
+    val defaulted = expect(studio("PUT", s"/workspaces/$wsId/routers/$routerId", Json.obj("decision_model_model" -> "")), 200)
+    assertEquals(defaulted.select("decision_model_model").asOptString, None, "an empty model gives the decision model its own back")
+    assertEquals(aiEntity("providers", routerId).get.at("options.decision_model_model").asOpt[JsValue], Some(JsNull))
     expect(studio("DELETE", s"/workspaces/$wsId/routers/$routerId"), 204)
 
     // a connection goes with its entity and its ref

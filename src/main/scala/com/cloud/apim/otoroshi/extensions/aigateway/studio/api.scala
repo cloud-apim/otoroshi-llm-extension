@@ -1671,7 +1671,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
           case Some(_) => throw badRequest(s"'$key' must be an array of provider ids or { ref, model } objects")
         }
       }
-      def ref(key: String): Option[String] = if (has(form, key)) string(form, key).filter(_.nonEmpty) else current.select(key).asOptString
+      def ref(key: String): Option[String] = if (has(form, key)) string(form, key).map(_.trim).filter(_.nonEmpty) else current.select(key).asOptString
       def clamped(key: String, min: Int, max: Int, default: BigDecimal): BigDecimal =
         number(form, key).orElse(current.select(key).asOpt[BigDecimal]).getOrElse(default).max(BigDecimal(min)).min(BigDecimal(max))
       val name = string(form, "name").map(connectionName).getOrElse(current.select("name").asString)

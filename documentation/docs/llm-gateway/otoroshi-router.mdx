@@ -62,6 +62,7 @@ and all the configuration goes in `options`:
     "allowed_models": [],
 
     "decision_model_ref": "decision-model_jev",
+    "decision_model_model": "jev-latest",
 
     "smart_router_refs": ["provider_claude_sonnet", "provider_gpt_mini", "provider_mistral_small"],
 
@@ -167,9 +168,9 @@ Callers can override all three settings on a request:
 `smart-router` spends on a request what the request deserves. A greeting and a research question do not need
 the same model: the router tells them apart, and you only pay for your best model when it is needed.
 
-1. A [decision model](/docs/decision-models/overview) (`decision_model_ref`) rates **how demanding the request
-   is**, on a five level scale going from trivial to expert. It answers in a fraction of a second, for a fraction
-   of the cost of the request it routes.
+1. A [decision model](/docs/decision-models/overview) (`decision_model_ref`, with its default model or the one set
+   in `decision_model_model`) rates **how demanding the request is**, on a five level scale going from trivial to
+   expert. It answers in a fraction of a second, for a fraction of the cost of the request it routes.
 2. The rating sets the **quality floor** of the request, relative to your best candidate: no floor for a
    trivial request, your best candidate for the most demanding one, and a floor in between for the others.
 3. The router calls the **cheapest candidate above that floor**, from the coding quality index and the price of each

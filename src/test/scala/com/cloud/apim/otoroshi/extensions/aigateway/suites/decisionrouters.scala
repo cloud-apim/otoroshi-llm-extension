@@ -135,8 +135,9 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     Json.obj("ref" -> chats.provider.id, "model" -> "translator", "description" -> "Translation between languages", "name" -> "translation"),
     Json.obj("ref" -> chats.provider.id, "model" -> "coder", "description" -> "Software, code review and database queries"),
   )
+  // a router asking its decision model for another model than the default one of the decision model
   lazy val intent = router("intent", Json.obj(
-    "decision_model_ref" -> picking.model.id, "intent_router_refs" -> described(picked),
+    "decision_model_ref" -> picking.model.id, "decision_model_model" -> "jev-for-routing", "intent_router_refs" -> described(picked),
     "intent_router_instructions" -> "Which assistant should answer ?", "intent_router_min_confidence" -> 0.5,
   ))
   lazy val failing = router("failing", Json.obj(
@@ -197,6 +198,7 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(asked.at("questions.difficulty.criteria").asOpt[Seq[String]], Some(OtoroshiRouterChatClient.difficultyLevels))
     assertEquals(asked.select("state").asOpt[Seq[JsObject]].map(_.map(m => (m.select("role").asString, m.select("content").asString))), Some(Seq(("user", "hello !"))))
     assertEquals(rating.asked.size, 3, "one question for each request")
+    assertEquals(asked.select("model").asOptString, Some("jev-test"), "the decision model answers with its own model")
   }
 
   test("smart-router: without an answer of the decision model a request is of average difficulty, and the floors can be moved") {
@@ -221,6 +223,7 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       "instructions" -> "Which assistant should answer ?",
       "criteria" -> Json.obj("option_1" -> "Everyday questions and conversation", "translation" -> "Translation between languages", "option_3" -> "Software, code review and database queries"),
     )))
+    assertEquals(asked.select("model").asOptString, Some("jev-for-routing"), "or with the model the router names")
     await(5.seconds)
     val after = consumptions()
     assertEquals(after.decisionTokens - before.decisionTokens, 40L, "the decision of the first request counts for its caller")
@@ -234,5 +237,6 @@ class DecisionRoutersSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     // the translator is down: the next candidate is the most probable of the other ones
     ask(failing, "intent-router", "I need a translation of this letter")
     assertEquals(cascading.asked, Seq("down", "coder"))
+    assertEquals(picking.asked.last.select("model").asOptString, Some("jev-test"), "a router naming no model leaves the decision model with its own")
   }
 }

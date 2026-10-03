@@ -184,6 +184,7 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
     cost_quality_tradeoff: o.cost_quality_tradeoff ?? 7,
     allowed_models: o.allowed_models || [],
     decision_model_ref: o.decision_model_ref || '',
+    decision_model_model: o.decision_model_model || '',
     smart_router_refs: refsOf(o.smart_router_refs),
     smart_router_min_score: o.smart_router_min_score ?? 0,
     smart_router_max_score: o.smart_router_max_score ?? 1,
@@ -201,6 +202,18 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
   const countOf = (m) => form[m.refs].filter((r) => (typeof r === 'string' ? r : r.ref)).length;
   const hasCandidates = ROUTER_MODES.some((m) => countOf(m) > 0);
   const decisionOptions = (decisionModels || []).map((d) => ({ value: d.id, label: d.name }));
+  const decisionDefault = (((decisionModels || []).find((d) => d.id === form.decision_model_ref) || {}).config || {}).options?.model;
+  // the decision model of the smart and the intent routers, shared by both, and the model it answers with
+  const decisionFields = (hint) => (
+    <div className="form-grid">
+      <Field label="Decision model" hint={hint}>
+        <Select value={form.decision_model_ref} onChange={(v) => set({ decision_model_ref: v })} placeholder={decisionOptions.length ? 'Select a decision model' : 'No decision model in this workspace'} options={decisionOptions} />
+      </Field>
+      <Field label="Model" hint="Optional: the model it answers with, instead of its default one.">
+        <TextInput value={form.decision_model_model} onChange={(v) => set({ decision_model_model: v })} placeholder={decisionDefault || 'Default model'} disabled={!form.decision_model_ref} />
+      </Field>
+    </div>
+  );
   const setIntent = (idx, patch) => set({ intent_router_refs: form.intent_router_refs.map((c, i) => (i === idx ? { ...c, ...patch } : c)) });
   const candidateOptions = providers.map((p) => ({ value: p.id, label: `${p.name} (${(p.options || {}).model || 'default model'})` }));
   const providerOptions = providers.map((p) => ({ value: p.id, label: p.name }));
@@ -232,6 +245,7 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
           cost_quality_tradeoff: Math.min(10, Math.max(0, num(form.cost_quality_tradeoff, 7))),
           allowed_models: form.allowed_models.map((m) => m.trim()).filter(Boolean),
           decision_model_ref: form.decision_model_ref || null,
+          decision_model_model: (form.decision_model_ref && form.decision_model_model.trim()) || null,
           smart_router_refs: keepEntries(o.smart_router_refs, form.smart_router_refs),
           smart_router_min_score: Math.min(1, Math.max(0, num(form.smart_router_min_score, 0))),
           smart_router_max_score: Math.min(1, Math.max(0, num(form.smart_router_max_score, 1))),
@@ -330,9 +344,7 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
           <Field label="Candidates" hint="Each candidate is called with its own default model. Models missing from the quality index are only used when no ranked candidate answers.">
             <Checks options={candidateOptions} value={form.smart_router_refs} onChange={(v) => set({ smart_router_refs: v })} />
           </Field>
-          <Field label="Decision model" hint="Rates how demanding each request is, from trivial to expert. Without it, every request is of average difficulty.">
-            <Select value={form.decision_model_ref} onChange={(v) => set({ decision_model_ref: v })} placeholder={decisionOptions.length ? 'Select a decision model' : 'No decision model in this workspace'} options={decisionOptions} />
-          </Field>
+          {decisionFields('Rates how demanding each request is, from trivial to expert. Without it, every request is of average difficulty.')}
           <div className="form-grid">
             <Field label="Quality for a trivial request" hint="From 0 to 1, relative to your best candidate. 0 lets the cheapest candidate answer trivial requests.">
               <NumberInput value={form.smart_router_min_score} onChange={(v) => set({ smart_router_min_score: v })} min="0" max="1" step="0.05" />
@@ -368,17 +380,15 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
               </button>
             </div>
           </Field>
+          {decisionFields('Picks the candidate whose description fits each request.')}
           <div className="form-grid">
-            <Field label="Decision model" hint="Picks the candidate whose description fits each request.">
-              <Select value={form.decision_model_ref} onChange={(v) => set({ decision_model_ref: v })} placeholder={decisionOptions.length ? 'Select a decision model' : 'No decision model in this workspace'} options={decisionOptions} />
+            <Field label="Question" hint="Optional: the question asked to the decision model about each request.">
+              <TextInput value={form.intent_router_instructions} onChange={(v) => set({ intent_router_instructions: v })} placeholder="Which of these options is the best suited to answer this request ?" />
             </Field>
             <Field label="Minimum confidence" hint="From 0 to 1, optional. Below it, the first candidate answers.">
               <NumberInput value={form.intent_router_min_confidence} onChange={(v) => set({ intent_router_min_confidence: v === null ? '' : v })} min="0" max="1" step="0.05" />
             </Field>
           </div>
-          <Field label="Question" hint="Optional: the question asked to the decision model about each request.">
-            <TextInput value={form.intent_router_instructions} onChange={(v) => set({ intent_router_instructions: v })} placeholder="Which of these options is the best suited to answer this request ?" />
-          </Field>
         </>
       )}
 
