@@ -958,6 +958,8 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .playground-text { position: relative; }
 .playground-text pre { margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 40vh; overflow: auto; }
 .playground-text > .copy-btn { position: absolute; top: 2px; right: 2px; }
+.playground-reasoning { border-left: 2px solid var(--border-strong); padding-left: 10px; color: var(--muted); }
+.playground-reasoning summary { cursor: pointer; }
 .playground-vector { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; }
 .playground-vector .copy-btn { white-space: nowrap; }
 .playground-result > .meta { display: flex; flex-wrap: wrap; gap: 12px; color: var(--faint); }

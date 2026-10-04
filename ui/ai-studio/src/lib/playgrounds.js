@@ -17,9 +17,22 @@ export const MAX_EDIT_IMAGES = 16;
 
 /**
  * What a model can be tried with. `endpoint` is the OpenAI endpoint of the metadata, `modality` the kind of
- * entity serving it when the metadata says nothing.
+ * entity serving it when the metadata says nothing. `everyModel` is an endpoint the gateway serves for every
+ * model of its kind, whatever the provider serves it on.
  */
 export const PLAYGROUNDS = [
+  {
+    id: 'responses',
+    label: 'Responses',
+    endpoint: 'responses',
+    modality: 'text',
+    // the workspace converts a Responses call for the providers that only chat
+    everyModel: true,
+    input: 'text',
+    placeholder: 'Explain in three sentences what an AI gateway is for',
+    action: 'Send',
+    hint: 'The input of a Responses API call.',
+  },
   {
     id: 'image',
     label: 'Image',
@@ -60,6 +73,16 @@ export const PLAYGROUNDS = [
     accept: 'audio/*,video/mp4,.mp3,.wav,.m4a,.ogg,.webm,.flac',
     action: 'Transcribe',
     hint: 'Drop an audio file, mp3, wav, m4a, ogg or flac.',
+  },
+  {
+    id: 'translation',
+    label: 'Translation',
+    endpoint: 'audio_translations',
+    modality: 'audio',
+    input: 'file',
+    accept: 'audio/*,video/mp4,.mp3,.wav,.m4a,.ogg,.webm,.flac',
+    action: 'Translate',
+    hint: 'Drop an audio file in any language: the model writes it down in English.',
   },
   {
     id: 'embedding',
@@ -121,7 +144,9 @@ const modelId = (slug, model) => (model.includes('/') ? `${slug}###${model}` : `
 function waysOf(model) {
   const endpoints = endpointsOf(model);
   const kinds = kindsOf(model);
-  return PLAYGROUNDS.filter((p) => (endpoints.length > 0 ? endpoints.includes(p.endpoint) : kinds.includes(p.modality)));
+  return PLAYGROUNDS.filter(
+    (p) => (p.everyModel && kinds.includes(p.modality)) || (endpoints.length > 0 ? endpoints.includes(p.endpoint) : kinds.includes(p.modality)),
+  );
 }
 
 // the connection serving `model` for this playground, when it can be asked for it
@@ -144,7 +169,8 @@ export function playgroundsOf(model, providers = []) {
  */
 export function playgroundHint(model, providers = []) {
   if (!model) return null;
-  const ways = waysOf(model);
+  // an endpoint served for every model is never off on a connection
+  const ways = waysOf(model).filter((p) => !p.everyModel);
   if (ways.length === 0 || ways.some((p) => servingOf(model, providers, p))) return null;
   const capabilities = [...new Set(ways.map((p) => KIND_LABELS[p.modality] || p.modality))];
   return `${capabilities.join(' / ')} is off on the ${model.provider} connection: turn it on to call this model, here and from your applications.`;
@@ -195,14 +221,51 @@ async function runSpeech({ workspace, model, text, signal }) {
   return { audio: { url: URL.createObjectURL(blob), type: blob.type || 'audio/mpeg', size: blob.size }, duration };
 }
 
-async function runTranscription({ workspace, model, file, signal }) {
+// what an audio file says, as it is said or in English
+const writeDown = (path) => async ({ workspace, model, file, signal }) => {
   checkFile(file);
   const form = new FormData();
   form.append('model', model);
   form.append('file', file, file.name);
-  const { res, duration } = await call(workspace, '/audio/transcriptions', { form, signal });
+  const { res, duration } = await call(workspace, path, { form, signal });
   const json = await res.json();
   return { text: json.text || '', usage: usageOf(json), costs: costsOf(json), duration, raw: json };
+};
+
+const runTranscription = writeDown('/audio/transcriptions');
+const runTranslation = writeDown('/audio/translations');
+
+// The Responses API: one input, and the output items of the answer, read for the text of its messages, the
+// summaries of its reasoning and the images it drew
+async function runResponses({ workspace, model, text, signal }) {
+  const { res, duration } = await call(workspace, '/responses', { body: { model, input: text }, signal });
+  const json = await res.json();
+  const output = json.output || [];
+  const texts = output
+    .filter((o) => o.type === 'message')
+    .flatMap((o) => o.content || [])
+    .filter((c) => c.type === 'output_text' && c.text)
+    .map((c) => c.text);
+  const reasoning = output
+    .filter((o) => o.type === 'reasoning')
+    .flatMap((o) => o.summary || [])
+    .map((s) => s.text)
+    .filter(Boolean);
+  const images = output
+    .filter((o) => o.type === 'image_generation_call' && o.result)
+    .map((o) => (o.result.startsWith('data:') || o.result.startsWith('http') ? o.result : `data:image/png;base64,${o.result}`));
+  const usage = json.usage
+    ? { prompt_tokens: json.usage.input_tokens || 0, completion_tokens: json.usage.output_tokens || 0, total_tokens: json.usage.total_tokens || 0 }
+    : null;
+  return {
+    text: texts.join('\n\n'),
+    reasoning: reasoning.join('\n\n'),
+    ...(images.length > 0 ? { images } : {}),
+    usage,
+    costs: costsOf(json),
+    duration,
+    raw: json,
+  };
 }
 
 async function runEmbedding({ workspace, model, text, signal }) {
@@ -242,7 +305,18 @@ async function runDecision({ workspace, model, text, questions, signal }) {
   return { answers: json.answers || {}, usage: usageOf(json), costs: costsOf(json), duration, raw: json };
 }
 
-const RUNNERS = { image: runImage, image_edit: runImageEdit, tts: runSpeech, stt: runTranscription, embedding: runEmbedding, moderation: runModeration, ocr: runOcr, decision: runDecision };
+const RUNNERS = {
+  responses: runResponses,
+  image: runImage,
+  image_edit: runImageEdit,
+  tts: runSpeech,
+  stt: runTranscription,
+  translation: runTranslation,
+  embedding: runEmbedding,
+  moderation: runModeration,
+  ocr: runOcr,
+  decision: runDecision,
+};
 
 /** Runs one playground, `input` being `{ text }`, `{ file }`, `{ text, images }` or `{ text, questions }`. Throws what to show the user. */
 export function runPlayground(id, { workspace, model, text = '', file = null, images = [], questions = null, signal }) {

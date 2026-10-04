@@ -373,8 +373,18 @@ export function Playground({ model, workspace, providers }) {
           {result.vectors && <Vectors result={result} />}
           {result.moderation !== undefined && <Moderation moderation={result.moderation} />}
           {result.answers && <Decisions answers={result.answers} />}
-          {/* a transcription or an extraction is the answer itself, a revised prompt only shows when the model sent one */}
-          {['stt', 'ocr'].includes(current.id) ? <TextResult text={result.text} markdown={current.id === 'ocr'} /> : result.text ? <TextResult text={result.text} /> : null}
+          {result.reasoning && (
+            <details className="playground-reasoning">
+              <summary className="muted small">Reasoning</summary>
+              <Markdown text={result.reasoning} />
+            </details>
+          )}
+          {/* a transcription, a translation, an extraction or an answer is the result itself, a revised prompt only shows when the model sent one */}
+          {['stt', 'translation', 'ocr', 'responses'].includes(current.id) ? (
+            <TextResult text={result.text} markdown={['ocr', 'responses'].includes(current.id)} />
+          ) : result.text ? (
+            <TextResult text={result.text} />
+          ) : null}
           <RunMeta result={result} />
         </div>
       )}
