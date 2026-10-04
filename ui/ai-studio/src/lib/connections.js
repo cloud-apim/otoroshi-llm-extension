@@ -189,7 +189,8 @@ export function buildEntity(modality, wsId, conn, catalogEntry, existing) {
         ? { enabled: !!tts, model_id: tts, voice_id: '21m00Tcm4TlvDq8ikWAM', output_format: 'mp3_44100_128' }
         : { enabled: !!tts, model: tts, voice: 'alloy', response_format: 'mp3' };
     const sttConf = kind === 'elevenlabs' ? { enabled: !!stt, model_id: stt } : { enabled: !!stt, model: stt };
-    const translate = { enabled: false };
+    // a connection that transcribes also translates: its client knows whether the provider can
+    const translate = { enabled: !!stt };
     // the audio client reads tts/stt at the root of the config, the admin ui writes them in options:
     // write both so the entity behaves the same in both places
     config = {
@@ -197,12 +198,12 @@ export function buildEntity(modality, wsId, conn, catalogEntry, existing) {
       connection,
       tts: { ...(prevConfig.tts || {}), ...ttsConf },
       stt: { ...(prevConfig.stt || {}), ...sttConf },
-      translate: { ...translate, ...(prevConfig.translate || {}) },
+      translate: { ...(prevConfig.translate || {}), ...translate },
       options: {
         ...prevOptions,
         tts: { ...(prevOptions.tts || {}), ...ttsConf },
         stt: { ...(prevOptions.stt || {}), ...sttConf },
-        translation: { ...translate, ...(prevOptions.translation || {}) },
+        translation: { ...(prevOptions.translation || {}), ...translate },
       },
     };
   } else if (modality === 'video') {

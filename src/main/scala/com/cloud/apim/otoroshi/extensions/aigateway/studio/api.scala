@@ -759,17 +759,18 @@ class AiStudioApi(env: Env, ext: AiExtension) {
             if (kind == "elevenlabs") Json.obj("enabled" -> tts.nonEmpty, "model_id" -> tts, "voice_id" -> "21m00Tcm4TlvDq8ikWAM", "output_format" -> "mp3_44100_128")
             else Json.obj("enabled" -> tts.nonEmpty, "model" -> tts, "voice" -> "alloy", "response_format" -> "mp3")
           val sttConf = if (kind == "elevenlabs") Json.obj("enabled" -> stt.nonEmpty, "model_id" -> stt) else Json.obj("enabled" -> stt.nonEmpty, "model" -> stt)
-          val translate = Json.obj("enabled" -> false)
+          // a connection that transcribes also translates: its client knows whether the provider can
+          val translate = Json.obj("enabled" -> stt.nonEmpty)
           // the audio client reads tts/stt at the root of the config, the admin ui writes them in options: write both
           prevConfig ++ Json.obj(
             "connection" -> connection,
             "tts" -> (objOf(prevConfig.select("tts")) ++ ttsConf),
             "stt" -> (objOf(prevConfig.select("stt")) ++ sttConf),
-            "translate" -> (translate ++ objOf(prevConfig.select("translate"))),
+            "translate" -> (objOf(prevConfig.select("translate")) ++ translate),
             "options" -> (prevOptions ++ Json.obj(
               "tts" -> (objOf(prevOptions.select("tts")) ++ ttsConf),
               "stt" -> (objOf(prevOptions.select("stt")) ++ sttConf),
-              "translation" -> (translate ++ objOf(prevOptions.select("translation"))),
+              "translation" -> (objOf(prevOptions.select("translation")) ++ translate),
             )),
           )
         case "video" =>
