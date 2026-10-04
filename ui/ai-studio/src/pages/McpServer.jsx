@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useWorkspace } from '../App';
-import { Checks, CopyButton, Empty, ErrorAlert, Field, Loading, PageHeader, Readonly, StatusBadge, TextArea, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
+import { Checks, CopyButton, Empty, ErrorAlert, Field, Loading, PageHeader, Readonly, Select, StatusBadge, TextArea, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
 import { Resources, workspaceFilter } from '../lib/entities';
 import { Link } from '../lib/router';
-import { clientConfigOf, deleteMcpServer, loadMcpServer, mcpUrlOf, saveMcpServer, toolRefsOf } from '../lib/mcpserver';
+import { clientConfigOf, deleteMcpServer, exampleArguments, loadMcpServer, mcpCall, mcpUrlOf, saveMcpServer, toolRefsOf } from '../lib/mcpserver';
+import { fmtMs } from '../lib/format';
 
 const emptyForm = (workspace) => ({ name: `${workspace.name} tools`, description: '', enabled: true, functions: [], connectors: [] });
 
@@ -70,6 +71,149 @@ function ToolsCard({ workspace, form, set, tools }) {
         <Field label="MCP connectors" hint="Remote MCP servers: their tools, resources and prompts are re-exposed here.">
           <Checks options={options(connectors)} value={form.connectors} onChange={(connectors) => set({ connectors })} />
         </Field>
+      )}
+    </div>
+  );
+}
+
+// a text the tool answered, shown as indented json when it is some
+function pretty(text) {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch (e) {
+    return text;
+  }
+}
+
+function ToolResult({ result }) {
+  const content = result.content || [];
+  return (
+    <div className="card playground-result">
+      {result.isError && (
+        <div className="playground-verdict flagged">
+          <Icon name="info" />
+          The tool answered with an error
+        </div>
+      )}
+      {content.map((c, i) =>
+        c.type === 'text' ? (
+          <div key={i} className="playground-text">
+            <pre>{pretty(c.text)}</pre>
+            <CopyButton text={c.text} />
+          </div>
+        ) : c.type === 'image' ? (
+          <img key={i} src={`data:${c.mimeType};base64,${c.data}`} alt={`Image ${i + 1}`} style={{ maxWidth: 320 }} />
+        ) : (
+          <pre key={i}>{JSON.stringify(c, null, 2)}</pre>
+        )
+      )}
+      {content.length === 0 && !result.structuredContent && <p className="muted">The tool answered with no content.</p>}
+      {result.structuredContent && (
+        <div className="playground-text">
+          <pre>{JSON.stringify(result.structuredContent, null, 2)}</pre>
+        </div>
+      )}
+      <div className="meta small">
+        <span>{fmtMs(result.duration)}</span>
+      </div>
+    </div>
+  );
+}
+
+// The tools of the saved server, called the way a client calls them on the workspace endpoint: what a tool
+// answers here is what Claude or Cursor gets, audited the same way
+function PlaygroundCard({ workspace }) {
+  const tools = useAsync(() => mcpCall(workspace, 'tools/list').then((r) => (r && r.tools) || []), [workspace.id]);
+  const [name, setName] = useState('');
+  const [args, setArgs] = useState('{}');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null);
+  const abort = useRef(null);
+  const list = tools.data || [];
+  const tool = list.find((t) => t.name === name) || null;
+
+  const pick = (toolName) => {
+    const picked = list.find((t) => t.name === toolName);
+    setName(toolName);
+    setArgs(JSON.stringify(exampleArguments(picked && picked.inputSchema), null, 2));
+    setResult(null);
+    setError(null);
+  };
+
+  // the first tool is ready to be called as soon as the list is in
+  useEffect(() => {
+    if (list.length > 0 && !list.some((t) => t.name === name)) pick(list[0].name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tools.data]);
+
+  let parsed = null;
+  try {
+    parsed = JSON.parse(args.trim() || '{}');
+  } catch (e) {
+    parsed = undefined;
+  }
+  const valid = parsed !== undefined && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed);
+
+  const run = () => {
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    const controller = new AbortController();
+    abort.current = controller;
+    const started = Date.now();
+    mcpCall(workspace, 'tools/call', { name, arguments: parsed }, controller.signal)
+      .then((r) => setResult({ ...(r || {}), duration: Date.now() - started }))
+      .catch((e) => {
+        if (e.name !== 'AbortError') setError(e);
+      })
+      .finally(() => {
+        abort.current = null;
+        setBusy(false);
+      });
+  };
+
+  return (
+    <div className="card">
+      <div className="row between">
+        <h2>Playground</h2>
+        <button className="btn sm ghost" onClick={tools.reload} disabled={tools.loading}>
+          <Icon name="refresh" />
+          Reload tools
+        </button>
+      </div>
+      <p className="muted" style={{ margin: '4px 0 14px' }}>
+        Call a tool the way a client does, on the endpoint of the workspace and as it is saved: what it answers here
+        is what your agents get, and the call shows up in the MCP activity.
+      </p>
+      <ErrorAlert error={tools.error} />
+      {tools.loading && !tools.data && <Loading />}
+      {tools.data && list.length === 0 && <p className="muted">The server exposes no tool yet.</p>}
+      {list.length > 0 && (
+        <div className="playground stack">
+          <Field label="Tool" hint={tool && tool.description}>
+            <Select value={name} onChange={pick} options={list.map((t) => ({ value: t.name, label: t.title || t.name }))} />
+          </Field>
+          <Field label="Arguments" hint="A JSON object, written after the input schema of the tool.">
+            <TextArea className="mono" rows={6} value={args} onChange={setArgs} />
+          </Field>
+          <div className="row between">
+            <span className="faint small">{valid ? `Sent to ${mcpUrlOf(workspace)}` : 'The arguments are not a JSON object'}</span>
+            <div className="row">
+              {busy && (
+                <button className="btn sm" onClick={() => abort.current && abort.current.abort()}>
+                  <Icon name="stop" />
+                  Stop
+                </button>
+              )}
+              <button className="btn primary" disabled={busy || !valid || !name} onClick={run}>
+                {busy ? 'Running…' : 'Call'}
+              </button>
+            </div>
+          </div>
+          <ErrorAlert error={error} />
+          {result && <ToolResult result={result} />}
+        </div>
       )}
     </div>
   );
@@ -178,6 +322,7 @@ export function McpServerPage() {
           </div>
           <ToolsCard workspace={workspace} form={form} set={set} tools={data.data} />
           {server && <ConnectCard workspace={workspace} />}
+          {server && server.enabled !== false && <PlaygroundCard key={JSON.stringify(toolRefsOf(server))} workspace={workspace} />}
           {server && (
             <div className="card">
               <h2>Activity</h2>

@@ -1,3 +1,5 @@
+import { gatewayError, STUDIO_API } from './api';
+import { currentTenant } from './bootstrap';
 import { Resources } from './entities';
 import { findPlugin, OPENAI_COMPAT_PLUGIN, routeIdOf, setOpenAiConfig, updateWorkspaceRoute, workspaceLocation, workspaceMetadata } from './workspaces';
 
@@ -81,4 +83,64 @@ export function clientConfigOf(workspace, slug) {
     null,
     2
   );
+}
+
+let rpcId = 0;
+
+/**
+ * One JSON-RPC request on the MCP endpoint of the workspace, as the signed-in backoffice user: the endpoint
+ * answers a client that never initializes, so a playground needs no session. Returns the `result` of the
+ * answer, and throws its error.
+ */
+export async function mcpCall(workspace, method, params = {}, signal) {
+  const res = await fetch(`${STUDIO_API}/workspaces/${workspace.id}/proxy${MCP_PATH}`, {
+    method: 'POST',
+    credentials: 'include',
+    signal,
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'Otoroshi-Tenant': currentTenant() },
+    body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
+  });
+  const text = await res.text();
+  // an answer may come as a stream of events: the last message is the answer
+  const raw = (res.headers.get('Content-Type') || '').startsWith('text/event-stream')
+    ? text
+        .split('\n')
+        .filter((l) => l.startsWith('data:'))
+        .map((l) => l.slice(5).trim())
+        .filter(Boolean)
+        .pop()
+    : text;
+  let json = null;
+  try {
+    json = JSON.parse(raw || '');
+  } catch (e) {
+    throw gatewayError(text, res.status, res.statusText);
+  }
+  if (json.error && json.error.message) throw new Error(`${json.error.code} - ${json.error.message}`);
+  if (!res.ok || json.result === undefined) throw gatewayError(text, res.status, res.statusText);
+  return json.result;
+}
+
+// arguments to start from, written after the input schema of a tool: its defaults, its first allowed values
+export function exampleArguments(schema) {
+  if (!schema || typeof schema !== 'object') return {};
+  if (schema.default !== undefined) return schema.default;
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) return schema.enum[0];
+  if (Array.isArray(schema.examples) && schema.examples.length > 0) return schema.examples[0];
+  const type = Array.isArray(schema.type) ? schema.type[0] : schema.type;
+  switch (type) {
+    case 'object':
+      return Object.fromEntries(Object.entries(schema.properties || {}).map(([k, v]) => [k, exampleArguments(v)]));
+    case 'array':
+      return [];
+    case 'number':
+    case 'integer':
+      return 0;
+    case 'boolean':
+      return false;
+    case 'string':
+      return '';
+    default:
+      return schema.properties ? exampleArguments({ ...schema, type: 'object' }) : null;
+  }
 }
