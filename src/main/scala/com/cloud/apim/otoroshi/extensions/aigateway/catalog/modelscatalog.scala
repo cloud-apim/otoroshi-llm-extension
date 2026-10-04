@@ -597,6 +597,14 @@ object ModelEndpoints {
 
   private val speechName = "(^|[^a-z])tts([^a-z]|$)".r
 
+  // No price table lists `/audio/translations`: the Whisper models serve it (`whisper-1` at OpenAI,
+  // `whisper-large-v3` at Groq), their turbo variants only transcribe
+  private val translatorName = "whisper(?!.*turbo)".r
+
+  def withTranslations(endpoints: Seq[String], model: String): Seq[String] =
+    if (endpoints.contains(AudioTranscriptions) && !endpoints.contains(AudioTranslations) && translatorName.findFirstIn(model.toLowerCase(Locale.ROOT)).isDefined) endpoints :+ AudioTranslations
+    else endpoints
+
   // what the data says: the price table endpoints (batch and vendor specific ones left out), else its mode, else
   // the api shape of the catalog
   def known(supported: Seq[String], mode: Option[String], shape: Option[String]): Seq[String] = {
@@ -715,10 +723,13 @@ object ModelsMetadata {
       AiProvider.openAiCompatibleProviders.contains(kind) && servedByOpenAiSdk && !decides &&
         (knownEndpoints.isEmpty || knownEndpoints.exists(_ != ModelEndpoints.Messages))
     }
-    val endpoints = if (decides) Seq(ModelEndpoints.SystemOne)
+    val endpoints = ModelEndpoints.withTranslations(
+      if (decides) Seq(ModelEndpoints.SystemOne)
       else if (!openAiCompatible.contains(true)) Seq.empty
       else if (knownEndpoints.nonEmpty) knownEndpoints.filterNot(_ == ModelEndpoints.Messages)
-      else ModelEndpoints.ofKinds(kinds, names, input.getOrElse(Seq.empty))
+      else ModelEndpoints.ofKinds(kinds, names, input.getOrElse(Seq.empty)),
+      model,
+    )
     val cacheRead = catalog.flatMap(_.cost).map(_.cacheRead.isDefined).filter(identity)
     // What the gateway can actually bill for a call on this model, which decides whether its calls count
     // against dollar budgets. Text, embeddings, moderations and decisions are billed per token; the other modalities by
