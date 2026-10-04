@@ -676,7 +676,20 @@ When `decode_images` is enabled, base64-encoded image results are decoded and re
 
 ### POST /images/edits
 
-[OpenAI Image Edit API](https://platform.openai.com/docs/api-reference/images/createEdit) endpoint. Accepts multipart/form-data uploads.
+[OpenAI Image Edit API](https://platform.openai.com/docs/api-reference/images/createEdit) endpoint. Accepts multipart/form-data uploads: the
+picture to change as `image`, or several of them as `image[]`, and a `prompt` saying what to change.
+
+```sh
+curl https://api.domain.tld/v1/images/edits \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
+  -F model="gpt-image-1" \
+  -F "image[]=@cabin.png" \
+  -F "image[]=@fox.png" \
+  -F prompt="Put the fox in the snow in front of the cabin"
+```
+
+The same call edits with every provider that can: OpenAI compatible providers get it as is, and OpenRouter gets the
+pictures as images of a chat message, the way its image models take them.
 
 ### POST /audio/speech
 
