@@ -4,7 +4,8 @@ import { CopyButton, ErrorAlert, Segmented } from './ui';
 import { Markdown } from './Markdown';
 import { DecisionForm, Decisions } from './decisions';
 import { exampleQuestions, questionsReady, toQuestions } from '../lib/decisions';
-import { MAX_UPLOAD_BYTES, playgroundsOf, runPlayground } from '../lib/playgrounds';
+import { MAX_EDIT_IMAGES, MAX_UPLOAD_BYTES, playgroundsOf, runPlayground } from '../lib/playgrounds';
+import { imageFile } from '../lib/images';
 import { fmtBytes } from '../lib/attachments';
 import { fmtCost, fmtInt, fmtMs } from '../lib/format';
 import { costOf } from '../lib/conversations';
@@ -25,8 +26,10 @@ function RunMeta({ result }) {
   );
 }
 
+const baseName = (model) => `${(model || 'model').replace(/[^a-z0-9.-]+/gi, '-')}-${Date.now()}`;
+
 function fileName(model, extension) {
-  return `${(model || 'model').replace(/[^a-z0-9.-]+/gi, '-')}-${Date.now()}.${extension}`;
+  return `${baseName(model)}.${extension}`;
 }
 
 // the text a transcription, an extraction or a revised prompt gives back
@@ -132,6 +135,68 @@ function DropZone({ file, accept, hint, onPick, disabled }) {
   );
 }
 
+// the images an edit starts from: dropped, picked, or taken from an answer to keep editing it
+function ImagesPicker({ images, accept, onAdd, onRemove, disabled }) {
+  const input = useRef(null);
+  const [over, setOver] = useState(false);
+  const full = images.length >= MAX_EDIT_IMAGES;
+  const pick = () => !disabled && !full && input.current && input.current.click();
+  const drop = (e) => {
+    e.preventDefault();
+    setOver(false);
+    if (!disabled) onAdd([...e.dataTransfer.files].filter((f) => f.type.startsWith('image/')));
+  };
+  const dragging = {
+    onDragOver: (e) => {
+      e.preventDefault();
+      setOver(true);
+    },
+    onDragLeave: () => setOver(false),
+    onDrop: drop,
+  };
+  const picker = (
+    <input
+      ref={input}
+      type="file"
+      multiple
+      accept={accept}
+      style={{ display: 'none' }}
+      onChange={(e) => {
+        onAdd([...e.target.files]);
+        e.target.value = '';
+      }}
+    />
+  );
+  if (images.length === 0) {
+    return (
+      <div className={`dropzone ${over ? 'over' : ''}`} {...dragging} onClick={pick}>
+        {picker}
+        <Icon name="image" size={18} />
+        <b>Drop the images to edit here</b>
+        <span className="faint small">PNG, JPEG or WebP, up to {MAX_EDIT_IMAGES} of them, {fmtBytes(MAX_UPLOAD_BYTES)} each at most.</span>
+      </div>
+    );
+  }
+  return (
+    <div className={`edit-images ${over ? 'over' : ''}`} {...dragging}>
+      {picker}
+      {images.map((img, i) => (
+        <div key={img.url} className="edit-image" title={`${img.file.name} · ${fmtBytes(img.file.size)}`}>
+          <img src={img.url} alt={img.file.name} />
+          <button className="btn sm ghost icon" title="Remove this image" disabled={disabled} onClick={() => onRemove(i)}>
+            <Icon name="x" size={12} />
+          </button>
+        </div>
+      ))}
+      {!full && (
+        <button className="edit-image add" title="Add images" disabled={disabled} onClick={pick}>
+          <Icon name="plus" size={18} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 /**
  * A small form to try a model that is not a chat model: a prompt or a file in, what the model answers out.
  * Every run is a real call on the workspace endpoint, so it is billed and audited like any other.
@@ -141,6 +206,8 @@ export function Playground({ model, workspace, providers }) {
   const [kind, setKind] = useState(kinds[0] ? kinds[0].id : null);
   const [text, setText] = useState('');
   const [file, setFile] = useState(null);
+  // the images to edit, each with the object url of its preview
+  const [images, setImages] = useState([]);
   // a decision playground opens on questions ready to be asked, there to be rewritten
   const [questions, setQuestions] = useState(exampleQuestions);
   const [busy, setBusy] = useState(false);
@@ -148,6 +215,8 @@ export function Playground({ model, workspace, providers }) {
   const [result, setResult] = useState(null);
   const abort = useRef(null);
   const audioUrl = useRef(null);
+  const previews = useRef([]);
+  previews.current = images;
 
   const current = kinds.find((k) => k.id === kind) || kinds[0];
 
@@ -158,28 +227,75 @@ export function Playground({ model, workspace, providers }) {
     setError(null);
   };
 
+  const addImages = (files) => {
+    const room = MAX_EDIT_IMAGES - previews.current.length;
+    const added = files.slice(0, Math.max(room, 0)).map((f) => ({ file: f, url: URL.createObjectURL(f) }));
+    if (added.length > 0) setImages((all) => [...all, ...added]);
+  };
+  const removeImage = (index) => {
+    setImages((all) => {
+      URL.revokeObjectURL(all[index].url);
+      return all.filter((_, i) => i !== index);
+    });
+  };
+  const resetImages = (files = []) => {
+    previews.current.forEach((img) => URL.revokeObjectURL(img.url));
+    setImages(files.map((f) => ({ file: f, url: URL.createObjectURL(f) })));
+  };
+
   // a new model, or another way of using it, starts from a blank form
   useEffect(() => {
     clear();
     setText('');
     setFile(null);
+    resetImages();
     setQuestions(exampleQuestions());
     setKind(kinds[0] ? kinds[0].id : null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model.id, model.modality]);
 
-  useEffect(() => () => audioUrl.current && URL.revokeObjectURL(audioUrl.current), []);
+  useEffect(
+    () => () => {
+      if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
+      previews.current.forEach((img) => URL.revokeObjectURL(img.url));
+    },
+    [],
+  );
 
   if (!current) return null;
 
-  const ready = current.input === 'file' ? !!file : text.trim().length > 0 && (current.input !== 'decision' || questionsReady(questions));
+  const editing = kinds.find((k) => k.id === 'image_edit');
+  const ready =
+    current.input === 'file'
+      ? !!file
+      : text.trim().length > 0 && (current.input !== 'decision' || questionsReady(questions)) && (current.input !== 'images' || images.length > 0);
+
+  // an image of the answer becomes the one to edit, with a fresh prompt: the way to refine it step by step
+  const editFurther = (src) => {
+    imageFile(src, baseName(model.model || model.id))
+      .then((f) => {
+        clear();
+        resetImages([f]);
+        setText('');
+        setKind(editing.id);
+      })
+      .catch(setError);
+  };
 
   const run = () => {
     clear();
     setBusy(true);
     const controller = new AbortController();
     abort.current = controller;
-    runPlayground(current.id, { workspace, model: current.model, text, file, questions: current.input === 'decision' ? toQuestions(questions) : null, signal: controller.signal })
+    runPlayground(current.id, {
+      workspace,
+      model: current.model,
+      text,
+      file,
+      images: images.map((img) => img.file),
+      questions: current.input === 'decision' ? toQuestions(questions) : null,
+      signal: controller.signal,
+    })
       .then((r) => {
         if (r.audio) audioUrl.current = r.audio.url;
         setResult(r);
@@ -200,6 +316,11 @@ export function Playground({ model, workspace, providers }) {
         <DropZone file={file} accept={current.accept} hint={current.hint} disabled={busy} onPick={(f) => { clear(); setFile(f); }} />
       ) : current.input === 'decision' ? (
         <DecisionForm state={text} onState={setText} questions={questions} onQuestions={setQuestions} disabled={busy} />
+      ) : current.input === 'images' ? (
+        <>
+          <ImagesPicker images={images} accept={current.accept} disabled={busy} onAdd={(files) => { clear(); addImages(files); }} onRemove={removeImage} />
+          <textarea rows={4} placeholder={current.placeholder} value={text} onChange={(e) => setText(e.target.value)} />
+        </>
       ) : (
         <textarea rows={4} placeholder={current.placeholder} value={text} onChange={(e) => setText(e.target.value)} />
       )}
@@ -223,9 +344,17 @@ export function Playground({ model, workspace, providers }) {
           {result.images && (
             <div className="answer-images">
               {result.images.map((src, i) => (
-                <button key={i} className="answer-image" title="Download this image" onClick={() => downloadDataUrl(fileName(model.model || model.id, 'png'), src)}>
-                  <img src={src} alt={`Generated ${i + 1}`} />
-                </button>
+                <div key={i} className="stack tight">
+                  <button className="answer-image" title="Download this image" onClick={() => downloadDataUrl(fileName(model.model || model.id, 'png'), src)}>
+                    <img src={src} alt={`Generated ${i + 1}`} />
+                  </button>
+                  {editing && (
+                    <button className="btn sm" title="Edit this image with this model" onClick={() => editFurther(src)}>
+                      <Icon name="edit" />
+                      {current.id === 'image_edit' ? 'Keep editing' : 'Edit this image'}
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           )}

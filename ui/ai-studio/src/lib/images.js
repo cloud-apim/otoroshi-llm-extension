@@ -1,6 +1,6 @@
 // Images generated from the chat by the image models of the workspace, on its `/images/generations`
-// endpoint. Chat models that draw instead of writing answer on the chat endpoint, with their images in
-// the message: see `imagesOf` in `chat.js`.
+// endpoint, and edited from the playground on its `/images/edits` endpoint. Chat models that draw instead of
+// writing answer on the chat endpoint, with their images in the message: see `imagesOf` in `chat.js`.
 
 import { gatewayError } from './api';
 import { currentTenant } from './bootstrap';
@@ -18,25 +18,9 @@ function usageOf(json) {
   };
 }
 
-/**
- * Asks `model` for an image, as the signed-in backoffice user. Returns `{ images, content, usage, costs,
- * duration }`, the images as data urls. A workspace that decodes its images answers with the image itself
- * rather than json, so both shapes are read.
- */
-export async function generateImage({ workspace, model, prompt, signal, sessionId }) {
-  const started = Date.now();
-  const res = await fetch(billedProxyUrl(workspace, '/images/generations'), {
-    method: 'POST',
-    credentials: 'include',
-    signal,
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      'Otoroshi-Tenant': currentTenant(),
-      ...(sessionId ? { 'X-Session-Id': sessionId } : {}),
-    },
-    body: JSON.stringify({ model, prompt, n: 1 }),
-  });
+// What an images endpoint answers: `{ images, content, usage, costs, duration }`, the images as data urls. A
+// workspace that decodes its images answers with the image itself rather than json, so both shapes are read.
+async function answerOf(res, started) {
   if (!res.ok) throw gatewayError(await res.text(), res.status, res.statusText);
   const duration = () => Date.now() - started;
   if ((res.headers.get('Content-Type') || '').startsWith('image/')) {
@@ -53,4 +37,51 @@ export async function generateImage({ workspace, model, prompt, signal, sessionI
     costs: (json.usage && json.usage.costs) || json.costs || null,
     duration: duration(),
   };
+}
+
+/** Asks `model` for an image, as the signed-in backoffice user. */
+export async function generateImage({ workspace, model, prompt, signal, sessionId }) {
+  const started = Date.now();
+  const res = await fetch(billedProxyUrl(workspace, '/images/generations'), {
+    method: 'POST',
+    credentials: 'include',
+    signal,
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'Otoroshi-Tenant': currentTenant(),
+      ...(sessionId ? { 'X-Session-Id': sessionId } : {}),
+    },
+    body: JSON.stringify({ model, prompt, n: 1 }),
+  });
+  return answerOf(res, started);
+}
+
+/** Asks `model` to change `images` (files) the way `prompt` says, as the signed-in backoffice user. */
+export async function editImage({ workspace, model, prompt, images, signal }) {
+  const started = Date.now();
+  const form = new FormData();
+  form.append('model', model);
+  form.append('prompt', prompt);
+  // one image goes as `image`, several as `image[]`, the way the OpenAI sdks send them
+  images.forEach((file) => form.append(images.length > 1 ? 'image[]' : 'image', file, file.name));
+  const res = await fetch(billedProxyUrl(workspace, '/images/edits'), {
+    method: 'POST',
+    credentials: 'include',
+    signal,
+    // a FormData body carries its own content type, with the boundary the gateway parses
+    headers: { Accept: 'application/json', 'Otoroshi-Tenant': currentTenant() },
+    body: form,
+  });
+  return answerOf(res, started);
+}
+
+/** An image of an answer (a data url, or an url the provider gave) as a file to send back for editing. */
+export async function imageFile(src, name) {
+  const blob = await fetch(src).then((r) => {
+    if (!r.ok) throw new Error(`could not read this image (${r.status})`);
+    return r.blob();
+  });
+  const type = blob.type && blob.type.startsWith('image/') ? blob.type : 'image/png';
+  return new File([blob], `${name}.${type.split('/')[1] || 'png'}`, { type });
 }

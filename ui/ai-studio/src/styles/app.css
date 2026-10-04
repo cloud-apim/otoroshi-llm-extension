@@ -943,6 +943,17 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
 .dropzone:hover, .dropzone.over { border-color: var(--grape); color: var(--ink); }
 .dropzone.filled { border-style: solid; }
 .dropzone b { max-width: 100%; }
+/* the images an edit starts from, each with a button to take it out */
+.edit-images { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px; border: 1px dashed var(--border-strong); border-radius: var(--radius); }
+.edit-images.over { border-color: var(--grape); }
+.edit-image {
+  position: relative; width: 96px; height: 96px; padding: 0; overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--hover);
+}
+.edit-image img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.edit-image > .btn { position: absolute; top: 4px; right: 4px; padding: 3px; background: var(--surface); box-shadow: var(--shadow); }
+.edit-image.add { display: flex; align-items: center; justify-content: center; border-style: dashed; color: var(--muted); cursor: pointer; }
+.edit-image.add:hover { border-color: var(--grape); color: var(--ink); }
 .playground-result { display: flex; flex-direction: column; gap: 10px; }
 .playground-text { position: relative; }
 .playground-text pre { margin: 0; white-space: pre-wrap; word-break: break-word; max-height: 40vh; overflow: auto; }

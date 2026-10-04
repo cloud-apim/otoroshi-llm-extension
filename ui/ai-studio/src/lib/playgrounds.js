@@ -5,12 +5,15 @@
 import { gatewayError } from './api';
 import { currentTenant } from './bootstrap';
 import { stateOf } from './decisions';
-import { generateImage } from './images';
+import { editImage, generateImage } from './images';
 import { endpointsOf, KIND_LABELS, kindsOf } from './modelmeta';
 import { billedProxyUrl } from './models';
 
 // a file sent to a playground: large enough for a song or a scanned contract
 export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+// the images an edit can start from, as many as the OpenAI image models take
+export const MAX_EDIT_IMAGES = 16;
 
 /**
  * What a model can be tried with. `endpoint` is the OpenAI endpoint of the metadata, `modality` the kind of
@@ -26,6 +29,17 @@ export const PLAYGROUNDS = [
     placeholder: 'A red panda coding on a laptop, watercolor',
     action: 'Generate',
     hint: 'Describes what the model draws.',
+  },
+  {
+    id: 'image_edit',
+    label: 'Image edit',
+    endpoint: 'images_edits',
+    modality: 'image',
+    input: 'images',
+    accept: 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp',
+    placeholder: 'Turn the sky into a sunset, keep everything else as it is',
+    action: 'Edit',
+    hint: 'Says what to change in the images.',
   },
   {
     id: 'tts',
@@ -168,6 +182,13 @@ async function runImage({ workspace, model, text, signal }) {
   return { images: result.images, text: result.content, usage: result.usage, costs: result.costs, duration: result.duration };
 }
 
+async function runImageEdit({ workspace, model, text, images, signal }) {
+  if (images.length === 0) throw new Error('pick an image first');
+  images.forEach(checkFile);
+  const result = await editImage({ workspace, model, prompt: text, images, signal });
+  return { images: result.images, text: result.content, usage: result.usage, costs: result.costs, duration: result.duration };
+}
+
 async function runSpeech({ workspace, model, text, signal }) {
   const { res, duration } = await call(workspace, '/audio/speech', { body: { model, input: text }, signal });
   const blob = await res.blob();
@@ -221,11 +242,11 @@ async function runDecision({ workspace, model, text, questions, signal }) {
   return { answers: json.answers || {}, usage: usageOf(json), costs: costsOf(json), duration, raw: json };
 }
 
-const RUNNERS = { image: runImage, tts: runSpeech, stt: runTranscription, embedding: runEmbedding, moderation: runModeration, ocr: runOcr, decision: runDecision };
+const RUNNERS = { image: runImage, image_edit: runImageEdit, tts: runSpeech, stt: runTranscription, embedding: runEmbedding, moderation: runModeration, ocr: runOcr, decision: runDecision };
 
-/** Runs one playground, `input` being `{ text }`, `{ file }` or `{ text, questions }`. Throws what to show the user. */
-export function runPlayground(id, { workspace, model, text = '', file = null, questions = null, signal }) {
+/** Runs one playground, `input` being `{ text }`, `{ file }`, `{ text, images }` or `{ text, questions }`. Throws what to show the user. */
+export function runPlayground(id, { workspace, model, text = '', file = null, images = [], questions = null, signal }) {
   const runner = RUNNERS[id];
   if (!runner) return Promise.reject(new Error('unknown playground'));
-  return runner({ workspace, model, text, file, questions, signal });
+  return runner({ workspace, model, text, file, images, questions, signal });
 }
