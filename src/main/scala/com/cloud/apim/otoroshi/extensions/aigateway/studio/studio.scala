@@ -4,7 +4,7 @@ import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsMetadata
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ImageModel}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.SystemOneProviders
 import otoroshi.env.Env
 import otoroshi.models.{BackOfficeUser, EntityLocation, PrivateAppsUser}
@@ -353,13 +353,20 @@ class AiStudio(env: Env, ext: AiExtension) {
   /**
    * What an entity of this modality can be called for, whatever model the call names: it serves every model
    * of its kind on its connection, not only the one it carries as a default. An audio entity speaks and
-   * transcribes only through the sections that are on, the way its client reads them.
+   * transcribes only through the sections that are on, the way its client reads them. An image entity edits
+   * only when its client can: most providers draw and nothing else, whatever their edition section says.
    */
-  private def endpointsOf(config: JsValue, modality: String): Seq[String] = {
+  private def endpointsOf(entity: JsValue, modality: String): Seq[String] = {
+    val config = entity.select("config").asOpt[JsValue].getOrElse(Json.obj())
     def on(name: String): Boolean = Seq(config.select(name), config.select("options").select(name))
       .flatMap(_.select("enabled").asOpt[Boolean]).headOption.getOrElse(true)
     modality match {
-      case "image" => Seq(Option.when(on("generation"))("images_generations"), Option.when(on("edition"))("images_edits")).flatten
+      case "image" =>
+        val client = ImageModel.format.reads(entity).asOpt.flatMap(_.getImageModelClient())
+        Seq(
+          Option.when(client.map(_.supportsGeneration).getOrElse(on("generation")))("images_generations"),
+          Option.when(client.map(_.supportsEdit).getOrElse(on("edition")))("images_edits"),
+        ).flatten
       case "audio" => Seq(Option.when(on("tts"))("audio_speech"), Option.when(on("stt"))("audio_transcriptions")).flatten
       case other   => modalityEndpoints.get(other).toSeq
     }
@@ -368,7 +375,8 @@ class AiStudio(env: Env, ext: AiExtension) {
   /**
    * The models an entity of this modality serves, each with the endpoint it is called on. An audio model
    * carries two of them: a voice, served on `/audio/speech`, and a transcription model, served on
-   * `/audio/transcriptions` — they are two different models and both belong in the listing.
+   * `/audio/transcriptions` — they are two different models and both belong in the listing. The same goes for
+   * the model an image entity edits with, when it is not the one it draws with.
    */
   private def modelsOf(config: JsValue, modality: String): Seq[(String, String)] = {
     val options = config.select("options")
@@ -378,7 +386,8 @@ class AiStudio(env: Env, ext: AiExtension) {
       .map(_.trim).find(_.nonEmpty)
     val endpoint = modalityEndpoints.getOrElse(modality, "")
     modality match {
-      case "image" => modelIn(options.select("generation"), options).toSeq.map(m => (m, endpoint))
+      case "image" => modelIn(options.select("generation"), options).toSeq.map(m => (m, endpoint)) ++
+        modelIn(options.select("edition")).toSeq.map(m => (m, "images_edits"))
       case "audio" => modelIn(config.select("tts"), options.select("tts")).toSeq.map(m => (m, "audio_speech")) ++
         modelIn(config.select("stt"), options.select("stt")).toSeq.map(m => (m, "audio_transcriptions"))
       case _ => modelIn(options).toSeq.map(m => (m, endpoint))
@@ -433,10 +442,13 @@ class AiStudio(env: Env, ext: AiExtension) {
   )
 
   // a model of the listing with what the gateway knows of it: types, cost, api, capabilities, limits, prices
-  private def described(model: JsObject, provider: AiProvider, modality: String, endpoints: Seq[String] = Seq.empty): JsObject = {
+  private def described(model: JsObject, provider: AiProvider, modality: String, endpoints: Seq[String] = Seq.empty, servable: Seq[String] = Seq.empty): JsObject = {
     val metadata = ModelsMetadata.describe(provider, model.select("model").asString, modality).metadata
-    // the entity says which endpoints serve this model, which beats what the catalog guesses from its name
-    val known = if (endpoints.isEmpty) metadata else metadata ++ Json.obj("endpoints" -> JsArray(endpoints.map(JsString.apply)))
+    // the entity says which endpoints serve this model, which beats what the catalog guesses from its name. The
+    // catalog still knows what else the model does (`gpt-image-1` draws and edits): those of its endpoints the
+    // entity can be asked for are added
+    val catalog = metadata.select("endpoints").asOpt[Seq[String]].getOrElse(Seq.empty).filter(servable.contains)
+    val known = if (endpoints.isEmpty) metadata else metadata ++ Json.obj("endpoints" -> JsArray((endpoints ++ catalog).distinct.map(JsString.apply)))
     model ++ Json.obj("metadata" -> known)
   }
 
@@ -509,12 +521,13 @@ class AiStudio(env: Env, ext: AiExtension) {
               .getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
             val served = modelsOf(entity.select("config").asOpt[JsValue].getOrElse(Json.obj()), modality)
             val config = entity.select("config").asOpt[JsValue].getOrElse(Json.obj())
+            val endpoints = endpointsOf(entity, modality)
             val info = Json.obj(
               "id" -> ref, "name" -> name, "slug" -> slug, "kind" -> entity.select("provider").asOptString.getOrElse("--").json,
               "modality" -> modality,
               "default_model" -> served.headOption.map(m => JsString(m._1)).getOrElse(JsNull).as[JsValue],
               // what this connection can be asked for, whichever model of its kind the call names
-              "endpoints" -> JsArray(endpointsOf(config, modality).map(JsString.apply)),
+              "endpoints" -> JsArray(endpoints.map(JsString.apply)),
             )
             val kind = entity.select("provider").asOptString.getOrElse("--")
             // a decision made by a text provider is billed as the chat call it is: the model is described, and
@@ -525,9 +538,9 @@ class AiStudio(env: Env, ext: AiExtension) {
             val provider = AiProvider(id = ref, name = name, provider = billedKind, metadata = entity.select("metadata").asOpt[Map[String, String]].getOrElse(Map.empty), connection = Json.obj(), options = Json.obj())
             // one entry per model, with every endpoint it is served on (the same model can do both ways of audio)
             val models = served.map(_._1).distinct.map { m =>
-              val endpoints = served.collect { case (model, endpoint) if model == m && endpoint.nonEmpty => endpoint }.distinct
+              val endpointsOfModel = served.collect { case (model, endpoint) if model == m && endpoint.nonEmpty => endpoint }.distinct
               val id = if (all.size == 1) m else if (m.contains("/")) s"$slug###$m" else s"$slug/$m"
-              described(Json.obj("id" -> id, "model" -> m, "provider" -> slug, "provider_id" -> ref, "provider_kind" -> kind, "modality" -> modality, "created" -> now) ++ ownedBy(name, m), provider, modality, endpoints)
+              described(Json.obj("id" -> id, "model" -> m, "provider" -> slug, "provider_id" -> ref, "provider_kind" -> kind, "modality" -> modality, "created" -> now) ++ ownedBy(name, m), provider, modality, endpointsOfModel, endpoints)
             }
             (info, models)
         }
