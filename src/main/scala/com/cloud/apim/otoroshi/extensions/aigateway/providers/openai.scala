@@ -1,6 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
-import org.apache.pekko.http.scaladsl.model.{ContentType, HttpEntity, Multipart, Uri}
+import org.apache.pekko.http.scaladsl.model.{ContentType, HttpEntity, MediaTypes, Multipart, Uri}
 import org.apache.pekko.stream.scaladsl.{Framing, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.*
@@ -1195,83 +1195,46 @@ class OpenAiImageModelClient(val api: OpenAiApi, val genOptions: OpenAiImageMode
 
   override def edit(opts: ImageModelClientEditionInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ImagesGenResponse]] = {
     val finalModel = opts.model.orElse(editOptions.model).getOrElse("gpt-image-1")
-    val model = finalModel
-    val background = opts.background.orElse(editOptions.background)
-    val n = opts.n.orElse(editOptions.n)
-    val quality = opts.quality.orElse(editOptions.quality)
-    val size = opts.size.orElse(editOptions.size)
-    val parts = opts.images.map(i => Multipart.FormData.BodyPart(
-      "file",
-      HttpEntity(ContentType.parse(i.contentType).toOption.get, i.length, i.bytes),
-      Map("filename" -> i.name.getOrElse("audio.mp3"))
-    )).applyOnWithOpt(model.some) {
-        case (list, model) => list :+ Multipart.FormData.BodyPart(
-          "model",
-          HttpEntity(model.byteString),
-        )
-      }.applyOnWithOpt(background) {
-        case (list, background) => list :+ Multipart.FormData.BodyPart(
-          "background",
-          HttpEntity(background.byteString),
-        )
-      }
-      .applyOnWithOpt(n) {
-        case (list, n) => list :+ Multipart.FormData.BodyPart(
-          "n",
-          HttpEntity(n.toString.byteString),
-        )
-      }
-      .applyOnWithOpt(quality) {
-        case (list, quality) => list :+ Multipart.FormData.BodyPart(
-          "quality",
-          HttpEntity(quality.byteString),
-        )
-      }
-      .applyOnWithOpt(size) {
-        case (list, size) => list :+ Multipart.FormData.BodyPart(
-          "size",
-          HttpEntity(size.byteString),
-        )
-      }
-      .applyOnWithOpt(size) {
-        case (list, size) => list :+ Multipart.FormData.BodyPart(
-          "size",
-          HttpEntity(size.byteString),
-        )
-      }
-    val form = Multipart.FormData(parts*)
+    def field(name: String, value: String): Multipart.FormData.BodyPart = Multipart.FormData.BodyPart(name, HttpEntity(value.byteString))
+    // one image goes as `image`, several as `image[]`, the way the OpenAI sdks send them
+    val imageField = if (opts.images.size > 1) "image[]" else "image"
+    val images = opts.images.map(i => Multipart.FormData.BodyPart(
+      imageField,
+      HttpEntity(ContentType.parse(i.contentType).toOption.getOrElse(ContentType(MediaTypes.`image/png`)), i.length, i.bytes),
+      Map("filename" -> i.name.getOrElse("image.png"))
+    ))
+    val fields = Seq(
+      Some("prompt" -> opts.prompt),
+      Some("model" -> finalModel),
+      opts.background.orElse(editOptions.background).map("background" -> _),
+      opts.n.orElse(editOptions.n).map(n => "n" -> n.toString),
+      opts.responseFormat.orElse(editOptions.responseFormat).map("response_format" -> _),
+      opts.quality.orElse(editOptions.quality).map("quality" -> _),
+      opts.size.orElse(editOptions.size).map("size" -> _),
+    ).flatten.map { case (name, value) => field(name, value) }
+    val form = Multipart.FormData((images ++ fields)*)
     api.rawCallForm("POST", "/images/edits", form).map { resp =>
       if (resp.status == 200) {
         val headers = resp.headers.view.mapValues(_.last).toMap
         Right(ImagesGenResponse(
           created = resp.json.select("created").asOpt[Long].getOrElse(-1L),
-          images = resp.json.select("data").as[Seq[JsObject]].map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String])),
-          metadata = finalModel.toLowerCase match {
-            case "gpt-image-1" => ImagesGenResponseMetadata(
-              rateLimit = ChatResponseMetadataRateLimit(
-                requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
-                requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
-                tokensLimit = headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
-                tokensRemaining = headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
-              ), impacts = None, costs = None,
-              usage = ImagesGenResponseMetadataUsage(
-                totalTokens = resp.json.at("usage.total_tokens").asOpt[Long].getOrElse(-1L),
-                tokenInput = resp.json.at("usage.input_tokens").asOpt[Long].getOrElse(-1L),
-                tokenOutput = resp.json.at("usage.output_tokens").asOpt[Long].getOrElse(-1L),
-                tokenText = resp.json.at("usage.input_tokens_details.text_tokens").asOpt[Long].getOrElse(-1L),
-                tokenImage = resp.json.at("usage.input_tokens_details.image_tokens").asOpt[Long].getOrElse(-1L),
-              )
+          images = resp.json.select("data").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map(o => ImagesGen(o.select("b64_json").asOpt[String], o.select("revised_prompt").asOpt[String], o.select("url").asOpt[String])),
+          metadata = ImagesGenResponseMetadata(
+            rateLimit = ChatResponseMetadataRateLimit(
+              requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
+              requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
+              tokensLimit = headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
+              tokensRemaining = headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
+            ), impacts = None, costs = None,
+            // every model counting its tokens gives them, as on a generation
+            usage = ImagesGenResponseMetadataUsage(
+              totalTokens = resp.json.at("usage.total_tokens").asOpt[Long].getOrElse(-1L),
+              tokenInput = resp.json.at("usage.input_tokens").asOpt[Long].getOrElse(-1L),
+              tokenOutput = resp.json.at("usage.output_tokens").asOpt[Long].getOrElse(-1L),
+              tokenText = resp.json.at("usage.input_tokens_details.text_tokens").asOpt[Long].getOrElse(-1L),
+              tokenImage = resp.json.at("usage.input_tokens_details.image_tokens").asOpt[Long].getOrElse(-1L),
             )
-            case _ => ImagesGenResponseMetadata(
-              rateLimit = ChatResponseMetadataRateLimit(
-                requestsLimit = headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
-                requestsRemaining = headers.getIgnoreCase("x-ratelimit-remaining-requests").map(_.toLong).getOrElse(-1L),
-                tokensLimit = headers.getIgnoreCase("x-ratelimit-limit-tokens").map(_.toLong).getOrElse(-1L),
-                tokensRemaining = headers.getIgnoreCase("x-ratelimit-remaining-tokens").map(_.toLong).getOrElse(-1L),
-              ), impacts = None, costs = None,
-              usage = ImagesGenResponseMetadataUsage.empty
-            )
-          }
+          )
         ))
       } else {
         Left(Json.obj("status" -> resp.status, "body" -> resp.json))
