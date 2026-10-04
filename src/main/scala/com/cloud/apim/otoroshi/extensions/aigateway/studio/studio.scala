@@ -4,7 +4,7 @@ import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsMetadata
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ImageModel}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, ImageModel}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.SystemOneProviders
 import otoroshi.env.Env
 import otoroshi.models.{BackOfficeUser, EntityLocation, PrivateAppsUser}
@@ -353,8 +353,9 @@ class AiStudio(env: Env, ext: AiExtension) {
   /**
    * What an entity of this modality can be called for, whatever model the call names: it serves every model
    * of its kind on its connection, not only the one it carries as a default. An audio entity speaks and
-   * transcribes only through the sections that are on, the way its client reads them. An image entity edits
-   * only when its client can: most providers draw and nothing else, whatever their edition section says.
+   * transcribes only through the sections that are on, the way its client reads them. An image entity edits,
+   * and an audio entity translates, only when its client can: most providers draw, or transcribe, and nothing
+   * else, whatever their sections say.
    */
   private def endpointsOf(entity: JsValue, modality: String): Seq[String] = {
     val config = entity.select("config").asOpt[JsValue].getOrElse(Json.obj())
@@ -367,7 +368,13 @@ class AiStudio(env: Env, ext: AiExtension) {
           Option.when(client.map(_.supportsGeneration).getOrElse(on("generation")))("images_generations"),
           Option.when(client.map(_.supportsEdit).getOrElse(on("edition")))("images_edits"),
         ).flatten
-      case "audio" => Seq(Option.when(on("tts"))("audio_speech"), Option.when(on("stt"))("audio_transcriptions")).flatten
+      case "audio" =>
+        val client = AudioModel.format.reads(entity).asOpt.flatMap(_.getAudioModelClient())
+        Seq(
+          Option.when(on("tts"))("audio_speech"),
+          Option.when(on("stt"))("audio_transcriptions"),
+          Option.when(client.map(_.supportsTranslation).getOrElse(on("translate")))("audio_translations"),
+        ).flatten
       case other   => modalityEndpoints.get(other).toSeq
     }
   }
@@ -389,7 +396,8 @@ class AiStudio(env: Env, ext: AiExtension) {
       case "image" => modelIn(options.select("generation"), options).toSeq.map(m => (m, endpoint)) ++
         modelIn(options.select("edition")).toSeq.map(m => (m, "images_edits"))
       case "audio" => modelIn(config.select("tts"), options.select("tts")).toSeq.map(m => (m, "audio_speech")) ++
-        modelIn(config.select("stt"), options.select("stt")).toSeq.map(m => (m, "audio_transcriptions"))
+        modelIn(config.select("stt"), options.select("stt")).toSeq.map(m => (m, "audio_transcriptions")) ++
+        modelIn(config.select("translate"), options.select("translation")).toSeq.map(m => (m, "audio_translations"))
       case _ => modelIn(options).toSeq.map(m => (m, endpoint))
     }
   }
@@ -470,6 +478,8 @@ class AiStudio(env: Env, ext: AiExtension) {
             "kind" -> provider.provider,
             "modality" -> "text",
             "default_model" -> provider.options.select("model").asOptString.map(JsString.apply).getOrElse(JsNull).as[JsValue],
+            // the workspace endpoint serves both for every text provider, converting the call when it has to
+            "endpoints" -> Json.arr("chat_completions", "responses"),
           )
           // a router only lists the routing models that have candidates
           def usable(model: String): Boolean = provider.provider != "otoroshi" ||
