@@ -3,11 +3,13 @@ package com.cloud.apim.otoroshi.extensions.aigateway.providers
 import org.apache.pekko.stream.scaladsl.{Framing, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.*
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsMetadata
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{A2ASupport, GenericApiResponseChoiceMessageToolCall, LlmFunctions}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
 
@@ -39,7 +41,8 @@ case class NativeResponsesToolsOptions(
  *
  * A client mixes it in and provides the few provider-specific bits below. When `responsesEnabled`
  * is false, `response` / `responseStream` fall back to the default degradation to
- * `/chat/completions` implemented by `ChatClient`.
+ * `/chat/completions` implemented by `ChatClient`, except for a model the provider only serves on
+ * `/responses`, which `/chat/completions` would refuse.
  */
 trait NativeResponsesSupport extends ChatClient {
 
@@ -64,6 +67,18 @@ trait NativeResponsesSupport extends ChatClient {
   protected def responsesRawStream(body: JsValue)(using ec: ExecutionContext, env: Env): Future[WSResponse]
 
   override def supportsResponses: Boolean = responsesEnabled
+
+  // the native endpoint when the `responses` option asks for it, and for a model the provider only serves there
+  // (`gpt-5-pro`, the codex models...): the catalog says so
+  private def native(originalBody: JsValue)(using env: Env): Boolean =
+    responsesEnabled || computeModel(originalBody).exists(onlyOnResponses)
+
+  private def onlyOnResponses(model: String)(using env: Env): Boolean = {
+    env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(responsesProviderId)).exists { provider =>
+      val endpoints = ModelsMetadata.describe(provider, model).endpoints
+      endpoints.contains("responses") && !endpoints.contains("chat_completions")
+    }
+  }
 
   // ---- payload ----------------------------------------------------------------------------
 
@@ -171,7 +186,7 @@ trait NativeResponsesSupport extends ChatClient {
   }
 
   final override def response(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
-    if (!responsesEnabled) {
+    if (!native(originalBody)) {
       return super.response(prompt, attrs, originalBody)
     }
     val (body, finalModel, gatewayTools) = payload(prompt, attrs, originalBody)
@@ -198,7 +213,7 @@ trait NativeResponsesSupport extends ChatClient {
   // ---- streaming --------------------------------------------------------------------------
 
   final override def responseStream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
-    if (!responsesEnabled) {
+    if (!native(originalBody)) {
       return super.responseStream(prompt, attrs, originalBody)
     }
     val (body, finalModel, _) = payload(prompt, attrs, originalBody)

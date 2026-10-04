@@ -394,6 +394,15 @@ class ResponsesSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(messages.last.select("content").asString, "hello")
   }
 
+  test("a model only served on /responses goes there even when the native path is off") {
+    val res = responsesCall("degraded.oto.tools", Json.obj("model" -> "gpt-5-codex", "input" -> "hello"))
+    assertEquals(res.status, 200, s"bad status: ${res.body}")
+    assertEquals(outputText(res.json), "native hello")
+    assert(bodies.contains("responses"), s"the native endpoint should have been called: ${bodies.keys.mkString(", ")}")
+    assert(!bodies.contains("chat"), "/chat/completions refuses this model, it should not have been called")
+    assertEquals(bodies("responses").select("model").asOptString, Some("gpt-5-codex"))
+  }
+
   test("tools declared in responses format work on a provider with no native responses path") {
     val res = responsesCall("degraded.oto.tools", Json.obj(
       "model" -> "gpt-4.1",
