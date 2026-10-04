@@ -978,10 +978,11 @@ class OpenAIAudioModelClient(val api: OpenAiApi, val ttsOptions: OpenAIAudioMode
   }
 
   override def translate(opts: AudioModelClientTranslationInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, AudioTranscriptionResponse]] = {
-    val model = opts.model.orElse(sttOptions.model)
-    val prompt = opts.prompt.orElse(sttOptions.prompt)
-    val responseFormat = opts.responseFormat.orElse(sttOptions.responseFormat)
-    val temperature = opts.responseFormat.orElse(sttOptions.temperature)
+    // the translation section first, then the transcription one, which used to be the only one read
+    val model = opts.model.orElse(translationOptions.model).orElse(sttOptions.model)
+    val prompt = opts.prompt.orElse(translationOptions.prompt).orElse(sttOptions.prompt)
+    val responseFormat = opts.responseFormat.orElse(translationOptions.responseFormat).orElse(sttOptions.responseFormat)
+    val temperature = opts.temperature.orElse(translationOptions.temperature).orElse(sttOptions.temperature)
     val parts = List(
       Multipart.FormData.BodyPart(
         "file",
