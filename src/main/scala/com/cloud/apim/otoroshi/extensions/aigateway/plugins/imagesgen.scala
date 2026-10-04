@@ -306,11 +306,12 @@ object OpenAICompatImagesEdit {
           case Some(provider) => {
             provider.getImageModelClient() match {
               case None => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "failed to create client"))).leftf
-              case Some(client) if !client.supportsEdit => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support text to speech"))).leftf
+              case Some(client) if !client.supportsEdit => NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj("error" -> "internal_error", "error_details" -> "provider does not support image edition"))).leftf
               case Some(client) => {
                 val _options = ImageModelClientEditionInputOptions.format.reads(jsonBody).get
                 val options = _options.copy(
-                  images = form.files.filter(_.key == "image").map(file => ImageFile(
+                  // `image` for one image, `image[]` for several, as the OpenAI sdks send them
+                  images = form.files.filter(f => f.key == "image" || f.key == "image[]").map(file => ImageFile(
                     bytes = FileIO.fromPath(file.ref.path),
                     name = file.filename.some,
                     contentType = file.contentType.getOrElse("image/png"),

@@ -2303,7 +2303,8 @@ object ImageModelClientEditionInputOptions {
         prompt = json.select("prompt").asString,
         background = json.select("background").asOptString,
         model = json.select("model").asOptString,
-        n = json.select("n").asOptInt,
+        // read from a multipart form, where every field is a string
+        n = json.select("n").asOptInt.orElse(json.select("n").asOptString.flatMap(_.trim.toIntOption)),
         responseFormat = json.select("response_format").asOptString,
         quality = json.select("quality").asOptString,
         size = json.select("size").asOptString
