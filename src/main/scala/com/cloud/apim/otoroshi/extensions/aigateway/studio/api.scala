@@ -748,7 +748,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
             "connection" -> connection,
             "options" -> (prevOptions ++ Json.obj(
               "generation" -> (Json.obj("enabled" -> true) ++ objOf(prevOptions.select("generation")) ++ Json.obj("model" -> model)),
-              "edition" -> (Json.obj("enabled" -> false) ++ objOf(prevOptions.select("edition")) ++ Json.obj("model" -> model)),
+              // the image capability of a connection draws and edits: its client knows whether the provider can edit
+              "edition" -> (objOf(prevOptions.select("edition")) ++ Json.obj("enabled" -> true, "model" -> model)),
             )),
           )
         case "audio" =>

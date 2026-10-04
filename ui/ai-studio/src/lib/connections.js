@@ -177,7 +177,8 @@ export function buildEntity(modality, wsId, conn, catalogEntry, existing) {
       options: {
         ...prevOptions,
         generation: { enabled: true, ...(prevOptions.generation || {}), model },
-        edition: { enabled: false, ...(prevOptions.edition || {}), model },
+        // the image capability of a connection draws and edits: its client knows whether the provider can edit
+        edition: { ...(prevOptions.edition || {}), enabled: true, model },
       },
     };
   } else if (modality === 'audio') {
