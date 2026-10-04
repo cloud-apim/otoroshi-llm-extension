@@ -154,9 +154,9 @@ restrictions) never count as failures of a model, and answers served from the ca
 *The busiest models of the week, with the share of their calls that succeeded, their median latency and their speed.*
 
 A model that does not chat is one click away from being tried anyway. Every image, embedding, speech,
-transcription, moderation, OCR and decision model of the workspace opens its own **playground** next to its details:
+transcription, translation, moderation, OCR and decision model of the workspace opens its own **playground** next to its details:
 write a prompt and get the image, drop pictures — or the one the model just drew — and say what to change in
-them, type a sentence and play the voice, drop an mp3 and read its transcript,
+them, type a sentence and play the voice, drop an mp3 and read its transcript, or its English translation,
 drop a PDF or a photo of a document and get its text, paste a paragraph and see its vectors or what the
 moderation model makes of it, describe a situation, write your questions — yes/no, a choice, a score — and
 watch a [decision model](/docs/decision-models/overview) answer each one with the probability of every outcome. Each run is a real call on the workspace endpoint — same models, same
@@ -171,6 +171,15 @@ will get, with the tokens, pages and cost it took shown next to the answer.
 
 *An image model that edits takes your pictures and a few words: the sky turns pink, the rest stays as it was. **Keep
 editing** sends the answer back in, to refine a picture step by step.*
+
+Text models have a playground too, on the **Responses API**: an input in, the answer out, with the summary of
+its reasoning when the model gives one. Every text model of the workspace answers there, whatever its provider,
+and so do the models OpenAI only serves on that API — the codex and pro ones — which the gateway always asks
+on the right endpoint.
+
+![The Responses playground of a codex model: an input, and the code it writes](/img/ai-studio-models-responses.png)
+
+*A codex model, only served on the Responses API, tried from its card like any other.*
 
 ![The playground of a decision model: a state, three typed questions, and the probability of each of their outcomes](/img/ai-studio-models-decision.png)
 
@@ -369,6 +378,14 @@ over Streamable HTTP with a key of the workspace:
 
 Because a tool call carries an API key, it counts for the owner of that key exactly like a model call: the
 **MCP** tab of Activity shows what was served, tool by tool, user by user and key by key.
+
+Before handing the endpoint to a client, call the tools yourself: the **Playground** of the page lists what the
+server exposes, writes the arguments of a tool from its input schema, and shows what the tool answers — the very
+answer your agents will get, recorded in the MCP activity like any other call.
+
+![The MCP playground: a tool of the server, its arguments, and what it answers](/img/ai-studio-mcp-playground.png)
+
+*A tool called from the studio, on the endpoint MCP clients use.*
 
 ![The MCP server page of a workspace: exposed tools and the configuration to paste in a client](/img/ai-studio-mcp-server.png)
 

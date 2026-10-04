@@ -19,13 +19,17 @@
  * DECISION_STATE (the state of the decision playground shot, empty to capture the form without running
  * it), DECISION_MODEL (the decision model that playground tries, the first one of the workspace otherwise),
  * EDIT_PROMPT (what the image edit shot asks to change), EDIT_MODEL (the model that edits, the first image
- * model of the workspace that can otherwise).
+ * model of the workspace that can otherwise), RESPONSES_PROMPT and RESPONSES_MODEL (the input of the Responses
+ * playground shot, and the model it asks, the first model of the workspace only served on that API otherwise),
+ * MCP_TOOL and MCP_ARGS (the tool the MCP playground shot calls and its JSON arguments, the first tool with the
+ * arguments written from its schema otherwise).
  *
  * The chat shots show conversations of the signed-in user: have a plain conversation and a comparison of
  * two or three models in the workspace before running the script.
  *
  * Note: the `models-playground` shot runs the playground it opens, so the provider bills that one image.
- * The `models-image-edit` shot draws an image, then edits it: two images billed.
+ * The `models-image-edit` shot draws an image, then edits it: two images billed. The `models-responses` shot
+ * asks one question, and the `mcp-playground` one calls one tool.
  * The `models-decision` shot does the same with a decision model: one call, a few hundred input tokens.
  * It needs a provider with the Decision capability in the workspace.
  */
@@ -60,6 +64,7 @@ const ONLY = (process.env.ONLY || '').split(',').map((s) => s.trim()).filter(Boo
 const PLAYGROUND_PROMPT = process.env.PLAYGROUND_PROMPT === undefined ? 'A red panda coding on a laptop, watercolor' : process.env.PLAYGROUND_PROMPT;
 
 const EDIT_PROMPT = process.env.EDIT_PROMPT || 'Turn the sky in the window into a pink sunset, keep everything else as it is';
+const RESPONSES_PROMPT = process.env.RESPONSES_PROMPT || 'Write a JavaScript function that checks whether a string is a palindrome. Code only.';
 
 const DECISION_STATE =
   process.env.DECISION_STATE === undefined
@@ -189,6 +194,46 @@ const openImageEditPlayground = async (page) => {
   await page.waitForTimeout(800);
 };
 
+// The Responses playground of a model only served on that API (a codex or a pro model of OpenAI), which has a
+// playground rather than a chat: one input, one answer billed by the provider
+const openResponsesPlayground = async (page) => {
+  const wanted = process.env.RESPONSES_MODEL;
+  if (wanted) {
+    await page.locator('.filters input.search').fill(wanted);
+  } else {
+    const responses = page.locator('.filters .check.facet:has(span.grow:text-is("Responses")) input');
+    if ((await responses.count()) === 0) throw new Error('no model of this workspace is served on the Responses API');
+    await responses.check();
+  }
+  await page.waitForTimeout(800);
+  // a model that chats has a Chat button: the first Playground one is a model only served on that API
+  await page.locator('.model-card button:has-text("Playground")').first().click();
+  await page.waitForTimeout(900);
+  const drawer = page.locator('.drawer .playground');
+  await drawer.locator('textarea').fill(RESPONSES_PROMPT);
+  await drawer.locator('button.primary').click();
+  await drawer
+    .locator('.playground-result')
+    .waitFor({ timeout: 180000 })
+    .catch(() => console.warn('  the model did not answer, capturing the form'));
+  await page.waitForTimeout(800);
+};
+
+// The MCP playground of the workspace: one tool called with its arguments, and what it answers. The workspace
+// needs an MCP server exposing at least one tool
+const callMcpTool = async (page) => {
+  const card = page.locator('.card:has(h2:text-is("Playground"))');
+  await card.locator('select').waitFor({ timeout: 30000 });
+  if (process.env.MCP_TOOL) await card.locator('select').selectOption(process.env.MCP_TOOL);
+  if (process.env.MCP_ARGS) await card.locator('textarea').fill(process.env.MCP_ARGS);
+  await card.locator('button.primary').click();
+  await card
+    .locator('.playground-result')
+    .waitFor({ timeout: 60000 })
+    .catch(() => console.warn('  the tool did not answer, capturing the form'));
+  await page.waitForTimeout(500);
+};
+
 // The playground of a decision model: a state, the three kinds of questions the form opens on, and the
 // probability of each of their outcomes — that one decision is billed by the provider. The answers sit
 // under the questions: the shot is taken in a taller viewport and framed on the playground itself, so the
@@ -274,6 +319,8 @@ const SHOTS = [
   { name: 'models-playground', url: ws('/models'), viewport: true, before: openPlayground },
   // an image model that edits: the picture it drew, what to change in it, and the picture it gives back
   { name: 'models-image-edit', url: ws('/models'), height: 1400, element: '.drawer .playground', before: openImageEditPlayground },
+  // a model only served on the Responses API, tried from its card
+  { name: 'models-responses', url: ws('/models'), height: 1400, element: '.drawer .playground', before: openResponsesPlayground },
   // a decision model: typed questions about a state, answered with probabilities
   { name: 'models-decision', url: ws('/models'), height: 1400, element: '.drawer .playground', before: openDecisionPlayground },
   // the estimate stays on for the next visits of the page (local storage): keep this shot after the other models ones
@@ -298,6 +345,8 @@ const SHOTS = [
   { name: 'tools', url: ws('/tools') },
   { name: 'presets', url: ws('/presets') },
   { name: 'mcp-server', url: ws('/mcp-server') },
+  // a tool of the MCP server, called from the studio
+  { name: 'mcp-playground', url: ws('/mcp-server'), element: '.card:has(h2:text-is("Playground"))', before: callMcpTool },
   { name: 'credits', url: ws('/credits') },
   { name: 'budget-edit', url: ws('/credits'), viewport: true, before: clickFirst('button:has-text("Edit")') },
   { name: 'activity', url: ws('/activity?period=24h') },
