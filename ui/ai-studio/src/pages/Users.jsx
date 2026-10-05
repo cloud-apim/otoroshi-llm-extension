@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useWorkspace } from '../App';
 import { CalendarHeatmap, StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
-import { Badge, Empty, ErrorAlert, Loading, PageHeader, Segmented, StatusBadge, useAsync } from '../components/ui';
+import { Badge, Empty, ErrorAlert, Loading, PageHeader, Pager, Segmented, StatusBadge, useAsync, usePaged } from '../components/ui';
 import { BudgetsCard, Delta, METRIC_OPTIONS, METRICS } from '../components/usage';
 import { compareOf, itemsOf, NoExporterError, PERIODS, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
 import { listApikeys, ownerOf } from '../lib/apikeys';
@@ -58,6 +58,10 @@ function UsersList() {
       .map((email) => ({ email, keys: owned.get(email) || 0, ...(byEmail.get(email) || { calls: 0, tokens: 0, spend_usd: 0, errors: 0 }) }))
       .sort((a, b) => Number(b.spend_usd) - Number(a.spend_usd) || Number(b.tokens) - Number(a.tokens) || a.email.localeCompare(b.email));
   }, [keys.data, usage.data, me]);
+  const [search, setSearch] = useState('');
+  const needle = search.trim().toLowerCase();
+  const found = needle ? rows.filter((r) => r.email.toLowerCase().includes(needle)) : rows;
+  const paged = usePaged(found, 20, needle);
 
   return (
     <div className="content">
@@ -67,11 +71,17 @@ function UsersList() {
       </PageHeader>
       <div className="stack">
         {usage.error instanceof NoExporterError ? <NoExporter /> : <ErrorAlert error={usage.error || keys.error} />}
+        <div className="row">
+          <input className="input search sm" style={{ maxWidth: 280 }} placeholder="Search a user" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
         <div className="card flush">
+          <Pager paged={paged} position="top" />
           {(usage.loading || keys.loading) && !usage.data && !keys.data ? (
             <div style={{ padding: 20 }}>
               <Loading />
             </div>
+          ) : found.length === 0 ? (
+            <Empty>No user matches “{search.trim()}”.</Empty>
           ) : (
             <div className="table-wrap">
               <table className="table">
@@ -86,7 +96,7 @@ function UsersList() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r) => (
+                  {paged.shown.map((r) => (
                     <tr key={r.email} className="clickable" onClick={() => navigate(profilePath(workspace.id, r.email))}>
                       <td>
                         <span className="row" style={{ gap: 10 }}>
@@ -108,6 +118,7 @@ function UsersList() {
               </table>
             </div>
           )}
+          <Pager paged={paged} position="bottom" />
         </div>
         <p className="faint small">
           Calls from the AI Studio chat count for the person chatting, calls made with an API key count for its owner. Workspace keys have no owner.

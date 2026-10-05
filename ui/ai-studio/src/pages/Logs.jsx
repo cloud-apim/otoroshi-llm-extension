@@ -13,6 +13,19 @@ import { Link, useQueryState } from '../lib/router';
 
 const PAGE = 50;
 const DEFAULT_PERIOD = '24h';
+
+// The calls are paged on their timestamp (`ts < before`), newest first: a page stays the same while new calls
+// come in, and stays fast however far back it goes. The url keeps the cursor of every page left behind,
+// `pages=<before>,<before>`, so a page can be shared and the browser goes back to the previous one
+const trailOf = (value) =>
+  (value || '')
+    .split(',')
+    .map((v) => Number(v))
+    .filter((v) => v > 0);
+
+// what the drawer opens when the call next to the one it shows is on another page
+const OLDER_PAGE = { id: 'older-page' };
+const NEWER_PAGE = { id: 'newer-page' };
 const FINISH_REASONS = ['stop', 'length', 'tool_calls', 'content_filter'];
 
 function StatusBadge({ call }) {
@@ -375,11 +388,15 @@ export function LogsPage() {
   // filters, tab and opened call live in the url, so a filtered view or a call can be shared
   const [query, setQuery] = useQueryState();
   const { period, refresh: reload, setPeriod, setRefresh: setReload } = useTimeView('logs', query, setQuery, DEFAULT_PERIOD);
-  const { apikey = '', user = '', model = '', status = '', finish = '', session = '', q = '', call = '' } = query;
+  const { apikey = '', user = '', model = '', status = '', finish = '', session = '', q = '', call = '', pages: pagesParam = '' } = query;
   const tab = query.tab === 'sessions' ? 'sessions' : 'calls';
   const [search, setSearch] = useState(q);
   const [refresh, setRefresh] = useState(0);
-  const [pages, setPages] = useState({ items: [], next: null, loadingMore: false });
+  // the call the drawer opens once the page it is on is in: the first of an older page, the last of a newer one
+  const [pending, setPending] = useState(null);
+  // the pages already seen with these filters, so going back to one is instant
+  const cache = useRef({ key: null, pages: new Map() });
+  const table = useRef(null);
   const [columns, shown, toggleColumn] = useColumns();
   const toast = useToast();
   // the number of calls fetched so far while exporting, null otherwise
@@ -402,25 +419,82 @@ export function LogsPage() {
   const opts = { period, apikey: apikey || undefined, user: user || undefined, nocache: true, refresh };
   const params = { limit: PAGE, model: model || undefined, status: status || undefined, finish_reason: finish || undefined, session_id: session || undefined, search: q || undefined };
 
+  const filters = JSON.stringify([period, apikey, user, model, status, finish, session, q]);
+  // the pages left behind with other filters say nothing of these: back to the newest page
+  const trailFilters = useRef(filters);
+  const trail = trailFilters.current === filters ? trailOf(pagesParam) : [];
+  const before = trail.length > 0 ? trail[trail.length - 1] : undefined;
+  useEffect(() => {
+    if (trailFilters.current === filters) return;
+    trailFilters.current = filters;
+    if (pagesParam) setQuery({ pages: '' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters]);
+
   const first = useAsync(async () => {
-    const [log, calls, models] = await Promise.all([
-      runQuery(workspace.id, 'cloudapim_llm_calls_log', { ...opts, params }),
+    const [calls, models] = await Promise.all([
       runQuery(workspace.id, 'cloudapim_llm_requests_over_time', { ...opts, err: status === 'error' ? true : undefined }),
       runQuery(workspace.id, 'cloudapim_llm_top_models', { ...opts, params: { top_n: 50 } }),
     ]);
-    return { log, calls, models };
-  }, [workspace.id, period, apikey, user, model, status, finish, session, q, refresh]);
+    return { calls, models };
+  }, [workspace.id, filters, refresh]);
 
+  const page = useAsync(async () => {
+    const key = `${workspace.id}|${filters}|${refresh}`;
+    if (cache.current.key !== key) cache.current = { key, pages: new Map() };
+    const seen = cache.current.pages.get(before);
+    if (seen) return seen;
+    const res = await runQuery(workspace.id, 'cloudapim_llm_calls_log', { ...opts, params: { ...params, before } });
+    const loaded = { before, items: itemsOf(res), next: res.data.next_before || null };
+    cache.current.pages.set(before, loaded);
+    return loaded;
+  }, [workspace.id, filters, refresh, before]);
+
+  const items = (page.data && page.data.items) || [];
+  const offset = trail.length * PAGE;
+  const goTo = (pages) => setQuery({ pages: pages.join(',') }, { push: true });
+  const older = () => page.data && page.data.next && goTo([...trail, page.data.next]);
+  const newer = () => goTo(trail.slice(0, -1));
+
+  // above and under the calls: the way to the other pages is at hand wherever the page is read
+  const pager = (position) =>
+    page.data && (trail.length > 0 || page.data.next) ? (
+      <div className={`pager ${position}`}>
+        <span className="faint small">
+          {items.length > 0 ? `${fmtInt(offset + 1)}–${fmtInt(offset + items.length)}` : 'No call'}
+          {!page.data.next && items.length > 0 ? ` of ${fmtInt(offset + items.length)}` : ''}
+        </span>
+        <div className="row">
+          {trail.length > 1 && (
+            <button className="btn sm ghost" onClick={() => goTo([])} title="Back to the latest calls">
+              Newest
+            </button>
+          )}
+          <button className="btn sm ghost icon" title="Newer calls" disabled={trail.length === 0 || page.loading} onClick={newer}>
+            <Icon name="chevron" style={{ transform: 'rotate(90deg)' }} />
+          </button>
+          <span className="small">Page {fmtInt(trail.length + 1)}</span>
+          <button className="btn sm ghost icon" title="Older calls" disabled={!page.data.next || page.loading} onClick={older}>
+            <Icon name="chevron" style={{ transform: 'rotate(-90deg)' }} />
+          </button>
+        </div>
+      </div>
+    ) : null;
+
+  // a new page starts at its top, wherever the previous one was left
   useEffect(() => {
-    if (first.data) setPages({ items: itemsOf(first.data.log), next: first.data.log.data.next_before, loadingMore: false });
-  }, [first.data]);
+    const top = table.current && table.current.getBoundingClientRect().top;
+    if (top !== undefined && top < 0) window.scrollTo({ top: window.scrollY + top - 80 });
+  }, [before]);
 
-  const loadMore = () => {
-    setPages((p) => ({ ...p, loadingMore: true }));
-    runQuery(workspace.id, 'cloudapim_llm_calls_log', { ...opts, params: { ...params, before: pages.next } })
-      .then((res) => setPages((p) => ({ items: [...p.items, ...itemsOf(res)], next: res.data.next_before, loadingMore: false })))
-      .catch(() => setPages((p) => ({ ...p, loadingMore: false })));
-  };
+  // the call the drawer asked for, once its page is in
+  useEffect(() => {
+    if (!pending || !page.data || page.loading || page.data.before !== pending.before) return;
+    const target = pending.pick === 'first' ? page.data.items[0] : page.data.items[page.data.items.length - 1];
+    setPending(null);
+    if (target) setQuery({ call: target.id });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, page.data, page.loading]);
 
   // every call matching the filters, newest first
   const exportCalls = async () => {
@@ -442,17 +516,17 @@ export function LogsPage() {
     }
   };
 
-  const noExporter = first.error instanceof NoExporterError;
+  const noExporter = first.error instanceof NoExporterError || page.error instanceof NoExporterError;
   const modelOptions = first.data ? itemsOf(first.data.models).map((m) => ({ value: m.key, label: m.label || m.key })) : [];
   const userOptions = [...new Set([...(users.data || []).map((u) => u.user), ...(user ? [user] : [])])].map((u) => ({ value: u, label: u }));
-  const index = pages.items.findIndex((c) => c.id === call);
+  const index = items.findIndex((c) => c.id === call);
   const filtered = apikey || user || model || status || finish || session || q;
 
   return (
     <div className="content wide" style={{ maxWidth: 1500 }}>
       <PageHeader title="Logs" description="Every call made through this workspace, newest first. Only metadata is recorded: prompts and outputs are never stored.">
         <PeriodPicker value={period} onChange={setPeriod} />
-        <RefreshControl {...reload} onChange={setReload} onRefresh={() => setRefresh((r) => r + 1)} busy={tab === 'calls' && first.loading} loadedAt={tab === 'calls' ? first.loadedAt : null} />
+        <RefreshControl {...reload} onChange={setReload} onRefresh={() => setRefresh((r) => r + 1)} busy={tab === 'calls' && (first.loading || page.loading)} loadedAt={tab === 'calls' ? page.loadedAt : null} />
       </PageHeader>
 
       <Tabs
@@ -496,7 +570,7 @@ export function LogsPage() {
             {tab === 'calls' && <Select className="sm" style={{ width: 'auto' }} value={finish} onChange={(v) => setQuery({ finish: v })} placeholder="All finish reasons" options={[...new Set([...FINISH_REASONS, ...(finish ? [finish] : [])])].map((r) => ({ value: r, label: r }))} />}
             <div className="grow" />
             {tab === 'calls' && (
-              <button className="btn sm" disabled={exporting !== null || pages.items.length === 0} onClick={exportCalls} title="Download the calls matching these filters as CSV">
+              <button className="btn sm" disabled={exporting !== null || items.length === 0} onClick={exportCalls} title="Download the calls matching these filters as CSV">
                 <Icon name="download" />
                 {exporting !== null ? `Exporting ${fmtInt(exporting)}…` : 'Export CSV'}
               </button>
@@ -527,20 +601,21 @@ export function LogsPage() {
             <SessionsTab workspace={workspace} opts={opts} onPick={(s) => setQuery({ tab: 'calls', session: s })} />
           ) : (
             <>
-              <ErrorAlert error={first.error} />
+              <ErrorAlert error={first.error || page.error} />
               {first.data && (
                 <div className="card tight">
                   <StackedBars series={seriesOf(first.data.calls)} bucket={first.data.calls.meta && first.data.calls.meta.bucket} format={fmtNumber} height={110} />
                 </div>
               )}
-              <div className="card flush">
-                {first.loading && !first.data && (
+              <div className="card flush" ref={table}>
+                {items.length > 0 && pager('top')}
+                {page.loading && !page.data && (
                   <div style={{ padding: 20 }}>
                     <Loading />
                   </div>
                 )}
-                {first.data && pages.items.length === 0 && <Empty title="No call">Nothing matches these filters for this period.</Empty>}
-                {pages.items.length > 0 && (
+                {page.data && items.length === 0 && <Empty title="No call">Nothing matches these filters for this period.</Empty>}
+                {items.length > 0 && (
                   <div className="table-wrap">
                     <table className="table logs-table">
                       <thead>
@@ -553,7 +628,7 @@ export function LogsPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {pages.items.map((c) => (
+                        {items.map((c) => (
                           <tr key={c.id} className={`clickable ${c.id === call ? 'selected' : ''}`} onClick={() => setQuery({ call: c.id })}>
                             {columns.map((col) => (
                               <td key={col.id} className={`${col.num ? 'num' : ''} ${col.className || ''}`} style={col.style}>
@@ -566,14 +641,8 @@ export function LogsPage() {
                     </table>
                   </div>
                 )}
+                {pager('bottom')}
               </div>
-              {pages.next && (
-                <div className="row" style={{ justifyContent: 'center' }}>
-                  <button className="btn" onClick={loadMore} disabled={pages.loadingMore}>
-                    {pages.loadingMore ? 'Loading…' : 'Load more'}
-                  </button>
-                </div>
-              )}
             </>
           )}
         </div>
@@ -583,10 +652,21 @@ export function LogsPage() {
           key={call}
           workspace={workspace}
           id={call}
-          initial={index >= 0 ? pages.items[index] : null}
-          prev={index > 0 ? pages.items[index - 1] : null}
-          next={index >= 0 && index < pages.items.length - 1 ? pages.items[index + 1] : null}
-          onOpen={(c) => setQuery({ call: c.id })}
+          initial={index >= 0 ? items[index] : null}
+          // at the edge of the page, the call next to this one is on the page next to this one
+          prev={index > 0 ? items[index - 1] : index === 0 && trail.length > 0 ? NEWER_PAGE : null}
+          next={index >= 0 && index < items.length - 1 ? items[index + 1] : index === items.length - 1 && page.data && page.data.next ? OLDER_PAGE : null}
+          onOpen={(c) => {
+            if (c === OLDER_PAGE) {
+              setPending({ before: page.data.next, pick: 'first' });
+              older();
+            } else if (c === NEWER_PAGE) {
+              setPending({ before: trail.length > 1 ? trail[trail.length - 2] : undefined, pick: 'last' });
+              newer();
+            } else {
+              setQuery({ call: c.id });
+            }
+          }}
           onSession={(s) => setQuery({ tab: 'calls', session: s, call: '' })}
           onClose={() => setQuery({ call: '' })}
         />

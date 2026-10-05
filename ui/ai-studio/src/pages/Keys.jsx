@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useWorkspace } from '../App';
-import { Badge, CopyButton, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, NumberInput, PageHeader, Segmented, Select, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
+import { Badge, CopyButton, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, NumberInput, PageHeader, Pager, Segmented, Select, TextInput, Toggle, useAsync, useConfirm, useToast, usePaged } from '../components/ui';
 import { BudgetModal } from '../components/BudgetModal';
 import { Icon } from '../components/icons';
 import { exactModel, isExpired, listApikeys, modelModeOf, modelOfPattern, modelRulesOf, OWNER_PATTERN, ownerOf, patternError, resetApikeySecret, saveApikey, usesWorkspaceQuotas, validUntilOf } from '../lib/apikeys';
@@ -417,6 +417,10 @@ export function KeysPage() {
   }, [workspace.id]);
   const keys = (data.data && data.data.keys) || [];
   const budgets = (data.data && data.data.budgets) || [];
+  const [search, setSearch] = useState('');
+  const needle = search.trim().toLowerCase();
+  const found = needle ? keys.filter((k) => [k.clientName, ownerOf(k), k.clientId].some((v) => (v || '').toLowerCase().includes(needle))) : keys;
+  const paged = usePaged(found, 20, needle);
 
   const toggle = (apikey) => {
     Resources.apikeys
@@ -448,7 +452,13 @@ export function KeysPage() {
         </button>
       </PageHeader>
       <ErrorAlert error={data.error} />
+      {keys.length > 0 && (
+        <div className="row" style={{ marginBottom: 12 }}>
+          <input className="input search sm" style={{ maxWidth: 280 }} placeholder="Search name, owner, client id" value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+      )}
       <div className="card flush">
+        <Pager paged={paged} position="top" />
         {data.loading && !data.data && (
           <div style={{ padding: 20 }}>
             <Loading />
@@ -466,7 +476,8 @@ export function KeysPage() {
             Keys authenticate the calls made to {workspace.baseUrl}
           </Empty>
         )}
-        {keys.length > 0 && (
+        {keys.length > 0 && found.length === 0 && <Empty>No key matches “{search.trim()}”.</Empty>}
+        {found.length > 0 && (
           <div className="table-wrap">
             <table className="table">
               <thead>
@@ -483,7 +494,7 @@ export function KeysPage() {
                 </tr>
               </thead>
               <tbody>
-                {keys.map((k) => {
+                {paged.shown.map((k) => {
                   const b = keyBudgetOf(budgets, k.clientId);
                   return (
                     <tr key={k.clientId}>
@@ -556,6 +567,7 @@ export function KeysPage() {
             </table>
           </div>
         )}
+        <Pager paged={paged} position="bottom" />
       </div>
       {editing && (
         <KeyModal

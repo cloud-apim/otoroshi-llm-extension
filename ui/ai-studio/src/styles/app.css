@@ -705,6 +705,7 @@ dialog.modal::backdrop { background: rgba(3, 8, 10, 0.35); }
 /* the foot of a paged list */
 .pager { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 10px; }
 .card.flush .pager { padding: 10px 22px 14px; }
+.card.flush .pager.top { padding: 8px 22px; border-bottom: 1px solid var(--border); }
 .answer-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .answer-image { border: 0; background: none; padding: 0; cursor: pointer; line-height: 0; }
 .answer-image img { border: 1px solid var(--border); border-radius: var(--radius); max-width: 320px; max-height: 320px; }

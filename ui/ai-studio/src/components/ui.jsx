@@ -30,23 +30,25 @@ export function useAsync(fn, deps = []) {
 
 /**
  * A long list shown a page at a time: `shown` is the page, `offset` the position of its first item in the list.
- * A list of another length (another period, another filter) starts again from its first page.
+ * A list of another length (another period, another filter), or another `resetKey` (another search), starts
+ * again from its first page.
  */
-export function usePaged(items, pageSize = 10) {
+export function usePaged(items, pageSize = 10, resetKey = null) {
   const [page, setPage] = useState(0);
   const pages = Math.max(1, Math.ceil(items.length / pageSize));
-  useEffect(() => setPage(0), [items.length]);
+  useEffect(() => setPage(0), [items.length, resetKey]);
   const current = Math.min(page, pages - 1);
   const offset = current * pageSize;
   return { page: current, pages, offset, total: items.length, shown: items.slice(offset, offset + pageSize), setPage };
 }
 
-// the foot of a paged list: where it is, and the way to the other pages. Nothing when it fits in one
-export function Pager({ paged }) {
+// the head or the foot of a paged list (`position` top or bottom): where it is, and the way to the other
+// pages. Nothing when it fits in one
+export function Pager({ paged, position = '' }) {
   const { page, pages, offset, total, shown, setPage } = paged;
   if (pages <= 1) return null;
   return (
-    <div className="pager">
+    <div className={`pager ${position}`}>
       <span className="faint small">
         {offset + 1}–{offset + shown.length} of {total}
       </span>
