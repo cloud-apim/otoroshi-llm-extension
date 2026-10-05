@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from './icons';
-import { CopyButton, ErrorAlert, Segmented } from './ui';
+import { CopyButton, ErrorAlert, Modal, Segmented } from './ui';
 import { Markdown } from './Markdown';
 import { DecisionForm, Decisions } from './decisions';
 import { exampleQuestions, questionsReady, toQuestions } from '../lib/decisions';
 import { MAX_EDIT_IMAGES, MAX_UPLOAD_BYTES, playgroundsOf, runPlayground } from '../lib/playgrounds';
 import { imageFile } from '../lib/images';
+import { modelLabel } from '../lib/modelmeta';
 import { fmtBytes } from '../lib/attachments';
 import { fmtCost, fmtInt, fmtMs } from '../lib/format';
 import { costOf } from '../lib/conversations';
@@ -135,6 +136,37 @@ function DropZone({ file, accept, hint, onPick, disabled }) {
   );
 }
 
+// an image of the answer seen large, on most of the screen, whatever its own size
+function ImageViewer({ src, title, onDownload, onEdit, editLabel, onClose }) {
+  return (
+    <Modal
+      open
+      size="viewer"
+      title={title}
+      onClose={onClose}
+      footer={
+        <>
+          {onEdit && (
+            <button className="btn" onClick={onEdit}>
+              <Icon name="edit" />
+              {editLabel}
+            </button>
+          )}
+          <button className="btn" onClick={onDownload}>
+            <Icon name="download" />
+            Download
+          </button>
+          <button className="btn primary" onClick={onClose}>
+            Close
+          </button>
+        </>
+      }
+    >
+      <img className="viewer-image" src={src} alt={title} />
+    </Modal>
+  );
+}
+
 // the images an edit starts from: dropped, picked, or taken from an answer to keep editing it
 function ImagesPicker({ images, accept, onAdd, onRemove, disabled }) {
   const input = useRef(null);
@@ -213,6 +245,8 @@ export function Playground({ model, workspace, providers }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  // the image of the answer seen large, with its index
+  const [viewing, setViewing] = useState(null);
   const abort = useRef(null);
   const audioUrl = useRef(null);
   const previews = useRef([]);
@@ -225,6 +259,7 @@ export function Playground({ model, workspace, providers }) {
     audioUrl.current = null;
     setResult(null);
     setError(null);
+    setViewing(null);
   };
 
   const addImages = (files) => {
@@ -348,15 +383,31 @@ export function Playground({ model, workspace, providers }) {
                   <button className="answer-image" title="Download this image" onClick={() => downloadDataUrl(fileName(model.model || model.id, 'png'), src)}>
                     <img src={src} alt={`Generated ${i + 1}`} />
                   </button>
-                  {editing && (
-                    <button className="btn sm" title="Edit this image with this model" onClick={() => editFurther(src)}>
-                      <Icon name="edit" />
-                      {current.id === 'image_edit' ? 'Keep editing' : 'Edit this image'}
+                  <div className="answer-image-actions">
+                    <button className="btn sm" title="See this image larger" onClick={() => setViewing({ src, index: i })}>
+                      <Icon name="eye" />
+                      View
                     </button>
-                  )}
+                    {editing && (
+                      <button className="btn sm" title="Edit this image with this model" onClick={() => editFurther(src)}>
+                        <Icon name="edit" />
+                        {current.id === 'image_edit' ? 'Keep editing' : 'Edit this image'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
+          )}
+          {viewing && (
+            <ImageViewer
+              src={viewing.src}
+              title={result.images.length > 1 ? `${modelLabel(model)} · image ${viewing.index + 1}` : modelLabel(model)}
+              onDownload={() => downloadDataUrl(fileName(model.model || model.id, 'png'), viewing.src)}
+              onEdit={editing ? () => editFurther(viewing.src) : null}
+              editLabel={current.id === 'image_edit' ? 'Keep editing' : 'Edit this image'}
+              onClose={() => setViewing(null)}
+            />
           )}
           {result.audio && (
             <div className="stack tight">

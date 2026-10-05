@@ -284,7 +284,8 @@ function AttachmentModal({ attachment, onClose }) {
       open
       onClose={onClose}
       title={attachment.name}
-      size="wide"
+      // an image is seen large, on most of the screen, a text file reads in a narrower column
+      size={attachment.kind === 'image' ? 'viewer' : 'wide'}
       footer={
         <>
           {attachment.kind === 'image' && (
@@ -300,7 +301,7 @@ function AttachmentModal({ attachment, onClose }) {
       }
     >
       {attachment.kind === 'image' ? (
-        <img className="attachment-preview" src={attachment.data} alt={attachment.name} />
+        <img className="viewer-image" src={attachment.data} alt={attachment.name} />
       ) : (
         <pre className="attachment-text">{attachment.data}</pre>
       )}

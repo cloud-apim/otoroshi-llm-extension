@@ -548,6 +548,10 @@ dialog.modal {
 :root[data-theme='dark'] dialog.modal { border: 1px solid var(--border); }
 dialog.modal.wide { width: min(760px, calc(100vw - 32px)); }
 dialog.modal.xwide { width: min(1000px, calc(100vw - 32px)); }
+/* an image seen large: most of the screen, the picture fitted in it whatever its size */
+dialog.modal.viewer { width: 80vw; max-width: calc(100vw - 32px); }
+dialog.modal.viewer .modal-body { max-height: none; align-items: center; }
+.viewer-image { display: block; max-width: 100%; max-height: calc(80vh - 140px); object-fit: contain; border-radius: var(--radius); }
 dialog.modal::backdrop { background: rgba(3, 8, 10, 0.35); }
 .modal-head { display: flex; justify-content: space-between; align-items: center; padding: 18px 22px 0; }
 .modal-body { display: flex; overflow: auto; flex-direction: column; gap: 14px; max-height: 70vh; padding: 16px 22px 22px; }
@@ -691,7 +695,6 @@ dialog.modal::backdrop { background: rgba(3, 8, 10, 0.35); }
 .attachment-open { border: 0; display: flex; background: none; color: inherit; align-items: center; gap: 6px; font: inherit; min-width: 0; padding: 0; cursor: pointer; }
 .attachment-open:disabled { cursor: default; }
 .attachment-open img { border-radius: 4px; width: 28px; height: 28px; object-fit: cover; }
-.attachment-preview { border-radius: var(--radius); max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; }
 .attachment-text { white-space: pre-wrap; word-break: break-word; max-height: 60vh; }
 /* the consumer filters of a guardrail: what is read on the call, how it is compared, and to what */
 .filters { display: flex; flex-direction: column; gap: 8px; }
@@ -702,6 +705,8 @@ dialog.modal::backdrop { background: rgba(3, 8, 10, 0.35); }
 .answer-images { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .answer-image { border: 0; background: none; padding: 0; cursor: pointer; line-height: 0; }
 .answer-image img { border: 1px solid var(--border); border-radius: var(--radius); max-width: 320px; max-height: 320px; }
+.answer-image-actions { display: flex; gap: 6px; }
+.answer-image-actions .btn { flex: 1; justify-content: center; }
 .send { background: var(--grape); color: #fff; display: grid; cursor: pointer; border: 0; border-radius: 50%; place-items: center; width: 36px; height: 36px; flex-shrink: 0; }
 .send:disabled { opacity: 0.4; cursor: default; }
 .send svg { width: 17px; height: 17px; }
