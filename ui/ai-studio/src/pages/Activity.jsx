@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useWorkspace } from '../App';
 import { AreaChart, StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
-import { Empty, ErrorAlert, Loading, MenuButton, PageHeader, Select, Tabs, useAsync, useToast } from '../components/ui';
+import { Empty, ErrorAlert, Loading, MenuButton, PageHeader, Pager, Select, Tabs, useAsync, usePaged, useToast } from '../components/ui';
 import { BudgetsCard, ConsumersCard, Kpi, UsageCard } from '../components/usage';
 import { compareOf, itemsOf, NoExporterError, periodSlug, periodSpan, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
 import { listApikeys } from '../lib/apikeys';
@@ -177,6 +177,50 @@ function ImpactSection({ q, deps, bucket }) {
   );
 }
 
+function ModelsCard({ models }) {
+  const paged = usePaged(models);
+  return (
+    <div className="card flush">
+      <div style={{ padding: '18px 22px 6px' }}>
+        <h2>Models</h2>
+      </div>
+      {models.length === 0 ? (
+        <Empty>No model was called in this period.</Empty>
+      ) : (
+        <div className="table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th className="num">Requests</th>
+                <th className="num">Tokens</th>
+                <th className="num">Spend</th>
+                <th className="num">$ / 1k tokens</th>
+                <th className="num">Avg latency</th>
+                <th className="num">Error rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paged.shown.map((m) => (
+                <tr key={m.key}>
+                  <td className="mono">{m.model}</td>
+                  <td className="num">{fmtInt(m.calls)}</td>
+                  <td className="num">{fmtInt(m.tokens)}</td>
+                  <td className="num">{fmtCost(m.spend_usd)}</td>
+                  <td className="num">{Number(m.usd_per_1k_tokens) ? '$' + Number(m.usd_per_1k_tokens).toFixed(4) : '—'}</td>
+                  <td className="num">{fmtMs(m.avg_ms)}</td>
+                  <td className="num">{Number(m.error_rate_pct).toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <Pager paged={paged} />
+    </div>
+  );
+}
+
 export function ActivityPage() {
   const { workspace } = useWorkspace();
   // the filters live in the url (`?apikey=<client id>&user=<email>&period=24h&auto=true&every=30`) so any page can
@@ -230,9 +274,10 @@ export function ActivityPage() {
       q('cloudapim_llm_tokens_over_time'),
       q('cloudapim_llm_cache_over_time'),
       q('cloudapim_llm_latency_percentiles_over_time'),
-      q('cloudapim_llm_models_table', { params: { top_n: 20 } }),
-      q('cloudapim_llm_apikeys_table', { params: { top_n: 20 } }),
-      q('cloudapim_llm_users_table', { params: { top_n: 20 } }),
+      // the busiest first, a page at a time
+      q('cloudapim_llm_models_table', { params: { top_n: 100 } }),
+      q('cloudapim_llm_apikeys_table', { params: { top_n: 100 } }),
+      q('cloudapim_llm_users_table', { params: { top_n: 100 } }),
     ]);
     return { calls, tokensTs, cacheTs, latencyTs, models, apikeysTable, usersTable };
   }, [workspace.id, period, apikey, user, refresh, tab]);
@@ -418,43 +463,7 @@ export function ActivityPage() {
 
               <ImpactSection q={q} deps={deps} bucket={bucket} />
 
-              <div className="card flush">
-                <div style={{ padding: '18px 22px 6px' }}>
-                  <h2>Models</h2>
-                </div>
-                {itemsOf(c.models).length === 0 ? (
-                  <Empty>No model was called in this period.</Empty>
-                ) : (
-                  <div className="table-wrap">
-                    <table className="table">
-                      <thead>
-                        <tr>
-                          <th>Model</th>
-                          <th className="num">Requests</th>
-                          <th className="num">Tokens</th>
-                          <th className="num">Spend</th>
-                          <th className="num">$ / 1k tokens</th>
-                          <th className="num">Avg latency</th>
-                          <th className="num">Error rate</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {itemsOf(c.models).map((m) => (
-                          <tr key={m.key}>
-                            <td className="mono">{m.model}</td>
-                            <td className="num">{fmtInt(m.calls)}</td>
-                            <td className="num">{fmtInt(m.tokens)}</td>
-                            <td className="num">{fmtCost(m.spend_usd)}</td>
-                            <td className="num">{Number(m.usd_per_1k_tokens) ? '$' + Number(m.usd_per_1k_tokens).toFixed(4) : '—'}</td>
-                            <td className="num">{fmtMs(m.avg_ms)}</td>
-                            <td className="num">{Number(m.error_rate_pct).toFixed(1)}%</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
+              <ModelsCard models={itemsOf(c.models)} />
             </>
           )}
           <BudgetsCard workspace={workspace} />

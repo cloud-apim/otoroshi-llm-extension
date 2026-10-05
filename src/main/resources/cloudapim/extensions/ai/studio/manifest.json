@@ -16,7 +16,7 @@
     "src": "node_modules/@fontsource-variable/plus-jakarta-sans/files/plus-jakarta-sans-vietnamese-wght-normal.woff2"
   },
   "src/App.jsx": {
-    "file": "assets/App-LWKSlgwK.js",
+    "file": "assets/App-y1GVD92n.js",
     "name": "App",
     "src": "src/App.jsx",
     "isDynamicEntry": true,
@@ -32,7 +32,7 @@
     "src": "src/assets/cloud-apim-logo.svg"
   },
   "src/main.jsx": {
-    "file": "assets/main-BfZumZRa.js",
+    "file": "assets/main-C6BuCg3h.js",
     "name": "main",
     "src": "src/main.jsx",
     "isEntry": true,
@@ -40,7 +40,7 @@
       "src/App.jsx"
     ],
     "css": [
-      "assets/main-iJgMPOpi.css"
+      "assets/main--yUzf995.css"
     ],
     "assets": [
       "assets/plus-jakarta-sans-cyrillic-ext-wght-normal-lLTsRRxN.woff2",

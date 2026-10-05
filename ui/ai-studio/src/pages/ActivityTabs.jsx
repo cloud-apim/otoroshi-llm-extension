@@ -1,5 +1,5 @@
 import { AreaChart, seriesColor, StackedBars } from '../components/charts';
-import { Badge, Empty, ErrorAlert, Loading, Segmented, Select, useAsync } from '../components/ui';
+import { Badge, Empty, ErrorAlert, Loading, Pager, Segmented, Select, useAsync, usePaged } from '../components/ui';
 import { Delta, Kpi, METRIC_OPTIONS } from '../components/usage';
 import { compareOf, isShortPeriod, itemsOf, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
 import { fmtCost, fmtInt, fmtMs, fmtNumber, fmtPercent } from '../lib/format';
@@ -126,6 +126,7 @@ export function ExploreTab({ workspace, query, setQuery, opts }) {
   const d = data.data && data.data.data;
   const items = d && d.items ? d.items : [];
   const additive = d ? d.additive : true;
+  const paged = usePaged(items);
 
   return (
     <div className="stack">
@@ -171,7 +172,9 @@ export function ExploreTab({ workspace, query, setQuery, opts }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((it, idx) => {
+                  {paged.shown.map((it, i) => {
+                    // the position in the whole list, which the colors of the share bar go by
+                    const idx = paged.offset + i;
                     const share = additive && Number(d.total) ? (Number(it.value) || 0) / Number(d.total) : null;
                     const subTotal = (it.subgroups || []).reduce((a, s) => a + (Number(s.value) || 0), 0);
                     return (
@@ -220,6 +223,7 @@ export function ExploreTab({ workspace, query, setQuery, opts }) {
                 </tbody>
               </table>
             </div>
+            <Pager paged={paged} />
             <p className="faint small">
               {fmtInt(items.length)} of {fmtInt(d.groups)} {dimensionLabel(groupBy).toLowerCase()} values
               {additive ? ` · total ${metric.format(d.total)}` : ''}
@@ -389,11 +393,12 @@ export function McpTab({ workspace, opts }) {
       q('cloudapim_mcp_latency_p95', { compare: true }),
       q('cloudapim_mcp_distinct_users', { compare: true }),
       q('cloudapim_mcp_calls_over_time'),
-      q('cloudapim_mcp_tools_table', { params: { top_n: 20 } }),
+      // the busiest first, a page at a time
+      q('cloudapim_mcp_tools_table', { params: { top_n: 50 } }),
       q('cloudapim_mcp_by_method'),
-      q('cloudapim_mcp_users_table', { params: { top_n: 10 } }),
-      q('cloudapim_mcp_apikeys_table', { params: { top_n: 10 } }),
-      q('cloudapim_mcp_recent_calls', { params: { top_n: 25 } }),
+      q('cloudapim_mcp_users_table', { params: { top_n: 50 } }),
+      q('cloudapim_mcp_apikeys_table', { params: { top_n: 50 } }),
+      q('cloudapim_mcp_recent_calls', { params: { top_n: 50 } }),
     ]);
     return { calls, toolCalls, errorRate, p95, users, overTime, tools, byMethod, usersTable, keysTable, recent };
   }, [workspace.id, JSON.stringify(opts)]);
@@ -501,6 +506,7 @@ export function McpTab({ workspace, opts }) {
 }
 
 function McpTable({ title, description, items, columns, empty }) {
+  const paged = usePaged(items);
   return (
     <div className="card">
       <h3 style={{ marginBottom: 8 }}>{title}</h3>
@@ -517,8 +523,8 @@ function McpTable({ title, description, items, columns, empty }) {
               </tr>
             </thead>
             <tbody>
-              {items.map((row, i) => (
-                <tr key={row.key || i}>
+              {paged.shown.map((row, i) => (
+                <tr key={row.key || paged.offset + i}>
                   {columns.map(([key, , render]) => (
                     <td key={key} className={key === 'tool' || key === 'method' ? 'mono truncate' : 'truncate'}>
                       {render(row)}
@@ -530,6 +536,7 @@ function McpTable({ title, description, items, columns, empty }) {
           </table>
         </div>
       )}
+      <Pager paged={paged} />
     </div>
   );
 }

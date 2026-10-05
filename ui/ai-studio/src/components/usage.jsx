@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Sparkline, StackedBars, seriesColor } from './charts';
-import { Empty, Loading, Progress, Segmented, useAsync } from './ui';
+import { Empty, Loading, Pager, Progress, Segmented, useAsync, usePaged } from './ui';
 import { NoExporterError, runQuery, scalarOf, seriesOf } from '../lib/analytics';
 import { Link } from '../lib/router';
 import { budgetConsumption, listBudgets, periodLabel } from '../lib/budgets';
@@ -43,6 +43,7 @@ export function Kpi({ label, value, previous, format, points, inverse }) {
 // page to that consumer.
 export function ConsumersCard({ title, description, items, active, onPick, empty }) {
   const max = Math.max(1, ...items.map((i) => Number(i.tokens) || 0));
+  const paged = usePaged(items);
   return (
     <div className="card flush">
       <div style={{ padding: '18px 22px 6px' }}>
@@ -68,7 +69,7 @@ export function ConsumersCard({ title, description, items, active, onPick, empty
               </tr>
             </thead>
             <tbody>
-              {items.map((it) => (
+              {paged.shown.map((it) => (
                 <tr key={it.key} className={`clickable ${active === it.value ? 'selected' : ''}`} onClick={() => onPick(it.value)} title={active === it.value ? 'Clear this filter' : `Only show the usage of ${it.label}`}>
                   <td>
                     <div className="truncate" style={{ maxWidth: 260 }}>
@@ -90,6 +91,7 @@ export function ConsumersCard({ title, description, items, active, onPick, empty
           </table>
         </div>
       )}
+      <Pager paged={paged} />
     </div>
   );
 }

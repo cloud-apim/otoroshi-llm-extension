@@ -28,6 +28,43 @@ export function useAsync(fn, deps = []) {
   return { ...state, reload: run };
 }
 
+/**
+ * A long list shown a page at a time: `shown` is the page, `offset` the position of its first item in the list.
+ * A list of another length (another period, another filter) starts again from its first page.
+ */
+export function usePaged(items, pageSize = 10) {
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(items.length / pageSize));
+  useEffect(() => setPage(0), [items.length]);
+  const current = Math.min(page, pages - 1);
+  const offset = current * pageSize;
+  return { page: current, pages, offset, total: items.length, shown: items.slice(offset, offset + pageSize), setPage };
+}
+
+// the foot of a paged list: where it is, and the way to the other pages. Nothing when it fits in one
+export function Pager({ paged }) {
+  const { page, pages, offset, total, shown, setPage } = paged;
+  if (pages <= 1) return null;
+  return (
+    <div className="pager">
+      <span className="faint small">
+        {offset + 1}–{offset + shown.length} of {total}
+      </span>
+      <div className="row">
+        <button className="btn sm ghost icon" title="Previous page" disabled={page === 0} onClick={() => setPage(page - 1)}>
+          <Icon name="chevron" style={{ transform: 'rotate(90deg)' }} />
+        </button>
+        <span className="small">
+          {page + 1} / {pages}
+        </span>
+        <button className="btn sm ghost icon" title="Next page" disabled={page >= pages - 1} onClick={() => setPage(page + 1)}>
+          <Icon name="chevron" style={{ transform: 'rotate(-90deg)' }} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- toasts ---------- */
 
 const ToastContext = createContext(() => {});
