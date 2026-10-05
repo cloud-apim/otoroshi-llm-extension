@@ -33,7 +33,7 @@ export function toolRefsOf(server) {
   return { functions: config.refs || [], connectors: config.mcp_refs || [] };
 }
 
-export async function saveMcpServer(workspace, { name, description, enabled, functions, connectors }) {
+export async function saveMcpServer(workspace, { name, description, enabled, functions, connectors, exposeAsMeta, metaSemanticSearch }) {
   const existing = await loadMcpServer(workspace.id);
   const base = existing || (await Resources.mcpVirtualServers.template());
   const entity = {
@@ -52,6 +52,8 @@ export async function saveMcpServer(workspace, { name, description, enabled, fun
       name,
       refs: functions,
       mcp_refs: connectors,
+      expose_as_meta: !!exposeAsMeta,
+      meta_semantic_search: !!metaSemanticSearch,
       // what the activity page of the workspace reads
       emit_audit_events: true,
     },

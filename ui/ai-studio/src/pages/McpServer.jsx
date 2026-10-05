@@ -7,7 +7,15 @@ import { Link } from '../lib/router';
 import { clientConfigOf, deleteMcpServer, exampleArguments, loadMcpServer, mcpCall, mcpUrlOf, saveMcpServer, toolRefsOf } from '../lib/mcpserver';
 import { fmtMs } from '../lib/format';
 
-const emptyForm = (workspace) => ({ name: `${workspace.name} tools`, description: '', enabled: true, functions: [], connectors: [] });
+const emptyForm = (workspace) => ({
+  name: `${workspace.name} tools`,
+  description: '',
+  enabled: true,
+  functions: [],
+  connectors: [],
+  exposeAsMeta: false,
+  metaSemanticSearch: false,
+});
 
 function formOf(workspace, server) {
   if (!server) return emptyForm(workspace);
@@ -18,6 +26,8 @@ function formOf(workspace, server) {
     enabled: server.enabled !== false,
     functions: refs.functions,
     connectors: refs.connectors,
+    exposeAsMeta: !!(server.config && server.config.expose_as_meta),
+    metaSemanticSearch: !!(server.config && server.config.meta_semantic_search),
   };
 }
 
@@ -318,11 +328,20 @@ export function McpServerPage() {
               <Field label="Description">
                 <TextArea rows={2} value={form.description} onChange={(description) => set({ description })} placeholder="The tools of the Acme workspace" />
               </Field>
+              <Field
+                label="Meta mode"
+                hint="The MCP connectors are exposed through five tools — list_servers, list_tools, get_tool_schema, search_tools and execute — instead of their full tool list."
+              >
+                <Toggle value={form.exposeAsMeta} onChange={(exposeAsMeta) => set({ exposeAsMeta })} title="Expose as meta" />
+              </Field>
+              <Field label="Semantic tool search" hint="In meta mode, search_tools also ranks the tools by meaning, on top of their keywords.">
+                <Toggle value={form.metaSemanticSearch} onChange={(metaSemanticSearch) => set({ metaSemanticSearch })} title="Semantic tool search" />
+              </Field>
             </div>
           </div>
           <ToolsCard workspace={workspace} form={form} set={set} tools={data.data} />
           {server && <ConnectCard workspace={workspace} />}
-          {server && server.enabled !== false && <PlaygroundCard key={JSON.stringify(toolRefsOf(server))} workspace={workspace} />}
+          {server && server.enabled !== false && <PlaygroundCard key={JSON.stringify([toolRefsOf(server), server.config && server.config.expose_as_meta])} workspace={workspace} />}
           {server && (
             <div className="card">
               <h2>Activity</h2>
