@@ -111,7 +111,8 @@ class DecisionModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     req.receive().aggregate().asString().flatMap { body =>
       cloudflareUri.set(req.uri())
       cloudflareBody.set(Json.parse(body))
-      send(response, 200, Json.obj("result" -> answer("clef-flash"), "success" -> true, "errors" -> Json.arr(), "messages" -> Json.arr()).stringify)
+      // the model that answers is the one of the url, which the gateway bills
+      send(response, 200, Json.obj("result" -> answer(req.uri().split("/").last), "success" -> true, "errors" -> Json.arr(), "messages" -> Json.arr()).stringify)
     }
   })
 

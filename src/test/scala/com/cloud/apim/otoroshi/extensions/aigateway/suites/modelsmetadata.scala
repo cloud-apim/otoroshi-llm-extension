@@ -301,7 +301,8 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     // else the model types
     assertEquals(endpoints("ollama-openai", "my-local-model:latest"), Seq("chat_completions"))
     assertEquals(endpoints("openai-compatible", "text-embedding-3-small"), Seq("embeddings"))
-    assertEquals(endpoints("openai-compatible", "whisper-1"), Seq("audio_transcriptions"))
+    // a whisper model also translates, which no price table says
+    assertEquals(endpoints("openai-compatible", "whisper-1"), Seq("audio_transcriptions", "audio_translations"))
     assertEquals(endpoints("openai-compatible", "tts-1"), Seq("audio_speech"))
     // the endpoints tell what a model is for
     assertEquals(describe("openai", "gpt-realtime").kinds, Seq("audio"))

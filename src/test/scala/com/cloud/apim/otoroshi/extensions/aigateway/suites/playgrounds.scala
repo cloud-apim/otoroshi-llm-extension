@@ -129,18 +129,18 @@ class PlaygroundsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val models = studio("GET", s"/workspaces/$wsId/models").json.select("models").as[Seq[JsObject]]
     assertEquals(models.map(m => (m.select("id").asString, m.select("metadata").select("endpoints").as[Seq[String]])).sortBy(_._1), Seq(
       ("gpt-4o-mini-tts", Seq("audio_speech")),
-      ("gpt-image-1", Seq("images_generations")),
+      ("gpt-image-1", Seq("images_generations", "images_edits")),
       ("omni-moderation-latest", Seq("moderations")),
       ("text-embedding-3-small", Seq("embeddings")),
-      ("whisper-1", Seq("audio_transcriptions")),
+      ("whisper-1", Seq("audio_transcriptions", "audio_translations")),
     ))
     // and what each connection can be asked for, whichever model of its kind the call names: an image
     // entity draws every image model of its provider, not only the one it carries as a default
     val infos = studio("GET", s"/workspaces/$wsId/models").json.select("providers").as[Seq[JsObject]]
     assertEquals(infos.filter(_.select("modality").asString != "text").map(i => (i.select("modality").asString, i.select("endpoints").as[Seq[String]])).sortBy(_._1), Seq(
-      ("audio", Seq("audio_speech", "audio_transcriptions")),
+      ("audio", Seq("audio_speech", "audio_transcriptions", "audio_translations")),
       ("embedding", Seq("embeddings")),
-      ("image", Seq("images_generations")),
+      ("image", Seq("images_generations", "images_edits")),
       ("moderation", Seq("moderations")),
     ))
     // a connection that only speaks keeps its voice, and stops listing a transcription model
