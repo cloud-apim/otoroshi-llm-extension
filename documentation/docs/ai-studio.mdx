@@ -334,7 +334,9 @@ enough for it. The **intent router** has it pick, among the candidates you descr
 request, and every call of the workspace starts from the same instructions.
 
 **Tools** are what a model can call while it answers. Each tool is attached to the providers allowed to
-use it, so one workspace can offer different tools to different models:
+use it, so one workspace can offer different tools to different models. A new tool is offered to every
+provider, and a new provider to every tool: its **Tools** tab lists them all, checked, so the models you
+connect next can call what the others already do:
 
 - **HTTP functions** — the model chooses the arguments, the gateway performs the request and feeds the
   result back. **Ready-made functions** adds `web_fetch` in one click: give the model a URL and it gets the
@@ -553,7 +555,7 @@ models from the catalog, workspace quotas, every provider selected for a preset 
 | `GET` `POST /workspaces` | List or create workspaces (`name`, `description`, `slug`). The `Otoroshi-Tenant` header sets the tenant of a new workspace. |
 | `GET` `PUT` `PATCH` `DELETE /workspaces/:id` | Read, update or delete a workspace: `name`, `description`, `enabled`, `slug`, `call_timeout`, `global_timeout`, `max_size_upload`, `decode_images`, `allowed_ip_addresses`, `blocked_ip_addresses`. Deleting a workspace deletes all of its entities. |
 | `GET /workspaces/:id/models` | Every model reachable through the workspace endpoint, with the id to use in requests and its `metadata`: the same types, cost, API, capabilities, limits and prices as the [enriched models](/docs/llm-gateway/openai-compat-api#enriched-models) of the unified API (`?force=true` refreshes the lists of models). |
-| `GET` `POST /workspaces/:id/providers` | List or connect providers: `kind`, `name`, `token`, `base_url`, `timeout`, `enabled`, `require_known_costs` (refuse and hide the models the gateway cannot bill), `fields` and `modalities` (`text`, `embedding`, `image`, `audio`, `moderation`, `ocr`, `video`, `decision`, each with `enabled`, `model`, and `stt_model` for audio). |
+| `GET` `POST /workspaces/:id/providers` | List or connect providers: `kind`, `name`, `token`, `base_url`, `timeout`, `enabled`, `require_known_costs` (refuse and hide the models the gateway cannot bill), `fields`, `modalities` (`text`, `embedding`, `image`, `audio`, `moderation`, `ocr`, `video`, `decision`, each with `enabled`, `model`, and `stt_model` for audio) and `tools` (the ids of the tools of the workspace its text models can call, all of them when a provider is connected without it). |
 | `GET` `PUT` `DELETE /workspaces/:id/providers/:provider` | Read, update or remove a provider and all of its capabilities. |
 | `GET /workspaces/:id/providers/:provider/models`, `POST /workspaces/:id/providers/_models` | The models offered by a connected provider, or by a provider before connecting it. `?enriched=true` adds the `details` of each model. |
 | `GET` `POST /workspaces/:id/apikeys`, `GET` `PUT` `DELETE /workspaces/:id/apikeys/:clientId` | API keys: `name`, `description`, `enabled`, `owner` (the email the usage of the key counts for, `null` for a workspace key), `models` (`{ include, exclude }`, regular expressions on `model`, `provider/model` or `provider###model`, `null` for every model), `valid_until` (the date the key stops working: an ISO-8601 date and time, or a day, valid through its end in UTC; `null` for no expiration), `quotas` (`null` for the workspace defaults) and `credit_limit` (`{ usd, period }`, `null` to remove it). Responses add `expired`. Giving an expired key a new `valid_until` enables it again, unless `enabled` is set. |

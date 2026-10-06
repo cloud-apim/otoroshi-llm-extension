@@ -73,20 +73,38 @@ export function attachedProviders(providers, kind, id) {
 
 export const TOOL_LABELS = { functions: 'function', mcp: 'MCP', search: 'web search' };
 
+// every tool of the workspace, whatever it is attached to
+export async function listWorkspaceTools(wsId) {
+  const filter = workspaceFilter(wsId);
+  const [functions, mcp, search] = await Promise.all([Resources.functions.list(filter), Resources.mcpConnectors.list(filter), Resources.searchEngines.list(filter)]);
+  const listed = (kind, entities) => (entities || []).map((e) => ({ id: e.id, name: e.name, kind }));
+  return [...listed('functions', functions), ...listed('mcp', mcp), ...listed('search', search)];
+}
+
+// The options of a text provider carrying the `selected` tools among `tools`: the ids the workspace does not
+// list (a tool attached from the Otoroshi admin) stay where they are.
+export function withTools(options, tools, selected) {
+  const next = { ...(options || {}) };
+  Object.keys(TOOL_KINDS).forEach((kind) => {
+    const option = TOOL_KINDS[kind].option;
+    const known = tools.filter((t) => t.kind === kind).map((t) => t.id);
+    const kept = (next[option] || []).filter((id) => !known.includes(id));
+    next[option] = [...kept, ...known.filter((id) => selected.includes(id))];
+  });
+  return next;
+}
+
+// the tools among `tools` that the options of a text provider carry
+export function toolsOf(options, tools) {
+  return tools.filter((t) => ((options && options[TOOL_KINDS[t.kind].option]) || []).includes(t.id)).map((t) => t.id);
+}
+
 // Every tool of the workspace that a provider carries, with the providers it is attached to. A call can
 // pick among them (`allowed_tools`): it only narrows what its provider offers, so a tool nobody attached
 // stays out of reach.
 export async function listAttachedTools(wsId) {
-  const filter = workspaceFilter(wsId);
-  const [providers, functions, mcp, search] = await Promise.all([
-    Resources.providers.list(filter),
-    Resources.functions.list(filter),
-    Resources.mcpConnectors.list(filter),
-    Resources.searchEngines.list(filter),
-  ]);
-  const listed = (kind, entities) =>
-    (entities || []).map((e) => ({ id: e.id, name: e.name, kind, providers: attachedProviders(providers, kind, e.id).map((p) => p.id) }));
-  return [...listed('functions', functions), ...listed('mcp', mcp), ...listed('search', search)].filter((t) => t.providers.length > 0);
+  const [providers, tools] = await Promise.all([Resources.providers.list(workspaceFilter(wsId)), listWorkspaceTools(wsId)]);
+  return tools.map((t) => ({ ...t, providers: attachedProviders(providers, t.kind, t.id).map((p) => p.id) })).filter((t) => t.providers.length > 0);
 }
 
 export async function attachTool(providers, kind, id, selectedIds) {

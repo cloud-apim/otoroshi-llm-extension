@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { HealthSummary } from '../components/health';
 import { combine, healthIndex, loadHealth } from '../lib/health';
 import { useWorkspace } from '../App';
 import {
   Badge,
+  Checks,
   Empty,
   ErrorAlert,
   Field,
@@ -35,6 +36,7 @@ import {
   withModelDefaults,
 } from '../lib/connections';
 import { listWorkspaceModels, loadCatalog } from '../lib/models';
+import { listWorkspaceTools, TOOL_LABELS, toolsOf, withTools } from '../lib/tools';
 import { initials } from '../lib/format';
 import { ModelLabels, PriceSummary } from '../components/modelinfo';
 import { contextOf, fitsCapability, fmtPrice, fmtTokens, hasCost, KIND_LABELS, KIND_ORDER, kindsSummary, metaOf, perMillion } from '../lib/modelmeta';
@@ -179,6 +181,27 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
       .finally(() => setLoadingModels(false));
   };
 
+  // The tools of the workspace live in the options of the text provider, next to what the Advanced tab
+  // edits. A new provider is given all of them, the way a new tool is given every provider: otherwise the
+  // models of a provider connected after the tools would be the only ones without.
+  const tools = useAsync(() => listWorkspaceTools(workspace.id), [workspace.id]);
+  const workspaceTools = tools.data || [];
+  const offersTools = entry.capabilities.includes('text') && workspaceTools.length > 0;
+  const textOptions = (conn.entities.text && conn.entities.text.options) || {};
+  const selectedTools = toolsOf(textOptions, workspaceTools);
+  const setTools = (selected, list = workspaceTools) =>
+    setConn((c) => {
+      const text = c.entities.text || {};
+      return { ...c, entities: { ...c.entities, text: { ...text, options: withTools(text.options, list, selected) } } };
+    });
+  const toolsDefaulted = useRef(false);
+  useEffect(() => {
+    if (!isNew || toolsDefaulted.current || !tools.data || !entry.capabilities.includes('text')) return;
+    toolsDefaulted.current = true;
+    if (tools.data.length > 0) setTools(tools.data.map((t) => t.id), tools.data);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tools.data]);
+
   const save = () => {
     setSaving(true);
     saveConnection(workspace.id, conn, entry)
@@ -224,7 +247,8 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
         tabs={[
           { value: 'connection', label: 'Connection' },
           { value: 'models', label: 'Models' },
-          ...(textEntity || conn.modalities.text ? [{ value: 'advanced', label: 'Advanced' }] : []),
+          ...(offersTools ? [{ value: 'tools', label: `Tools (${selectedTools.length}/${workspaceTools.length})` }] : []),
+          ...(conn.modalities.text ? [{ value: 'advanced', label: 'Advanced' }] : []),
         ]}
       />
       {tab === 'connection' && <ProviderFacts entry={entry} />}
@@ -365,12 +389,23 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
           </div>
         </div>
       )}
+      {tab === 'tools' && offersTools && (
+        <div className="stack">
+          <p className="muted">
+            The tools of the workspace the models of this provider can call. They are offered on every call of the provider, and a chat can still leave some
+            out.
+          </p>
+          {!(conn.modalities.text || {}).enabled && <div className="alert info">Tools are called by the text models: enable the Text capability to attach them.</div>}
+          <Checks options={workspaceTools.map((t) => ({ value: t.id, label: `${t.name} · ${TOOL_LABELS[t.kind]}` }))} value={selectedTools} onChange={(v) => setTools(v)} />
+        </div>
+      )}
       {tab === 'advanced' && (
         <div className="stack">
           <p className="muted">Raw options of the text provider (temperature, max tokens, tools…). They are merged into every request unless the caller overrides them.</p>
           <JsonInput
             rows={14}
-            value={(textEntity && textEntity.options) || { model: (conn.modalities.text || {}).model }}
+            // the model is the one of the Models tab, the one the provider is saved with
+            value={{ ...((textEntity && textEntity.options) || {}), model: (conn.modalities.text || {}).model }}
             onChange={(options) =>
               setConn((c) => ({
                 ...c,

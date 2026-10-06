@@ -579,6 +579,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     fields: Map[String, JsValue],
     modalities: Map[String, ModalityConf],
     entities: Map[String, JsObject],
+    // the tool options to write on the text provider, `None` to keep the ones it has
+    tools: Option[JsObject] = None,
   )
 
   private def catalogEntry(kind: String): Option[JsObject] = AiStudioCatalog.json.value.collectFirst {
@@ -672,6 +674,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       id -> (Json.obj("enabled" -> m.enabled, "model" -> m.model) ++ m.sttModel.map(s => Json.obj("stt_model" -> s)).getOrElse(Json.obj()))
     }),
     "entities" -> JsObject(conn.entities.toSeq.map { case (id, entity) => id -> JsString(modalities.find(_.id == id).get.entities.idOf(entity)) }),
+    "tools" -> conn.entities.get("text").map(t => toolKinds.flatMap(k => stringsOf(t.select("options").select(k.option)))).getOrElse(Seq.empty[String]),
   )
 
   private def buildConnection(conn: Connection, entry: Option[JsObject]): JsObject = {
@@ -734,7 +737,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       Json.obj("include" -> Json.arr(), "exclude" -> Json.arr()) ++ objOf(prev.select("models")) ++ Json.obj("require_known_costs" -> conn.requireKnownCosts)
     ))
     if (modality == "text") {
-      val options = if (model.nonEmpty) objOf(prev.select("options")) ++ Json.obj("model" -> model) else objOf(prev.select("options")) - "model"
+      val options = (if (model.nonEmpty) objOf(prev.select("options")) ++ Json.obj("model" -> model) else objOf(prev.select("options")) - "model") ++ conn.tools.getOrElse(Json.obj())
       Json.obj("guardrails" -> Json.arr(), "guardrails_fail_on_deny" -> false) ++ base ++ models ++ Json.obj(
         "connection" -> (objOf(prev.select("connection")) ++ connection),
         "options" -> options,
@@ -832,8 +835,20 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     )
   }
 
+  // the tools of a workspace, by kind
+  private def workspaceTools(wsId: String): Future[Seq[(ToolKind, String)]] =
+    Future.sequence(toolKinds.map(k => k.entities.list(wsId).map(_.map(t => (k, k.entities.idOf(t)))))).map(_.flatten)
+
+  // The tool options of a text provider carrying the `selected` tools of the workspace: the ids the workspace
+  // does not list (a tool attached from the Otoroshi admin) stay where they are.
+  private def toolOptions(options: JsObject, tools: Seq[(ToolKind, String)], selected: Seq[String]): JsObject =
+    JsObject(toolKinds.map { k =>
+      val known = tools.collect { case (kind, id) if kind.id == k.id => id }
+      k.option -> Json.toJson(stringsOf(options.select(k.option)).filterNot(known.contains) ++ known.filter(selected.contains))
+    })
+
   // applies an api body on a connection, then checks it the way the provider form does
-  private def connectionFromForm(base: Connection, form: JsObject, entry: Option[JsObject], initialName: Option[String], existingNames: Seq[String]): Connection = {
+  private def connectionFromForm(base: Connection, form: JsObject, entry: Option[JsObject], initialName: Option[String], existingNames: Seq[String], tools: Seq[(ToolKind, String)]): Connection = {
     val isNew = base.entities.isEmpty
     val capabilities = entry.map(capabilitiesOf).getOrElse(Seq("text", "embedding", "image", "audio", "moderation", "ocr", "video", "decision"))
     val formModalities = obj(form, "modalities").getOrElse(Json.obj())
@@ -863,13 +878,18 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       fields = base.fields ++ obj(form, "fields").map(_.value.toMap).getOrElse(Map.empty),
       modalities = mods,
     )
+    // a new provider is given every tool of the workspace, the way a new tool is given every provider
+    val selectedTools = strings(form, "tools").orElse(Option.when(isNew)(tools.map(_._2)))
+    selectedTools.getOrElse(Seq.empty).filterNot(id => tools.exists(_._2 == id)).headOption.foreach(id => throw badRequest(s"the tool '$id' does not belong to this workspace"))
+    if (strings(form, "tools").exists(_.nonEmpty) && !mods.get("text").exists(_.enabled)) throw badRequest("'tools' are called by the text models: enable the text capability")
+    val textOptions = base.entities.get("text").map(t => objOf(t.select("options"))).getOrElse(Json.obj())
     val nameTaken = existingNames.contains(conn.name) && !initialName.contains(conn.name)
     if (conn.name.isEmpty) throw badRequest("'name' is required")
     if (nameTaken) throw conflict(s"the name '${conn.name}' is already used in this workspace")
     if (!conn.modalities.values.exists(_.enabled)) throw badRequest("at least one capability must be enabled")
     if (entry.exists(_.select("token_required").asOpt[Boolean].contains(true)) && conn.token.isEmpty && isNew) throw badRequest("'token' is required for this provider")
     if (entry.exists(_.select("base_url_required").asOpt[Boolean].contains(true)) && conn.baseUrl.isEmpty) throw badRequest("'base_url' is required for this provider")
-    conn
+    conn.copy(tools = selectedTools.map(toolOptions(textOptions, tools, _)))
   }
 
   private def realConnections(wsId: String): Future[Seq[Connection]] = listConnections(wsId).map(_.filterNot(c => VirtualKinds.contains(c.kind)))
@@ -880,10 +900,10 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   private def createConnection(ws: Workspace, form: JsObject)(using call: AiStudioApiRequest): Future[JsObject] = {
     val kind = string(form, "kind").getOrElse(throw badRequest("'kind' is required"))
     val entry = catalogEntry(kind).getOrElse(throw badRequest(s"unknown provider kind '$kind', see the catalog"))
-    realConnections(ws.id).flatMap { existing =>
+    realConnections(ws.id).zip(workspaceTools(ws.id)).flatMap { case (existing, tools) =>
       val names = existing.map(_.name)
       val fresh = newConnection(entry, names)
-      val conn = connectionFromForm(fresh, form, Some(entry), Some(fresh.name), names)
+      val conn = connectionFromForm(fresh, form, Some(entry), Some(fresh.name), names, tools)
       emulated(ws, conn).flatMap(checked => saveConnection(ws, checked, Some(entry))).flatMap(_ => connection(ws.id, conn.id)).map(connectionJson)
     }
   }
@@ -906,11 +926,11 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   }
 
   private def updateConnection(ws: Workspace, connId: String, form: JsObject)(using call: AiStudioApiRequest): Future[JsObject] =
-    realConnections(ws.id).flatMap { existing =>
+    realConnections(ws.id).zip(workspaceTools(ws.id)).flatMap { case (existing, tools) =>
       val current = existing.find(_.id == connId).getOrElse(throw notFound("provider not found"))
       if (string(form, "kind").exists(_ != current.kind)) throw badRequest("the kind of a provider cannot be changed")
       val entry = catalogEntry(current.kind)
-      val conn = connectionFromForm(current, form, entry, Some(current.name), existing.map(_.name))
+      val conn = connectionFromForm(current, form, entry, Some(current.name), existing.map(_.name), tools)
       emulated(ws, conn).flatMap(checked => saveConnection(ws, checked, entry)).flatMap(_ => connection(ws.id, conn.id)).map(connectionJson)
     }
 

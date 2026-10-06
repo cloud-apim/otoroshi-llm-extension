@@ -308,6 +308,22 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val functionEntity = aiEntity("tool-functions", function.select("id").asString).get
     assertEquals(functionEntity.select("backend").select("options").select("url").asString, "https://weather.oto.tools")
     assertEquals(function.select("providers").as[Seq[String]], Seq(ollamaText))
+    // a provider connected after the tools is given all of them, unless the body picks some
+    val searchId = search.select("id").asString
+    val functionId = function.select("id").asString
+    val late = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj("kind" -> "ollama", "name" -> "late", "base_url" -> s"http://localhost:$ollamaPort")), 201)
+    val lateId = late.select("id").asString
+    assertEquals(late.select("tools").as[Seq[String]].toSet, Set(searchId, functionId))
+    val lateOptions = aiEntity("providers", late.select("entities").select("text").asString).get.select("options")
+    assertEquals(lateOptions.select("tool_functions").as[Seq[String]], Seq(functionId))
+    assertEquals(lateOptions.select("search_engines").as[Seq[String]], Seq(searchId))
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/providers/$lateId", Json.obj("tools" -> Json.arr(searchId))), 200).select("tools").as[Seq[String]], Seq(searchId))
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/providers/$lateId", Json.obj("description" -> "kept")), 200).select("tools").as[Seq[String]], Seq(searchId))
+    expect(studio("PUT", s"/workspaces/$wsId/providers/$lateId", Json.obj("tools" -> Json.arr("tool-function_nope"))), 400)
+    val picked = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj("kind" -> "ollama", "name" -> "picked", "base_url" -> s"http://localhost:$ollamaPort", "tools" -> Json.arr())), 201)
+    assertEquals(picked.select("tools").as[Seq[String]], Seq.empty[String])
+    expect(studio("DELETE", s"/workspaces/$wsId/providers/$lateId"), 204)
+    expect(studio("DELETE", s"/workspaces/$wsId/providers/${picked.select("id").asString}"), 204)
     // the form speaks json schema, the entity stores the properties and the required ones next to them,
     // so what models and MCP clients are given is a valid schema and not a schema nested in a schema
     assertEquals(functionEntity.select("parameters").as[JsObject], Json.obj("city" -> Json.obj("type" -> "string")))
