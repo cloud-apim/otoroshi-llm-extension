@@ -5,7 +5,7 @@ import { bootstrap } from './lib/bootstrap';
 import { matchPath, RouterProvider, useRouter } from './lib/router';
 import { useTheme } from './lib/theme';
 import { backend } from './lib/backend';
-import { platform } from './lib/platform';
+import { hasPermission, platform } from './lib/platform';
 import { WorkspacesPage } from './pages/Workspaces';
 import { OverviewPage } from './pages/Overview';
 import { ApiPage } from './pages/Api';
@@ -37,11 +37,11 @@ export function useCan() {
 }
 
 // a page opened from its url by someone it is not for
-function NotAllowed() {
+function NotAllowed({ children = 'Your role in this workspace does not give access to this page.' }) {
   return (
     <div className="content">
       <div className="card">
-        <Empty title="Insufficient access">Your role in this workspace does not give access to this page.</Empty>
+        <Empty title="Insufficient access">{children}</Empty>
       </div>
     </div>
   );
@@ -135,9 +135,15 @@ function Root() {
     [workspaces.data, theme.theme]
   );
 
+  // a page of the edition outside of the workspaces
+  const route = wsMatch ? null : platform.routes.map((r) => ({ r, params: matchPath(r.path, path) })).find((x) => x.params);
+
   let content = null;
   if (wsMatch) {
     content = <WorkspaceShell wsId={wsMatch.id} page={wsMatch.page || 'overview'} sub={wsMatch.sub} />;
+  } else if (route) {
+    const Page = route.r.component;
+    content = !route.r.permission || hasPermission(route.r.permission) ? <Page params={route.params} /> : <NotAllowed>You do not have access to this page.</NotAllowed>;
   } else {
     content = <WorkspacesPage loading={workspaces.loading} error={workspaces.error} />;
   }

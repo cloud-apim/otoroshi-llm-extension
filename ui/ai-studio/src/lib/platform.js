@@ -12,6 +12,8 @@ export const platform = {
   },
   // pages added to the workspace menu: { id, label, icon, component, permission, after }
   pages: [],
+  // pages outside of the workspaces: { path, component, permission } (a global permission, see `permissions`)
+  routes: [],
   // elements added to the top bar, before the theme menu
   topbar: [],
   // shown next to the logo
