@@ -5,7 +5,7 @@ import { Icon } from '../components/icons';
 import { Markdown } from '../components/Markdown';
 import { chatCompletion, chatPrefs, DEFAULT_SETTINGS, samplingOf } from '../lib/chat';
 import { generateImage } from '../lib/images';
-import { randomId } from '../lib/entities';
+import { randomId } from '../lib/ids';
 import { backend } from '../lib/backend';
 import { listAttachedTools, TOOL_LABELS } from '../lib/tools';
 import { fmtCost, fmtInt, fmtMs } from '../lib/format';

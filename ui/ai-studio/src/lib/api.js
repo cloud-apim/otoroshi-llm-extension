@@ -81,5 +81,3 @@ export function gatewayError(text, status, statusText) {
 }
 
 export const STUDIO_API = '/extensions/cloud-apim/extensions/ai-extension/studio';
-export const EXT_ADMIN_API = '/bo/api/proxy/api/extensions/cloud-apim/extensions/ai-extension';
-export const EXT_BO_API = '/extensions/cloud-apim/extensions/ai-extension';

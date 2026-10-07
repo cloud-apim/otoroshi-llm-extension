@@ -4,7 +4,7 @@ import { LinesInput, NumberInput, PageHeader, Readonly, TextInput, Toggle, useCo
 import { Icon } from '../components/icons';
 import { backend } from '../lib/backend';
 import { bootstrap } from '../lib/bootstrap';
-import { slugify } from '../lib/entities';
+import { slugify } from '../lib/ids';
 import { adminLink } from '../lib/platform';
 import { useRouter } from '../lib/router';
 import { exposureFor } from '../lib/workspaces';

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useStudio } from '../App';
 import { Badge, Empty, ErrorAlert, Field, Loading, Modal, PageHeader, TextInput, useToast } from '../components/ui';
-import { slugify } from '../lib/entities';
+import { slugify } from '../lib/ids';
 import { useRouter } from '../lib/router';
 import { exposureFor } from '../lib/workspaces';
 import { backend } from '../lib/backend';
