@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useWorkspace } from '../App';
 import { Checks, CopyButton, Empty, ErrorAlert, Field, Loading, PageHeader, Readonly, Select, StatusBadge, TextArea, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
-import { Resources, workspaceFilter } from '../lib/entities';
+import { backend } from '../lib/backend';
 import { Link } from '../lib/router';
-import { clientConfigOf, deleteMcpServer, exampleArguments, loadMcpServer, mcpCall, mcpUrlOf, saveMcpServer, toolRefsOf } from '../lib/mcpserver';
+import { clientConfigOf, exampleArguments, mcpCall, mcpUrlOf } from '../lib/mcpserver';
 import { fmtMs } from '../lib/format';
 
 const emptyForm = (workspace) => ({
@@ -17,17 +17,17 @@ const emptyForm = (workspace) => ({
   metaSemanticSearch: false,
 });
 
+// `server` is the view of the studio api, null while the workspace serves no MCP server
 function formOf(workspace, server) {
   if (!server) return emptyForm(workspace);
-  const refs = toolRefsOf(server);
   return {
     name: server.name || '',
     description: server.description || '',
     enabled: server.enabled !== false,
-    functions: refs.functions,
-    connectors: refs.connectors,
-    exposeAsMeta: !!(server.config && server.config.expose_as_meta),
-    metaSemanticSearch: !!(server.config && server.config.meta_semantic_search),
+    functions: server.functions,
+    connectors: server.connectors,
+    exposeAsMeta: !!server.expose_as_meta,
+    metaSemanticSearch: !!server.meta_semantic_search,
   };
 }
 
@@ -238,13 +238,8 @@ export function McpServerPage() {
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
   const data = useAsync(async () => {
-    const filter = workspaceFilter(workspace.id);
-    const [server, functions, mcp] = await Promise.all([
-      loadMcpServer(workspace.id),
-      Resources.functions.list(filter),
-      Resources.mcpConnectors.list(filter),
-    ]);
-    return { server, functions, mcp };
+    const [server, tools] = await Promise.all([backend.run('mcpServer.get', workspace.id), backend.run('tools.list', workspace.id)]);
+    return { server: server.served ? server : null, functions: tools.filter((t) => t.kind === 'functions'), mcp: tools.filter((t) => t.kind === 'mcp') };
   }, [workspace.id]);
 
   const server = data.data && data.data.server;
@@ -255,7 +250,17 @@ export function McpServerPage() {
   const save = async () => {
     setSaving(true);
     try {
-      await saveMcpServer(workspace, form);
+      await backend.run('mcpServer.save', workspace.id, {
+        body: {
+          name: form.name,
+          description: form.description,
+          enabled: form.enabled,
+          functions: form.functions,
+          connectors: form.connectors,
+          expose_as_meta: form.exposeAsMeta,
+          meta_semantic_search: form.metaSemanticSearch,
+        },
+      });
       toast.success(server ? 'MCP server saved' : 'MCP server enabled');
       data.reload();
       reload();
@@ -275,7 +280,7 @@ export function McpServerPage() {
     });
     if (!ok) return;
     try {
-      await deleteMcpServer(workspace);
+      await backend.run('mcpServer.delete', workspace.id);
       toast.success('MCP server removed');
       data.reload();
       reload();
@@ -341,7 +346,7 @@ export function McpServerPage() {
           </div>
           <ToolsCard workspace={workspace} form={form} set={set} tools={data.data} />
           {server && <ConnectCard workspace={workspace} />}
-          {server && server.enabled !== false && <PlaygroundCard key={JSON.stringify([toolRefsOf(server), server.config && server.config.expose_as_meta])} workspace={workspace} />}
+          {server && server.enabled !== false && <PlaygroundCard key={JSON.stringify([server.functions, server.connectors, server.expose_as_meta])} workspace={workspace} />}
           {server && (
             <div className="card">
               <h2>Activity</h2>

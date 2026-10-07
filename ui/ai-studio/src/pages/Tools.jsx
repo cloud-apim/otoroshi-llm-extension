@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useWorkspace } from '../App';
 import { Badge, Checks, Empty, ErrorAlert, Field, JsonInput, Loading, Modal, NumberInput, PageHeader, SecretInput, Select, StatusBadge, Tabs, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
-import { Resources, workspaceFilter } from '../lib/entities';
-import { attachedProviders, deleteTool, FUNCTION_TEMPLATES, MCP_TRANSPORT, propertiesOf, requiredOf, saveTool, schemaOf, SEARCH_PROVIDERS } from '../lib/tools';
+import { backend } from '../lib/backend';
+import { FUNCTION_TEMPLATES, MCP_TRANSPORT, SEARCH_PROVIDERS } from '../lib/tools';
 
 const TABS = {
   functions: { title: 'HTTP functions', add: 'Add function', description: 'Tools the model can call; the gateway performs the HTTP request and feeds the result back.' },
@@ -12,80 +12,43 @@ const TABS = {
 
 const DEFAULT_PARAMETERS = { type: 'object', properties: { city: { type: 'string', description: 'The city name' } }, required: ['city'] };
 
+// the form of a tool is the view of the studio api (`toolFormOf` in studio/api.scala): the parameters are a
+// whole json schema, the endpoint and the credentials sit at the top level
 function ToolModal({ workspace, kind, tool, providers, onClose, onSaved }) {
   const toast = useToast();
-  const backend = (tool && tool.backend && tool.backend.options) || {};
-  const transport = (tool && tool.transport && tool.transport.options) || {};
-  const connection = (tool && tool.config && tool.config.connection) || {};
   const [form, setForm] = useState({
     name: tool ? tool.name : '',
     description: tool ? tool.description : '',
-    parameters: tool && tool.parameters ? schemaOf(tool.parameters, tool.required) : DEFAULT_PARAMETERS,
-    url: kind === 'functions' ? backend.url || '' : transport.url || '',
-    method: backend.method || 'GET',
-    headers: (kind === 'functions' ? backend.headers : transport.headers) || {},
-    body: backend.body || '',
-    timeout: (kind === 'functions' ? backend.timeout : transport.timeout) || 30000,
-    kreuzberg: backend.kreuzberg === true,
+    parameters: (tool && tool.parameters) || DEFAULT_PARAMETERS,
+    url: (tool && tool.url) || '',
+    method: (tool && tool.method) || 'GET',
+    headers: (tool && tool.headers) || {},
+    body: (tool && tool.body) || '',
+    timeout: (tool && tool.timeout) || 30000,
+    kreuzberg: !!(tool && tool.kreuzberg),
     enabled: tool ? tool.enabled !== false : true,
-    search_provider: tool ? tool.provider : 'tavily',
-    token: connection.token || '',
-    base_url: connection.base_url || '',
-    providers: tool ? attachedProviders(providers, kind, tool.id).map((p) => p.id) : providers.map((p) => p.id),
+    search_provider: tool ? tool.search_provider : 'tavily',
+    token: (tool && tool.token) || '',
+    base_url: (tool && tool.base_url) || '',
+    providers: tool ? tool.providers : providers.map((p) => p.id),
   });
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const search = SEARCH_PROVIDERS.find((s) => s.value === form.search_provider) || SEARCH_PROVIDERS[0];
 
+  // what the studio does not show (tls, response selection…) is kept by the api, and so is an empty token
   const save = async () => {
     setSaving(true);
     try {
-      let base;
-      let patch;
-      if (kind === 'functions') {
-        base = tool || (await Resources.functions.template());
-        patch = {
-          name: form.name,
-          description: form.description,
-          strict: false,
-          parameters: propertiesOf(form.parameters),
-          required: requiredOf(form.parameters),
-          backend: {
-            kind: 'Http',
-            options: {
-              ...((tool && tool.backend && tool.backend.options) || {}),
-              url: form.url,
-              method: form.method,
-              headers: form.headers,
-              timeout: Number(form.timeout),
-              kreuzberg: form.kreuzberg,
-              ...(form.body ? { body: form.body } : {}),
-            },
-          },
-        };
-      } else if (kind === 'mcp') {
-        base = tool || (await Resources.mcpConnectors.template());
-        patch = {
-          name: form.name,
-          description: form.description,
-          enabled: form.enabled,
-          // an existing connector keeps the transport it was given, whoever created it
-          transport: {
-            kind: (tool && tool.transport && tool.transport.kind) || MCP_TRANSPORT,
-            options: { url: form.url, headers: form.headers, timeout: Number(form.timeout) },
-          },
-        };
-      } else {
-        base = tool && tool.provider === form.search_provider ? tool : await Resources.searchEngines.template({ kind: form.search_provider });
-        const prev = (base.config && base.config.connection) || {};
-        patch = {
-          name: form.name,
-          description: form.description,
-          provider: form.search_provider,
-          config: { ...(base.config || {}), connection: { ...prev, ...(form.base_url ? { base_url: form.base_url } : {}), ...(form.token ? { token: form.token } : {}) } },
-        };
-      }
-      await saveTool(workspace.id, kind, base, patch, tool, providers, form.providers);
+      const common = { name: form.name, description: form.description, providers: form.providers };
+      const body =
+        kind === 'functions'
+          ? { ...common, parameters: form.parameters, url: form.url, method: form.method, headers: form.headers, body: form.body, timeout: Number(form.timeout), kreuzberg: form.kreuzberg }
+          : kind === 'mcp'
+            ? { ...common, enabled: form.enabled, url: form.url, headers: form.headers, timeout: Number(form.timeout) }
+            : { ...common, search_provider: form.search_provider, token: form.token, base_url: form.base_url };
+      if (tool) await backend.run('tools.update', workspace.id, { kind, tid: tool.id, body });
+      else await backend.run('tools.create', workspace.id, { kind, body });
       toast.success(tool ? 'Tool saved' : 'Tool added');
       onSaved();
     } catch (e) {
@@ -183,14 +146,14 @@ function ToolModal({ workspace, kind, tool, providers, onClose, onSaved }) {
 
 // Ready-made functions: one click instead of a form nobody enjoys filling. Adding one creates an ordinary
 // tool function, editable and deletable like any other.
-function TemplatesCard({ workspace, functions, providers, onAdded }) {
+function TemplatesCard({ workspace, functions, onAdded }) {
   const toast = useToast();
   const [adding, setAdding] = useState(null);
+  // the api fills the whole function from its template, and attaches it to every provider
   const add = async (template) => {
     setAdding(template.id);
     try {
-      const base = await Resources.functions.template();
-      await saveTool(workspace.id, 'functions', base, template.build(), null, providers, providers.map((p) => p.id));
+      await backend.run('tools.create', workspace.id, { kind: 'functions', body: { template: template.id } });
       toast.success(`${template.label} added`);
       onAdded();
     } catch (e) {
@@ -236,15 +199,11 @@ export function ToolsPage() {
   const confirm = useConfirm();
   const [tab, setTab] = useState('functions');
   const [editing, setEditing] = useState(null);
+  // every tool of the workspace, and the text providers they can be attached to
   const data = useAsync(async () => {
-    const filter = workspaceFilter(workspace.id);
-    const [functions, mcp, search, providers] = await Promise.all([
-      Resources.functions.list(filter),
-      Resources.mcpConnectors.list(filter),
-      Resources.searchEngines.list(filter).catch(() => []),
-      Resources.providers.list(filter),
-    ]);
-    return { functions, mcp, search, providers };
+    const [tools, entities] = await Promise.all([backend.run('tools.list', workspace.id), backend.run('modelEntities.list', workspace.id)]);
+    const ofKind = (kind) => tools.filter((t) => t.kind === kind);
+    return { functions: ofKind('functions'), mcp: ofKind('mcp'), search: ofKind('search'), providers: entities.filter((e) => e.modality === 'text') };
   }, [workspace.id]);
   const providers = (data.data && data.data.providers) || [];
   const items = (data.data && data.data[tab]) || [];
@@ -252,7 +211,8 @@ export function ToolsPage() {
   const remove = (tool) => {
     confirm({ title: `Delete ${tool.name}?`, danger: true, confirmLabel: 'Delete' }).then((ok) => {
       if (!ok) return;
-      deleteTool(tab, tool, providers)
+      backend
+        .run('tools.delete', workspace.id, { kind: tab, tid: tool.id })
         .then(() => {
           toast.success('Tool deleted');
           data.reload();
@@ -281,7 +241,7 @@ export function ToolsPage() {
       />
       <ErrorAlert error={data.error} />
       {tab === 'functions' && data.data && (
-        <TemplatesCard workspace={workspace} functions={data.data.functions} providers={providers} onAdded={data.reload} />
+        <TemplatesCard workspace={workspace} functions={data.data.functions} onAdded={data.reload} />
       )}
       <div className="card">
         <h2>{TABS[tab].title}</h2>
@@ -320,11 +280,11 @@ export function ToolsPage() {
                       {t.description && <div className="muted small truncate" style={{ maxWidth: 320 }}>{t.description}</div>}
                     </td>
                     <td className="mono truncate" style={{ maxWidth: 320 }}>
-                      {tab === 'functions' ? `${(t.backend && t.backend.options && t.backend.options.method) || 'POST'} ${(t.backend && t.backend.options && t.backend.options.url) || '—'}` : tab === 'mcp' ? (t.transport && t.transport.options && t.transport.options.url) || '—' : t.provider}
+                      {tab === 'functions' ? `${t.method} ${t.url || '—'}` : tab === 'mcp' ? t.url || '—' : t.search_provider}
                     </td>
                     <td>
                       <div className="badges">
-                        {attachedProviders(providers, tab, t.id).map((p) => (
+                        {providers.filter((p) => t.providers.includes(p.id)).map((p) => (
                           <Badge key={p.id} kind="accent">
                             {p.name}
                           </Badge>
@@ -333,10 +293,10 @@ export function ToolsPage() {
                     </td>
                     {tab === 'mcp' && (
                       <td>
-                        {(t.transport && t.transport.kind) === MCP_TRANSPORT ? (
+                        {t.transport === MCP_TRANSPORT ? (
                           <Badge kind="accent" title="Stateless Streamable HTTP">stateless http</Badge>
                         ) : (
-                          <Badge title="Created outside the studio: the studio keeps the transport it was given">{(t.transport && t.transport.kind) || '—'}</Badge>
+                          <Badge title="Created outside the studio: the studio keeps the transport it was given">{t.transport || '—'}</Badge>
                         )}
                       </td>
                     )}
