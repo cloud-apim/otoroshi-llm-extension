@@ -6,10 +6,11 @@ import com.cloud.apim.otoroshi.extensions.aigateway.providers.SystemOneProviders
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
+import otoroshi.actions.ApiActionContextCapable
 import otoroshi.api.{Resource, WriteAction}
 import otoroshi.env.Env
 import otoroshi.events.{AdminApiEvent, Audit}
-import otoroshi.models.ApiKey
+import otoroshi.models.{ApiKey, TenantId}
 import otoroshi.next.analytics.queries.{AnalyticsRuntime, Filters}
 import otoroshi.next.extensions.*
 import otoroshi.security.IdGenerator
@@ -21,6 +22,8 @@ import play.api.Logger
 import play.api.libs.json.*
 import play.api.mvc.{RequestHeader, Result, Results}
 
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 import java.text.Normalizer
 import java.time.{Instant, LocalDate, ZoneOffset}
 import java.time.temporal.ChronoUnit
@@ -34,11 +37,20 @@ final case class AiStudioApiError(status: Int, error: String, description: Strin
 
 object AiStudioApiError {
   def badRequest(description: String): AiStudioApiError = AiStudioApiError(400, "bad_request", description)
+  def forbidden(description: String): AiStudioApiError = AiStudioApiError(403, "forbidden", description)
   def notFound(description: String): AiStudioApiError = AiStudioApiError(404, "not_found", description)
   def conflict(description: String): AiStudioApiError = AiStudioApiError(409, "conflict", description)
 }
 
-final case class AiStudioApiRequest(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: JsValue) {
+/**
+ * A call of the studio api, with the rights of its caller. Otoroshi checks nothing on the admin api routes of an
+ * extension: the rights are the ones the generic admin api applies, read the same way. An api key gets the rights
+ * of its `otoroshi-access-rights` metadata (none at all means no restriction), a call relayed by the backoffice
+ * (`/bo/api/proxy`) the rights of its user, and `Otoroshi-Tenant` is the tenant the caller works in.
+ */
+final case class AiStudioApiRequest(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: JsValue) extends ApiActionContextCapable {
+  override def apiKey: ApiKey = apikey
+  override def request: RequestHeader = req
   def param(name: String): String = ctx.named(name).getOrElse("--")
   def flag(name: String): Boolean = req.getQueryString(name).contains("true")
   def form: JsObject = body match {
@@ -103,8 +115,9 @@ private object StudioForm {
  *
  * It produces exactly the entities the studio front (`ui/ai-studio/src/lib`) creates through the generic admin
  * api: every write goes through the same resource access (json format, write validation, audit event), with the
- * same ids, metadata, locations and plugin configs. Authentication, tenants and rights are the ones of the
- * Otoroshi admin api serving the extension routes.
+ * same ids, metadata, locations and plugin configs. Every entity read or written is checked against the rights
+ * of the caller the way the generic admin api checks them (see `AiStudioApiRequest`): what a caller cannot read
+ * does not exist for it, what it cannot write is refused.
  */
 class AiStudioApi(env: Env, ext: AiExtension) {
 
@@ -131,17 +144,21 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
     def idOf(entity: JsValue): String = entity.select(resource.access.idFieldName()).asOptString.getOrElse("")
 
-    // datastore reads, not the in-memory state, so what was just written is always returned
-    def all(): Future[Seq[JsObject]] = lookup match {
+    // datastore reads, not the in-memory state, so what was just written is always returned. Whatever the
+    // caller cannot read is left out, as the generic admin api does
+    def all()(using call: AiStudioApiRequest): Future[Seq[JsObject]] = everything().map(_.filter(e => call.canUserReadJson(e)))
+
+    // every entity, readable by the caller or not: only to keep what must stay unique unique
+    def everything(): Future[Seq[JsObject]] = lookup match {
       case None    => Seq.empty[JsObject].vfuture
       case Some(r) => r.access.findAll(r.version.name).map(_.collect { case o: JsObject => o })
     }
 
-    def list(wsId: String): Future[Seq[JsObject]] = all().map(_.filter(e => metaOf(e, MetaWorkspace).contains(wsId)))
+    def list(wsId: String)(using call: AiStudioApiRequest): Future[Seq[JsObject]] = all().map(_.filter(e => metaOf(e, MetaWorkspace).contains(wsId)))
 
-    def get(id: String): Future[Option[JsObject]] = {
+    def get(id: String)(using call: AiStudioApiRequest): Future[Option[JsObject]] = {
       val r = resource
-      r.access.findOne(r.version.name, id).map(_.collect { case o: JsObject => o })
+      r.access.findOne(r.version.name, id).map(_.collect { case o: JsObject if call.canUserReadJson(o) => o })
     }
 
     def template(params: Map[String, String] = Map.empty): JsObject = {
@@ -161,6 +178,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         (action, old) match {
           case (WriteAction.Create, Some(_)) => Future.failed(conflict(s"${r.singularName} '$id' already exists"))
           case (WriteAction.Update, None)    => Future.failed(notFound(s"${r.singularName} '$id' not found"))
+          case (WriteAction.Update, Some(o)) if !call.canUserReadJson(o) => Future.failed(notFound(s"${r.singularName} '$id' not found"))
+          case _ if !call.canUserWriteJson(entity) || old.exists(o => !call.canUserWriteJson(o)) =>
+            Future.failed(forbidden(s"you cannot write the ${r.singularName} '$id'"))
           case _ =>
             r.access.validateToJson(entity, r.singularName, Right(None)) match {
               case JsError(errors) =>
@@ -180,11 +200,16 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
     def delete(id: String)(using call: AiStudioApiRequest): Future[Unit] = {
       val r = resource
-      r.access.deleteOne(r.version.name, id, r.singularName).flatMap {
-        case Left(err) => Future.failed(badRequest(s"unable to delete ${r.singularName} '$id': ${err.stringify}"))
-        case Right(_) =>
-          audit(s"DELETE_${r.singularName.toUpperCase}", s"AI Studio api deleted a ${r.singularName}", Json.obj("id" -> id))
-          ().vfuture
+      r.access.findOne(r.version.name, id).flatMap {
+        case Some(o) if !call.canUserReadJson(o) => Future.failed(notFound(s"${r.singularName} '$id' not found"))
+        case Some(o) if !call.canUserWriteJson(o) => Future.failed(forbidden(s"you cannot delete the ${r.singularName} '$id'"))
+        case _ =>
+          r.access.deleteOne(r.version.name, id, r.singularName).flatMap {
+            case Left(err) => Future.failed(badRequest(s"unable to delete ${r.singularName} '$id': ${err.stringify}"))
+            case Right(_) =>
+              audit(s"DELETE_${r.singularName.toUpperCase}", s"AI Studio api deleted a ${r.singularName}", Json.obj("id" -> id))
+              ().vfuture
+          }
       }
     }
   }
@@ -194,7 +219,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       env.snowflakeGenerator.nextIdStr(),
       env.env,
       Some(call.apikey),
-      None,
+      // the backoffice user, for a call relayed by the backoffice
+      call.user,
       action,
       message,
       call.req.theIpAddress,
@@ -298,12 +324,30 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     def compat: JsObject = compatConfigOf(route)
   }
 
-  private def workspace(wsId: String): Future[Workspace] = Routes.get(routeIdOf(wsId)).flatMap {
+  private def workspace(wsId: String)(using call: AiStudioApiRequest): Future[Workspace] = Routes.get(routeIdOf(wsId)).flatMap {
     case Some(route) if metaOf(route, MetaWorkspace).contains(wsId) => Workspace(wsId, route).vfuture
     case _ => Future.failed(notFound("workspace not found"))
   }
 
-  private def workspaceRoutes(): Future[Seq[JsObject]] = Routes.all().map(_.filter(r => metaOf(r, MetaKind).contains("workspace")))
+  private def isWorkspaceRoute(route: JsObject): Boolean = metaOf(route, MetaKind).contains("workspace")
+
+  private def workspaceRoutes()(using call: AiStudioApiRequest): Future[Seq[JsObject]] = Routes.all().map(_.filter(isWorkspaceRoute))
+
+  // The location of the entities of a new workspace (see `workspaceLocation` in lib/workspaces.js): its team, and
+  // for a caller who is not an admin of the tenant, the teams it can write in that tenant, so it still sees what it
+  // creates.
+  private def locationOf(wsId: String, tenant: String)(using call: AiStudioApiRequest): JsObject = {
+    val teams = call.backOfficeUser match {
+      case Right(Some(user)) if !(user.rights.superAdmin || user.rights.tenantAdmin(TenantId(tenant))) =>
+        user.rights.rights
+          .filter(r => r.tenant.value == "*" || r.tenant.value == tenant)
+          .flatMap(_.teams)
+          .filter(t => t.canWrite && !t.value.startsWith("*"))
+          .map(_.value)
+      case _ => Seq.empty
+    }
+    Json.obj("tenant" -> tenant, "teams" -> (teamIdOf(wsId) +: teams).distinct)
+  }
 
   private def pluginsOf(route: JsObject): Seq[JsObject] = route.select("plugins").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
 
@@ -334,6 +378,12 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       Option.when(!has(IpBlockPlugin))(pluginInstance(IpBlockPlugin, Json.obj("addresses" -> Json.arr()), Json.obj("validate_access" -> 1), enabled = false)),
     ).flatten
     route ++ Json.obj("plugins" -> (head ++ plugins))
+  }
+
+  // a route created by an earlier version of the studio: its next update repairs it (see ensureStudioPlugins)
+  private def needsRepair(route: JsObject): Boolean = {
+    def has(plugin: String) = findPlugin(route, plugin).isDefined
+    !has(IpAllowPlugin) || !has(IpBlockPlugin) || has(LegacyStudioConsumerPlugin)
   }
 
   private def ipAddressesOf(route: JsObject, plugin: String): Seq[String] = findPlugin(route, plugin).map(p => stringsOf(p.select("config").select("addresses"))).getOrElse(Seq.empty)
@@ -379,6 +429,10 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       "tenant" -> route.select("_loc").select("tenant").asOptString.getOrElse("default"),
       "route_id" -> routeIdOf(wsId),
       "team_id" -> teamIdOf(wsId),
+      // the virtual MCP server the route serves on `<base url>/mcp`, if any
+      "mcp_server_ref" -> optString(mcpServerRefOf(route)),
+      // an empty PATCH repairs it
+      "needs_repair" -> needsRepair(route),
       "settings" -> Json.obj(
         "call_timeout" -> client.select("call_timeout").asOpt[Long].filter(_ > 0).getOrElse(600000L),
         "global_timeout" -> client.select("global_timeout").asOpt[Long].filter(_ > 0).getOrElse(600000L),
@@ -396,9 +450,11 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     val description = string(form, "description").getOrElse("")
     val wsId = randomId(12)
     val finalSlug = Some(slugify(string(form, "slug").map(_.toLowerCase).filter(_.nonEmpty).getOrElse(name))).filter(_.nonEmpty).getOrElse(wsId)
-    val tenant = call.req.headers.get("Otoroshi-Tenant").map(_.trim).filter(_.nonEmpty).getOrElse("default")
+    val tenant = call.currentTenant.value
+    val location = locationOf(wsId, tenant)
     val (host, path) = exposureFor(finalSlug, config)
-    workspaceRoutes().flatMap { existing =>
+    // two workspaces cannot share a slug, whoever can see them: they would answer on the same domain
+    Routes.everything().map(_.filter(isWorkspaceRoute)).flatMap { existing =>
       if (existing.exists(r => slugOf(r, config) == finalSlug)) {
         Future.failed(conflict(s"a workspace already uses '$finalSlug'"))
       } else {
@@ -414,7 +470,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
           val frontend = objOf(template.select("frontend"))
           val backend = objOf(template.select("backend"))
           val route = template ++ Json.obj(
-            "_loc" -> Json.obj("tenant" -> tenant, "teams" -> Json.arr(teamIdOf(wsId))),
+            "_loc" -> location,
             "id" -> routeIdOf(wsId),
             "name" -> name,
             "description" -> description,
@@ -485,7 +541,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     val config = AiStudioConfig.current(env)
     for {
       ws <- workspace(wsId)
-      others <- workspaceRoutes().map(_.filterNot(r => metaOf(r, MetaWorkspace).contains(wsId)))
+      others <- Routes.everything().map(_.filter(r => isWorkspaceRoute(r) && !metaOf(r, MetaWorkspace).contains(wsId)))
       current = workspaceJson(ws.route, config)
       settings = current.select("settings")
       name = string(form, "name").getOrElse(current.select("name").asString).trim
@@ -528,7 +584,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   private def deleteWorkspace(wsId: String)(using call: AiStudioApiRequest): Future[Unit] = {
     val kinds = Seq(Apikeys, Budgets) ++ modalities.map(_.entities) ++ Seq(Contexts, Functions, McpConnectors, SearchEngines)
     for {
-      _ <- workspace(wsId)
+      ws <- workspace(wsId)
+      // the route is removed whatever happens to it below: who cannot write it removes nothing at all
+      _ = if (!call.canUserWriteJson(ws.route)) throw forbidden("you cannot delete this workspace")
       // the route first so nothing can be served while the rest is removed
       _ <- Routes.delete(routeIdOf(wsId)).recover { case _ => () }
       _ <- sequentially(kinds) { kind =>
@@ -581,6 +639,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     entities: Map[String, JsObject],
     // the tool options to write on the text provider, `None` to keep the ones it has
     tools: Option[JsObject] = None,
+    // the raw options of the text provider (temperature, max tokens…), `None` to keep the ones it has. Its model
+    // is the one of the text capability, its tools the ones of `tools`
+    options: Option[JsObject] = None,
   )
 
   private def catalogEntry(kind: String): Option[JsObject] = AiStudioCatalog.json.value.collectFirst {
@@ -612,7 +673,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   private def connectionOfEntity(modality: String, entity: JsObject): JsObject =
     if (modality == "text") objOf(entity.select("connection")) else objOf(entity.select("config").select("connection"))
 
-  private def listConnections(wsId: String): Future[Seq[Connection]] =
+  private def listConnections(wsId: String)(using call: AiStudioApiRequest): Future[Seq[Connection]] =
     Future.sequence(modalities.map(m => m.entities.list(wsId).map(list => (m, list)))).map { lists =>
       val byId = scala.collection.mutable.LinkedHashMap.empty[String, Connection]
       lists.foreach { case (m, list) =>
@@ -675,6 +736,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     }),
     "entities" -> JsObject(conn.entities.toSeq.map { case (id, entity) => id -> JsString(modalities.find(_.id == id).get.entities.idOf(entity)) }),
     "tools" -> conn.entities.get("text").map(t => toolKinds.flatMap(k => stringsOf(t.select("options").select(k.option)))).getOrElse(Seq.empty[String]),
+    "options" -> conn.entities.get("text").map(t => objOf(t.select("options"))).getOrElse(Json.obj()).as[JsValue],
   )
 
   private def buildConnection(conn: Connection, entry: Option[JsObject]): JsObject = {
@@ -737,7 +799,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       Json.obj("include" -> Json.arr(), "exclude" -> Json.arr()) ++ objOf(prev.select("models")) ++ Json.obj("require_known_costs" -> conn.requireKnownCosts)
     ))
     if (modality == "text") {
-      val options = (if (model.nonEmpty) objOf(prev.select("options")) ++ Json.obj("model" -> model) else objOf(prev.select("options")) - "model") ++ conn.tools.getOrElse(Json.obj())
+      val prevOptions = conn.options.getOrElse(objOf(prev.select("options")))
+      val options = (if (model.nonEmpty) prevOptions ++ Json.obj("model" -> model) else prevOptions - "model") ++ conn.tools.getOrElse(Json.obj())
       Json.obj("guardrails" -> Json.arr(), "guardrails_fail_on_deny" -> false) ++ base ++ models ++ Json.obj(
         "connection" -> (objOf(prev.select("connection")) ++ connection),
         "options" -> options,
@@ -836,7 +899,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   }
 
   // the tools of a workspace, by kind
-  private def workspaceTools(wsId: String): Future[Seq[(ToolKind, String)]] =
+  private def workspaceTools(wsId: String)(using call: AiStudioApiRequest): Future[Seq[(ToolKind, String)]] =
     Future.sequence(toolKinds.map(k => k.entities.list(wsId).map(_.map(t => (k, k.entities.idOf(t)))))).map(_.flatten)
 
   // The tool options of a text provider carrying the `selected` tools of the workspace: the ids the workspace
@@ -877,6 +940,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       requireKnownCosts = boolean(form, "require_known_costs").getOrElse(base.requireKnownCosts),
       fields = base.fields ++ obj(form, "fields").map(_.value.toMap).getOrElse(Map.empty),
       modalities = mods,
+      // null clears them, absent keeps them
+      options = Option.when(has(form, "options"))(obj(form, "options").getOrElse(Json.obj())),
     )
     // a new provider is given every tool of the workspace, the way a new tool is given every provider
     val selectedTools = strings(form, "tools").orElse(Option.when(isNew)(tools.map(_._2)))
@@ -892,9 +957,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     conn.copy(tools = selectedTools.map(toolOptions(textOptions, tools, _)))
   }
 
-  private def realConnections(wsId: String): Future[Seq[Connection]] = listConnections(wsId).map(_.filterNot(c => VirtualKinds.contains(c.kind)))
+  private def realConnections(wsId: String)(using call: AiStudioApiRequest): Future[Seq[Connection]] = listConnections(wsId).map(_.filterNot(c => VirtualKinds.contains(c.kind)))
 
-  private def connection(wsId: String, connId: String): Future[Connection] =
+  private def connection(wsId: String, connId: String)(using call: AiStudioApiRequest): Future[Connection] =
     realConnections(wsId).map(_.find(_.id == connId).getOrElse(throw notFound("provider not found")))
 
   private def createConnection(ws: Workspace, form: JsObject)(using call: AiStudioApiRequest): Future[JsObject] = {
@@ -1174,7 +1239,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     result
   }
 
-  private def workspaceBudget(ws: Workspace, budgetId: String): Future[JsObject] =
+  private def workspaceBudget(ws: Workspace, budgetId: String)(using call: AiStudioApiRequest): Future[JsObject] =
     Budgets.get(budgetId).map {
       case Some(b) if metaOf(b, MetaWorkspace).contains(ws.id) => b
       case _ => throw notFound("budget not found")
@@ -1242,7 +1307,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     )
   }
 
-  private def workspaceApikey(ws: Workspace, clientId: String): Future[JsObject] =
+  private def workspaceApikey(ws: Workspace, clientId: String)(using call: AiStudioApiRequest): Future[JsObject] =
     Apikeys.get(clientId).map {
       case Some(k) if metaOf(k, MetaWorkspace).contains(ws.id) => k
       case _ => throw notFound("api key not found")
@@ -1440,8 +1505,24 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       updated <- Providers.list(ws.id)
     } yield guardrailsJson(updated)
 
-  private def allModelEntities(wsId: String): Future[Seq[(Modality, JsObject)]] =
+  private def allModelEntities(wsId: String)(using call: AiStudioApiRequest): Future[Seq[(Modality, JsObject)]] =
     Future.sequence(modalities.map(m => m.entities.list(wsId).map(_.map(e => (m, e))))).map(_.flatten)
+
+  // What the pickers of the studio offer: every model entity of the workspace, load balancers and routers included,
+  // the way a guardrail, a preset, a tool or a router refers to it (by entity id)
+  private def modelEntityJson(m: Modality, entity: JsObject): JsObject = {
+    val kind = entity.select("provider").asOptString.getOrElse("")
+    Json.obj(
+      "id" -> m.entities.idOf(entity),
+      "name" -> entity.select("name").asOptString.getOrElse(""),
+      "modality" -> m.id,
+      "kind" -> kind,
+      "model" -> optString(modelOfEntity(m.id, entity)),
+      "connection" -> optString(metaOf(entity, MetaConnection)),
+      "virtual" -> VirtualKinds.contains(kind),
+      "enabled" -> !metaOf(entity, MetaDisabled).contains("true"),
+    )
+  }
 
   private def modelAccessJson(entities: Seq[(Modality, JsObject)]): JsObject = {
     def access(e: JsObject) = (e.select("models").select("include").asOpt[JsValue].getOrElse(Json.arr()), e.select("models").select("exclude").asOpt[JsValue].getOrElse(Json.arr()))
@@ -1616,7 +1697,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       updated <- Providers.list(ws.id)
     } yield routingJson(ws.copy(route = route), updated)
 
-  private def virtualProvider(ws: Workspace, id: String, kind: String): Future[JsObject] =
+  private def virtualProvider(ws: Workspace, id: String, kind: String)(using call: AiStudioApiRequest): Future[JsObject] =
     Providers.get(id).map {
       case Some(p) if metaOf(p, MetaWorkspace).contains(ws.id) && p.select("provider").asOptString.contains(kind) => p
       case _ => throw notFound(if (kind == "loadbalancer") "load balancer not found" else "router not found")
@@ -1780,7 +1861,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       }
     }
 
-  private def workspacePreset(ws: Workspace, id: String): Future[JsObject] =
+  private def workspacePreset(ws: Workspace, id: String)(using call: AiStudioApiRequest): Future[JsObject] =
     Contexts.get(id).map {
       case Some(c) if metaOf(c, MetaWorkspace).contains(ws.id) => c
       case _ => throw notFound("preset not found")
@@ -1903,7 +1984,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         common ++ Json.obj(
           "parameters" -> tool.select("parameters").asOpt[JsObject].map(p => schemaOf(p, stringsOf(tool.select("required")))).getOrElse(defaultParameters),
           "url" -> backend.select("url").asOptString.getOrElse(""),
-          "method" -> nonEmptyString(backend.select("method")).getOrElse("GET"),
+          // what the gateway calls a function with when it names no method
+          "method" -> nonEmptyString(backend.select("method")).getOrElse("POST"),
           "headers" -> objOf(backend.select("headers")),
           "body" -> backend.select("body").asOptString.getOrElse(""),
           "timeout" -> backend.select("timeout").asOpt[BigDecimal].filter(_ != 0).getOrElse(BigDecimal(30000)),
@@ -1928,7 +2010,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     }
   }
 
-  private def workspaceTool(ws: Workspace, kind: ToolKind, id: String): Future[JsObject] =
+  private def workspaceTool(ws: Workspace, kind: ToolKind, id: String)(using call: AiStudioApiRequest): Future[JsObject] =
     kind.entities.get(id).map {
       case Some(t) if metaOf(t, MetaWorkspace).contains(ws.id) => t
       case _ => throw notFound("tool not found")
@@ -2045,7 +2127,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   private def mcpServerRefOf(route: JsObject): Option[String] =
     nonEmptyString(compatConfigOf(route).select("mcp_server_ref"))
 
-  private def mcpServer(ws: Workspace): Future[Option[JsObject]] = mcpServerRefOf(ws.route) match {
+  private def mcpServer(ws: Workspace)(using call: AiStudioApiRequest): Future[Option[JsObject]] = mcpServerRefOf(ws.route) match {
     case None      => None.vfuture
     case Some(ref) => McpVirtualServers.get(ref)
   }
@@ -2061,6 +2143,10 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       "enabled" -> !server.exists(_.select("enabled").asOpt[Boolean].contains(false)),
       "functions" -> stringsOf(config.select("refs")),
       "connectors" -> stringsOf(config.select("mcp_refs")),
+      // the tools are exposed behind a few meta tools (list, search, schema, execute) instead of one by one, and
+      // their search can be semantic
+      "expose_as_meta" -> config.select("expose_as_meta").asOpt[Boolean].getOrElse(false),
+      "meta_semantic_search" -> config.select("meta_semantic_search").asOpt[Boolean].getOrElse(false),
     )
   }
 
@@ -2093,6 +2179,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
           "name" -> name,
           "refs" -> selectedFunctions,
           "mcp_refs" -> selectedConnectors,
+          "expose_as_meta" -> boolean(form, "expose_as_meta").getOrElse(current.select("expose_as_meta").as[Boolean]),
+          "meta_semantic_search" -> boolean(form, "meta_semantic_search").getOrElse(current.select("meta_semantic_search").as[Boolean]),
           // what the activity of the workspace reads
           "emit_audit_events" -> true,
         )),
@@ -2159,11 +2247,79 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
   private def call(using r: AiStudioApiRequest): AiStudioApiRequest = r
 
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+  // information and calls on behalf of a user
+  /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  // the build of the extension, when it runs from its jar
+  private val version: String = Option(getClass.getPackage).flatMap(p => Option(p.getImplementationVersion)).getOrElse("dev")
+
+  // What this api offers beyond the routes of its first version: a client built against it (AI Studio Enterprise)
+  // checks the ones it needs before starting
+  private val features = Seq(
+    "caller-rights",
+    "proxy-on-behalf-of",
+    "providers-draft-models",
+    "provider-options",
+    "model-entities",
+    "tools-listing",
+    "mcp-server-meta",
+  )
+
+  val UserEmailHeader = "AI-Studio-User-Email"
+  val UserNameHeader = "AI-Studio-User-Name"
+
+  // A call of the chat of a workspace for the user the headers name, served like the one of the backoffice studio
+  // (see AiStudio.callWorkspace): the usage, the budgets scoped to users and the audit events are the ones of that
+  // user. Naming someone else is attributing calls to them, which only who can write the workspace can already do
+  // (an api key given to anyone), so only they can.
+  private def onBehalfOf(body: Option[Source[ByteString, ?]])(using call: AiStudioApiRequest): Future[Result] = {
+    val email = call.req.headers.get(UserEmailHeader).map(_.trim).filter(_.nonEmpty).getOrElse(throw badRequest(s"the '$UserEmailHeader' header is required"))
+    if (!OwnerPattern.matches(email)) throw badRequest(s"the '$UserEmailHeader' header must be an email")
+    val name = call.req.headers.get(UserNameHeader)
+      .map(n => Try(URLDecoder.decode(n, StandardCharsets.UTF_8)).getOrElse(n).trim)
+      .filter(_.nonEmpty)
+      .getOrElse(email)
+    withWorkspace { ws =>
+      if (!call.canUserWriteJson(ws.route)) throw forbidden("calling a workspace on behalf of a user needs the right to write it")
+      env.datastores.routeDataStore.findById(routeIdOf(ws.id)).flatMap {
+        case None        => Future.failed(notFound("workspace not found"))
+        case Some(route) => ext.studio.callWorkspace(route, ws.id, call.req, ext.studio.studioUser(email, name), body)
+      }
+    }
+  }
+
+  private def proxyRoute(method: String): AdminExtensionAdminApiRoute =
+    AdminExtensionAdminApiRoute(
+      method = method,
+      path = s"$apiPath/workspaces/:id/proxy/*",
+      // the body is relayed as it comes (uploads of audio files, images…), never parsed
+      wantsBody = method == "POST",
+      handle = (ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]) => {
+        given AiStudioApiRequest = AiStudioApiRequest(ctx, req, apikey, JsNull)
+        ().vfuture.flatMap(_ => onBehalfOf(body)).recover {
+          case e: AiStudioApiError => e.result
+          case e: Throwable =>
+            logger.error(s"error while calling a workspace on behalf of a user $method ${req.path}", e)
+            Results.InternalServerError(Json.obj("error" -> "internal_error", "error_description" -> e.getMessage))
+        }
+      }
+    )
+
   private def withWorkspace(f: Workspace => Future[Result])(using r: AiStudioApiRequest): Future[Result] = workspace(r.param("id")).flatMap(f)
 
   private def ok(json: JsValue): Result = Results.Ok(json)
 
   val routes: Seq[AdminExtensionAdminApiRoute] = Seq(
+
+    route("GET", "/_info") {
+      ok(Json.obj(
+        "version" -> version,
+        "features" -> features,
+        // the exposure of the workspaces, set in the danger zone
+        "config" -> AiStudioConfig.current(env).frontendJson(env),
+      )).vfuture
+    },
 
     route("GET", "/catalog") {
       AiStudioCatalog.enrichedJson.map(providers => ok(Json.obj("providers" -> providers)))
@@ -2202,18 +2358,32 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     route("POST", "/workspaces/:id/providers", wantsBody = true) {
       withWorkspace(ws => createConnection(ws, call.form).map(c => Results.Created(c)))
     },
+    // The models of a provider being edited, before it is saved: from a fresh connection of `kind`, or from the
+    // saved connection `connection_id` (its token and settings are used unless the body gives others). Every model
+    // is listed, the ones with no known price included: the form tells which ones a strict provider refuses.
     route("POST", "/workspaces/:id/providers/_models", wantsBody = true) {
       withWorkspace { ws =>
         val form = call.form
-        val kind = string(form, "kind").getOrElse(throw badRequest("'kind' is required"))
-        val entry = catalogEntry(kind).getOrElse(throw badRequest(s"unknown provider kind '$kind', see the catalog"))
-        val fresh = newConnection(entry, Seq.empty)
-        val conn = fresh.copy(
-          baseUrl = string(form, "base_url").getOrElse(fresh.baseUrl),
-          token = string(form, "token").getOrElse(""),
-          fields = fresh.fields ++ obj(form, "fields").map(_.value.toMap).getOrElse(Map.empty),
-        )
-        fetchProviderModels(ws, conn, call.flag("force"), call.flag("enriched"))
+        val base: Future[Connection] = string(form, "connection_id") match {
+          case Some(connId) =>
+            connection(ws.id, connId).map { current =>
+              if (string(form, "kind").exists(_ != current.kind)) throw badRequest("the kind of a provider cannot be changed")
+              current
+            }
+          case None =>
+            val kind = string(form, "kind").getOrElse(throw badRequest("'kind' or 'connection_id' is required"))
+            val entry = catalogEntry(kind).getOrElse(throw badRequest(s"unknown provider kind '$kind', see the catalog"))
+            newConnection(entry, Seq.empty).vfuture
+        }
+        base.flatMap { current =>
+          val conn = current.copy(
+            baseUrl = if (has(form, "base_url")) string(form, "base_url").getOrElse("") else current.baseUrl,
+            token = if (has(form, "token")) string(form, "token").getOrElse("") else current.token,
+            fields = current.fields ++ obj(form, "fields").map(_.value.toMap).getOrElse(Map.empty),
+            requireKnownCosts = false,
+          )
+          fetchProviderModels(ws, conn, call.flag("force"), call.flag("enriched"))
+        }
       }
     },
     route("GET", "/workspaces/:id/providers/:cid") {
@@ -2224,6 +2394,14 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     },
     route("DELETE", "/workspaces/:id/providers/:cid") {
       withWorkspace(ws => deleteConnection(ws, call.param("cid")).map(_ => Results.NoContent))
+    },
+    route("GET", "/workspaces/:id/model-entities") {
+      withWorkspace { ws =>
+        allModelEntities(ws.id).map { entities =>
+          val sorted = entities.sortBy { case (m, e) => (modalities.indexOf(m), e.select("name").asOptString.getOrElse("").toLowerCase) }
+          ok(JsArray(sorted.map { case (m, e) => modelEntityJson(m, e) }))
+        }
+      }
     },
     route("GET", "/workspaces/:id/providers/:cid/models") {
       withWorkspace(ws => connection(ws.id, call.param("cid")).flatMap(c => fetchProviderModels(ws, c, call.flag("force"), call.flag("enriched"))))
@@ -2405,6 +2583,15 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
     // tools
 
+    // every tool of the workspace, whatever its kind
+    route("GET", "/workspaces/:id/tools") {
+      withWorkspace { ws =>
+        for {
+          tools <- Future.sequence(toolKinds.map(k => k.entities.list(ws.id).map(_.map(t => (k, t))))).map(_.flatten)
+          providers <- Providers.list(ws.id)
+        } yield ok(JsArray(tools.sortBy(_._2.select("name").asOptString.getOrElse("").toLowerCase).map { case (k, t) => toolFormOf(k, t, providers) ++ Json.obj("kind" -> k.id) }))
+      }
+    },
     route("GET", "/workspaces/:id/tools/:kind") {
       withWorkspace { ws =>
         val kind = toolKind(call.param("kind"))
@@ -2453,5 +2640,10 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     route("POST", "/workspaces/:id/analytics/_query", wantsBody = true) {
       withWorkspace(ws => runAnalyticsQuery(ws, call.form))
     },
+
+    // chat on behalf of a user
+
+    proxyRoute("GET"),
+    proxyRoute("POST"),
   )
 }
