@@ -5,7 +5,8 @@ import { Icon } from '../components/icons';
 import { Markdown } from '../components/Markdown';
 import { chatCompletion, chatPrefs, DEFAULT_SETTINGS, samplingOf } from '../lib/chat';
 import { generateImage } from '../lib/images';
-import { Resources, randomId, workspaceFilter } from '../lib/entities';
+import { randomId } from '../lib/entities';
+import { backend } from '../lib/backend';
 import { listAttachedTools, TOOL_LABELS } from '../lib/tools';
 import { fmtCost, fmtInt, fmtMs } from '../lib/format';
 import { deleteConversation, getConversation, listConversations, listWorkspaceModels, saveConversation } from '../lib/models';
@@ -343,7 +344,7 @@ export function ChatPage() {
   const prefKey = `ai-studio-chat-${workspace.id}`;
 
   const models = useAsync(() => listWorkspaceModels(workspace), [workspace.id]);
-  const presets = useAsync(() => Resources.contexts.list(workspaceFilter(workspace.id)), [workspace.id]);
+  const presets = useAsync(() => backend.run('chat.presets', workspace.id), [workspace.id]);
   const rooms = useAsync(() => listConversations(workspace), [workspace.id]);
   const tools = useAsync(() => listAttachedTools(workspace.id), [workspace.id]);
 
@@ -859,7 +860,7 @@ export function ChatPage() {
                         'Every question goes to each model at once, and each model keeps its own thread. Compare the answers, their cost and their speed.'
                       ) : (
                         <>
-                          Chat with the models of <code>{workspace.baseUrl.replace(/^https?:\/\//, '')}</code> as {bootstrap.user.email}.
+                          Chat with the models of <code>{workspace.base_url.replace(/^https?:\/\//, '')}</code> as {bootstrap.user.email}.
                         </>
                       )}
                       {temporary && ' This chat is not saved, its calls still count in the activity and the budgets.'}

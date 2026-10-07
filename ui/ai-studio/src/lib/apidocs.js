@@ -3,7 +3,6 @@
 // request can carry and a snippet to start from. A guide, not a reference: the full one is in the docs.
 
 import { chatUsable, endpointsOf } from './modelmeta';
-import { findPlugin, OPENAI_COMPAT_PLUGIN } from './workspaces';
 
 export const DOCS_URL = 'https://cloud-apim.github.io/otoroshi-llm-extension/docs';
 
@@ -569,10 +568,7 @@ const PLACEHOLDER_MODEL = 'provider/model';
 export function servingOf(endpoint, workspace, listing) {
   const needs = endpoint.needs;
   if (!needs) return { available: true, model: null };
-  if (needs.mcp) {
-    const plugin = findPlugin(workspace.route, OPENAI_COMPAT_PLUGIN);
-    return { available: !!(plugin && plugin.config && plugin.config.mcp_server_ref), model: null };
-  }
+  if (needs.mcp) return { available: !!workspace.mcp_server_ref, model: null };
   const providers = (listing && listing.providers) || [];
   const models = ((listing && listing.models) || []).filter((m) => m.modality === needs.modality);
   if (needs.modality === 'text') {
@@ -589,5 +585,5 @@ export function servingOf(endpoint, workspace, listing) {
 
 // the snippets of an endpoint for this workspace, by language
 export function snippetsOf(endpoint, workspace, model) {
-  return endpoint.snippets({ baseUrl: workspace.baseUrl, model: model || PLACEHOLDER_MODEL });
+  return endpoint.snippets({ baseUrl: workspace.base_url, model: model || PLACEHOLDER_MODEL });
 }

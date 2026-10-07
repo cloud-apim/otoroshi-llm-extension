@@ -1,12 +1,12 @@
 import { bootstrap, currentTenant } from './bootstrap';
-import { META, Resources, randomId, slugify, workspaceFilter } from './entities';
+import { META, Resources, workspaceFilter } from './entities';
 
 // A workspace is not an entity by itself: it is the combination of a team (owning every entity of
 // the workspace), a route (the OpenAI-compatible endpoint) and all the entities tagged with
-// `metadata.ai_studio_workspace = <id>`. Everything is created and read live through the admin api.
+// `metadata.ai_studio_workspace = <id>`. The studio admin api (studio/api.scala) creates, reads and
+// deletes workspaces; what is left here builds the entities of the pages not moved to it yet.
 
 export const OPENAI_COMPAT_PLUGIN = 'cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatApi';
-export const CONSUMER_PRESET_PLUGIN = 'cp:otoroshi.next.plugins.MandatoryConsumerPreset';
 export const IP_ALLOW_PLUGIN = 'cp:otoroshi.next.plugins.IpAddressAllowedList';
 export const IP_BLOCK_PLUGIN = 'cp:otoroshi.next.plugins.IpAddressBlockList';
 // added by earlier versions of the studio, removed from the routes on their next update
@@ -58,48 +58,6 @@ export function exposureFor(slug) {
   return { host: `${slug}.${c.domain}`, path: routePath };
 }
 
-export function baseUrlOf(route) {
-  const c = bootstrap.config;
-  const domain = (route && route.frontend && route.frontend.domains && route.frontend.domains[0]) || '';
-  const idx = domain.indexOf('/');
-  const host = idx > -1 ? domain.substring(0, idx) : domain;
-  const path = idx > -1 ? domain.substring(idx) : '';
-  return `${c.public_scheme}://${host}${c.public_port || ''}${path}`;
-}
-
-export function slugOf(route) {
-  const c = bootstrap.config;
-  const domain = (route && route.frontend && route.frontend.domains && route.frontend.domains[0]) || '';
-  if (c.exposure === 'path') {
-    const parts = domain.split('/');
-    return parts[1] || '';
-  }
-  return domain.split('/')[0].split('.')[0];
-}
-
-function toWorkspace(route) {
-  const wsId = route.metadata[META.workspace];
-  return {
-    id: wsId,
-    name: route.name,
-    description: route.description,
-    enabled: route.enabled,
-    slug: slugOf(route),
-    baseUrl: baseUrlOf(route),
-    route,
-  };
-}
-
-export async function listWorkspaces() {
-  const routes = await Resources.routes.list({ [`metadata.${META.kind}`]: 'workspace' });
-  return routes.map(toWorkspace).sort((a, b) => a.name.localeCompare(b.name));
-}
-
-export async function getWorkspace(wsId) {
-  const route = await Resources.routes.get(routeIdOf(wsId));
-  return toWorkspace(route);
-}
-
 export function findPlugin(route, plugin) {
   return (route.plugins || []).find((p) => p.plugin === plugin);
 }
@@ -119,116 +77,6 @@ export function ensureStudioPlugins(route) {
   if (!has(IP_BLOCK_PLUGIN)) head.push(pluginInstance(IP_BLOCK_PLUGIN, { addresses: [] }, { validate_access: 1 }, false));
   route.plugins = [...head, ...plugins];
   return route;
-}
-
-export function routeNeedsRepair(route) {
-  const plugins = (route && route.plugins) || [];
-  const has = (p) => plugins.some((x) => x.plugin === p);
-  return !has(IP_ALLOW_PLUGIN) || !has(IP_BLOCK_PLUGIN) || has(LEGACY_STUDIO_CONSUMER_PLUGIN);
-}
-
-export function ipAddressesOf(route, plugin) {
-  const p = findPlugin(route, plugin);
-  return (p && p.config && p.config.addresses) || [];
-}
-
-export function setIpAddresses(route, plugin, addresses) {
-  const p = findPlugin(ensureStudioPlugins(route), plugin);
-  p.config = { ...(p.config || {}), addresses };
-  p.enabled = addresses.length > 0;
-  return route;
-}
-
-export async function createWorkspace({ name, description, slug }) {
-  const wsId = randomId(12);
-  const finalSlug = slugify(slug || name) || wsId;
-  const loc = workspaceLocation(wsId);
-  const { host, path } = exposureFor(finalSlug);
-
-  const existing = await Resources.routes.list({ [`metadata.${META.kind}`]: 'workspace' });
-  if (existing.some((r) => slugOf(r) === finalSlug)) {
-    throw new Error(`a workspace already uses '${finalSlug}'`);
-  }
-
-  await Resources.teams.create({
-    id: teamIdOf(wsId),
-    tenant: loc.tenant,
-    name: `AI Studio - ${name}`,
-    description: description || '',
-    tags: [],
-    metadata: workspaceMetadata(wsId, 'team'),
-  });
-
-  const template = await Resources.routes.template();
-  const route = {
-    ...template,
-    _loc: loc,
-    id: routeIdOf(wsId),
-    name,
-    description: description || '',
-    tags: [],
-    metadata: workspaceMetadata(wsId, 'workspace'),
-    enabled: true,
-    debug_flow: false,
-    capture: false,
-    export_reporting: false,
-    groups: ['default'],
-    frontend: {
-      ...(template.frontend || {}),
-      domains: [`${host}${path}`],
-      strip_path: true,
-      exact: false,
-    },
-    backend: {
-      ...(template.backend || {}),
-      targets: [
-        {
-          id: 'target_1',
-          hostname: 'request.otoroshi.io',
-          port: 443,
-          tls: true,
-          weight: 1,
-          backup: false,
-          predicate: { type: 'AlwaysMatch' },
-          protocol: 'HTTP/1.1',
-          ip_address: null,
-          tls_config: { certs: [], trusted_certs: [], enabled: false, loose: false, trust_all: false },
-        },
-      ],
-      root: '/',
-      rewrite: false,
-      load_balancing: { type: 'RoundRobin' },
-      client: {
-        ...((template.backend && template.backend.client) || {}),
-        call_timeout: 600000,
-        call_and_stream_timeout: 600000,
-        global_timeout: 600000,
-        idle_timeout: 600000,
-      },
-    },
-    plugins: [
-      pluginInstance(IP_ALLOW_PLUGIN, { addresses: [] }, { validate_access: 0 }, false),
-      pluginInstance(IP_BLOCK_PLUGIN, { addresses: [] }, { validate_access: 1 }, false),
-      pluginInstance(CONSUMER_PRESET_PLUGIN, { ref: null, tags: [consumerTagOf(wsId)] }),
-      pluginInstance(OPENAI_COMPAT_PLUGIN, {
-        language_model_refs: [],
-        audio_model_refs: [],
-        image_model_refs: [],
-        ocr_model_refs: [],
-        embedding_model_refs: [],
-        moderation_model_refs: [],
-        decision_model_refs: [],
-        context_refs: [],
-        max_size_upload: 104857600,
-        decode_images: false,
-        use_open_response_for_responses: false,
-        response_headers: false,
-        response_headers_include_costs: true,
-      }),
-    ],
-  };
-  await Resources.routes.create(route);
-  return wsId;
 }
 
 export async function updateWorkspaceRoute(wsId, mutate) {
@@ -262,22 +110,4 @@ export async function syncWorkspaceRefs(wsId) {
     patch.context_refs = merge(current.context_refs, contexts.map((c) => c.id));
     return setOpenAiConfig(route, patch);
   });
-}
-
-export async function deleteWorkspace(wsId) {
-  const filter = workspaceFilter(wsId);
-  const kinds = ['apikeys', 'budgets', ...MODALITIES.map((m) => m.resource), 'contexts', 'functions', 'mcpConnectors', 'searchEngines'];
-  // the route first so nothing can be served while the rest is removed
-  await Resources.routes.delete(routeIdOf(wsId)).catch(() => {});
-  for (const kind of kinds) {
-    const items = await Resources[kind].list(filter);
-    await Promise.all(items.map((it) => Resources[kind].delete(it[Resources[kind].idField])));
-  }
-  await Resources.teams.delete(teamIdOf(wsId)).catch(() => {});
-}
-
-export async function workspaceCounts(wsId) {
-  const filter = workspaceFilter(wsId);
-  const [keys, providers] = await Promise.all([Resources.apikeys.list(filter), Resources.providers.list(filter)]);
-  return { keys: keys.length, providers: providers.length };
 }

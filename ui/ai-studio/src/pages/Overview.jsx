@@ -4,7 +4,7 @@ import { Badge, CopyButton, useAsync } from '../components/ui';
 import { Snippets } from '../components/snippets';
 import { WeekUsage } from '../components/usage';
 import { QUICKSTARTS, servingOf, snippetsOf } from '../lib/apidocs';
-import { Resources, workspaceFilter } from '../lib/entities';
+import { backend } from '../lib/backend';
 import { modelLabel } from '../lib/modelmeta';
 import { Link, useRouter } from '../lib/router';
 import { listWorkspaceModels } from '../lib/models';
@@ -14,11 +14,7 @@ export function OverviewPage() {
   const { navigate } = useRouter();
   const [lang, setLang] = useState('curl');
   const [quickstart, setQuickstart] = useState(QUICKSTARTS[0].id);
-  const filter = workspaceFilter(workspace.id);
-  const data = useAsync(async () => {
-    const [providers, keys] = await Promise.all([Resources.providers.list(filter), Resources.apikeys.list(filter)]);
-    return { providers, keys };
-  }, [workspace.id]);
+  const data = useAsync(async () => ({ providers: await backend.run('providers.list', workspace.id) }), [workspace.id]);
   const models = useAsync(() => listWorkspaceModels(workspace), [workspace.id]);
 
   const providers = (data.data && data.data.providers) || [];
@@ -36,8 +32,8 @@ export function OverviewPage() {
         <p>
           Route requests to {providers.length} provider{providers.length === 1 ? '' : 's'} and {modelList.length} model{modelList.length === 1 ? '' : 's'} through{' '}
           <span className="hero-url">
-            <code>{workspace.baseUrl.replace(/^https?:\/\//, '')}</code>
-            <CopyButton text={workspace.baseUrl} title="Copy the base URL" />
+            <code>{workspace.base_url.replace(/^https?:\/\//, '')}</code>
+            <CopyButton text={workspace.base_url} title="Copy the base URL" />
           </span>
         </p>
         <div className="row">
@@ -94,7 +90,7 @@ export function OverviewPage() {
                 ))}
               </select>
             )}
-            <CopyButton text={workspace.baseUrl} className="btn sm" label="Copy URL" title="Copy the base URL" />
+            <CopyButton text={workspace.base_url} className="btn sm" label="Copy URL" title="Copy the base URL" />
             <CopyButton text={() => snippets[snippets[lang] ? lang : 'curl']} className="btn sm" label="Copy code" title="Copy the code" />
           </div>
         </div>

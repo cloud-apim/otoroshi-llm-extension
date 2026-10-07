@@ -1,4 +1,5 @@
-import { gatewayError, STUDIO_API } from './api';
+import { gatewayError } from './api';
+import { backend } from './backend';
 import { currentTenant } from './bootstrap';
 import { Resources } from './entities';
 import { findPlugin, OPENAI_COMPAT_PLUGIN, routeIdOf, setOpenAiConfig, updateWorkspaceRoute, workspaceLocation, workspaceMetadata } from './workspaces';
@@ -11,7 +12,7 @@ export const MCP_PATH = '/mcp';
 
 export const mcpServerIdOf = (wsId) => `mcp-virtual-server_ais_${wsId}`;
 
-export const mcpUrlOf = (workspace) => `${workspace.baseUrl}${MCP_PATH}`;
+export const mcpUrlOf = (workspace) => `${workspace.base_url}${MCP_PATH}`;
 
 export function mcpServerRefOf(route) {
   const plugin = findPlugin(route, OPENAI_COMPAT_PLUGIN);
@@ -95,7 +96,7 @@ let rpcId = 0;
  * answer, and throws its error.
  */
 export async function mcpCall(workspace, method, params = {}, signal) {
-  const res = await fetch(`${STUDIO_API}/workspaces/${workspace.id}/proxy${MCP_PATH}`, {
+  const res = await fetch(backend.urls.proxy(workspace.id, MCP_PATH), {
     method: 'POST',
     credentials: 'include',
     signal,

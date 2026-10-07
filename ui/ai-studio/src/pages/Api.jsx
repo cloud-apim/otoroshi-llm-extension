@@ -118,7 +118,7 @@ export function ApiPage() {
       <div className="grid cols-3 mb api-connect">
         <div className="card">
           <h3>Base URL</h3>
-          <Readonly value={workspace.baseUrl} />
+          <Readonly value={workspace.base_url} />
           <p className="muted small">Every endpoint below is a path under it. An OpenAI SDK only needs this URL and a key.</p>
         </div>
         <div className="card">

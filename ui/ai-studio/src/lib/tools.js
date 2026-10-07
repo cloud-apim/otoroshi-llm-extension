@@ -1,4 +1,5 @@
 import { Resources, randomId, workspaceFilter } from './entities';
+import { backend } from './backend';
 import { workspaceLocation, workspaceMetadata } from './workspaces';
 
 // The studio only creates MCP connectors speaking the stateless Streamable HTTP revision: every request is
@@ -103,8 +104,8 @@ export function toolsOf(options, tools) {
 // pick among them (`allowed_tools`): it only narrows what its provider offers, so a tool nobody attached
 // stays out of reach.
 export async function listAttachedTools(wsId) {
-  const [providers, tools] = await Promise.all([Resources.providers.list(workspaceFilter(wsId)), listWorkspaceTools(wsId)]);
-  return tools.map((t) => ({ ...t, providers: attachedProviders(providers, t.kind, t.id).map((p) => p.id) })).filter((t) => t.providers.length > 0);
+  const tools = await backend.run('tools.list', wsId);
+  return tools.filter((t) => t.providers.length > 0);
 }
 
 export async function attachTool(providers, kind, id, selectedIds) {

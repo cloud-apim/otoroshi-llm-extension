@@ -3,7 +3,8 @@ import { useStudio } from '../App';
 import { Badge, Empty, ErrorAlert, Field, Loading, Modal, PageHeader, TextInput, useToast } from '../components/ui';
 import { slugify } from '../lib/entities';
 import { useRouter } from '../lib/router';
-import { createWorkspace, exposureFor } from '../lib/workspaces';
+import { exposureFor } from '../lib/workspaces';
+import { backend } from '../lib/backend';
 import { bootstrap } from '../lib/bootstrap';
 
 export function NewWorkspaceModal({ open, onClose }) {
@@ -20,12 +21,13 @@ export function NewWorkspaceModal({ open, onClose }) {
 
   const create = () => {
     setSaving(true);
-    createWorkspace({ name, description, slug: finalSlug })
-      .then((wsId) => {
+    backend.workspaces
+      .create({ name, description, slug: finalSlug })
+      .then((ws) => {
         toast.success('Workspace created');
         studio.reloadWorkspaces();
         onClose();
-        navigate(`/workspaces/${wsId}/providers`);
+        navigate(`/workspaces/${ws.id}/providers`);
       })
       .catch(toast.error)
       .finally(() => setSaving(false));
@@ -110,7 +112,7 @@ export function WorkspacesPage({ loading, error }) {
             <div className="muted" style={{ marginBottom: 10 }}>
               {ws.description || 'No description'}
             </div>
-            <div className="mono truncate">{ws.baseUrl}</div>
+            <div className="mono truncate">{ws.base_url}</div>
           </div>
         ))}
       </div>

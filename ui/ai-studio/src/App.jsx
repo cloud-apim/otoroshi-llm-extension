@@ -3,7 +3,7 @@ import { Topbar, WorkspaceSidebar } from './components/layout';
 import { ConfirmProvider, ErrorAlert, Loading, ToastProvider, useAsync } from './components/ui';
 import { matchPath, RouterProvider, useRouter } from './lib/router';
 import { useTheme } from './lib/theme';
-import { getWorkspace, listWorkspaces, routeNeedsRepair, updateWorkspaceRoute } from './lib/workspaces';
+import { backend } from './lib/backend';
 import { WorkspacesPage } from './pages/Workspaces';
 import { OverviewPage } from './pages/Overview';
 import { ApiPage } from './pages/Api';
@@ -50,16 +50,16 @@ const PAGES = {
 function WorkspaceShell({ wsId, page, sub }) {
   const studio = useStudio();
   const { navigate } = useRouter();
-  const ws = useAsync(() => getWorkspace(wsId), [wsId]);
+  const ws = useAsync(() => backend.run('workspace.get', wsId), [wsId]);
 
   useEffect(() => {
     if (ws.error && ws.error.status === 404) navigate('/', { replace: true });
   }, [ws.error, navigate]);
 
-  // routes created by an older studio miss some plugins or carry legacy ones: fix them once, silently,
-  // when the user is allowed to
+  // routes created by an older studio miss some plugins or carry legacy ones: an empty update fixes them,
+  // once, silently, when the user is allowed to
   useEffect(() => {
-    if (ws.data && routeNeedsRepair(ws.data.route)) updateWorkspaceRoute(wsId, (route) => route).catch(() => {});
+    if (ws.data && ws.data.needs_repair) backend.run('workspace.update', wsId, { body: {} }).catch(() => {});
   }, [ws.data, wsId]);
 
   const value = useMemo(
@@ -97,7 +97,7 @@ function WorkspaceShell({ wsId, page, sub }) {
 function Root() {
   const theme = useTheme();
   const { path } = useRouter();
-  const workspaces = useAsync(() => listWorkspaces(), []);
+  const workspaces = useAsync(() => backend.workspaces.list(), []);
 
   // `sub` is the item of a page, e.g. the user of `/workspaces/:id/users/:email`
   const wsMatch = matchPath('/workspaces/:id/:page/:sub', path) || matchPath('/workspaces/:id/:page', path) || matchPath('/workspaces/:id', path);

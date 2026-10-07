@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { bootstrap } from '../lib/bootstrap';
+import { platform } from '../lib/platform';
 import { initials } from '../lib/format';
 import { Link, useRouter } from '../lib/router';
 import { Icon } from './icons';
@@ -157,9 +158,11 @@ export function Topbar({ theme, workspaces, currentWorkspace }) {
         <img className="brand-mark" src={cloudApimLogo} alt="Cloud APIM" />
         AI Studio
       </Link>
-      <span className="badge warning experimental" title="AI Studio is experimental: it does not cover everything the LLM extension can do yet, and may change in future releases">
-        Experimental
-      </span>
+      {platform.experimental && (
+        <span className="badge warning experimental" title="AI Studio is experimental: it does not cover everything the LLM extension can do yet, and may change in future releases">
+          Experimental
+        </span>
+      )}
       <SearchBox workspaces={workspaces} currentWorkspace={currentWorkspace} />
       <nav>
         {nav.map((n) => (
@@ -172,10 +175,12 @@ export function Topbar({ theme, workspaces, currentWorkspace }) {
         </a>
       </nav>
       <ThemeMenu theme={theme} />
-      <a className="btn sm" href={bootstrap.adminUrl} title="Back to the Otoroshi admin console">
-        <Icon name="arrowLeft" />
-        Back to Otoroshi
-      </a>
+      {platform.links.admin && (
+        <a className="btn sm" href={platform.links.admin} title="Back to the Otoroshi admin console">
+          <Icon name="arrowLeft" />
+          Back to Otoroshi
+        </a>
+      )}
       {currentWorkspace ? (
         <Link className="user" to={`/workspaces/${currentWorkspace.id}/users/${encodeURIComponent(user.email)}`} title={`${user.email}: my usage in ${currentWorkspace.name}`}>
           <span className="avatar">{initials(user.name || user.email)}</span>

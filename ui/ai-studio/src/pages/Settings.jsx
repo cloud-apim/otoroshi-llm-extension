@@ -2,24 +2,12 @@ import { useState } from 'react';
 import { useStudio, useWorkspace } from '../App';
 import { LinesInput, NumberInput, PageHeader, Readonly, TextInput, Toggle, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
+import { backend } from '../lib/backend';
 import { bootstrap } from '../lib/bootstrap';
-import { Resources, slugify } from '../lib/entities';
+import { slugify } from '../lib/entities';
+import { adminLink } from '../lib/platform';
 import { useRouter } from '../lib/router';
-import {
-  deleteWorkspace,
-  exposureFor,
-  findPlugin,
-  ipAddressesOf,
-  IP_ALLOW_PLUGIN,
-  IP_BLOCK_PLUGIN,
-  setIpAddresses,
-  OPENAI_COMPAT_PLUGIN,
-  routeIdOf,
-  setOpenAiConfig,
-  slugOf,
-  teamIdOf,
-  updateWorkspaceRoute,
-} from '../lib/workspaces';
+import { exposureFor } from '../lib/workspaces';
 
 function Row({ title, help, children, top }) {
   return (
@@ -39,53 +27,46 @@ export function SettingsPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const { navigate } = useRouter();
-  const route = workspace.route;
-  const compat = (findPlugin(route, OPENAI_COMPAT_PLUGIN) || { config: {} }).config;
-  const client = (route.backend && route.backend.client) || {};
+  const settings = workspace.settings || {};
   const c = bootstrap.config;
 
   const [form, setForm] = useState({
-    name: route.name,
-    description: route.description,
-    enabled: route.enabled,
-    slug: slugOf(route),
-    call_timeout: client.call_timeout || 600000,
-    global_timeout: client.global_timeout || 600000,
-    max_size_upload: compat.max_size_upload || 104857600,
-    decode_images: !!compat.decode_images,
-    allowed: ipAddressesOf(route, IP_ALLOW_PLUGIN),
-    blocked: ipAddressesOf(route, IP_BLOCK_PLUGIN),
+    name: workspace.name,
+    description: workspace.description,
+    enabled: workspace.enabled,
+    slug: workspace.slug,
+    call_timeout: settings.call_timeout,
+    global_timeout: settings.global_timeout,
+    max_size_upload: settings.max_size_upload,
+    decode_images: !!settings.decode_images,
+    allowed: settings.allowed_ip_addresses || [],
+    blocked: settings.blocked_ip_addresses || [],
   });
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
-  const slug = slugify(form.slug) || slugOf(route);
+  const slug = slugify(form.slug) || workspace.slug;
   const exposure = exposureFor(slug);
   const newBaseUrl = `${c.public_scheme}://${exposure.host}${c.public_port || ''}${exposure.path}`;
+  const routeLink = adminLink(`/routes/${workspace.route_id}?tab=flow`);
 
   const save = async () => {
     setSaving(true);
     try {
-      if (slug !== slugOf(route) && studio.workspaces.some((w) => w.id !== workspace.id && w.slug === slug)) {
-        throw new Error(`a workspace already uses '${slug}'`);
-      }
-      await updateWorkspaceRoute(workspace.id, (r) => {
-        r.name = form.name;
-        r.description = form.description;
-        r.enabled = form.enabled;
-        r.frontend.domains = [`${exposure.host}${exposure.path}`];
-        r.backend.client = {
-          ...(r.backend.client || {}),
+      // the api checks the slug is free among every workspace, the ones this user cannot see included
+      await backend.run('workspace.update', workspace.id, {
+        body: {
+          name: form.name,
+          description: form.description,
+          enabled: form.enabled,
+          slug,
           call_timeout: Number(form.call_timeout),
-          call_and_stream_timeout: Number(form.call_timeout),
           global_timeout: Number(form.global_timeout),
-        };
-        setOpenAiConfig(r, { max_size_upload: Number(form.max_size_upload), decode_images: form.decode_images });
-        setIpAddresses(r, IP_ALLOW_PLUGIN, form.allowed);
-        setIpAddresses(r, IP_BLOCK_PLUGIN, form.blocked);
-        return r;
+          max_size_upload: Number(form.max_size_upload),
+          decode_images: form.decode_images,
+          allowed_ip_addresses: form.allowed,
+          blocked_ip_addresses: form.blocked,
+        },
       });
-      const team = await Resources.teams.get(teamIdOf(workspace.id)).catch(() => null);
-      if (team) await Resources.teams.update({ ...team, name: `AI Studio - ${form.name}`, description: form.description });
       toast.success('Settings saved');
       reload();
     } catch (e) {
@@ -103,7 +84,8 @@ export function SettingsPage() {
       confirmLabel: 'Delete workspace',
     }).then((ok) => {
       if (!ok) return;
-      deleteWorkspace(workspace.id)
+      backend
+        .run('workspace.delete', workspace.id)
         .then(() => {
           toast.success('Workspace deleted');
           studio.reloadWorkspaces();
@@ -194,14 +176,18 @@ export function SettingsPage() {
             <dd className="mono">{workspace.id}</dd>
             <dt>Route</dt>
             <dd className="mono">
-              <a className="link" href={`/bo/dashboard/routes/${routeIdOf(workspace.id)}?tab=flow`} target="_blank" rel="noreferrer">
-                {routeIdOf(workspace.id)} <Icon name="external" size={12} />
-              </a>
+              {routeLink ? (
+                <a className="link" href={routeLink} target="_blank" rel="noreferrer">
+                  {workspace.route_id} <Icon name="external" size={12} />
+                </a>
+              ) : (
+                workspace.route_id
+              )}
             </dd>
             <dt>Team</dt>
-            <dd className="mono">{teamIdOf(workspace.id)}</dd>
+            <dd className="mono">{workspace.team_id}</dd>
             <dt>Base URL</dt>
-            <dd className="mono">{workspace.baseUrl}</dd>
+            <dd className="mono">{workspace.base_url}</dd>
           </dl>
         </details>
 

@@ -473,7 +473,7 @@ export function KeysPage() {
               </button>
             }
           >
-            Keys authenticate the calls made to {workspace.baseUrl}
+            Keys authenticate the calls made to {workspace.base_url}
           </Empty>
         )}
         {keys.length > 0 && found.length === 0 && <Empty>No key matches “{search.trim()}”.</Empty>}
