@@ -122,21 +122,29 @@ export const ops = defineOps({
   'analytics.query': { access: 'usage:own', method: 'POST', path: '/analytics/_query' },
 });
 
+// One segment of a path. `encodeURIComponent` leaves `.` and `..` as they are, and a url resolves them: an id of
+// `..` would call the route above the one of the operation (`/keys/..` is the workspace itself).
+function segment(name, param, value) {
+  const text = String(value);
+  if (text === '.' || text === '..') throw new Error(`the operation '${name}' got an invalid '${param}'`);
+  return encodeURIComponent(text);
+}
+
 /**
  * The http call of an operation: `input` gives the `:params` of its path by name, `query` (values left out when
  * null, undefined or false) and `body`. Never an entity the api should trust: the api reads what it needs.
  */
 export function routeOf(name, wsId, input = {}) {
-  const op = ops[name];
+  const op = Object.hasOwn(ops, name) ? ops[name] : null;
   if (!op) throw new Error(`unknown operation '${name}'`);
   const path = op.path.replace(/:([a-z]+)/g, (_, param) => {
     const value = input[param];
     if (value === undefined || value === null || value === '') throw new Error(`the operation '${name}' needs '${param}'`);
-    return encodeURIComponent(value);
+    return segment(name, param, value);
   });
   const query = Object.entries(input.query || {})
     .filter(([, value]) => value !== undefined && value !== null && value !== false)
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
     .join('&');
-  return { method: op.method, path: `/workspaces/${encodeURIComponent(wsId)}${path}${query ? `?${query}` : ''}`, body: input.body };
+  return { method: op.method, path: `/workspaces/${segment(name, 'workspace', wsId)}${path}${query ? `?${query}` : ''}`, body: input.body };
 }

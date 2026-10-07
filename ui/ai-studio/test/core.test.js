@@ -26,6 +26,16 @@ test('the route of an operation takes its params, its query and its body from th
   assert.deepEqual(route, { method: 'PUT', path: '/workspaces/ws%201/tools/functions/tool%2F1?force=true', body: { name: 'x' } });
   assert.throws(() => routeOf('tools.update', 'ws', { kind: 'functions' }), /needs 'tid'/);
   assert.throws(() => routeOf('nope', 'ws'), /unknown operation/);
+  assert.throws(() => routeOf('constructor', 'ws'), /unknown operation/);
+});
+
+test('an id never takes the route of an operation above its own', () => {
+  assert.throws(() => routeOf('keys.delete', 'ws', { kid: '..' }), /invalid 'kid'/);
+  assert.throws(() => routeOf('keys.delete', 'ws', { kid: ['..'] }), /invalid 'kid'/);
+  assert.throws(() => routeOf('keys.delete', 'ws', { kid: '.' }), /invalid 'kid'/);
+  assert.throws(() => routeOf('workspace.get', '..'), /invalid 'workspace'/);
+  assert.equal(routeOf('keys.delete', 'ws', { kid: '../providers/x' }).path, '/workspaces/ws/apikeys/..%2Fproviders%2Fx');
+  assert.equal(new URL(`http://h${routeOf('keys.delete', 'ws', { kid: '...' }).path}`).pathname, '/workspaces/ws/apikeys/...');
 });
 
 test('declared secrets apply to known operations', () => {
