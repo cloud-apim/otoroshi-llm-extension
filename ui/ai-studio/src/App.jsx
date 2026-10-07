@@ -1,9 +1,11 @@
 import { createContext, useContext, useEffect, useMemo } from 'react';
-import { Topbar, WorkspaceSidebar } from './components/layout';
-import { ConfirmProvider, ErrorAlert, Loading, ToastProvider, useAsync } from './components/ui';
+import { Topbar, WORKSPACE_PAGES, WorkspaceSidebar } from './components/layout';
+import { ConfirmProvider, Empty, ErrorAlert, Loading, ToastProvider, useAsync } from './components/ui';
+import { bootstrap } from './lib/bootstrap';
 import { matchPath, RouterProvider, useRouter } from './lib/router';
 import { useTheme } from './lib/theme';
 import { backend } from './lib/backend';
+import { platform } from './lib/platform';
 import { WorkspacesPage } from './pages/Workspaces';
 import { OverviewPage } from './pages/Overview';
 import { ApiPage } from './pages/Api';
@@ -27,6 +29,23 @@ export const useStudio = () => useContext(StudioContext);
 
 const WorkspaceContext = createContext(null);
 export const useWorkspace = () => useContext(WorkspaceContext);
+
+// what the signed-in user can do on the current workspace (the pages hide what they cannot, the api refuses it)
+export function useCan() {
+  const { workspace } = useWorkspace();
+  return (permission) => platform.can(permission, workspace);
+}
+
+// a page opened from its url by someone it is not for
+function NotAllowed() {
+  return (
+    <div className="content">
+      <div className="card">
+        <Empty title="Insufficient access">Your role in this workspace does not give access to this page.</Empty>
+      </div>
+    </div>
+  );
+}
 
 const PAGES = {
   home: OverviewPage,
@@ -82,13 +101,20 @@ function WorkspaceShell({ wsId, page, sub }) {
     );
   }
 
-  const Page = PAGES[page] || OverviewPage;
+  // the pages of the edition, then the ones of the studio, each with the permission it needs
+  const extra = platform.pages.find((p) => p.id === page);
+  const own = WORKSPACE_PAGES.find((p) => p.id === page);
+  const permission = extra ? extra.permission : page === 'chat' ? 'chat:use' : page === 'models' || page === 'home' ? 'workspace:read' : own && own.permission;
+  // a user can always open their own usage
+  const ownProfile = page === 'users' && sub === bootstrap.user.email;
+  const allowed = !permission || platform.can(ownProfile ? ['activity:read', 'usage:own'] : permission, ws.data);
+  const Page = (extra && extra.component) || PAGES[page] || OverviewPage;
   const sidebarPage = page === 'home' ? 'overview' : page;
   return (
     <WorkspaceContext.Provider value={value}>
       <div className="shell">
         <WorkspaceSidebar workspace={ws.data} workspaces={studio.workspaces} page={sidebarPage} />
-        {page === 'chat' ? <ChatPage key={wsId} /> : <Page key={`${wsId}-${page}-${sub || ''}`} sub={sub} />}
+        {!allowed ? <NotAllowed /> : page === 'chat' ? <ChatPage key={wsId} /> : <Page key={`${wsId}-${page}-${sub || ''}`} sub={sub} />}
       </div>
     </WorkspaceContext.Provider>
   );

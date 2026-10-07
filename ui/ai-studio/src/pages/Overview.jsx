@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Badge, CopyButton, useAsync } from '../components/ui';
 import { Snippets } from '../components/snippets';
 import { WeekUsage } from '../components/usage';
@@ -11,6 +11,7 @@ import { listWorkspaceModels } from '../lib/models';
 
 export function OverviewPage() {
   const { workspace } = useWorkspace();
+  const can = useCan();
   const { navigate } = useRouter();
   const [lang, setLang] = useState('curl');
   const [quickstart, setQuickstart] = useState(QUICKSTARTS[0].id);
@@ -37,13 +38,13 @@ export function OverviewPage() {
           </span>
         </p>
         <div className="row">
-          <button className="btn primary" onClick={() => navigate(`/workspaces/${workspace.id}/chat`)}>
+          <button className="btn primary" hidden={!can('chat:use')} onClick={() => navigate(`/workspaces/${workspace.id}/chat`)}>
             Open the chat
           </button>
           <button className="btn" onClick={() => navigate(`/workspaces/${workspace.id}/models`)}>
             Browse models
           </button>
-          <button className="btn" onClick={() => navigate(`/workspaces/${workspace.id}/keys`)}>
+          <button className="btn" hidden={!can(['keys:own', 'keys:manage'])} onClick={() => navigate(`/workspaces/${workspace.id}/keys`)}>
             Get an API key
           </button>
         </div>

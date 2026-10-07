@@ -6,22 +6,33 @@ import { Link, useRouter } from '../lib/router';
 import { Icon } from './icons';
 import cloudApimLogo from '../assets/cloud-apim-logo.svg';
 
+// the pages of the workspace menu, each with the permission (or one of the permissions) it needs
 export const WORKSPACE_PAGES = [
-  { id: 'overview', label: 'Overview', icon: 'grid' },
-  { id: 'api', label: 'API', icon: 'book' },
-  { id: 'activity', label: 'Activity', icon: 'chart' },
-  { id: 'logs', label: 'Logs', icon: 'list' },
-  { id: 'keys', label: 'API Keys', icon: 'key' },
-  { id: 'users', label: 'Users', icon: 'users' },
-  { id: 'guardrails', label: 'Guardrails', icon: 'shield' },
-  { id: 'providers', label: 'Providers (BYOK)', icon: 'database' },
-  { id: 'routing', label: 'Routing', icon: 'route' },
-  { id: 'presets', label: 'Presets', icon: 'sliders' },
-  { id: 'tools', label: 'Tools', icon: 'wrench' },
-  { id: 'mcp-server', label: 'MCP server', icon: 'plug' },
-  { id: 'credits', label: 'Credits', icon: 'wallet' },
-  { id: 'settings', label: 'Settings', icon: 'settings' },
+  { id: 'overview', label: 'Overview', icon: 'grid', permission: 'workspace:read' },
+  { id: 'api', label: 'API', icon: 'book', permission: 'workspace:read' },
+  { id: 'activity', label: 'Activity', icon: 'chart', permission: 'activity:read' },
+  { id: 'logs', label: 'Logs', icon: 'list', permission: 'activity:read' },
+  { id: 'keys', label: 'API Keys', icon: 'key', permission: ['config:read', 'keys:own'] },
+  { id: 'users', label: 'Users', icon: 'users', permission: 'activity:read' },
+  { id: 'guardrails', label: 'Guardrails', icon: 'shield', permission: 'config:read' },
+  { id: 'providers', label: 'Providers (BYOK)', icon: 'database', permission: 'config:read' },
+  { id: 'routing', label: 'Routing', icon: 'route', permission: 'config:read' },
+  { id: 'presets', label: 'Presets', icon: 'sliders', permission: 'config:read' },
+  { id: 'tools', label: 'Tools', icon: 'wrench', permission: 'config:read' },
+  { id: 'mcp-server', label: 'MCP server', icon: 'plug', permission: 'config:read' },
+  { id: 'credits', label: 'Credits', icon: 'wallet', permission: 'config:read' },
+  { id: 'settings', label: 'Settings', icon: 'settings', permission: 'config:read' },
 ];
+
+// the pages of the menu, with the ones the edition adds (each after the page it names), the user can open
+export function menuOf(workspace) {
+  const pages = [...WORKSPACE_PAGES];
+  platform.pages.forEach((p) => {
+    const idx = pages.findIndex((x) => x.id === p.after);
+    pages.splice(idx >= 0 ? idx + 1 : pages.length, 0, p);
+  });
+  return pages.filter((p) => !p.permission || platform.can(p.permission, workspace));
+}
 
 function SearchBox({ workspaces, currentWorkspace }) {
   const { navigate } = useRouter();
@@ -36,7 +47,7 @@ function SearchBox({ workspaces, currentWorkspace }) {
       items.push({ label: ws.name, hint: 'Workspace', to: `/workspaces/${ws.id}/overview`, icon: 'box' });
     });
     if (currentWorkspace) {
-      WORKSPACE_PAGES.forEach((p) => items.push({ label: p.label, hint: currentWorkspace.name, to: `/workspaces/${currentWorkspace.id}/${p.id}`, icon: p.icon }));
+      menuOf(currentWorkspace).forEach((p) => items.push({ label: p.label, hint: currentWorkspace.name, to: `/workspaces/${currentWorkspace.id}/${p.id}`, icon: p.icon }));
       items.push({ label: 'Models', hint: currentWorkspace.name, to: `/workspaces/${currentWorkspace.id}/models`, icon: 'box' });
       items.push({ label: 'Chat', hint: currentWorkspace.name, to: `/workspaces/${currentWorkspace.id}/chat`, icon: 'message' });
     }
@@ -174,6 +185,7 @@ export function Topbar({ theme, workspaces, currentWorkspace }) {
           Docs
         </a>
       </nav>
+      {platform.topbar.map((Item, idx) => (typeof Item === 'function' ? <Item key={idx} workspace={currentWorkspace} /> : <span key={idx}>{Item}</span>))}
       <ThemeMenu theme={theme} />
       {platform.links.admin && (
         <a className="btn sm" href={platform.links.admin} title="Back to the Otoroshi admin console">
@@ -215,7 +227,7 @@ export function WorkspaceSidebar({ workspace, workspaces, page }) {
           </option>
         ))}
       </select>
-      {WORKSPACE_PAGES.map((p) => (
+      {menuOf(workspace).map((p) => (
         <Link key={p.id} to={`/workspaces/${workspace.id}/${p.id}`} className={`navlink ${page === p.id ? 'active' : ''}`}>
           <Icon name={p.icon} />
           {p.label}

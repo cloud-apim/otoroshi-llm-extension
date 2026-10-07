@@ -102,6 +102,8 @@ export const ops = defineOps({
   // api keys
   'keys.list': { access: 'config:read', method: 'GET', path: '/apikeys' },
   'keys.get': { access: 'config:read', method: 'GET', path: '/apikeys/:kid' },
+  // the same key with its secret: AI Studio Enterprise masks it everywhere else, and records who revealed it
+  'keys.reveal': { access: 'keys:manage', method: 'GET', path: '/apikeys/:kid', audit: true, reveals: true },
   'keys.create': { access: 'keys:manage', method: 'POST', path: '/apikeys', audit: true },
   'keys.update': { access: 'keys:manage', method: 'PUT', path: '/apikeys/:kid', audit: true },
   'keys.resetSecret': { access: 'keys:manage', method: 'POST', path: '/apikeys/:kid/_reset-secret', audit: true },

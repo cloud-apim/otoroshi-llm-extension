@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Checks, CopyButton, Empty, ErrorAlert, Field, Loading, Modal, PageHeader, TextInput, useAsync, useConfirm, useToast } from '../components/ui';
 import { backend } from '../lib/backend';
 
@@ -70,6 +70,7 @@ function PresetModal({ workspace, preset, providers, onClose, onSaved }) {
 
 export function PresetsPage() {
   const { workspace } = useWorkspace();
+  const write = useCan()('config:write');
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(null);
@@ -97,9 +98,11 @@ export function PresetsPage() {
   return (
     <div className="content">
       <PageHeader title="Presets" description="Reusable system prompts and framing messages. Select a preset in the chat, or reference it with the `context` field in API requests.">
-        <button className="btn primary" onClick={() => setEditing({})}>
-          New Preset
-        </button>
+        {write && (
+          <button className="btn primary" onClick={() => setEditing({})}>
+            New Preset
+          </button>
+        )}
       </PageHeader>
       <ErrorAlert error={data.error} />
       {data.loading && !data.data && <Loading />}
@@ -108,9 +111,11 @@ export function PresetsPage() {
           <Empty
             title="No preset yet"
             action={
-              <button className="btn primary" onClick={() => setEditing({})}>
-                Create a preset
-              </button>
+              write ? (
+                <button className="btn primary" onClick={() => setEditing({})}>
+                  Create a preset
+                </button>
+              ) : null
             }
           >
             Presets let every app of the workspace share the same instructions.
@@ -129,12 +134,16 @@ export function PresetsPage() {
                   {p.description && <p className="muted">{p.description}</p>}
                 </div>
                 <div className="row">
-                  <button className="btn sm" onClick={() => setEditing({ preset: p })}>
-                    Edit
-                  </button>
-                  <button className="btn sm ghost" onClick={() => remove(p)}>
-                    Delete
-                  </button>
+                  {write && (
+                    <button className="btn sm" onClick={() => setEditing({ preset: p })}>
+                      Edit
+                    </button>
+                  )}
+                  {write && (
+                    <button className="btn sm ghost" onClick={() => remove(p)}>
+                      Delete
+                    </button>
+                  )}
                 </div>
               </div>
               {p.system && (

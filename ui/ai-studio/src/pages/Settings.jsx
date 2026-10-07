@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useStudio, useWorkspace } from '../App';
+import { useCan, useStudio, useWorkspace } from '../App';
 import { LinesInput, NumberInput, PageHeader, Readonly, TextInput, Toggle, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
 import { backend } from '../lib/backend';
@@ -24,6 +24,7 @@ function Row({ title, help, children, top }) {
 export function SettingsPage() {
   const { workspace, reload } = useWorkspace();
   const studio = useStudio();
+  const can = useCan();
   const toast = useToast();
   const confirm = useConfirm();
   const { navigate } = useRouter();
@@ -99,75 +100,78 @@ export function SettingsPage() {
     <div className="content narrow">
       <PageHeader title="Settings" description="Manage your workspace identity, exposure and gateway controls." />
       <div className="stack">
-        <div className="card">
-          <h2>General</h2>
-          <p className="muted" style={{ marginBottom: 14 }}>
-            Identity of this workspace.
-          </p>
-          <Row title="Name" help="Shown across the console.">
-            <TextInput value={form.name} onChange={(v) => set({ name: v })} />
-          </Row>
-          <Row title="Description" help="A short note describing how this workspace is used.">
-            <TextInput value={form.description} onChange={(v) => set({ description: v })} />
-          </Row>
-          <Row title="Enabled" help="Disabled workspaces reject every request.">
-            <Toggle value={form.enabled} onChange={(v) => set({ enabled: v })} />
-          </Row>
-        </div>
+        {/* who can only read the configuration sees it, without changing it */}
+        <fieldset className="bare stack" disabled={!can('config:write')}>
+          <div className="card">
+            <h2>General</h2>
+            <p className="muted" style={{ marginBottom: 14 }}>
+              Identity of this workspace.
+            </p>
+            <Row title="Name" help="Shown across the console.">
+              <TextInput value={form.name} onChange={(v) => set({ name: v })} />
+            </Row>
+            <Row title="Description" help="A short note describing how this workspace is used.">
+              <TextInput value={form.description} onChange={(v) => set({ description: v })} />
+            </Row>
+            <Row title="Enabled" help="Disabled workspaces reject every request.">
+              <Toggle value={form.enabled} onChange={(v) => set({ enabled: v })} />
+            </Row>
+          </div>
 
-        <div className="card">
-          <h2>Domain</h2>
-          <p className="muted" style={{ marginBottom: 14 }}>
-            Where this workspace's OpenAI-compatible route is served.
-          </p>
-          <Row title="Managed domain" help="Domain provided by the gateway for every workspace.">
-            <Readonly value={c.domain} copy={false} mono={false} />
-          </Row>
-          <Row title={c.exposure === 'path' ? 'Path' : 'Subdomain'} help="Lowercase letters, digits and hyphens.">
-            <TextInput value={form.slug} onChange={(v) => set({ slug: v.toLowerCase() })} />
-          </Row>
-          <Row title="Base URL" help="Where clients send their requests.">
-            <Readonly value={newBaseUrl} />
-          </Row>
-        </div>
+          <div className="card">
+            <h2>Domain</h2>
+            <p className="muted" style={{ marginBottom: 14 }}>
+              Where this workspace's OpenAI-compatible route is served.
+            </p>
+            <Row title="Managed domain" help="Domain provided by the gateway for every workspace.">
+              <Readonly value={c.domain} copy={false} mono={false} />
+            </Row>
+            <Row title={c.exposure === 'path' ? 'Path' : 'Subdomain'} help="Lowercase letters, digits and hyphens.">
+              <TextInput value={form.slug} onChange={(v) => set({ slug: v.toLowerCase() })} />
+            </Row>
+            <Row title="Base URL" help="Where clients send their requests.">
+              <Readonly value={newBaseUrl} />
+            </Row>
+          </div>
 
-        <div className="card">
-          <h2>Gateway</h2>
-          <p className="muted" style={{ marginBottom: 14 }}>
-            Timeouts and request limits on the route.
-          </p>
-          <Row title="Call timeout (ms)" help="Applies to streaming calls as well.">
-            <NumberInput value={form.call_timeout} onChange={(v) => set({ call_timeout: v })} />
-          </Row>
-          <Row title="Global timeout (ms)">
-            <NumberInput value={form.global_timeout} onChange={(v) => set({ global_timeout: v })} />
-          </Row>
-          <Row title="Max upload size (bytes)">
-            <NumberInput value={form.max_size_upload} onChange={(v) => set({ max_size_upload: v })} />
-          </Row>
-          <Row title="Decode images" help="Let the gateway decode image inputs before forwarding.">
-            <Toggle value={form.decode_images} onChange={(v) => set({ decode_images: v })} />
-          </Row>
-        </div>
+          <div className="card">
+            <h2>Gateway</h2>
+            <p className="muted" style={{ marginBottom: 14 }}>
+              Timeouts and request limits on the route.
+            </p>
+            <Row title="Call timeout (ms)" help="Applies to streaming calls as well.">
+              <NumberInput value={form.call_timeout} onChange={(v) => set({ call_timeout: v })} />
+            </Row>
+            <Row title="Global timeout (ms)">
+              <NumberInput value={form.global_timeout} onChange={(v) => set({ global_timeout: v })} />
+            </Row>
+            <Row title="Max upload size (bytes)">
+              <NumberInput value={form.max_size_upload} onChange={(v) => set({ max_size_upload: v })} />
+            </Row>
+            <Row title="Decode images" help="Let the gateway decode image inputs before forwarding.">
+              <Toggle value={form.decode_images} onChange={(v) => set({ decode_images: v })} />
+            </Row>
+          </div>
 
-        <div className="card">
-          <h2>IP access control</h2>
-          <p className="muted" style={{ marginBottom: 14 }}>
-            One address, regex or CIDR per line, enforced by the IpAddressAllowedList and IpAddressBlockList plugins of the route. Leave empty to allow all.
-          </p>
-          <Row title="Allowed addresses" top help="Only applies to applications: the studio chat is served for the signed-in user, whatever their address.">
-            <LinesInput value={form.allowed} onChange={(v) => set({ allowed: v })} rows={3} />
-          </Row>
-          <Row title="Blocked addresses" top>
-            <LinesInput value={form.blocked} onChange={(v) => set({ blocked: v })} rows={3} />
-          </Row>
-        </div>
+          <div className="card">
+            <h2>IP access control</h2>
+            <p className="muted" style={{ marginBottom: 14 }}>
+              One address, regex or CIDR per line, enforced by the IpAddressAllowedList and IpAddressBlockList plugins of the route. Leave empty to allow all.
+            </p>
+            <Row title="Allowed addresses" top help="Only applies to applications: the studio chat is served for the signed-in user, whatever their address.">
+              <LinesInput value={form.allowed} onChange={(v) => set({ allowed: v })} rows={3} />
+            </Row>
+            <Row title="Blocked addresses" top>
+              <LinesInput value={form.blocked} onChange={(v) => set({ blocked: v })} rows={3} />
+            </Row>
+          </div>
 
-        <div className="row end">
-          <button className="btn primary" onClick={save} disabled={saving || !form.name.trim()}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
+          <div className="row end">
+            <button className="btn primary" onClick={save} disabled={saving || !form.name.trim()}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </fieldset>
 
         <details className="details">
           <summary>Technical details</summary>
@@ -191,15 +195,17 @@ export function SettingsPage() {
           </dl>
         </details>
 
-        <div className="card danger-zone row between">
-          <div>
-            <h3 className="negative-text">Delete workspace</h3>
-            <p className="muted">Undeploys the route and deletes every key, provider and policy.</p>
+        {can('workspace:delete') && (
+          <div className="card danger-zone row between">
+            <div>
+              <h3 className="negative-text">Delete workspace</h3>
+              <p className="muted">Undeploys the route and deletes every key, provider and policy.</p>
+            </div>
+            <button className="btn danger" onClick={remove}>
+              Delete
+            </button>
           </div>
-          <button className="btn danger" onClick={remove}>
-            Delete
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );

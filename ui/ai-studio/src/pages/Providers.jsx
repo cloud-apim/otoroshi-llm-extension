@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HealthSummary } from '../components/health';
 import { combine, healthIndex, loadHealth } from '../lib/health';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import {
   Badge,
   Checks,
@@ -429,6 +429,7 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
 
 export function ProvidersPage() {
   const { workspace } = useWorkspace();
+  const write = useCan()('config:write');
   const toast = useToast();
   const confirm = useConfirm();
   const [filter, setFilter] = useState('');
@@ -493,9 +494,11 @@ export function ProvidersPage() {
   return (
     <div className="content">
       <PageHeader title="Providers" description="Bring your own provider keys. Each connected provider exposes its models on this workspace's base URL.">
-        <button className="btn primary" disabled={!cat.length} onClick={() => openNew(cat.find((c) => c.id === 'openai') || cat[0])}>
-          Add provider
-        </button>
+        {write && (
+          <button className="btn primary" disabled={!cat.length} onClick={() => openNew(cat.find((c) => c.id === 'openai') || cat[0])}>
+            Add provider
+          </button>
+        )}
       </PageHeader>
       <ErrorAlert error={connections.error || catalog.error} />
 
@@ -564,12 +567,16 @@ export function ProvidersPage() {
                       </div>
                     </td>
                     <td className="actions">
-                      <button className="btn sm" onClick={() => openEdit(conn)}>
-                        Edit
-                      </button>
-                      <button className="btn sm ghost" onClick={() => remove(conn)}>
-                        Remove
-                      </button>
+                      {write && (
+                        <>
+                          <button className="btn sm" onClick={() => openEdit(conn)}>
+                            Edit
+                          </button>
+                          <button className="btn sm ghost" onClick={() => remove(conn)}>
+                            Remove
+                          </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -615,7 +622,7 @@ export function ProvidersPage() {
             const insights = entry.insights || {};
             const doc = insights.catalog && insights.catalog.doc;
             return (
-              <div key={entry.id} className="card tight clickable provider" onClick={() => openNew(entry)}>
+              <div key={entry.id} className={`card tight provider ${write ? 'clickable' : ''}`} onClick={() => write && openNew(entry)}>
                 <div className="head">
                   <span className="logo-chip">{initials(entry.label)}</span>
                   <div className="grow">

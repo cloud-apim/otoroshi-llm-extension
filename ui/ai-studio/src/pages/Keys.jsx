@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Badge, CopyButton, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, NumberInput, PageHeader, Pager, Segmented, Select, TextInput, Toggle, useAsync, useConfirm, useToast, usePaged } from '../components/ui';
 import { BudgetModal } from '../components/BudgetModal';
 import { Icon } from '../components/icons';
@@ -327,7 +327,8 @@ function RevealModal({ workspace, apikey, onClose, onReset }) {
   const [full, setFull] = useState(null);
   const [fresh, setFresh] = useState(null);
   const [resetting, setResetting] = useState(false);
-  const key = useAsync(() => backend.run('keys.get', workspace.id, { kid: apikey.client_id }), [apikey.client_id]);
+  // the only read of a key giving its secret (AI Studio Enterprise records who revealed it)
+  const key = useAsync(() => backend.run('keys.reveal', workspace.id, { kid: apikey.client_id }), [apikey.client_id]);
   const current = fresh || key.data || apikey;
   const bearer = current.bearer;
   const validUntil = validUntilOf(current);
@@ -398,6 +399,10 @@ function RevealModal({ workspace, apikey, onClose, onReset }) {
 
 export function KeysPage() {
   const { workspace } = useWorkspace();
+  const can = useCan();
+  // managing every key and seeing their secret, and making budgets for them
+  const manage = can('keys:manage');
+  const write = can('config:write');
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(null);
@@ -438,9 +443,11 @@ export function KeysPage() {
   return (
     <div className="content">
       <PageHeader title="API Keys" description="Create and manage API keys for this workspace.">
-        <button className="btn primary" onClick={() => setEditing({})}>
-          New Key
-        </button>
+        {manage && (
+          <button className="btn primary" onClick={() => setEditing({})}>
+            New Key
+          </button>
+        )}
       </PageHeader>
       <ErrorAlert error={data.error} />
       {keys.length > 0 && (
@@ -459,9 +466,11 @@ export function KeysPage() {
           <Empty
             title="No API key yet"
             action={
-              <button className="btn primary" onClick={() => setEditing({})}>
-                Create a key
-              </button>
+              manage ? (
+                <button className="btn primary" onClick={() => setEditing({})}>
+                  Create a key
+                </button>
+              ) : null
             }
           >
             Keys authenticate the calls made to {workspace.base_url}
@@ -530,7 +539,7 @@ export function KeysPage() {
                         {isExpired(k) ? (
                           <Toggle value={false} disabled onChange={() => {}} title="Expired: edit the key to give it a new date" />
                         ) : (
-                          <Toggle value={k.enabled} onChange={() => toggle(k)} title={k.enabled ? 'Enabled' : 'Disabled'} />
+                          <Toggle value={k.enabled} disabled={!manage} onChange={() => toggle(k)} title={k.enabled ? 'Enabled' : 'Disabled'} />
                         )}
                       </td>
                       {/* the secondary actions are icons: with an owner column, labels push Delete out of a laptop screen */}
@@ -538,18 +547,26 @@ export function KeysPage() {
                         <Link className="btn sm icon" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.client_id)}`} title="Usage of this key">
                           <Icon name="chart" />
                         </Link>
-                        <button className="btn sm icon" onClick={() => setRevealing(k)} title="Show or reset the key">
-                          <Icon name="key" />
-                        </button>
-                        <button className="btn sm icon" onClick={() => setBudgeting(k.client_id)} title="Create a budget for this key">
-                          <Icon name="wallet" />
-                        </button>
-                        <button className="btn sm" onClick={() => setEditing({ apikey: k })}>
-                          Edit
-                        </button>
-                        <button className="btn sm ghost" onClick={() => remove(k)}>
-                          Delete
-                        </button>
+                        {manage && (
+                          <button className="btn sm icon" onClick={() => setRevealing(k)} title="Show or reset the key">
+                            <Icon name="key" />
+                          </button>
+                        )}
+                        {write && (
+                          <button className="btn sm icon" onClick={() => setBudgeting(k.client_id)} title="Create a budget for this key">
+                            <Icon name="wallet" />
+                          </button>
+                        )}
+                        {manage && (
+                          <button className="btn sm" onClick={() => setEditing({ apikey: k })}>
+                            Edit
+                          </button>
+                        )}
+                        {manage && (
+                          <button className="btn sm ghost" onClick={() => remove(k)}>
+                            Delete
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );

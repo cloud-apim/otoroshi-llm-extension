@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Badge, Checks, CopyButton, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, NumberInput, PageHeader, Segmented, Select, TextInput, useAsync, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
 import { backend } from '../lib/backend';
@@ -371,6 +371,7 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
 
 export function RoutingPage() {
   const { workspace } = useWorkspace();
+  const write = useCan()('config:write');
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(null);
@@ -464,7 +465,7 @@ export function RoutingPage() {
                         </td>
                         <td className="mono">{p.model || '—'}</td>
                         <td>
-                          <Select className="sm" value={p.fallback || ''} onChange={(v) => setFallback(p, v)} placeholder="None" options={all.filter((o) => o.id !== p.id).map((o) => ({ value: o.id, label: o.name }))} />
+                          <Select className="sm" disabled={!write} value={p.fallback || ''} onChange={(v) => setFallback(p, v)} placeholder="None" options={all.filter((o) => o.id !== p.id).map((o) => ({ value: o.id, label: o.name }))} />
                         </td>
                         <td>
                           <div className="badges">
@@ -489,7 +490,7 @@ export function RoutingPage() {
                 <h2>Load balancing</h2>
                 <p>Spread the traffic over several providers. A load balancer is exposed like a provider of the workspace.</p>
               </div>
-              <button className="btn sm primary" disabled={real.length === 0} onClick={() => setEditing({})}>
+              <button className="btn sm primary" hidden={!write} disabled={real.length === 0} onClick={() => setEditing({})}>
                 New load balancer
               </button>
             </div>
@@ -529,10 +530,10 @@ export function RoutingPage() {
                           </span>
                         </td>
                         <td className="actions">
-                          <button className="btn sm" onClick={() => setEditing({ balancer: b })}>
+                          <button className="btn sm" hidden={!write} onClick={() => setEditing({ balancer: b })}>
                             Edit
                           </button>
-                          <button className="btn sm ghost" onClick={() => removeVirtual(b, 'Load balancer')}>
+                          <button className="btn sm ghost" hidden={!write} onClick={() => removeVirtual(b, 'Load balancer')}>
                             Delete
                           </button>
                         </td>
@@ -550,7 +551,7 @@ export function RoutingPage() {
                 <h2>Smart routing</h2>
                 <p>Let the gateway pick the model: the cheapest good coder, the best model for each prompt, the one a decision model picks, or a panel of models answering together.</p>
               </div>
-              <button className="btn sm primary" disabled={real.length === 0} onClick={() => setEditingRouter({})}>
+              <button className="btn sm primary" hidden={!write} disabled={real.length === 0} onClick={() => setEditingRouter({})}>
                 New router
               </button>
             </div>
@@ -596,10 +597,10 @@ export function RoutingPage() {
                             </div>
                           </td>
                           <td className="actions">
-                            <button className="btn sm" onClick={() => setEditingRouter({ router: r })}>
+                            <button className="btn sm" hidden={!write} onClick={() => setEditingRouter({ router: r })}>
                               Edit
                             </button>
-                            <button className="btn sm ghost" onClick={() => removeVirtual(r, 'Router')}>
+                            <button className="btn sm ghost" hidden={!write} onClick={() => removeVirtual(r, 'Router')}>
                               Delete
                             </button>
                           </td>
@@ -620,7 +621,7 @@ export function RoutingPage() {
             {defaultProvider ? (
               <div className="form-grid">
                 <Field label="Provider" hint={`Serves requests with ${defaultProvider.model ? `\`${defaultProvider.model}\` when they do not ask for a model` : 'its default model when they do not ask for a model'}.`}>
-                  <Select value={defaultProvider.id} onChange={(v) => v !== defaultProvider.id && byId[v] && makeDefault(byId[v])} options={ordered.map((p) => ({ value: p.id, label: `${p.name} (${p.label})` }))} />
+                  <Select disabled={!write} value={defaultProvider.id} onChange={(v) => v !== defaultProvider.id && byId[v] && makeDefault(byId[v])} options={ordered.map((p) => ({ value: p.id, label: `${p.name} (${p.label})` }))} />
                 </Field>
               </div>
             ) : (

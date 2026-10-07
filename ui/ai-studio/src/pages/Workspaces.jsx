@@ -5,6 +5,7 @@ import { slugify } from '../lib/ids';
 import { useRouter } from '../lib/router';
 import { exposureFor } from '../lib/workspaces';
 import { backend } from '../lib/backend';
+import { hasPermission } from '../lib/platform';
 import { bootstrap } from '../lib/bootstrap';
 
 export function NewWorkspaceModal({ open, onClose }) {
@@ -76,9 +77,11 @@ export function WorkspacesPage({ loading, error }) {
   return (
     <div className="content">
       <PageHeader title="Workspaces" description="Each workspace has its own OpenAI-compatible base URL, API keys, providers and policies.">
-        <button className="btn primary" onClick={() => setCreating(true)}>
-          New Workspace
-        </button>
+        {hasPermission('workspaces:create') && (
+          <button className="btn primary" onClick={() => setCreating(true)}>
+            New Workspace
+          </button>
+        )}
       </PageHeader>
       <ErrorAlert error={error} />
       {loading && workspaces.length === 0 && <Loading />}
@@ -87,9 +90,11 @@ export function WorkspacesPage({ loading, error }) {
           <Empty
             title="No workspace yet"
             action={
-              <button className="btn primary" onClick={() => setCreating(true)}>
-                Create your first workspace
-              </button>
+              hasPermission('workspaces:create') ? (
+                <button className="btn primary" onClick={() => setCreating(true)}>
+                  Create your first workspace
+                </button>
+              ) : null
             }
           >
             A workspace gives your team an OpenAI-compatible endpoint backed by the providers you bring.

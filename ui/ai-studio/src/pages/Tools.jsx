@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Badge, Checks, Empty, ErrorAlert, Field, JsonInput, Loading, Modal, NumberInput, PageHeader, SecretInput, Select, StatusBadge, Tabs, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { backend } from '../lib/backend';
 import { FUNCTION_TEMPLATES, MCP_TRANSPORT, SEARCH_PROVIDERS } from '../lib/tools';
@@ -195,6 +195,7 @@ function TemplatesCard({ workspace, functions, onAdded }) {
 
 export function ToolsPage() {
   const { workspace } = useWorkspace();
+  const write = useCan()('config:write');
   const toast = useToast();
   const confirm = useConfirm();
   const [tab, setTab] = useState('functions');
@@ -226,9 +227,11 @@ export function ToolsPage() {
   return (
     <div className="content">
       <PageHeader title="Tools" description="Server-side tools the gateway runs on behalf of the model. Attach each tool to the providers that may use it.">
-        <button className="btn primary" onClick={() => setEditing({})}>
-          {TABS[tab].add}
-        </button>
+        {write && (
+          <button className="btn primary" onClick={() => setEditing({})}>
+            {TABS[tab].add}
+          </button>
+        )}
       </PageHeader>
       <Tabs
         value={tab}
@@ -240,7 +243,7 @@ export function ToolsPage() {
         ]}
       />
       <ErrorAlert error={data.error} />
-      {tab === 'functions' && data.data && (
+      {tab === 'functions' && data.data && write && (
         <TemplatesCard workspace={workspace} functions={data.data.functions} onAdded={data.reload} />
       )}
       <div className="card">
@@ -253,9 +256,11 @@ export function ToolsPage() {
           <Empty
             title={`No ${TABS[tab].title.toLowerCase()} yet`}
             action={
-              <button className="btn primary" onClick={() => setEditing({})}>
-                Add one
-              </button>
+              write ? (
+                <button className="btn primary" onClick={() => setEditing({})}>
+                  Add one
+                </button>
+              ) : null
             }
           />
         )}
@@ -306,12 +311,16 @@ export function ToolsPage() {
                       </td>
                     )}
                     <td className="actions">
-                      <button className="btn sm" onClick={() => setEditing({ tool: t })}>
-                        Edit
-                      </button>
-                      <button className="btn sm ghost" onClick={() => remove(t)}>
-                        Delete
-                      </button>
+                      {write && (
+                        <button className="btn sm" onClick={() => setEditing({ tool: t })}>
+                          Edit
+                        </button>
+                      )}
+                      {write && (
+                        <button className="btn sm ghost" onClick={() => remove(t)}>
+                          Delete
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

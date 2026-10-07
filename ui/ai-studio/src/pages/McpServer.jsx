@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Checks, CopyButton, Empty, ErrorAlert, Field, Loading, PageHeader, Readonly, Select, StatusBadge, TextArea, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
 import { backend } from '../lib/backend';
@@ -231,6 +231,7 @@ function PlaygroundCard({ workspace }) {
 
 export function McpServerPage() {
   const { workspace, reload } = useWorkspace();
+  const write = useCan()('config:write');
   const toast = useToast();
   const confirm = useConfirm();
   const [form, setForm] = useState(null);
@@ -295,13 +296,13 @@ export function McpServerPage() {
         title="MCP server"
         description="Expose the tools of this workspace to MCP clients — Claude, Cursor, your own agents — on the same endpoint and with the same API keys as the models."
       >
-        {server && (
+        {server && write && (
           <button className="btn ghost" onClick={remove}>
             <Icon name="trash" />
             Stop serving
           </button>
         )}
-        {form && (
+        {form && write && (
           <button className="btn primary" onClick={save} disabled={saving || !form.name}>
             {saving ? 'Saving…' : server ? 'Save' : 'Enable MCP server'}
           </button>
@@ -311,40 +312,42 @@ export function McpServerPage() {
       {data.loading && !data.data && <Loading />}
       {form && (
         <div className="stack">
-          <div className="card">
-            <div className="row between center">
-              <div>
-                <h2 style={{ margin: 0 }}>
-                  {server ? 'Serving' : 'Not served yet'}{' '}
-                  {server && <StatusBadge enabled={form.enabled} on="Enabled" off="Disabled" />}
-                </h2>
-                <p className="muted" style={{ margin: '4px 0 0' }}>
-                  {server
-                    ? `Exposed on ${mcpUrlOf(workspace)}`
-                    : 'Pick the tools to expose, then enable the server: the endpoint returns 404 until then.'}
-                </p>
+          <fieldset className="bare stack" disabled={!write}>
+            <div className="card">
+              <div className="row between center">
+                <div>
+                  <h2 style={{ margin: 0 }}>
+                    {server ? 'Serving' : 'Not served yet'}{' '}
+                    {server && <StatusBadge enabled={form.enabled} on="Enabled" off="Disabled" />}
+                  </h2>
+                  <p className="muted" style={{ margin: '4px 0 0' }}>
+                    {server
+                      ? `Exposed on ${mcpUrlOf(workspace)}`
+                      : 'Pick the tools to expose, then enable the server: the endpoint returns 404 until then.'}
+                  </p>
+                </div>
+                {server && <Toggle value={form.enabled} onChange={(enabled) => set({ enabled })} title="Serve this MCP server" />}
               </div>
-              {server && <Toggle value={form.enabled} onChange={(enabled) => set({ enabled })} title="Serve this MCP server" />}
+              <div className="grid cols-2" style={{ marginTop: 16 }}>
+                <Field label="Name" hint="What clients display for this server.">
+                  <TextInput value={form.name} onChange={(name) => set({ name })} placeholder="Acme tools" />
+                </Field>
+                <Field label="Description">
+                  <TextArea rows={2} value={form.description} onChange={(description) => set({ description })} placeholder="The tools of the Acme workspace" />
+                </Field>
+                <Field
+                  label="Meta mode"
+                  hint="The MCP connectors are exposed through five tools — list_servers, list_tools, get_tool_schema, search_tools and execute — instead of their full tool list."
+                >
+                  <Toggle value={form.exposeAsMeta} onChange={(exposeAsMeta) => set({ exposeAsMeta })} title="Expose as meta" />
+                </Field>
+                <Field label="Semantic tool search" hint="In meta mode, search_tools also ranks the tools by meaning, on top of their keywords.">
+                  <Toggle value={form.metaSemanticSearch} onChange={(metaSemanticSearch) => set({ metaSemanticSearch })} title="Semantic tool search" />
+                </Field>
+              </div>
             </div>
-            <div className="grid cols-2" style={{ marginTop: 16 }}>
-              <Field label="Name" hint="What clients display for this server.">
-                <TextInput value={form.name} onChange={(name) => set({ name })} placeholder="Acme tools" />
-              </Field>
-              <Field label="Description">
-                <TextArea rows={2} value={form.description} onChange={(description) => set({ description })} placeholder="The tools of the Acme workspace" />
-              </Field>
-              <Field
-                label="Meta mode"
-                hint="The MCP connectors are exposed through five tools — list_servers, list_tools, get_tool_schema, search_tools and execute — instead of their full tool list."
-              >
-                <Toggle value={form.exposeAsMeta} onChange={(exposeAsMeta) => set({ exposeAsMeta })} title="Expose as meta" />
-              </Field>
-              <Field label="Semantic tool search" hint="In meta mode, search_tools also ranks the tools by meaning, on top of their keywords.">
-                <Toggle value={form.metaSemanticSearch} onChange={(metaSemanticSearch) => set({ metaSemanticSearch })} title="Semantic tool search" />
-              </Field>
-            </div>
-          </div>
-          <ToolsCard workspace={workspace} form={form} set={set} tools={data.data} />
+            <ToolsCard workspace={workspace} form={form} set={set} tools={data.data} />
+          </fieldset>
           {server && <ConnectCard workspace={workspace} />}
           {server && server.enabled !== false && <PlaygroundCard key={JSON.stringify([server.functions, server.connectors, server.expose_as_meta])} workspace={workspace} />}
           {server && (

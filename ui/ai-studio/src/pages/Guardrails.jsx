@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Badge, Checks, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, NumberInput, PageHeader, Select, TextInput, Toggle, useAsync, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
 import { FILTER_OPERATORS, FILTER_SOURCES, filtersSummary, formatFilterValue, GUARDRAIL_KINDS, kindOf, operatorOf, parseFilterValue, summaryOf } from '../lib/guardrails';
@@ -121,6 +121,7 @@ function GuardrailModal({ initial, providers, moderationModels, decisionModels, 
 
 export function GuardrailsPage() {
   const { workspace } = useWorkspace();
+  const write = useCan()('config:write');
   const toast = useToast();
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -185,9 +186,11 @@ export function GuardrailsPage() {
   return (
     <div className="content">
       <PageHeader title="Guardrails" description="Model restrictions, content policies and budgets enforced by the gateway for every key of this workspace.">
-        <button className="btn primary" disabled={providers.length === 0} onClick={() => setEditing({})}>
-          New Guardrail
-        </button>
+        {write && (
+          <button className="btn primary" disabled={providers.length === 0} onClick={() => setEditing({})}>
+            New Guardrail
+          </button>
+        )}
       </PageHeader>
       <ErrorAlert error={data.error} />
       {data.loading && !data.data && <Loading />}
@@ -199,17 +202,19 @@ export function GuardrailsPage() {
                 <h2>Model & provider access</h2>
                 <p>Regular expressions on model ids: model, provider/model or provider###model. Empty lists allow everything. Applied to every provider and model of the workspace, and to every key on top of its own models.</p>
               </div>
-              <button className="btn sm primary" disabled={saving || !data.data || data.data.models === 0} onClick={saveAccess}>
-                Save
-              </button>
+              {write && (
+                <button className="btn sm primary" disabled={saving || !data.data || data.data.models === 0} onClick={saveAccess}>
+                  Save
+                </button>
+              )}
             </div>
             {accessMixed && <div className="alert warning mb">Providers currently have different lists, saving applies these ones to all of them.</div>}
             <div className="grid cols-2">
               <Field label="Allowed models" hint="e.g. gpt-4o.*, mistral-.* or openai/.*">
-                <LinesInput value={access.include} onChange={(v) => setAccess((a) => ({ ...a, include: v }))} rows={4} />
+                <LinesInput value={access.include} onChange={(v) => setAccess((a) => ({ ...a, include: v }))} rows={4} disabled={!write} />
               </Field>
               <Field label="Blocked models" hint="e.g. .*-preview, o1.* or azure###.*">
-                <LinesInput value={access.exclude} onChange={(v) => setAccess((a) => ({ ...a, exclude: v }))} rows={4} />
+                <LinesInput value={access.exclude} onChange={(v) => setAccess((a) => ({ ...a, exclude: v }))} rows={4} disabled={!write} />
               </Field>
             </div>
           </div>
@@ -252,16 +257,21 @@ export function GuardrailsPage() {
                         <td>
                           <Toggle
                             value={item.enabled !== false}
+                            disabled={!write}
                             onChange={(v) => savePolicies(policies.items.map((x, i) => (i === idx ? { ...x, enabled: v } : x)), policies.failOnDeny)}
                           />
                         </td>
                         <td className="actions">
-                          <button className="btn sm" onClick={() => setEditing({ item, idx })}>
-                            Edit
-                          </button>
-                          <button className="btn sm ghost" onClick={() => savePolicies(policies.items.filter((_, i) => i !== idx), policies.failOnDeny)}>
-                            Remove
-                          </button>
+                          {write && (
+                            <>
+                              <button className="btn sm" onClick={() => setEditing({ item, idx })}>
+                                Edit
+                              </button>
+                              <button className="btn sm ghost" onClick={() => savePolicies(policies.items.filter((_, i) => i !== idx), policies.failOnDeny)}>
+                                Remove
+                              </button>
+                            </>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -276,7 +286,7 @@ export function GuardrailsPage() {
                   <div className="help">On: a denied request returns an error to the caller. Off: the model answers with a refusal message instead.</div>
                 </div>
                 <div>
-                  <Toggle value={policies.failOnDeny} onChange={(v) => savePolicies(policies.items, v)} />
+                  <Toggle value={policies.failOnDeny} disabled={!write} onChange={(v) => savePolicies(policies.items, v)} />
                 </div>
               </div>
             )}

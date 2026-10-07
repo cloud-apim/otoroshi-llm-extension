@@ -271,6 +271,16 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   private val MetaModelsInclude = "ai_models_include"
   private val MetaModelsExclude = "ai_models_exclude"
 
+  // A secret a client was shown masked (AI Studio Enterprise masks them) comes back as this sentinel: it stands for
+  // the value already stored
+  val SecretSentinel = "__ai_studio_secret__"
+
+  private def unmasked(form: JsObject, current: JsValue): JsObject = JsObject(form.fields.flatMap {
+    case (key, JsString(SecretSentinel)) => current.select(key).asOpt[JsValue].map(key -> _)
+    case (key, o: JsObject)              => Some(key -> unmasked(o, current.select(key).asOpt[JsValue].getOrElse(Json.obj())))
+    case other                           => Some(other)
+  })
+
   private val OpenAiCompatPlugin = "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatApi"
   private val ConsumerPresetPlugin = "cp:otoroshi.next.plugins.MandatoryConsumerPreset"
   private val IpAllowPlugin = "cp:otoroshi.next.plugins.IpAddressAllowedList"
@@ -415,7 +425,15 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     else domain.split("/").headOption.getOrElse("").split("\\.").headOption.getOrElse("")
   }
 
-  private def workspaceJson(route: JsObject, config: AiStudioConfig): JsObject = {
+  // What the caller can do on a workspace, in the permissions of AI Studio (see ui/ai-studio/src/core/ops.js):
+  // who can read its route reads it, chats and sees its usage, who can write it does everything else
+  private val readPermissions = Seq("workspace:read", "chat:use", "usage:own", "config:read", "activity:read")
+  private val writePermissions = readPermissions ++ Seq("config:write", "keys:own", "keys:manage", "workspace:delete")
+
+  private def permissionsOn(route: JsObject)(using call: AiStudioApiRequest): Seq[String] =
+    if (call.canUserWriteJson(route)) writePermissions else if (call.canUserReadJson(route)) readPermissions else Seq.empty
+
+  private def workspaceJson(route: JsObject, config: AiStudioConfig)(using call: AiStudioApiRequest): JsObject = {
     val wsId = metaOf(route, MetaWorkspace).getOrElse("")
     val compat = compatConfigOf(route)
     val client = route.select("backend").select("client")
@@ -433,6 +451,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       "mcp_server_ref" -> optString(mcpServerRefOf(route)),
       // an empty PATCH repairs it
       "needs_repair" -> needsRepair(route),
+      "permissions" -> permissionsOn(route),
       "settings" -> Json.obj(
         "call_timeout" -> client.select("call_timeout").asOpt[Long].filter(_ > 0).getOrElse(600000L),
         "global_timeout" -> client.select("global_timeout").asOpt[Long].filter(_ > 0).getOrElse(600000L),
@@ -995,7 +1014,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       val current = existing.find(_.id == connId).getOrElse(throw notFound("provider not found"))
       if (string(form, "kind").exists(_ != current.kind)) throw badRequest("the kind of a provider cannot be changed")
       val entry = catalogEntry(current.kind)
-      val conn = connectionFromForm(current, form, entry, Some(current.name), existing.map(_.name), tools)
+      val conn = connectionFromForm(current, unmasked(form, connectionJson(current)), entry, Some(current.name), existing.map(_.name), tools)
       emulated(ws, conn).flatMap(checked => saveConnection(ws, checked, entry)).flatMap(_ => connection(ws.id, conn.id)).map(connectionJson)
     }
 
@@ -2019,7 +2038,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   private def saveTool(ws: Workspace, kind: ToolKind, rawForm: JsObject, existing: Option[JsObject])(using call: AiStudioApiRequest): Future[JsObject] =
     Providers.list(ws.id).flatMap { providers =>
       val form = string(rawForm, "template") match {
-        case None        => rawForm
+        case None        => existing.map(t => unmasked(rawForm, toolFormOf(kind, t, providers))).getOrElse(rawForm)
         case Some(_) if kind.id != "functions" || existing.isDefined =>
           throw badRequest("'template' only applies when creating an http function")
         case Some(id)    =>
@@ -2264,6 +2283,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     "model-entities",
     "tools-listing",
     "mcp-server-meta",
+    "workspace-permissions",
+    "secret-sentinel",
   )
 
   val UserEmailHeader = "AI-Studio-User-Email"
@@ -2363,19 +2384,20 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     // is listed, the ones with no known price included: the form tells which ones a strict provider refuses.
     route("POST", "/workspaces/:id/providers/_models", wantsBody = true) {
       withWorkspace { ws =>
-        val form = call.form
-        val base: Future[Connection] = string(form, "connection_id") match {
+        val raw = call.form
+        val base: Future[Connection] = string(raw, "connection_id") match {
           case Some(connId) =>
             connection(ws.id, connId).map { current =>
-              if (string(form, "kind").exists(_ != current.kind)) throw badRequest("the kind of a provider cannot be changed")
+              if (string(raw, "kind").exists(_ != current.kind)) throw badRequest("the kind of a provider cannot be changed")
               current
             }
           case None =>
-            val kind = string(form, "kind").getOrElse(throw badRequest("'kind' or 'connection_id' is required"))
+            val kind = string(raw, "kind").getOrElse(throw badRequest("'kind' or 'connection_id' is required"))
             val entry = catalogEntry(kind).getOrElse(throw badRequest(s"unknown provider kind '$kind', see the catalog"))
             newConnection(entry, Seq.empty).vfuture
         }
         base.flatMap { current =>
+          val form = if (current.entities.isEmpty) raw else unmasked(raw, connectionJson(current))
           val conn = current.copy(
             baseUrl = if (has(form, "base_url")) string(form, "base_url").getOrElse("") else current.baseUrl,
             token = if (has(form, "token")) string(form, "token").getOrElse("") else current.token,

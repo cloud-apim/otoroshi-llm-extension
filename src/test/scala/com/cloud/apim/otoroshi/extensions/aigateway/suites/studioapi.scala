@@ -577,8 +577,14 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     // a slug stays unique among the workspaces it cannot see
     expect(studioAs(writer, "POST", "/workspaces", Json.obj("name" -> "Not for them")), 409)
 
+    // what each one can do comes with the workspace
+    val writerPermissions = expect(studioAs(writer, "GET", s"/workspaces/$mine"), 200).select("permissions").as[Seq[String]]
+    assert(Seq("config:write", "keys:manage", "workspace:delete").forall(writerPermissions.contains), writerPermissions.toString)
+    val readerView = expect(studioAs(reader, "GET", s"/workspaces/$mine"), 200)
+    assertEquals(readerView.select("permissions").as[Seq[String]].sorted, Seq("activity:read", "chat:use", "config:read", "usage:own", "workspace:read"))
+
     // what it can read but not write is refused
-    assertEquals(expect(studioAs(reader, "GET", s"/workspaces/$mine"), 200).select("name").asString, "For the team")
+    assertEquals(readerView.select("name").asString, "For the team")
     expect(studioAs(reader, "POST", s"/workspaces/$mine/presets", Json.obj("name" -> "read-only")), 403)
     expect(studioAs(reader, "PATCH", s"/workspaces/$mine", Json.obj("description" -> "read-only")), 403)
     expect(studioAs(reader, "DELETE", s"/workspaces/$mine"), 403)
@@ -615,6 +621,9 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(expect(studio("PUT", s"/workspaces/$wsId/providers/$openaiId", Json.obj("description" -> "kept")), 200).select("options").select("max_tokens").asOpt[Int], Some(256))
     val cleared = expect(studio("PUT", s"/workspaces/$wsId/providers/$openaiId", Json.obj("options" -> JsNull)), 200).select("options")
     assertEquals((cleared.select("max_tokens").asOpt[Int], cleared.select("model").asOpt[String]), (None, Some("gpt-4o-mini")))
+    // a secret shown masked comes back as the sentinel: the stored one is kept
+    val sentinel = "__ai_studio_secret__"
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/providers/$openaiId", Json.obj("token" -> sentinel, "description" -> "masked")), 200).select("token").asString, "sk-studio")
 
     // the models of a saved provider, with its stored settings, every model listed even for a strict provider
     val ollama = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj(
@@ -635,6 +644,10 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(entities.find(_.select("id").asString == openaiText).get.select("model").asString, "gpt-4o-mini")
     expect(studio("POST", s"/workspaces/$wsId/tools/functions", Json.obj("template" -> "web_fetch")), 201)
     expect(studio("POST", s"/workspaces/$wsId/tools/search", Json.obj("name" -> "search", "search_provider" -> "duckduckgo")), 201)
+    val secured = expect(studio("POST", s"/workspaces/$wsId/tools/functions", Json.obj("name" -> "secured", "url" -> "https://example.com", "headers" -> Json.obj("Authorization" -> "Bearer secret-value"))), 201)
+    val resaved = expect(studio("PUT", s"/workspaces/$wsId/tools/functions/${secured.select("id").asString}", Json.obj("headers" -> Json.obj("Authorization" -> sentinel, "X-Trace" -> "1"))), 200)
+    assertEquals(resaved.select("headers").as[JsObject], Json.obj("Authorization" -> "Bearer secret-value", "X-Trace" -> "1"))
+    expect(studio("DELETE", s"/workspaces/$wsId/tools/functions/${secured.select("id").asString}"), 204)
     val tools = expect(studio("GET", s"/workspaces/$wsId/tools"), 200).as[Seq[JsObject]]
     assertEquals(tools.map(t => (t.select("name").asString, t.select("kind").asString)), Seq(("search", "search"), ("web_fetch", "functions")))
     assertEquals(tools.find(_.select("kind").asString == "functions").get.select("method").asString, "GET")

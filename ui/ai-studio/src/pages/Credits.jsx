@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { BudgetModal } from '../components/BudgetModal';
 import { Badge, Empty, ErrorAlert, Loading, PageHeader, Progress, useAsync, useConfirm, useToast } from '../components/ui';
 import { backend } from '../lib/backend';
@@ -8,6 +8,7 @@ import { fmtCost, fmtNumber } from '../lib/format';
 
 export function CreditsPage() {
   const { workspace } = useWorkspace();
+  const write = useCan()('config:write');
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(null);
@@ -58,12 +59,16 @@ export function CreditsPage() {
   return (
     <div className="content">
       <PageHeader title="Credits" description="Spending budgets enforced by the gateway. Each budget tracks its own window; totals are not summed across budgets.">
-        <button className="btn" disabled={keys.length === 0} onClick={() => setEditing({ apikey: keys[0] && keys[0].client_id })}>
-          Budget for an API key
-        </button>
-        <button className="btn primary" onClick={() => setEditing({})}>
-          Add budget
-        </button>
+        {write && (
+          <button className="btn" disabled={keys.length === 0} onClick={() => setEditing({ apikey: keys[0] && keys[0].client_id })}>
+            Budget for an API key
+          </button>
+        )}
+        {write && (
+          <button className="btn primary" onClick={() => setEditing({})}>
+            Add budget
+          </button>
+        )}
       </PageHeader>
       <ErrorAlert error={data.error} />
       {data.loading && !data.data && <Loading />}
@@ -72,9 +77,11 @@ export function CreditsPage() {
           <Empty
             title="No budget yet"
             action={
-              <button className="btn primary" onClick={() => setEditing({})}>
-                Add a budget
-              </button>
+              write ? (
+                <button className="btn primary" onClick={() => setEditing({})}>
+                  Add a budget
+                </button>
+              ) : null
             }
           >
             Cap the spend or the tokens of the whole workspace, or of some keys.
@@ -120,16 +127,22 @@ export function CreditsPage() {
                 </div>
               )}
               <div className="row">
-                <button className="btn sm" onClick={() => setEditing({ budget: b })}>
-                  Edit
-                </button>
-                <button className="btn sm" onClick={() => reset(b)}>
-                  Reset window
-                </button>
+                {write && (
+                  <button className="btn sm" onClick={() => setEditing({ budget: b })}>
+                    Edit
+                  </button>
+                )}
+                {write && (
+                  <button className="btn sm" onClick={() => reset(b)}>
+                    Reset window
+                  </button>
+                )}
                 <div className="grow" />
-                <button className="btn sm ghost" onClick={() => remove(b)}>
-                  Delete
-                </button>
+                {write && (
+                  <button className="btn sm ghost" onClick={() => remove(b)}>
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
           );
