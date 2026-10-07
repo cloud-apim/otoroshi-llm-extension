@@ -26,7 +26,8 @@ export function localBackend() {
     },
     catalog: () => api.get(`${ADMIN_API}/catalog`),
     // the preferences of the backoffice user (the theme)
-    prefs: { set: (key, value) => api.post(`/bo/api/me/preferences/${key}`, value) },
+    // a json value: the api client sends a string body as it is, and `light` is no json
+    prefs: { set: (key, value) => api.post(`/bo/api/me/preferences/${key}`, JSON.stringify(value)) },
     // the chat and the conversations of the signed-in user, served by the backoffice routes of the studio
     urls: {
       proxy: (wsId, path) => `${STUDIO_API}/workspaces/${wsId}/proxy${path}`,
