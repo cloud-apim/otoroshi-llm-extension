@@ -5,9 +5,10 @@ import { Icon } from '../components/icons';
 import { Badge, Empty, ErrorAlert, Loading, PageHeader, Pager, Segmented, StatusBadge, useAsync, usePaged } from '../components/ui';
 import { BudgetsCard, Delta, METRIC_OPTIONS, METRICS } from '../components/usage';
 import { compareOf, itemsOf, NoExporterError, PERIODS, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
-import { listApikeys, ownerOf } from '../lib/apikeys';
+import { ownerOf } from '../lib/apikeys';
+import { backend } from '../lib/backend';
 import { bootstrap } from '../lib/bootstrap';
-import { budgetNamesUser, isWorkspaceWide, keyBudgetOf, listBudgets, periodLabel } from '../lib/budgets';
+import { budgetNamesUser, isWorkspaceWide, keyBudgetOf, periodLabel } from '../lib/budgets';
 import { fmtCost, fmtInt, fmtNumber, initials } from '../lib/format';
 import { PeriodPicker, RefreshControl, useTimeView } from '../components/timeview';
 import { Link, useQueryState, useRouter } from '../lib/router';
@@ -44,7 +45,7 @@ function UsersList() {
   const [query, setQuery] = useQueryState();
   const { period, refresh: reload, setPeriod, setRefresh: setReload } = useTimeView('users', query, setQuery, '30d', SUMMARY_PERIODS);
   const [refresh, setRefresh] = useState(0);
-  const keys = useAsync(() => listApikeys(workspace.id), [workspace.id, refresh]);
+  const keys = useAsync(() => backend.run('keys.list', workspace.id), [workspace.id, refresh]);
   const usage = useAsync(() => runQuery(workspace.id, 'cloudapim_llm_users_table', { period, nocache: refresh > 0, params: { top_n: 200 } }).then(itemsOf), [workspace.id, period, refresh]);
   const me = bootstrap.user.email;
 
@@ -267,8 +268,8 @@ function YearActivity({ workspace, email, query, setQuery, refresh }) {
 function OwnedKeys({ workspace, email, refresh }) {
   const data = useAsync(async () => {
     const [keys, budgets, usage] = await Promise.all([
-      listApikeys(workspace.id),
-      listBudgets(workspace.id),
+      backend.run('keys.list', workspace.id),
+      backend.run('budgets.list', workspace.id),
       runQuery(workspace.id, 'cloudapim_llm_apikeys_table', { period: '30d', user: email, nocache: refresh > 0, params: { top_n: 200 } })
         .then(itemsOf)
         .catch(() => []),
@@ -277,7 +278,7 @@ function OwnedKeys({ workspace, email, refresh }) {
   }, [workspace.id, email, refresh]);
   const d = data.data;
   // the usage table is keyed by key name
-  const usageOf = (k) => (d ? d.usage.find((u) => u.apikey === k.clientName || u.apikey === k.clientId) : null) || {};
+  const usageOf = (k) => (d ? d.usage.find((u) => u.apikey === k.name || u.apikey === k.client_id) : null) || {};
   return (
     <div className="card flush">
       <div className="card-head" style={{ padding: '18px 22px 6px' }}>
@@ -315,13 +316,13 @@ function OwnedKeys({ workspace, email, refresh }) {
             <tbody>
               {d.keys.map((k) => {
                 const u = usageOf(k);
-                const b = keyBudgetOf(d.budgets, k.clientId);
-                const limit = b && b.limits ? b.limits.total_usd : null;
+                const b = keyBudgetOf(d.budgets, k.client_id);
+                const limit = b ? b.usd : null;
                 return (
-                  <tr key={k.clientId}>
-                    <td>{k.clientName}</td>
+                  <tr key={k.client_id}>
+                    <td>{k.name}</td>
                     <td className="mono truncate" style={{ maxWidth: 220 }}>
-                      {k.clientId}
+                      {k.client_id}
                     </td>
                     <td>
                       {limit !== null && limit !== undefined ? (
@@ -339,7 +340,7 @@ function OwnedKeys({ workspace, email, refresh }) {
                       <StatusBadge enabled={k.enabled} />
                     </td>
                     <td className="actions">
-                      <Link className="btn sm" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.clientId)}`} title="Usage of this key">
+                      <Link className="btn sm" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.client_id)}`} title="Usage of this key">
                         <Icon name="chart" />
                         Activity
                       </Link>

@@ -3,7 +3,8 @@ import { Sparkline, StackedBars, seriesColor } from './charts';
 import { Empty, Loading, Pager, Progress, Segmented, useAsync, usePaged } from './ui';
 import { NoExporterError, runQuery, scalarOf, seriesOf } from '../lib/analytics';
 import { Link } from '../lib/router';
-import { budgetConsumption, listBudgets, periodLabel } from '../lib/budgets';
+import { backend } from '../lib/backend';
+import { periodLabel } from '../lib/budgets';
 import { fmtCost, fmtInt, fmtNumber } from '../lib/format';
 
 // Building blocks of the usage pages (activity, users): KPIs, consumer tables, usage over time, budgets.
@@ -99,9 +100,8 @@ export function ConsumersCard({ title, description, items, active, onPick, empty
 // Live consumption of the budgets of a workspace, optionally only some of them
 export function BudgetsCard({ workspace, title = 'Budgets', description = 'Live consumption of the current window of each budget.', filter = () => true, empty = 'No budget in this workspace.' }) {
   const data = useAsync(async () => {
-    const budgets = (await listBudgets(workspace.id)).filter(filter);
-    const consumptions = await Promise.all(budgets.map((b) => budgetConsumption(b.id).catch(() => null)));
-    return budgets.map((b, i) => ({ budget: b, consumption: consumptions[i] }));
+    const budgets = (await backend.run('budgets.list', workspace.id, { query: { consumption: true } })).filter(filter);
+    return budgets.map((b) => ({ budget: b, consumption: b.consumption || null }));
   }, [workspace.id]);
   const list = data.data || [];
   if (data.loading && !data.data) return null;
@@ -116,8 +116,8 @@ export function BudgetsCard({ workspace, title = 'Budgets', description = 'Live 
         {list.map(({ budget, consumption }) => {
           const usd = consumption ? Number(consumption.consumed_total_usd) || 0 : 0;
           const tokens = consumption ? Number(consumption.consumed_total_tokens) || 0 : 0;
-          const limitUsd = budget.limits && budget.limits.total_usd;
-          const limitTokens = budget.limits && budget.limits.total_tokens;
+          const limitUsd = budget.usd;
+          const limitTokens = budget.tokens;
           return (
             <div key={budget.id} className="stack tight">
               <div className="row between">

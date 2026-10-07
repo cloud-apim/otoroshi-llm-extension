@@ -4,7 +4,8 @@ import { Badge, Checks, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, Nu
 import { Icon } from '../components/icons';
 import { Resources, workspaceFilter } from '../lib/entities';
 import { FILTER_OPERATORS, FILTER_SOURCES, filtersSummary, formatFilterValue, GUARDRAIL_KINDS, kindOf, operatorOf, parseFilterValue, summaryOf } from '../lib/guardrails';
-import { listBudgets, periodLabel } from '../lib/budgets';
+import { backend } from '../lib/backend';
+import { periodLabel } from '../lib/budgets';
 import { fmtCost } from '../lib/format';
 import { Link } from '../lib/router';
 import { MODALITIES } from '../lib/workspaces';
@@ -132,7 +133,7 @@ export function GuardrailsPage() {
   const data = useAsync(async () => {
     const filter = workspaceFilter(workspace.id);
     const lists = await Promise.all(MODALITIES.map((m) => Resources[m.resource].list(filter)));
-    const budgets = await listBudgets(workspace.id);
+    const budgets = await backend.run('budgets.list', workspace.id);
     const byModality = Object.fromEntries(MODALITIES.map((m, i) => [m.id, lists[i]]));
     return { byModality, budgets };
   }, [workspace.id]);
@@ -306,9 +307,8 @@ export function GuardrailsPage() {
                 <div key={b.id} className="row">
                   <Badge kind={b.enabled ? 'positive' : ''}>{b.name}</Badge>
                   <span className="small">
-                    {b.limits && b.limits.total_usd !== undefined && b.limits.total_usd !== null ? fmtCost(b.limits.total_usd) : ''}
-                    {b.limits && b.limits.total_tokens ? ` ${b.limits.total_tokens} tokens` : ''} · {(b.scope && b.scope.apikeys && b.scope.apikeys.length) || 'all'} key(s) ·{' '}
-                    {b.action_on_exceed && b.action_on_exceed.mode === 'soft' ? 'alert' : 'block'} · {periodLabel(b)}
+                    {b.usd !== undefined && b.usd !== null ? fmtCost(b.usd) : ''}
+                    {b.tokens ? ` ${b.tokens} tokens` : ''} · {b.apikeys.length || 'all'} key(s) · {b.mode === 'soft' ? 'alert' : 'block'} · {periodLabel(b)}
                   </span>
                 </div>
               ))}

@@ -3,10 +3,10 @@ import { useWorkspace } from '../App';
 import { Badge, CopyButton, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, NumberInput, PageHeader, Pager, Segmented, Select, TextInput, Toggle, useAsync, useConfirm, useToast, usePaged } from '../components/ui';
 import { BudgetModal } from '../components/BudgetModal';
 import { Icon } from '../components/icons';
-import { exactModel, isExpired, listApikeys, modelModeOf, modelOfPattern, modelRulesOf, OWNER_PATTERN, ownerOf, patternError, resetApikeySecret, saveApikey, usesWorkspaceQuotas, validUntilOf } from '../lib/apikeys';
+import { exactModel, isExpired, modelModeOf, modelOfPattern, modelRulesOf, OWNER_PATTERN, ownerOf, patternError, usesWorkspaceQuotas, validUntilOf } from '../lib/apikeys';
+import { backend } from '../lib/backend';
 import { bootstrap } from '../lib/bootstrap';
-import { budgetsOfKey, keyBudgetOf, listBudgets, periodLabel, PERIODS, periodOf, saveBudget } from '../lib/budgets';
-import { Resources, workspaceFilter } from '../lib/entities';
+import { budgetsOfKey, keyBudgetOf, periodLabel, PERIODS } from '../lib/budgets';
 import { fmtCost, fmtDate, fmtDay, fmtInt, fmtRelative } from '../lib/format';
 import { labelOfModelId, modelLabel } from '../lib/modelmeta';
 import { listWorkspaceModels } from '../lib/models';
@@ -131,13 +131,13 @@ function ownerKindOf(apikey) {
   return owner === bootstrap.user.email ? 'me' : 'teammate';
 }
 
-function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
+function KeyModal({ workspace, apikey, onClose, onSaved }) {
   const toast = useToast();
   const c = bootstrap.config;
   const [form, setForm] = useState(() => ({
     ownerKind: ownerKindOf(apikey),
     teammate: ownerKindOf(apikey) === 'teammate' ? ownerOf(apikey) : '',
-    name: apikey ? apikey.clientName : '',
+    name: apikey ? apikey.name : '',
     description: apikey ? apikey.description : '',
     enabled: apikey ? apikey.enabled : true,
     expiry: validUntilOf(apikey) !== null ? 'date' : 'never',
@@ -147,11 +147,11 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
     includeRules: modelRulesOf(apikey).include,
     excludeRules: modelRulesOf(apikey).exclude,
     override: apikey ? !usesWorkspaceQuotas(apikey) : false,
-    throttlingQuota: apikey ? apikey.throttlingQuota : c.default_throttling_quota,
-    dailyQuota: apikey ? apikey.dailyQuota : c.default_daily_quota,
-    monthlyQuota: apikey ? apikey.monthlyQuota : c.default_monthly_quota,
-    credit: budget && budget.limits ? budget.limits.total_usd ?? null : null,
-    period: budget ? periodOf(budget) : 'lifetime',
+    throttlingQuota: apikey ? apikey.quotas.throttling_quota : c.default_throttling_quota,
+    dailyQuota: apikey ? apikey.quotas.daily_quota : c.default_daily_quota,
+    monthlyQuota: apikey ? apikey.quotas.monthly_quota : c.default_monthly_quota,
+    credit: apikey && apikey.credit_limit ? apikey.credit_limit.usd ?? null : null,
+    period: apikey && apikey.credit_limit ? apikey.credit_limit.period : 'lifetime',
   }));
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
@@ -166,9 +166,8 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
   // the models of the workspace, only needed to pick some, and its load balancers (called `<name>/_default`)
   const models = useAsync(async () => {
     if (form.modelMode !== 'selected') return null;
-    const [listing, providers] = await Promise.all([listWorkspaceModels(workspace), Resources.providers.list(workspaceFilter(workspace.id))]);
-    const balancers = providers.filter((p) => p.provider === 'loadbalancer').map((p) => ({ id: `${p.name}/_default`, modality: 'load balancer' }));
-    return [...(listing.models || []), ...balancers];
+    const [listing, balancers] = await Promise.all([listWorkspaceModels(workspace), backend.run('balancers.list', workspace.id)]);
+    return [...(listing.models || []), ...balancers.map((b) => ({ id: `${b.name}/_default`, modality: 'load balancer' }))];
   }, [workspace.id, form.modelMode === 'selected']);
   const modelRules =
     form.modelMode === 'selected'
@@ -186,29 +185,22 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
       return wasExpired && (v === null || (v !== undefined && v > Date.now())) ? { ...next, enabled: true } : next;
     });
 
+  // the credit limit is a budget scoped to the key, kept by the api with the key
   const save = async () => {
     setSaving(true);
     try {
-      const saved = await saveApikey(workspace.id, { ...form, owner, validUntil, models: modelRules }, apikey);
       const hasCredit = form.credit !== null && form.credit !== '' && !Number.isNaN(Number(form.credit));
-      if (hasCredit) {
-        await saveBudget(
-          workspace.id,
-          {
-            name: `${form.name} limit`,
-            description: `Credit limit of the api key ${form.name}`,
-            usd: form.credit,
-            period: form.period,
-            apikeys: [saved.clientId],
-            mode: 'block',
-            enabled: true,
-            metadata: { ai_studio_key_limit: saved.clientId },
-          },
-          budget
-        );
-      } else if (budget) {
-        await Resources.budgets.delete(budget.id);
-      }
+      const body = {
+        name: form.name,
+        description: form.description || '',
+        enabled: form.enabled !== false,
+        owner,
+        valid_until: validUntil,
+        models: modelRules,
+        quotas: form.override ? { throttling_quota: Number(form.throttlingQuota), daily_quota: Number(form.dailyQuota), monthly_quota: Number(form.monthlyQuota) } : null,
+        credit_limit: hasCredit ? { usd: Number(form.credit), period: form.period } : null,
+      };
+      const saved = apikey ? await backend.run('keys.update', workspace.id, { kid: apikey.client_id, body }) : await backend.run('keys.create', workspace.id, { body });
       toast.success(apikey ? 'API key saved' : 'API key created');
       onSaved(apikey ? null : saved);
     } catch (e) {
@@ -222,7 +214,7 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
     <Modal
       open
       onClose={onClose}
-      title={apikey ? `Edit ${apikey.clientName}` : 'Create API Key'}
+      title={apikey ? `Edit ${apikey.name}` : 'Create API Key'}
       footer={
         <>
           <button className="btn" onClick={onClose}>
@@ -329,20 +321,20 @@ function KeyModal({ workspace, apikey, budget, onClose, onSaved }) {
   );
 }
 
-function RevealModal({ apikey, onClose, onReset }) {
+function RevealModal({ workspace, apikey, onClose, onReset }) {
   const toast = useToast();
   const confirm = useConfirm();
   const [full, setFull] = useState(null);
   const [fresh, setFresh] = useState(null);
   const [resetting, setResetting] = useState(false);
-  const key = useAsync(() => Resources.apikeys.get(apikey.clientId), [apikey.clientId]);
+  const key = useAsync(() => backend.run('keys.get', workspace.id, { kid: apikey.client_id }), [apikey.client_id]);
   const current = fresh || key.data || apikey;
   const bearer = current.bearer;
   const validUntil = validUntilOf(current);
 
   const reset = () => {
     confirm({
-      title: `Reset the secret of ${apikey.clientName}?`,
+      title: `Reset the secret of ${apikey.name}?`,
       message: 'The key gets a new secret. Applications still using the current one receive 401 errors within a few seconds.',
       danger: true,
       confirmLabel: 'Reset secret',
@@ -350,7 +342,7 @@ function RevealModal({ apikey, onClose, onReset }) {
       if (!ok) return;
       setResetting(true);
       try {
-        setFresh(await resetApikeySecret(apikey.clientId));
+        setFresh(await backend.run('keys.resetSecret', workspace.id, { kid: apikey.client_id }));
         setFull(true);
         toast.success('Secret reset: copy the new key');
         if (onReset) onReset();
@@ -366,7 +358,7 @@ function RevealModal({ apikey, onClose, onReset }) {
     <Modal
       open
       onClose={onClose}
-      title={`API key ${apikey.clientName}`}
+      title={`API key ${apikey.name}`}
       footer={
         <>
           <button className="btn danger left" disabled={resetting || key.loading} onClick={reset} title="Replace the secret of this key">
@@ -412,30 +404,29 @@ export function KeysPage() {
   const [revealing, setRevealing] = useState(null);
   const [budgeting, setBudgeting] = useState(null);
   const data = useAsync(async () => {
-    const [keys, budgets] = await Promise.all([listApikeys(workspace.id), listBudgets(workspace.id)]);
+    const [keys, budgets] = await Promise.all([backend.run('keys.list', workspace.id), backend.run('budgets.list', workspace.id)]);
     return { keys, budgets };
   }, [workspace.id]);
   const keys = (data.data && data.data.keys) || [];
   const budgets = (data.data && data.data.budgets) || [];
   const [search, setSearch] = useState('');
   const needle = search.trim().toLowerCase();
-  const found = needle ? keys.filter((k) => [k.clientName, ownerOf(k), k.clientId].some((v) => (v || '').toLowerCase().includes(needle))) : keys;
+  const found = needle ? keys.filter((k) => [k.name, ownerOf(k), k.client_id].some((v) => (v || '').toLowerCase().includes(needle))) : keys;
   const paged = usePaged(found, 20, needle);
 
   const toggle = (apikey) => {
-    Resources.apikeys
-      .update({ ...apikey, enabled: !apikey.enabled })
+    backend
+      .run('keys.update', workspace.id, { kid: apikey.client_id, body: { enabled: !apikey.enabled } })
       .then(() => data.reload())
       .catch(toast.error);
   };
 
   const remove = (apikey) => {
-    confirm({ title: `Delete ${apikey.clientName}?`, message: 'Applications using this key will immediately receive 401 errors.', danger: true, confirmLabel: 'Delete' }).then(async (ok) => {
+    confirm({ title: `Delete ${apikey.name}?`, message: 'Applications using this key will immediately receive 401 errors.', danger: true, confirmLabel: 'Delete' }).then(async (ok) => {
       if (!ok) return;
       try {
-        const b = keyBudgetOf(budgets, apikey.clientId);
-        if (b) await Resources.budgets.delete(b.id);
-        await Resources.apikeys.delete(apikey.clientId);
+        // its credit limit goes with it
+        await backend.run('keys.delete', workspace.id, { kid: apikey.client_id });
         toast.success('API key deleted');
         data.reload();
       } catch (e) {
@@ -495,12 +486,12 @@ export function KeysPage() {
               </thead>
               <tbody>
                 {paged.shown.map((k) => {
-                  const b = keyBudgetOf(budgets, k.clientId);
+                  const b = keyBudgetOf(budgets, k.client_id);
                   return (
-                    <tr key={k.clientId}>
+                    <tr key={k.client_id}>
                       <td>
                         <span className="row nowrap" style={{ gap: 8 }}>
-                          {k.clientName}
+                          {k.name}
                           <ModelsBadge apikey={k} />
                         </span>
                       </td>
@@ -514,12 +505,12 @@ export function KeysPage() {
                         )}
                       </td>
                       <td className="mono truncate" style={{ maxWidth: 260 }}>
-                        {k.clientId}
+                        {k.client_id}
                       </td>
                       <td>
-                        {b && b.limits && b.limits.total_usd !== undefined && b.limits.total_usd !== null ? (
+                        {k.credit_limit && k.credit_limit.usd !== null && k.credit_limit.usd !== undefined ? (
                           <>
-                            {fmtCost(b.limits.total_usd)} <span className="muted small">· {periodLabel(b)}</span>
+                            {fmtCost(k.credit_limit.usd)} <span className="muted small">· {b ? periodLabel(b) : k.credit_limit.period}</span>
                           </>
                         ) : (
                           <span className="muted">unlimited</span>
@@ -527,11 +518,11 @@ export function KeysPage() {
                       </td>
                       <td>
                         {(() => {
-                          const applying = budgetsOfKey(budgets, k.clientId, ownerOf(k));
+                          const applying = budgetsOfKey(budgets, k.client_id, ownerOf(k));
                           return applying.length ? <Badge title={applying.map((x) => x.name).join(', ')}>{applying.length}</Badge> : <span className="muted">none</span>;
                         })()}
                       </td>
-                      <td className="muted">{usesWorkspaceQuotas(k) ? 'default' : `${fmtInt(k.throttlingQuota)}/s · ${fmtInt(k.dailyQuota)}/d`}</td>
+                      <td className="muted">{usesWorkspaceQuotas(k) ? 'default' : `${fmtInt(k.quotas.throttling_quota)}/s · ${fmtInt(k.quotas.daily_quota)}/d`}</td>
                       <td className="nowrap">
                         <Expiry apikey={k} />
                       </td>
@@ -544,16 +535,16 @@ export function KeysPage() {
                       </td>
                       {/* the secondary actions are icons: with an owner column, labels push Delete out of a laptop screen */}
                       <td className="actions">
-                        <Link className="btn sm icon" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.clientId)}`} title="Usage of this key">
+                        <Link className="btn sm icon" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.client_id)}`} title="Usage of this key">
                           <Icon name="chart" />
                         </Link>
                         <button className="btn sm icon" onClick={() => setRevealing(k)} title="Show or reset the key">
                           <Icon name="key" />
                         </button>
-                        <button className="btn sm icon" onClick={() => setBudgeting(k.clientId)} title="Create a budget for this key">
+                        <button className="btn sm icon" onClick={() => setBudgeting(k.client_id)} title="Create a budget for this key">
                           <Icon name="wallet" />
                         </button>
-                        <button className="btn sm" onClick={() => setEditing({ apikey: k, budget: b })}>
+                        <button className="btn sm" onClick={() => setEditing({ apikey: k })}>
                           Edit
                         </button>
                         <button className="btn sm ghost" onClick={() => remove(k)}>
@@ -573,7 +564,6 @@ export function KeysPage() {
         <KeyModal
           workspace={workspace}
           apikey={editing.apikey}
-          budget={editing.budget}
           onClose={() => setEditing(null)}
           onSaved={(created) => {
             setEditing(null);
@@ -582,7 +572,7 @@ export function KeysPage() {
           }}
         />
       )}
-      {revealing && <RevealModal apikey={revealing} onClose={() => setRevealing(null)} onReset={() => data.reload()} />}
+      {revealing && <RevealModal workspace={workspace} apikey={revealing} onClose={() => setRevealing(null)} onReset={() => data.reload()} />}
       {budgeting && (
         <BudgetModal
           workspace={workspace}
