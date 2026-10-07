@@ -1,6 +1,12 @@
 // The api keys of a workspace, as the studio admin api shows them (`apikeyJson` in studio/api.scala) and the
 // key form writes them: owner, model rules, expiration, quotas and credit limit at the top level.
 
+import { platform } from './platform';
+
+// The operation `op` (list, create, update, reveal, resetSecret, delete) on the keys a person sees: every key of
+// the workspace when they read its configuration, the keys they own otherwise (`mykeys.*`, AI Studio Enterprise)
+export const keyOp = (workspace, op) => (platform.can('config:read', workspace) ? `keys.${op}` : `mykeys.${op}`);
+
 // same pattern as the studio api: an owner is always an email
 export const OWNER_PATTERN = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$/;
 

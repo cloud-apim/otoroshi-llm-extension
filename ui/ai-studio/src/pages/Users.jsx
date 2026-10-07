@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { CalendarHeatmap, StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
 import { Badge, Empty, ErrorAlert, Loading, PageHeader, Pager, Segmented, StatusBadge, useAsync, usePaged } from '../components/ui';
 import { BudgetsCard, Delta, METRIC_OPTIONS, METRICS } from '../components/usage';
 import { compareOf, itemsOf, NoExporterError, PERIODS, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
-import { ownerOf } from '../lib/apikeys';
+import { keyOp, ownerOf } from '../lib/apikeys';
 import { backend } from '../lib/backend';
 import { bootstrap } from '../lib/bootstrap';
-import { budgetNamesUser, isWorkspaceWide, keyBudgetOf, periodLabel } from '../lib/budgets';
+import { budgetNamesUser, budgetsListOp, isWorkspaceWide, keyBudgetOf, periodLabel } from '../lib/budgets';
 import { fmtCost, fmtInt, fmtNumber, initials } from '../lib/format';
 import { PeriodPicker, RefreshControl, useTimeView } from '../components/timeview';
 import { Link, useQueryState, useRouter } from '../lib/router';
@@ -266,10 +266,11 @@ function YearActivity({ workspace, email, query, setQuery, refresh }) {
 }
 
 function OwnedKeys({ workspace, email, refresh }) {
+  const can = useCan();
   const data = useAsync(async () => {
     const [keys, budgets, usage] = await Promise.all([
-      backend.run('keys.list', workspace.id),
-      backend.run('budgets.list', workspace.id),
+      backend.run(keyOp(workspace, 'list'), workspace.id),
+      backend.run(budgetsListOp(workspace), workspace.id),
       runQuery(workspace.id, 'cloudapim_llm_apikeys_table', { period: '30d', user: email, nocache: refresh > 0, params: { top_n: 200 } })
         .then(itemsOf)
         .catch(() => []),
@@ -340,10 +341,12 @@ function OwnedKeys({ workspace, email, refresh }) {
                       <StatusBadge enabled={k.enabled} />
                     </td>
                     <td className="actions">
-                      <Link className="btn sm" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.client_id)}`} title="Usage of this key">
-                        <Icon name="chart" />
-                        Activity
-                      </Link>
+                      {can('activity:read') && (
+                        <Link className="btn sm" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.client_id)}`} title="Usage of this key">
+                          <Icon name="chart" />
+                          Activity
+                        </Link>
+                      )}
                     </td>
                   </tr>
                 );
@@ -358,7 +361,10 @@ function OwnedKeys({ workspace, email, refresh }) {
 
 function UserProfile({ email }) {
   const { workspace } = useWorkspace();
+  const can = useCan();
   const me = bootstrap.user.email === email;
+  // who only sees their own usage has no list of users nor activity of the workspace to go to
+  const everyone = can('activity:read');
   // the period of the summary, its metric and the one of the year are in the url, like the auto reload
   const [query, setQuery] = useQueryState();
   const { period, refresh: reload, setPeriod, setRefresh: setReload } = useTimeView('user', query, setQuery, '30d', SUMMARY_PERIODS);
@@ -370,10 +376,12 @@ function UserProfile({ email }) {
   };
   return (
     <div className="content wide" style={{ maxWidth: 1200 }}>
-      <Link className="navlink muted" to={`/workspaces/${workspace.id}/users`}>
-        <Icon name="arrowLeft" />
-        All users
-      </Link>
+      {everyone && (
+        <Link className="navlink muted" to={`/workspaces/${workspace.id}/users`}>
+          <Icon name="arrowLeft" />
+          All users
+        </Link>
+      )}
       <div className="profile-head">
         <span className="avatar lg">{initials(email)}</span>
         <div className="grow" style={{ minWidth: 0 }}>
@@ -383,10 +391,12 @@ function UserProfile({ email }) {
           <p className="muted">Their chats in AI Studio and the calls of the API keys they own.</p>
         </div>
         <RefreshControl {...reload} onChange={setReload} onRefresh={reloadAll} loadedAt={loadedAt} />
-        <Link className="btn sm" to={`/workspaces/${workspace.id}/activity?user=${encodeURIComponent(email)}&period=${encodeURIComponent(period)}`}>
-          <Icon name="chart" />
-          Full activity
-        </Link>
+        {everyone && (
+          <Link className="btn sm" to={`/workspaces/${workspace.id}/activity?user=${encodeURIComponent(email)}&period=${encodeURIComponent(period)}`}>
+            <Icon name="chart" />
+            Full activity
+          </Link>
+        )}
       </div>
       <div className="stack">
         <UsageSummary workspace={workspace} email={email} period={period} setPeriod={setPeriod} query={query} setQuery={setQuery} refresh={refresh} />

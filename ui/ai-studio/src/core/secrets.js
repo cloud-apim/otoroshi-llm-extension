@@ -29,6 +29,9 @@ export const SECRET_FIELDS = {
   'keys.list': APIKEY.map((f) => `[].${f}`),
   'keys.get': APIKEY,
   'keys.update': APIKEY,
+  // their own keys too: their secret is revealed on demand, and that is recorded
+  'mykeys.list': APIKEY.map((f) => `[].${f}`),
+  'mykeys.update': APIKEY,
 };
 
 // A second pass after the declared fields, on what reads the configuration: any field whose name says it holds
@@ -69,8 +72,8 @@ function maskByName(value) {
  * left as they are.
  */
 export function maskSecrets(name, result) {
-  const op = ops[name];
-  if (!op || op.reveals || name === 'keys.create' || name === 'keys.resetSecret') return result;
+  const op = Object.hasOwn(ops, name) ? ops[name] : null;
+  if (!op || op.reveals || op.secretOnce) return result;
   const declared = (SECRET_FIELDS[name] || []).reduce((acc, path) => maskPath(acc, path.split('.')), result);
   return op.access === 'config:read' ? maskByName(declared) : declared;
 }

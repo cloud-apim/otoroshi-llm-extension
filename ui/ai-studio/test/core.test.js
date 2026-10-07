@@ -60,6 +60,17 @@ test('the secret of an api key is shown on creation, on reset and on reveal only
   assert.equal(maskSecrets('keys.create', key).client_secret, 's');
   assert.equal(maskSecrets('keys.resetSecret', key).bearer, 'otoapk_x');
   assert.equal(maskSecrets('keys.reveal', key).client_secret, 's');
+  assert.equal(maskSecrets('mykeys.list', [key])[0].bearer, SECRET_SENTINEL);
+  assert.equal(maskSecrets('mykeys.update', key).client_secret, SECRET_SENTINEL);
+  assert.equal(maskSecrets('mykeys.create', key).client_secret, 's');
+  assert.equal(maskSecrets('mykeys.reveal', key).bearer, 'otoapk_x');
+});
+
+test('what belongs to the person calling is read on the routes of the whole workspace', () => {
+  const own = Object.entries(ops).filter(([, op]) => op.own);
+  assert.deepEqual(own.map(([name]) => name).sort(), ['mybudgets.list', 'mykeys.create', 'mykeys.delete', 'mykeys.list', 'mykeys.resetSecret', 'mykeys.reveal', 'mykeys.update']);
+  // never the access of who reads or writes the configuration
+  own.forEach(([name, op]) => assert.ok(['keys:own', 'usage:own'].includes(op.access), name));
 });
 
 test('what reads the configuration has every field named like a secret masked, numbers aside', () => {

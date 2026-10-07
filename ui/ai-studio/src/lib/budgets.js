@@ -3,6 +3,11 @@
 // are picked (the whole workspace, one api key, or custom). The api keeps every budget scoped to its
 // workspace whatever the form says.
 
+import { platform } from './platform';
+
+// the budgets a person sees: every budget when they read the configuration, the ones counting their usage otherwise
+export const budgetsListOp = (workspace) => (platform.can('config:read', workspace) ? 'budgets.list' : 'mybudgets.list');
+
 export const PERIODS = [
   { value: 'lifetime', label: 'Never (lifetime)' },
   { value: 'daily', label: 'Daily' },

@@ -3,10 +3,10 @@ import { useCan, useWorkspace } from '../App';
 import { Badge, CopyButton, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, NumberInput, PageHeader, Pager, Segmented, Select, TextInput, Toggle, useAsync, useConfirm, useToast, usePaged } from '../components/ui';
 import { BudgetModal } from '../components/BudgetModal';
 import { Icon } from '../components/icons';
-import { exactModel, isExpired, modelModeOf, modelOfPattern, modelRulesOf, OWNER_PATTERN, ownerOf, patternError, usesWorkspaceQuotas, validUntilOf } from '../lib/apikeys';
+import { exactModel, isExpired, keyOp, modelModeOf, modelOfPattern, modelRulesOf, OWNER_PATTERN, ownerOf, patternError, usesWorkspaceQuotas, validUntilOf } from '../lib/apikeys';
 import { backend } from '../lib/backend';
 import { bootstrap } from '../lib/bootstrap';
-import { budgetsOfKey, keyBudgetOf, periodLabel, PERIODS } from '../lib/budgets';
+import { budgetsListOp, budgetsOfKey, keyBudgetOf, periodLabel, PERIODS } from '../lib/budgets';
 import { fmtCost, fmtDate, fmtDay, fmtInt, fmtRelative } from '../lib/format';
 import { labelOfModelId, modelLabel } from '../lib/modelmeta';
 import { listWorkspaceModels } from '../lib/models';
@@ -131,7 +131,9 @@ function ownerKindOf(apikey) {
   return owner === bootstrap.user.email ? 'me' : 'teammate';
 }
 
-function KeyModal({ workspace, apikey, onClose, onSaved }) {
+// `own`: a key of the person, who does not manage the keys of the workspace. They create it for themselves with
+// its expiry and its models, and then only rename it: what restricts a key is set by who manages the keys.
+function KeyModal({ workspace, apikey, own, onClose, onSaved }) {
   const toast = useToast();
   const c = bootstrap.config;
   const [form, setForm] = useState(() => ({
@@ -166,7 +168,8 @@ function KeyModal({ workspace, apikey, onClose, onSaved }) {
   // the models of the workspace, only needed to pick some, and its load balancers (called `<name>/_default`)
   const models = useAsync(async () => {
     if (form.modelMode !== 'selected') return null;
-    const [listing, balancers] = await Promise.all([listWorkspaceModels(workspace), backend.run('balancers.list', workspace.id)]);
+    // the load balancers are a part of the configuration
+    const [listing, balancers] = await Promise.all([listWorkspaceModels(workspace), own ? [] : backend.run('balancers.list', workspace.id)]);
     return [...(listing.models || []), ...balancers.map((b) => ({ id: `${b.name}/_default`, modality: 'load balancer' }))];
   }, [workspace.id, form.modelMode === 'selected']);
   const modelRules =
@@ -200,7 +203,11 @@ function KeyModal({ workspace, apikey, onClose, onSaved }) {
         quotas: form.override ? { throttling_quota: Number(form.throttlingQuota), daily_quota: Number(form.dailyQuota), monthly_quota: Number(form.monthlyQuota) } : null,
         credit_limit: hasCredit ? { usd: Number(form.credit), period: form.period } : null,
       };
-      const saved = apikey ? await backend.run('keys.update', workspace.id, { kid: apikey.client_id, body }) : await backend.run('keys.create', workspace.id, { body });
+      // the api owns a key of their own to the person
+      const ownBody = apikey ? { name: form.name } : { name: form.name, enabled: true, valid_until: validUntil, models: modelRules };
+      const saved = apikey
+        ? await backend.run(keyOp(workspace, 'update'), workspace.id, { kid: apikey.client_id, body: own ? ownBody : body })
+        : await backend.run(keyOp(workspace, 'create'), workspace.id, { body: own ? ownBody : body });
       toast.success(apikey ? 'API key saved' : 'API key created');
       onSaved(apikey ? null : saved);
     } catch (e) {
@@ -226,97 +233,104 @@ function KeyModal({ workspace, apikey, onClose, onSaved }) {
         </>
       }
     >
-      <Field label="Owner" hint="The usage of the key counts for its owner in Activity and Logs. Workspace keys have no individual owner: use them for shared apps and agents.">
-        <div className="stack tight">
-          <div>
-            <Segmented value={form.ownerKind} onChange={(v) => set({ ownerKind: v })} options={OWNER_KINDS} />
+      {!own && (
+        <Field label="Owner" hint="The usage of the key counts for its owner in Activity and Logs. Workspace keys have no individual owner: use them for shared apps and agents.">
+          <div className="stack tight">
+            <div>
+              <Segmented value={form.ownerKind} onChange={(v) => set({ ownerKind: v })} options={OWNER_KINDS} />
+            </div>
+            {form.ownerKind === 'me' && <TextInput value={bootstrap.user.email} onChange={() => {}} disabled />}
+            {form.ownerKind === 'teammate' && <TextInput value={form.teammate} onChange={(v) => set({ teammate: v })} placeholder="jane@company.com" type="email" />}
           </div>
-          {form.ownerKind === 'me' && <TextInput value={bootstrap.user.email} onChange={() => {}} disabled />}
-          {form.ownerKind === 'teammate' && <TextInput value={form.teammate} onChange={(v) => set({ teammate: v })} placeholder="jane@company.com" type="email" />}
-        </div>
-      </Field>
-      <Field label="Name">
+        </Field>
+      )}
+      <Field label="Name" hint={own ? 'The key is yours: its usage counts for you, and the budgets naming you apply to it.' : null}>
         <TextInput value={form.name} onChange={(v) => set({ name: v })} placeholder="My app" autoFocus />
       </Field>
-      <div className="form-grid">
-        <Field
-          label="Expires"
-          hint={
-            staysExpired
-              ? `Expired on ${fmtDate(validUntil)}: the gateway refuses this key until it gets a new date.`
-              : form.expiry === 'never'
-                ? 'The key works until you disable or delete it.'
-                : form.expiry === 'date'
-                  ? 'The key works through the end of that day, then the gateway refuses it.'
-                  : `On ${fmtDate(validUntil)}, then the gateway refuses it.`
-          }
-        >
-          <Select value={form.expiry} onChange={(v) => setExpiry({ expiry: v, expiryDate: v === 'date' && !form.expiryDate ? localDay(Date.now() + 30 * DAY) : form.expiryDate })} options={EXPIRIES} />
-        </Field>
-        {form.expiry === 'date' && (
-          <Field label="Valid until" error={pastDate ? 'Pick a date in the future.' : validUntil === undefined ? 'Pick a date.' : null}>
-            <TextInput type="date" value={form.expiryDate} min={localDay(Date.now())} onChange={(v) => setExpiry({ expiryDate: v })} />
+      {own && apikey && <p className="muted small">Its expiry, its models and its limits are set by who manages the keys of the workspace.</p>}
+      <fieldset className="bare" hidden={own && !!apikey}>
+        <div className="form-grid">
+          <Field
+            label="Expires"
+            hint={
+              staysExpired
+                ? `Expired on ${fmtDate(validUntil)}: the gateway refuses this key until it gets a new date.`
+                : form.expiry === 'never'
+                  ? 'The key works until you disable or delete it.'
+                  : form.expiry === 'date'
+                    ? 'The key works through the end of that day, then the gateway refuses it.'
+                    : `On ${fmtDate(validUntil)}, then the gateway refuses it.`
+            }
+          >
+            <Select value={form.expiry} onChange={(v) => setExpiry({ expiry: v, expiryDate: v === 'date' && !form.expiryDate ? localDay(Date.now() + 30 * DAY) : form.expiryDate })} options={EXPIRIES} />
           </Field>
-        )}
-      </div>
-      <Field
-        label="Models"
-        hint={
-          form.modelMode === 'all'
-            ? 'The key can call every model of the workspace, within the model access of its guardrails.'
-            : form.modelMode === 'selected'
-              ? 'The key can only call these models. Load balancers and routers can still send its calls to any of their targets.'
-              : 'Regular expressions on the model ids: model, provider/model or provider###model. Empty lists allow everything.'
-        }
-        error={form.modelMode === 'selected' && form.selectedModels.length === 0 ? 'Select at least one model.' : rulesError}
-      >
-        <div className="stack tight">
-          <div>
-            <Segmented value={form.modelMode} onChange={(v) => set({ modelMode: v })} options={MODEL_MODES} />
-          </div>
-          {form.modelMode === 'selected' && (
-            <ModelChecklist models={models.data || []} loading={models.loading} value={form.selectedModels} onChange={(v) => set({ selectedModels: v })} />
-          )}
-          {form.modelMode === 'custom' && (
-            <div className="form-grid">
-              <Field label="Allowed models" hint="e.g. gpt-4o.* or openai/.*">
-                <LinesInput value={form.includeRules} onChange={(v) => set({ includeRules: v })} rows={3} />
-              </Field>
-              <Field label="Blocked models" hint="e.g. .*-preview or azure###.*">
-                <LinesInput value={form.excludeRules} onChange={(v) => set({ excludeRules: v })} rows={3} />
-              </Field>
-            </div>
+          {form.expiry === 'date' && (
+            <Field label="Valid until" error={pastDate ? 'Pick a date in the future.' : validUntil === undefined ? 'Pick a date.' : null}>
+              <TextInput type="date" value={form.expiryDate} min={localDay(Date.now())} onChange={(v) => setExpiry({ expiryDate: v })} />
+            </Field>
           )}
         </div>
-      </Field>
-      <div className="form-grid">
-        <Field label="Credit limit (USD)" hint="Leave blank for unlimited. Enforced by a budget scoped to this key.">
-          <NumberInput value={form.credit} onChange={(v) => set({ credit: v })} placeholder="Leave blank for unlimited" step="0.01" min="0" />
+        <Field
+          label="Models"
+          hint={
+            form.modelMode === 'all'
+              ? 'The key can call every model of the workspace, within the model access of its guardrails.'
+              : form.modelMode === 'selected'
+                ? 'The key can only call these models. Load balancers and routers can still send its calls to any of their targets.'
+                : 'Regular expressions on the model ids: model, provider/model or provider###model. Empty lists allow everything.'
+          }
+          error={form.modelMode === 'selected' && form.selectedModels.length === 0 ? 'Select at least one model.' : rulesError}
+        >
+          <div className="stack tight">
+            <div>
+              <Segmented value={form.modelMode} onChange={(v) => set({ modelMode: v })} options={MODEL_MODES} />
+            </div>
+            {form.modelMode === 'selected' && (
+              <ModelChecklist models={models.data || []} loading={models.loading} value={form.selectedModels} onChange={(v) => set({ selectedModels: v })} />
+            )}
+            {form.modelMode === 'custom' && (
+              <div className="form-grid">
+                <Field label="Allowed models" hint="e.g. gpt-4o.* or openai/.*">
+                  <LinesInput value={form.includeRules} onChange={(v) => set({ includeRules: v })} rows={3} />
+                </Field>
+                <Field label="Blocked models" hint="e.g. .*-preview or azure###.*">
+                  <LinesInput value={form.excludeRules} onChange={(v) => set({ excludeRules: v })} rows={3} />
+                </Field>
+              </div>
+            )}
+          </div>
         </Field>
-        <Field label="Reset limit every…">
-          <Select value={form.period} onChange={(v) => set({ period: v })} options={PERIODS.map((p) => ({ value: p.value, label: p.label }))} />
+      </fieldset>
+      <fieldset className="bare" hidden={own}>
+        <div className="form-grid">
+          <Field label="Credit limit (USD)" hint="Leave blank for unlimited. Enforced by a budget scoped to this key.">
+            <NumberInput value={form.credit} onChange={(v) => set({ credit: v })} placeholder="Leave blank for unlimited" step="0.01" min="0" />
+          </Field>
+          <Field label="Reset limit every…">
+            <Select value={form.period} onChange={(v) => set({ period: v })} options={PERIODS.map((p) => ({ value: p.value, label: p.label }))} />
+          </Field>
+        </div>
+        <Field label="Quotas">
+          <label className="check">
+            <input type="checkbox" checked={form.override} onChange={(e) => set({ override: e.target.checked })} />
+            Override the default quotas for this key
+          </label>
         </Field>
-      </div>
-      <Field label="Quotas">
-        <label className="check">
-          <input type="checkbox" checked={form.override} onChange={(e) => set({ override: e.target.checked })} />
-          Override the default quotas for this key
-        </label>
-      </Field>
-      <div className="form-grid">
-        <Field label="Requests per second" hint={`default: ${fmtInt(c.default_throttling_quota)}`}>
-          <NumberInput value={form.throttlingQuota} disabled={!form.override} onChange={(v) => set({ throttlingQuota: v })} />
-        </Field>
-        <Field label="Requests per day" hint={`default: ${fmtInt(c.default_daily_quota)}`}>
-          <NumberInput value={form.dailyQuota} disabled={!form.override} onChange={(v) => set({ dailyQuota: v })} />
-        </Field>
-        <Field label="Requests per month" hint={`default: ${fmtInt(c.default_monthly_quota)}`}>
-          <NumberInput value={form.monthlyQuota} disabled={!form.override} onChange={(v) => set({ monthlyQuota: v })} />
-        </Field>
-        <Field label="Enabled" hint={staysExpired ? 'Expired keys stay disabled.' : null}>
-          <Toggle value={form.enabled && !staysExpired} disabled={staysExpired} onChange={(v) => set({ enabled: v })} />
-        </Field>
-      </div>
+        <div className="form-grid">
+          <Field label="Requests per second" hint={`default: ${fmtInt(c.default_throttling_quota)}`}>
+            <NumberInput value={form.throttlingQuota} disabled={!form.override} onChange={(v) => set({ throttlingQuota: v })} />
+          </Field>
+          <Field label="Requests per day" hint={`default: ${fmtInt(c.default_daily_quota)}`}>
+            <NumberInput value={form.dailyQuota} disabled={!form.override} onChange={(v) => set({ dailyQuota: v })} />
+          </Field>
+          <Field label="Requests per month" hint={`default: ${fmtInt(c.default_monthly_quota)}`}>
+            <NumberInput value={form.monthlyQuota} disabled={!form.override} onChange={(v) => set({ monthlyQuota: v })} />
+          </Field>
+          <Field label="Enabled" hint={staysExpired ? 'Expired keys stay disabled.' : null}>
+            <Toggle value={form.enabled && !staysExpired} disabled={staysExpired} onChange={(v) => set({ enabled: v })} />
+          </Field>
+        </div>
+      </fieldset>
     </Modal>
   );
 }
@@ -328,7 +342,7 @@ function RevealModal({ workspace, apikey, onClose, onReset }) {
   const [fresh, setFresh] = useState(null);
   const [resetting, setResetting] = useState(false);
   // the only read of a key giving its secret (AI Studio Enterprise records who revealed it)
-  const key = useAsync(() => backend.run('keys.reveal', workspace.id, { kid: apikey.client_id }), [apikey.client_id]);
+  const key = useAsync(() => backend.run(keyOp(workspace, 'reveal'), workspace.id, { kid: apikey.client_id }), [apikey.client_id]);
   const current = fresh || key.data || apikey;
   const bearer = current.bearer;
   const validUntil = validUntilOf(current);
@@ -343,7 +357,7 @@ function RevealModal({ workspace, apikey, onClose, onReset }) {
       if (!ok) return;
       setResetting(true);
       try {
-        setFresh(await backend.run('keys.resetSecret', workspace.id, { kid: apikey.client_id }));
+        setFresh(await backend.run(keyOp(workspace, 'resetSecret'), workspace.id, { kid: apikey.client_id }));
         setFull(true);
         toast.success('Secret reset: copy the new key');
         if (onReset) onReset();
@@ -403,13 +417,16 @@ export function KeysPage() {
   // managing every key and seeing their secret, and making budgets for them
   const manage = can('keys:manage');
   const write = can('config:write');
+  // without the configuration, the keys of the person only (AI Studio Enterprise)
+  const own = !can('config:read');
+  const mine = own && can('keys:own');
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(null);
   const [revealing, setRevealing] = useState(null);
   const [budgeting, setBudgeting] = useState(null);
   const data = useAsync(async () => {
-    const [keys, budgets] = await Promise.all([backend.run('keys.list', workspace.id), backend.run('budgets.list', workspace.id)]);
+    const [keys, budgets] = await Promise.all([backend.run(keyOp(workspace, 'list'), workspace.id), backend.run(budgetsListOp(workspace), workspace.id)]);
     return { keys, budgets };
   }, [workspace.id]);
   const keys = (data.data && data.data.keys) || [];
@@ -421,7 +438,7 @@ export function KeysPage() {
 
   const toggle = (apikey) => {
     backend
-      .run('keys.update', workspace.id, { kid: apikey.client_id, body: { enabled: !apikey.enabled } })
+      .run(keyOp(workspace, 'update'), workspace.id, { kid: apikey.client_id, body: { enabled: !apikey.enabled } })
       .then(() => data.reload())
       .catch(toast.error);
   };
@@ -431,7 +448,7 @@ export function KeysPage() {
       if (!ok) return;
       try {
         // its credit limit goes with it
-        await backend.run('keys.delete', workspace.id, { kid: apikey.client_id });
+        await backend.run(keyOp(workspace, 'delete'), workspace.id, { kid: apikey.client_id });
         toast.success('API key deleted');
         data.reload();
       } catch (e) {
@@ -442,8 +459,8 @@ export function KeysPage() {
 
   return (
     <div className="content">
-      <PageHeader title="API Keys" description="Create and manage API keys for this workspace.">
-        {manage && (
+      <PageHeader title="API Keys" description={own ? 'Your API keys for this workspace.' : 'Create and manage API keys for this workspace.'}>
+        {(manage || mine) && (
           <button className="btn primary" onClick={() => setEditing({})}>
             New Key
           </button>
@@ -466,7 +483,7 @@ export function KeysPage() {
           <Empty
             title="No API key yet"
             action={
-              manage ? (
+              manage || mine ? (
                 <button className="btn primary" onClick={() => setEditing({})}>
                   Create a key
                 </button>
@@ -539,15 +556,18 @@ export function KeysPage() {
                         {isExpired(k) ? (
                           <Toggle value={false} disabled onChange={() => {}} title="Expired: edit the key to give it a new date" />
                         ) : (
-                          <Toggle value={k.enabled} disabled={!manage} onChange={() => toggle(k)} title={k.enabled ? 'Enabled' : 'Disabled'} />
+                          // a key of their own is disabled by the person, enabled again by who manages the keys
+                          <Toggle value={k.enabled} disabled={!manage && !(mine && k.enabled)} onChange={() => toggle(k)} title={k.enabled ? 'Enabled' : 'Disabled'} />
                         )}
                       </td>
                       {/* the secondary actions are icons: with an owner column, labels push Delete out of a laptop screen */}
                       <td className="actions">
-                        <Link className="btn sm icon" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.client_id)}`} title="Usage of this key">
-                          <Icon name="chart" />
-                        </Link>
-                        {manage && (
+                        {can('activity:read') && (
+                          <Link className="btn sm icon" to={`/workspaces/${workspace.id}/activity?apikey=${encodeURIComponent(k.client_id)}`} title="Usage of this key">
+                            <Icon name="chart" />
+                          </Link>
+                        )}
+                        {(manage || mine) && (
                           <button className="btn sm icon" onClick={() => setRevealing(k)} title="Show or reset the key">
                             <Icon name="key" />
                           </button>
@@ -557,12 +577,12 @@ export function KeysPage() {
                             <Icon name="wallet" />
                           </button>
                         )}
-                        {manage && (
+                        {(manage || mine) && (
                           <button className="btn sm" onClick={() => setEditing({ apikey: k })}>
                             Edit
                           </button>
                         )}
-                        {manage && (
+                        {(manage || mine) && (
                           <button className="btn sm ghost" onClick={() => remove(k)}>
                             Delete
                           </button>
@@ -581,6 +601,7 @@ export function KeysPage() {
         <KeyModal
           workspace={workspace}
           apikey={editing.apikey}
+          own={own}
           onClose={() => setEditing(null)}
           onSaved={(created) => {
             setEditing(null);

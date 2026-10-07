@@ -4,7 +4,7 @@ import { Empty, Loading, Pager, Progress, Segmented, useAsync, usePaged } from '
 import { NoExporterError, runQuery, scalarOf, seriesOf } from '../lib/analytics';
 import { Link } from '../lib/router';
 import { backend } from '../lib/backend';
-import { periodLabel } from '../lib/budgets';
+import { budgetsListOp, periodLabel } from '../lib/budgets';
 import { fmtCost, fmtInt, fmtNumber } from '../lib/format';
 
 // Building blocks of the usage pages (activity, users): KPIs, consumer tables, usage over time, budgets.
@@ -100,7 +100,7 @@ export function ConsumersCard({ title, description, items, active, onPick, empty
 // Live consumption of the budgets of a workspace, optionally only some of them
 export function BudgetsCard({ workspace, title = 'Budgets', description = 'Live consumption of the current window of each budget.', filter = () => true, empty = 'No budget in this workspace.' }) {
   const data = useAsync(async () => {
-    const budgets = (await backend.run('budgets.list', workspace.id, { query: { consumption: true } })).filter(filter);
+    const budgets = (await backend.run(budgetsListOp(workspace), workspace.id, { query: { consumption: true } })).filter(filter);
     return budgets.map((b) => ({ budget: b, consumption: b.consumption || null }));
   }, [workspace.id]);
   const list = data.data || [];

@@ -23,6 +23,8 @@ export const PERMISSIONS = [
 ];
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+// what can belong to a person
+const OWNED = ['apikeys', 'budgets'];
 
 // An operation without a known access or a route fails the loading of the whole registry: nothing runs
 // with an access nobody decided.
@@ -30,12 +32,17 @@ function defineOps(ops) {
   Object.entries(ops).forEach(([name, op]) => {
     if (!PERMISSIONS.includes(op.access)) throw new Error(`the operation '${name}' declares no known access`);
     if (!METHODS.includes(op.method) || typeof op.path !== 'string') throw new Error(`the operation '${name}' has no route`);
+    if (op.own && !OWNED.includes(op.own)) throw new Error(`the operation '${name}' owns an unknown kind '${op.own}'`);
   });
   return Object.freeze(ops);
 }
 
 // `path` is relative to the workspace (`/workspaces/:ws`), its `:params` come from the input of the call.
-// `audit` marks the writes AI Studio Enterprise records.
+// `audit` marks the writes AI Studio Enterprise records. `reveals` gives a secret masked everywhere else,
+// `secretOnce` gives the secret of what it creates or resets, the only time it is shown without being revealed.
+// `own` reads or writes what belongs to the person calling only (`apikeys`: the keys they own, `budgets`: the
+// ones counting their usage), the rule being applied by AI Studio Enterprise; the OSS studio, whose users read
+// the whole configuration, never calls these.
 export const ops = defineOps({
   // workspace
   'workspace.get': { access: 'workspace:read', method: 'GET', path: '' },
@@ -104,10 +111,18 @@ export const ops = defineOps({
   'keys.get': { access: 'config:read', method: 'GET', path: '/apikeys/:kid' },
   // the same key with its secret: AI Studio Enterprise masks it everywhere else, and records who revealed it
   'keys.reveal': { access: 'keys:manage', method: 'GET', path: '/apikeys/:kid', audit: true, reveals: true },
-  'keys.create': { access: 'keys:manage', method: 'POST', path: '/apikeys', audit: true },
+  'keys.create': { access: 'keys:manage', method: 'POST', path: '/apikeys', audit: true, secretOnce: true },
   'keys.update': { access: 'keys:manage', method: 'PUT', path: '/apikeys/:kid', audit: true },
-  'keys.resetSecret': { access: 'keys:manage', method: 'POST', path: '/apikeys/:kid/_reset-secret', audit: true },
+  'keys.resetSecret': { access: 'keys:manage', method: 'POST', path: '/apikeys/:kid/_reset-secret', audit: true, secretOnce: true },
   'keys.delete': { access: 'keys:manage', method: 'DELETE', path: '/apikeys/:kid', audit: true },
+  // the keys of the person calling, for who does not read the configuration: created for them, and once created
+  // only renamed, disabled, reset or deleted (what restricts a key is set by who manages the keys)
+  'mykeys.list': { access: 'keys:own', method: 'GET', path: '/apikeys', own: 'apikeys' },
+  'mykeys.reveal': { access: 'keys:own', method: 'GET', path: '/apikeys/:kid', audit: true, reveals: true, own: 'apikeys' },
+  'mykeys.create': { access: 'keys:own', method: 'POST', path: '/apikeys', audit: true, secretOnce: true, own: 'apikeys' },
+  'mykeys.update': { access: 'keys:own', method: 'PUT', path: '/apikeys/:kid', audit: true, own: 'apikeys' },
+  'mykeys.resetSecret': { access: 'keys:own', method: 'POST', path: '/apikeys/:kid/_reset-secret', audit: true, secretOnce: true, own: 'apikeys' },
+  'mykeys.delete': { access: 'keys:own', method: 'DELETE', path: '/apikeys/:kid', audit: true, own: 'apikeys' },
 
   // budgets
   'budgets.list': { access: 'config:read', method: 'GET', path: '/budgets' },
@@ -117,6 +132,8 @@ export const ops = defineOps({
   'budgets.update': { access: 'config:write', method: 'PUT', path: '/budgets/:bid', audit: true },
   'budgets.delete': { access: 'config:write', method: 'DELETE', path: '/budgets/:bid', audit: true },
   'budgets.reset': { access: 'config:write', method: 'POST', path: '/budgets/:bid/consumption/_reset', audit: true },
+  // the budgets counting the usage of the person calling, naming nobody else
+  'mybudgets.list': { access: 'usage:own', method: 'GET', path: '/budgets', own: 'budgets' },
 
   // usage, always narrowed to the workspace by the api
   'analytics.query': { access: 'usage:own', method: 'POST', path: '/analytics/_query' },
