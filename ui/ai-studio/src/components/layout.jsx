@@ -31,7 +31,12 @@ export function menuOf(workspace) {
     const idx = pages.findIndex((x) => x.id === p.after);
     pages.splice(idx >= 0 ? idx + 1 : pages.length, 0, p);
   });
-  return pages.filter((p) => !p.permission || platform.can(p.permission, workspace));
+  const visible = pages.filter((p) => !p.permission || platform.can(p.permission, workspace));
+  // who does not see the activity of the workspace still sees their own usage, after the api
+  if (!platform.can('activity:read', workspace) && platform.can('usage:own', workspace)) {
+    visible.splice(visible.findIndex((p) => p.id === 'api') + 1, 0, { id: `users/${encodeURIComponent(bootstrap.user.email)}`, label: 'My usage', icon: 'chart' });
+  }
+  return visible;
 }
 
 function SearchBox({ workspaces, currentWorkspace }) {
@@ -228,7 +233,7 @@ export function WorkspaceSidebar({ workspace, workspaces, page }) {
         ))}
       </select>
       {menuOf(workspace).map((p) => (
-        <Link key={p.id} to={`/workspaces/${workspace.id}/${p.id}`} className={`navlink ${page === p.id ? 'active' : ''}`}>
+        <Link key={p.id} to={`/workspaces/${workspace.id}/${p.id}`} className={`navlink ${page === p.id || p.id.startsWith(`${page}/`) ? 'active' : ''}`}>
           <Icon name={p.icon} />
           {p.label}
         </Link>

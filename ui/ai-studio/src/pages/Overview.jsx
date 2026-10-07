@@ -15,10 +15,12 @@ export function OverviewPage() {
   const { navigate } = useRouter();
   const [lang, setLang] = useState('curl');
   const [quickstart, setQuickstart] = useState(QUICKSTARTS[0].id);
-  const data = useAsync(async () => ({ providers: await backend.run('providers.list', workspace.id) }), [workspace.id]);
+  // the providers are a part of the configuration
+  const data = useAsync(async () => ({ providers: can('config:read') ? await backend.run('providers.list', workspace.id) : null }), [workspace.id]);
   const models = useAsync(() => listWorkspaceModels(workspace), [workspace.id]);
 
   const providers = (data.data && data.data.providers) || [];
+  const knowsProviders = !!(data.data && data.data.providers);
   const modelList = (models.data && models.data.models) || [];
   // the quickstart shows the endpoints this workspace serves, the chat one whatever happens
   const quickstarts = QUICKSTARTS.filter((e, idx) => idx === 0 || servingOf(e, workspace, models.data).available);
@@ -31,7 +33,8 @@ export function OverviewPage() {
       <div className="hero">
         <h1>One API for every model</h1>
         <p>
-          Route requests to {providers.length} provider{providers.length === 1 ? '' : 's'} and {modelList.length} model{modelList.length === 1 ? '' : 's'} through{' '}
+          Route requests to {knowsProviders ? `${providers.length} provider${providers.length === 1 ? '' : 's'} and ` : ''}
+          {modelList.length} model{modelList.length === 1 ? '' : 's'} through{' '}
           <span className="hero-url">
             <code>{workspace.base_url.replace(/^https?:\/\//, '')}</code>
             <CopyButton text={workspace.base_url} title="Copy the base URL" />
@@ -50,7 +53,7 @@ export function OverviewPage() {
         </div>
       </div>
 
-      {data.data && providers.length === 0 && (
+      {knowsProviders && providers.length === 0 && (
         <div className="alert info mb">
           This workspace has no provider yet. <Link className="link" to={`/workspaces/${workspace.id}/providers`}>Connect a provider</Link> to start routing requests.
         </div>

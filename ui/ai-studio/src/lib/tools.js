@@ -33,6 +33,6 @@ export const TOOL_LABELS = { functions: 'function', mcp: 'MCP', search: 'web sea
 // pick among them (`allowed_tools`): it only narrows what its provider offers, so a tool nobody attached
 // stays out of reach.
 export async function listAttachedTools(wsId) {
-  const tools = await backend.run('tools.list', wsId);
+  const tools = await backend.run('chat.tools', wsId);
   return tools.filter((t) => t.providers.length > 0);
 }

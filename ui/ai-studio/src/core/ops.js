@@ -100,6 +100,9 @@ export const ops = defineOps({
   'tools.create': { access: 'config:write', method: 'POST', path: '/tools/:kind', audit: true },
   'tools.update': { access: 'config:write', method: 'PUT', path: '/tools/:kind/:tid', audit: true },
   'tools.delete': { access: 'config:write', method: 'DELETE', path: '/tools/:kind/:tid', audit: true },
+  // the tools a chat can offer its models, for who chats without reading the configuration (AI Studio Enterprise
+  // only gives their id, name, kind and providers)
+  'chat.tools': { access: 'chat:use', method: 'GET', path: '/tools' },
 
   // the MCP server of the workspace
   'mcpServer.get': { access: 'config:read', method: 'GET', path: '/mcp-server' },
