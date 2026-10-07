@@ -14,12 +14,16 @@ function errorMessage(body, status) {
   return body.error_description || body.message || body.error || JSON.stringify(body).substring(0, 300);
 }
 
-// every call goes through the backoffice session: the admin api is reached through `/bo/api/proxy`
-// which applies the tenant/teams rights of the logged user
+// The headers of every call of the studio: the tenant the user works in, and the marker AI Studio Enterprise
+// requires on its writes (a cross-site form cannot set it).
+export const studioHeaders = () => ({ 'Otoroshi-Tenant': currentTenant(), 'X-AI-Studio-Request': '1' });
+
+// every call goes through the session of the user: the backoffice one for the OSS studio, whose admin api
+// proxy applies the tenant/teams rights of the logged user, the one of AI Studio Enterprise otherwise
 export async function request(method, url, body, opts = {}) {
   const headers = {
     Accept: 'application/json',
-    'Otoroshi-Tenant': currentTenant(),
+    ...studioHeaders(),
     ...(opts.headers || {}),
   };
   const init = { method, headers, credentials: 'include', signal: opts.signal };

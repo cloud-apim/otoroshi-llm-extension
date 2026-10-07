@@ -1,6 +1,5 @@
-import { gatewayError } from './api';
+import { gatewayError, studioHeaders } from './api';
 import { backend } from './backend';
-import { currentTenant } from './bootstrap';
 
 // The MCP server of a workspace is one virtual server entity, referenced by the unified plugin of the
 // workspace route, which serves it on `<base url>/mcp`: same endpoint and same API keys as the models,
@@ -39,7 +38,7 @@ export async function mcpCall(workspace, method, params = {}, signal) {
     method: 'POST',
     credentials: 'include',
     signal,
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', 'Otoroshi-Tenant': currentTenant() },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...studioHeaders() },
     body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
   });
   const text = await res.text();

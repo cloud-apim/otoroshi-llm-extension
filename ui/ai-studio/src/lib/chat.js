@@ -1,5 +1,4 @@
-import { gatewayError } from './api';
-import { currentTenant } from './bootstrap';
+import { gatewayError, studioHeaders } from './api';
 import { billedProxyUrl } from './models';
 
 // The request settings of the chat. A sampling setting left to `null` is not sent, the model uses its own: a
@@ -50,7 +49,7 @@ export async function chatCompletion({ workspace, body, stream, signal, onDelta,
     headers: {
       'Content-Type': 'application/json',
       Accept: stream ? 'text/event-stream' : 'application/json',
-      'Otoroshi-Tenant': currentTenant(),
+      ...studioHeaders(),
       ...(sessionId ? { 'X-Session-Id': sessionId } : {}),
     },
     body: JSON.stringify({ ...body, stream: !!stream, ...(stream ? { stream_options: { include_usage: true } } : {}) }),

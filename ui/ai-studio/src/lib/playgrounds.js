@@ -2,8 +2,7 @@
 // the workspace endpoint exactly the way an application would (same path, same body, same api key rules).
 // Nothing is stored: a run is one call, shown and forgotten.
 
-import { gatewayError } from './api';
-import { currentTenant } from './bootstrap';
+import { gatewayError, studioHeaders } from './api';
 import { stateOf } from './decisions';
 import { editImage, generateImage } from './images';
 import { endpointsOf, KIND_LABELS, kindsOf } from './modelmeta';
@@ -185,7 +184,7 @@ async function call(workspace, path, { body, form, signal }) {
     signal,
     headers: {
       Accept: 'application/json',
-      'Otoroshi-Tenant': currentTenant(),
+      ...studioHeaders(),
       // a FormData body carries its own content type, with the boundary the gateway parses
       ...(form ? {} : { 'Content-Type': 'application/json' }),
     },

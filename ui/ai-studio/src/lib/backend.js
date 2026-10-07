@@ -25,6 +25,8 @@ export function localBackend() {
       create: (form) => api.post(`${ADMIN_API}/workspaces`, form),
     },
     catalog: () => api.get(`${ADMIN_API}/catalog`),
+    // the preferences of the backoffice user (the theme)
+    prefs: { set: (key, value) => api.post(`/bo/api/me/preferences/${key}`, value) },
     // the chat and the conversations of the signed-in user, served by the backoffice routes of the studio
     urls: {
       proxy: (wsId, path) => `${STUDIO_API}/workspaces/${wsId}/proxy${path}`,
