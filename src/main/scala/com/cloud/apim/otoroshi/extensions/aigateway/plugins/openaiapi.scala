@@ -289,8 +289,9 @@ class OpenAiCompatApi extends NgBackendCall {
       Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(JsArray(contexts))), None)).vfuture
 
     } else if (method == "GET" && path.endsWith("/models")) {
+      // every model the route serves: its text providers, and the entities of the other model types
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
-      OpenAiCompatProvidersWithModels.handleRequest(providerConfig, ctx)
+      OpenAiCompatProvidersWithModels.handleRequest(providerConfig, ctx, config.some)
 
     } else if (method == "GET" && path.endsWith("/providers")) {
       // Catalog of every provider type Otoroshi LLM supports, with its capabilities (text, audio,

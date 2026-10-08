@@ -29,7 +29,7 @@ This makes it the ideal choice when you want to expose a single, coherent API su
 
 | Method | Path | Description | Config field |
 |--------|------|-------------|--------------|
-| `GET` | `/models` | List available models from all configured providers | `language_model_refs` |
+| `GET` | `/models` | List available models from all configured providers | every `*_model_refs` |
 | `GET` | `/providers` | List every provider type the gateway can talk to, with their capabilities | — |
 | `GET` | `/model-capabilities` | List the model types (modalities) the gateway supports | — |
 | `GET` | `/contexts` | List available prompt contexts | `context_refs` |
@@ -134,14 +134,18 @@ This makes it the ideal choice when you want to expose a single, coherent API su
 
 ### GET /models
 
-Lists all models available from the configured language model providers. Compatible with the [OpenAI Models API](https://platform.openai.com/docs/api-reference/models).
+Lists every model the route serves, whatever its type, in one call. Compatible with the [OpenAI Models API](https://platform.openai.com/docs/api-reference/models), so any OpenAI SDK or tool discovers your chat, embedding, image, audio, moderation, OCR and decision models at once.
+
+- The language model providers list every model of their connection.
+- The embedding, image, audio, moderation, OCR and decision models list the models of their kind available on their connection, and always the ones they are configured with. A model entity created with the same connection and the same name as a language model provider is listed by that provider, and adds the models it is configured with that the provider does not list. Every connection is asked once, however many entities share it.
+- The decision models answered by a text provider list the model they are configured with.
 
 ```sh
 curl https://api.domain.tld/v1/models \
   -H "Authorization: Bearer $OTOROSHI_BEARER"
 ```
 
-When multiple providers are configured, model IDs are prefixed with the provider slug name (e.g., `my_openai/gpt-4o`, or `my_openrouter###openai/gpt-4o` when the model id already contains a `/`).
+When several providers of a type are configured, model IDs are prefixed with the provider slug name (e.g., `my_openai/gpt-4o`, or `my_openrouter###openai/gpt-4o` when the model id already contains a `/`): every ID is one its endpoint routes. A model listed twice under the same ID appears once.
 
 #### Query parameters
 

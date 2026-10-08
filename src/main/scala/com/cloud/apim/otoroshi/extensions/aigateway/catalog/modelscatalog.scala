@@ -818,10 +818,11 @@ final case class ModelsListing(enriched: Boolean, kinds: Set[String], endpoints:
     }
   }
 
-  // the listing entry of a model, None when the requested filters leave it out
-  def entry(provider: AiProvider, model: String, base: JsObject)(using env: Env): Option[JsObject] = {
+  // the listing entry of a model, None when the requested filters leave it out. `modality` is the kind of entity
+  // listing it: a text provider lists every kind of model, another entity only the ones of its kind
+  def entry(provider: AiProvider, model: String, base: JsObject, modality: String = AiProvidersCatalog.Text)(using env: Env): Option[JsObject] = {
     if (!described) base.some else {
-      val description = ModelsMetadata.describe(provider, model)
+      val description = ModelsMetadata.describe(provider, model, modality)
       val kept = (kinds.isEmpty || description.kinds.exists(kinds.contains)) &&
         (endpoints.isEmpty || description.endpoints.exists(endpoints.contains)) &&
         hasCost.forall(_ == description.hasCost)
