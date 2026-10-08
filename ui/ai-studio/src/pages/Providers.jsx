@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HealthSummary } from '../components/health';
 import { combine, healthIndex, loadHealth } from '../lib/health';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import {
   Badge,
   Checks,
@@ -24,19 +24,10 @@ import {
 } from '../components/ui';
 import { Icon } from '../components/icons';
 import { Link } from '../lib/router';
-import {
-  connectionName,
-  deleteConnection,
-  fetchProviderModels,
-  fieldsFromConnection,
-  listConnections,
-  MODALITY_LABELS,
-  newConnection,
-  saveConnection,
-  withModelDefaults,
-} from '../lib/connections';
+import { backend } from '../lib/backend';
+import { connectionName, fetchProviderModels, MODALITY_LABELS, newConnection, withModelDefaults } from '../lib/connections';
 import { listWorkspaceModels, loadCatalog } from '../lib/models';
-import { listWorkspaceTools, TOOL_LABELS, toolsOf, withTools } from '../lib/tools';
+import { TOOL_LABELS } from '../lib/tools';
 import { initials } from '../lib/format';
 import { ModelLabels, PriceSummary } from '../components/modelinfo';
 import { contextOf, fitsCapability, fmtPrice, fmtTokens, hasCost, KIND_LABELS, KIND_ORDER, kindsSummary, metaOf, perMillion } from '../lib/modelmeta';
@@ -128,6 +119,7 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
   const [models, setModels] = useState([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const entry = catalog.find((c) => c.id === conn.kind) || { id: conn.kind, label: conn.kind, capabilities: ['text'], fields: [], models: {} };
+  // `entities` gives the id of the entity of each capability a saved connection has
   const isNew = !initial.entities || Object.keys(initial.entities).length === 0;
   const set = (patch) => setConn((c) => ({ ...c, ...patch }));
   const setModality = (m, patch) => setConn((c) => ({ ...c, modalities: { ...c.modalities, [m]: { ...(c.modalities[m] || {}), ...patch } } }));
@@ -148,14 +140,15 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
   // has no credentials of its own
   const hasCredentials = entry.credentials !== false;
   const textProviders = connections.filter((c) => c.id !== conn.id && c.entities && c.entities.text);
+  const textProviderOf = (id) => textProviders.find((c) => c.entities.text === id);
   const providerPicked = (entry.fields || []).every((f) => f.kind !== 'provider' || (conn.fields || {})[f.name]);
   const valid = conn.name && !nameTaken && anyModality && providerPicked && (!entry.token_required || conn.token || !isNew) && (!entry.base_url_required || conn.base_url);
   // the text provider answers with its own model unless another one is asked for
   const pickProvider = (field, id) => {
-    const picked = textProviders.find((c) => c.entities.text.id === id);
+    const picked = textProviderOf(id);
     setConn((c) => {
       const decision = c.modalities.decision || { enabled: true, model: '' };
-      const previous = textProviders.find((p) => p.entities.text.id === (c.fields || {})[field]);
+      const previous = textProviderOf((c.fields || {})[field]);
       const untouched = !decision.model || (previous && decision.model === (previous.modalities.text || {}).model);
       const model = untouched && picked ? (picked.modalities.text || {}).model || '' : decision.model;
       return { ...c, fields: { ...(c.fields || {}), [field]: id }, modalities: { ...c.modalities, decision: { ...decision, model } } };
@@ -166,13 +159,13 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
     const next = catalog.find((c) => c.id === kind);
     if (!next) return;
     const fresh = newConnection(next, existingNames);
-    setConn((c) => ({ ...fresh, id: c.id, entities: c.entities, token: c.token, description: c.description, name: isNew ? fresh.name : c.name }));
+    setConn((c) => ({ ...fresh, id: c.id, entities: c.entities, tools: c.tools, token: c.token, description: c.description, name: isNew ? fresh.name : c.name }));
     setModels([]);
   };
 
   const loadModels = (force) => {
     setLoadingModels(true);
-    fetchProviderModels(workspace.id, conn, entry, force)
+    fetchProviderModels(workspace.id, conn, isNew, force)
       .then((list) => {
         setModels(list);
         toast.success(`${list.length} models found`);
@@ -181,30 +174,44 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
       .finally(() => setLoadingModels(false));
   };
 
-  // The tools of the workspace live in the options of the text provider, next to what the Advanced tab
-  // edits. A new provider is given all of them, the way a new tool is given every provider: otherwise the
-  // models of a provider connected after the tools would be the only ones without.
-  const tools = useAsync(() => listWorkspaceTools(workspace.id), [workspace.id]);
+  // The tools of the workspace the text models of the connection can call (`tools`, the ids the api reads from
+  // the options of its text provider). A new provider is given all of them, the way a new tool is given every
+  // provider: otherwise the models of a provider connected after the tools would be the only ones without.
+  const tools = useAsync(() => backend.run('tools.list', workspace.id), [workspace.id]);
   const workspaceTools = tools.data || [];
   const offersTools = entry.capabilities.includes('text') && workspaceTools.length > 0;
-  const textOptions = (conn.entities.text && conn.entities.text.options) || {};
-  const selectedTools = toolsOf(textOptions, workspaceTools);
-  const setTools = (selected, list = workspaceTools) =>
-    setConn((c) => {
-      const text = c.entities.text || {};
-      return { ...c, entities: { ...c.entities, text: { ...text, options: withTools(text.options, list, selected) } } };
-    });
+  const selectedTools = (conn.tools || []).filter((id) => workspaceTools.some((t) => t.id === id));
+  const setTools = (selected) => set({ tools: selected });
   const toolsDefaulted = useRef(false);
   useEffect(() => {
     if (!isNew || toolsDefaulted.current || !tools.data || !entry.capabilities.includes('text')) return;
     toolsDefaulted.current = true;
-    if (tools.data.length > 0) setTools(tools.data.map((t) => t.id), tools.data);
+    if (tools.data.length > 0) setTools(tools.data.map((t) => t.id));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tools.data]);
+  // the raw options are only sent once the Advanced tab changed them, the api keeps them otherwise
+  const [optionsTouched, setOptionsTouched] = useState(false);
 
   const save = () => {
     setSaving(true);
-    saveConnection(workspace.id, conn, entry)
+    const textOn = !!(conn.modalities.text && conn.modalities.text.enabled);
+    const body = {
+      kind: conn.kind,
+      name: conn.name,
+      description: conn.description || '',
+      base_url: conn.base_url || '',
+      token: conn.token || '',
+      timeout: Number(conn.timeout) || 180000,
+      enabled: conn.enabled !== false,
+      require_known_costs: !!conn.require_known_costs,
+      fields: conn.fields || {},
+      // only the capabilities of the provider kind, the others are refused
+      modalities: Object.fromEntries(Object.entries(conn.modalities || {}).filter(([id]) => entry.capabilities.includes(id))),
+      // tools are called by the text models only
+      ...(textOn && tools.data ? { tools: selectedTools } : {}),
+      ...(optionsTouched ? { options: conn.options || {} } : {}),
+    };
+    (isNew ? backend.run('providers.create', workspace.id, { body }) : backend.run('providers.update', workspace.id, { cid: conn.id, body }))
       .then(() => {
         toast.success(isNew ? 'Provider connected' : 'Provider saved');
         onSaved();
@@ -213,7 +220,6 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
       .finally(() => setSaving(false));
   };
 
-  const textEntity = conn.entities && conn.entities.text;
 
   // without details (an older gateway), every model is a text model suggestion. A provider requiring known
   // costs refuses what it cannot bill, whatever the modality: those are no suggestion
@@ -272,7 +278,7 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
                   value={(conn.fields || {})[f.name]}
                   onChange={(v) => pickProvider(f.name, v)}
                   placeholder={textProviders.length ? 'Select a provider' : 'Connect a text provider first'}
-                  options={textProviders.map((c) => ({ value: c.entities.text.id, label: `${c.name} (${(c.modalities.text || {}).model || 'default model'})` }))}
+                  options={textProviders.map((c) => ({ value: c.entities.text, label: `${c.name} (${(c.modalities.text || {}).model || 'default model'})` }))}
                 />
               </Field>
             ) : (
@@ -405,14 +411,15 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
           <JsonInput
             rows={14}
             // the model is the one of the Models tab, the one the provider is saved with
-            value={{ ...((textEntity && textEntity.options) || {}), model: (conn.modalities.text || {}).model }}
-            onChange={(options) =>
+            value={{ ...(conn.options || {}), model: (conn.modalities.text || {}).model }}
+            onChange={(options) => {
+              setOptionsTouched(true);
               setConn((c) => ({
                 ...c,
-                entities: { ...c.entities, text: { ...(c.entities.text || {}), options } },
+                options,
                 modalities: { ...c.modalities, text: { ...(c.modalities.text || {}), model: options.model || '' } },
-              }))
-            }
+              }));
+            }}
           />
         </div>
       )}
@@ -422,6 +429,7 @@ export function ConnectionModal({ workspace, catalog, initial, existingNames, co
 
 export function ProvidersPage() {
   const { workspace } = useWorkspace();
+  const write = useCan()('config:write');
   const toast = useToast();
   const confirm = useConfirm();
   const [filter, setFilter] = useState('');
@@ -430,16 +438,16 @@ export function ProvidersPage() {
   const [pricedOnly, setPricedOnly] = useState(false);
   const [editing, setEditing] = useState(null);
   const catalog = useAsync(() => loadCatalog(), []);
-  const connections = useAsync(() => listConnections(workspace.id), [workspace.id]);
+  const connections = useAsync(() => backend.run('providers.list', workspace.id), [workspace.id]);
   // the models each connection serves, refreshed with the connections
   const models = useAsync(() => (connections.data ? listWorkspaceModels(workspace) : Promise.resolve(null)), [workspace.id, connections.data]);
   // how each connection behaved over the last 24 hours, null without analytics
   const health = useAsync(() => loadHealth(workspace.id, '24h', 'provider'), [workspace.id]);
   const healthByProvider = useMemo(() => healthIndex(health.data, false), [health.data]);
-  const healthOf = (conn) => combine(Object.values(conn.entities || {}).map((e) => healthByProvider.get(e.id)));
+  const healthOf = (conn) => combine(Object.values(conn.entities || {}).map((id) => healthByProvider.get(id)));
 
-  // load balancers and routers are managed in the routing page
-  const list = (connections.data || []).filter((c) => !['loadbalancer', 'otoroshi'].includes(c.kind));
+  // load balancers and routers are not connections: the routing page manages them
+  const list = (connections.data || []).slice().sort((a, b) => a.name.localeCompare(b.name));
   const names = list.map((c) => c.name);
   const cat = catalog.data || [];
 
@@ -460,20 +468,19 @@ export function ProvidersPage() {
   const capabilityOptions = KIND_ORDER.filter((k) => cat.some((c) => c.capabilities.includes(k)));
 
   const modelsOf = (conn) => {
-    const ids = Object.values(conn.entities || {}).map((e) => e.id);
+    const ids = Object.values(conn.entities || {});
     return ((models.data && models.data.models) || []).filter((m) => ids.includes(m.provider_id));
   };
 
   const openNew = (entry) => setEditing(newConnection(entry, names));
-  const openEdit = (conn) => {
-    const entry = cat.find((c) => c.id === conn.kind);
-    setEditing({ ...conn, fields: fieldsFromConnection(conn, entry) });
-  };
+  // the fields of a saved connection come with the defaults of its catalog entry
+  const openEdit = (conn) => setEditing(conn);
 
   const remove = (conn) => {
     confirm({ title: `Remove ${conn.name}?`, message: 'Every model entity of this connection is deleted and the workspace stops serving its models.', danger: true, confirmLabel: 'Remove' }).then((ok) => {
       if (!ok) return;
-      deleteConnection(workspace.id, conn)
+      backend
+        .run('providers.delete', workspace.id, { cid: conn.id })
         .then(() => {
           toast.success('Provider removed');
           connections.reload();
@@ -487,9 +494,11 @@ export function ProvidersPage() {
   return (
     <div className="content">
       <PageHeader title="Providers" description="Bring your own provider keys. Each connected provider exposes its models on this workspace's base URL.">
-        <button className="btn primary" disabled={!cat.length} onClick={() => openNew(cat.find((c) => c.id === 'openai') || cat[0])}>
-          Add provider
-        </button>
+        {write && (
+          <button className="btn primary" disabled={!cat.length} onClick={() => openNew(cat.find((c) => c.id === 'openai') || cat[0])}>
+            Add provider
+          </button>
+        )}
       </PageHeader>
       <ErrorAlert error={connections.error || catalog.error} />
 
@@ -558,12 +567,16 @@ export function ProvidersPage() {
                       </div>
                     </td>
                     <td className="actions">
-                      <button className="btn sm" onClick={() => openEdit(conn)}>
-                        Edit
-                      </button>
-                      <button className="btn sm ghost" onClick={() => remove(conn)}>
-                        Remove
-                      </button>
+                      {write && (
+                        <>
+                          <button className="btn sm" onClick={() => openEdit(conn)}>
+                            Edit
+                          </button>
+                          <button className="btn sm ghost" onClick={() => remove(conn)}>
+                            Remove
+                          </button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -609,7 +622,7 @@ export function ProvidersPage() {
             const insights = entry.insights || {};
             const doc = insights.catalog && insights.catalog.doc;
             return (
-              <div key={entry.id} className="card tight clickable provider" onClick={() => openNew(entry)}>
+              <div key={entry.id} className={`card tight provider ${write ? 'clickable' : ''}`} onClick={() => write && openNew(entry)}>
                 <div className="head">
                   <span className="logo-chip">{initials(entry.label)}</span>
                   <div className="grow">

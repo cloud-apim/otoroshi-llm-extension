@@ -1,17 +1,12 @@
 import { useEffect, useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Badge, Checks, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, NumberInput, PageHeader, Select, TextInput, Toggle, useAsync, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
-import { Resources, workspaceFilter } from '../lib/entities';
 import { FILTER_OPERATORS, FILTER_SOURCES, filtersSummary, formatFilterValue, GUARDRAIL_KINDS, kindOf, operatorOf, parseFilterValue, summaryOf } from '../lib/guardrails';
-import { listBudgets, periodLabel } from '../lib/budgets';
+import { backend } from '../lib/backend';
+import { periodLabel } from '../lib/budgets';
 import { fmtCost } from '../lib/format';
 import { Link } from '../lib/router';
-import { MODALITIES } from '../lib/workspaces';
-
-function sameJson(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
 
 // One consumer filter: what is read on the call, how it is compared, and to what. A source the studio does
 // not list (a header, a metadata) is edited as the expression itself.
@@ -86,7 +81,7 @@ function GuardrailModal({ initial, providers, moderationModels, decisionModels, 
               {f.kind === 'select' && <Select value={value || f.options[0].value} onChange={(v) => setConfig({ [f.name]: v })} options={f.options} />}
               {f.kind === 'checks' && <Checks options={f.options.map((o) => ({ value: o, label: o }))} value={value || []} onChange={(v) => setConfig({ [f.name]: v })} />}
               {f.kind === 'provider' && (
-                <Select value={value} onChange={(v) => setConfig({ [f.name]: v })} placeholder="Select a provider" options={providers.map((p) => ({ value: p.id, label: `${p.name} (${(p.options || {}).model || 'default model'})` }))} />
+                <Select value={value} onChange={(v) => setConfig({ [f.name]: v })} placeholder="Select a provider" options={providers.map((p) => ({ value: p.id, label: `${p.name} (${p.model || 'default model'})` }))} />
               )}
               {f.kind === 'moderation_model' && (
                 <Select value={value} onChange={(v) => setConfig({ [f.name]: v })} placeholder={moderationModels.length ? 'Select a model' : 'No moderation model connected'} options={moderationModels.map((m) => ({ value: m.id, label: m.name }))} />
@@ -126,43 +121,43 @@ function GuardrailModal({ initial, providers, moderationModels, decisionModels, 
 
 export function GuardrailsPage() {
   const { workspace } = useWorkspace();
+  const write = useCan()('config:write');
   const toast = useToast();
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
+  // the model access and the content policies are the same on every model of the workspace: the api reads them
+  // from the first one, says when they differ (`mixed`), and writes them on all of them
   const data = useAsync(async () => {
-    const filter = workspaceFilter(workspace.id);
-    const lists = await Promise.all(MODALITIES.map((m) => Resources[m.resource].list(filter)));
-    const budgets = await listBudgets(workspace.id);
-    const byModality = Object.fromEntries(MODALITIES.map((m, i) => [m.id, lists[i]]));
-    return { byModality, budgets };
+    const [guardrails, modelAccess, entities, budgets] = await Promise.all([
+      backend.run('guardrails.get', workspace.id),
+      backend.run('modelAccess.get', workspace.id),
+      backend.run('modelEntities.list', workspace.id),
+      backend.run('budgets.list', workspace.id),
+    ]);
+    const ofModality = (modality) => entities.filter((e) => e.modality === modality);
+    return { guardrails, modelAccess, models: entities.length, providers: ofModality('text'), moderationModels: ofModality('moderation'), decisionModels: ofModality('decision'), budgets };
   }, [workspace.id]);
 
-  const providers = (data.data && data.data.byModality.text) || [];
-  const moderationModels = (data.data && data.data.byModality.moderation) || [];
-  const decisionModels = (data.data && data.data.byModality.decision) || [];
-  const allEntities = data.data ? MODALITIES.flatMap((m) => data.data.byModality[m.id].map((e) => ({ entity: e, resource: m.resource }))) : [];
+  const providers = (data.data && data.data.providers) || [];
+  const moderationModels = (data.data && data.data.moderationModels) || [];
+  const decisionModels = (data.data && data.data.decisionModels) || [];
 
   const [access, setAccess] = useState({ include: [], exclude: [] });
   const [policies, setPolicies] = useState({ items: [], failOnDeny: true });
 
   useEffect(() => {
     if (!data.data) return;
-    const first = allEntities[0] && allEntities[0].entity;
-    setAccess({ include: (first && first.models && first.models.include) || [], exclude: (first && first.models && first.models.exclude) || [] });
-    const p = providers[0];
-    setPolicies({ items: (p && p.guardrails) || [], failOnDeny: p ? p.guardrails_fail_on_deny !== false : true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setAccess({ include: data.data.modelAccess.include, exclude: data.data.modelAccess.exclude });
+    setPolicies({ items: data.data.guardrails.items, failOnDeny: data.data.guardrails.fail_on_deny });
   }, [data.data]);
 
-  const accessMixed = allEntities.some(({ entity }) => !sameJson((entity.models && entity.models.include) || [], allEntities[0].entity.models?.include || []) || !sameJson((entity.models && entity.models.exclude) || [], allEntities[0].entity.models?.exclude || []));
-  const policiesMixed = providers.some((p) => !sameJson(p.guardrails || [], providers[0].guardrails || []));
+  const accessMixed = !!(data.data && data.data.modelAccess.mixed);
+  const policiesMixed = !!(data.data && data.data.guardrails.mixed);
 
   const saveAccess = async () => {
     setSaving(true);
     try {
-      for (const { entity, resource } of allEntities) {
-        await Resources[resource].update({ ...entity, models: { ...(entity.models || {}), include: access.include, exclude: access.exclude } });
-      }
+      await backend.run('modelAccess.save', workspace.id, { body: { include: access.include, exclude: access.exclude } });
       toast.success('Model access saved');
       data.reload();
     } catch (e) {
@@ -175,9 +170,7 @@ export function GuardrailsPage() {
   const savePolicies = async (items, failOnDeny) => {
     setSaving(true);
     try {
-      for (const p of providers) {
-        await Resources.providers.update({ ...p, guardrails: items, guardrails_fail_on_deny: failOnDeny });
-      }
+      await backend.run('guardrails.save', workspace.id, { body: { items, fail_on_deny: failOnDeny } });
       setPolicies({ items, failOnDeny });
       toast.success('Content policies saved');
       data.reload();
@@ -193,9 +186,11 @@ export function GuardrailsPage() {
   return (
     <div className="content">
       <PageHeader title="Guardrails" description="Model restrictions, content policies and budgets enforced by the gateway for every key of this workspace.">
-        <button className="btn primary" disabled={providers.length === 0} onClick={() => setEditing({})}>
-          New Guardrail
-        </button>
+        {write && (
+          <button className="btn primary" disabled={providers.length === 0} onClick={() => setEditing({})}>
+            New Guardrail
+          </button>
+        )}
       </PageHeader>
       <ErrorAlert error={data.error} />
       {data.loading && !data.data && <Loading />}
@@ -207,17 +202,19 @@ export function GuardrailsPage() {
                 <h2>Model & provider access</h2>
                 <p>Regular expressions on model ids: model, provider/model or provider###model. Empty lists allow everything. Applied to every provider and model of the workspace, and to every key on top of its own models.</p>
               </div>
-              <button className="btn sm primary" disabled={saving || allEntities.length === 0} onClick={saveAccess}>
-                Save
-              </button>
+              {write && (
+                <button className="btn sm primary" disabled={saving || !data.data || data.data.models === 0} onClick={saveAccess}>
+                  Save
+                </button>
+              )}
             </div>
             {accessMixed && <div className="alert warning mb">Providers currently have different lists, saving applies these ones to all of them.</div>}
             <div className="grid cols-2">
               <Field label="Allowed models" hint="e.g. gpt-4o.*, mistral-.* or openai/.*">
-                <LinesInput value={access.include} onChange={(v) => setAccess((a) => ({ ...a, include: v }))} rows={4} />
+                <LinesInput value={access.include} onChange={(v) => setAccess((a) => ({ ...a, include: v }))} rows={4} disabled={!write} />
               </Field>
               <Field label="Blocked models" hint="e.g. .*-preview, o1.* or azure###.*">
-                <LinesInput value={access.exclude} onChange={(v) => setAccess((a) => ({ ...a, exclude: v }))} rows={4} />
+                <LinesInput value={access.exclude} onChange={(v) => setAccess((a) => ({ ...a, exclude: v }))} rows={4} disabled={!write} />
               </Field>
             </div>
           </div>
@@ -260,16 +257,21 @@ export function GuardrailsPage() {
                         <td>
                           <Toggle
                             value={item.enabled !== false}
+                            disabled={!write}
                             onChange={(v) => savePolicies(policies.items.map((x, i) => (i === idx ? { ...x, enabled: v } : x)), policies.failOnDeny)}
                           />
                         </td>
                         <td className="actions">
-                          <button className="btn sm" onClick={() => setEditing({ item, idx })}>
-                            Edit
-                          </button>
-                          <button className="btn sm ghost" onClick={() => savePolicies(policies.items.filter((_, i) => i !== idx), policies.failOnDeny)}>
-                            Remove
-                          </button>
+                          {write && (
+                            <>
+                              <button className="btn sm" onClick={() => setEditing({ item, idx })}>
+                                Edit
+                              </button>
+                              <button className="btn sm ghost" onClick={() => savePolicies(policies.items.filter((_, i) => i !== idx), policies.failOnDeny)}>
+                                Remove
+                              </button>
+                            </>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -284,7 +286,7 @@ export function GuardrailsPage() {
                   <div className="help">On: a denied request returns an error to the caller. Off: the model answers with a refusal message instead.</div>
                 </div>
                 <div>
-                  <Toggle value={policies.failOnDeny} onChange={(v) => savePolicies(policies.items, v)} />
+                  <Toggle value={policies.failOnDeny} disabled={!write} onChange={(v) => savePolicies(policies.items, v)} />
                 </div>
               </div>
             )}
@@ -306,9 +308,8 @@ export function GuardrailsPage() {
                 <div key={b.id} className="row">
                   <Badge kind={b.enabled ? 'positive' : ''}>{b.name}</Badge>
                   <span className="small">
-                    {b.limits && b.limits.total_usd !== undefined && b.limits.total_usd !== null ? fmtCost(b.limits.total_usd) : ''}
-                    {b.limits && b.limits.total_tokens ? ` ${b.limits.total_tokens} tokens` : ''} · {(b.scope && b.scope.apikeys && b.scope.apikeys.length) || 'all'} key(s) ·{' '}
-                    {b.action_on_exceed && b.action_on_exceed.mode === 'soft' ? 'alert' : 'block'} · {periodLabel(b)}
+                    {b.usd !== undefined && b.usd !== null ? fmtCost(b.usd) : ''}
+                    {b.tokens ? ` ${b.tokens} tokens` : ''} · {b.apikeys.length || 'all'} key(s) · {b.mode === 'soft' ? 'alert' : 'block'} · {periodLabel(b)}
                   </span>
                 </div>
               ))}

@@ -1,8 +1,7 @@
-import { api } from './api';
-import { routeIdOf } from './workspaces';
+import { backend } from './backend';
 
-// Usage data comes from the otoroshi user analytics (the LLM usage projection of the extension),
-// always narrowed to the route of the workspace.
+// Usage data comes from the otoroshi user analytics (the LLM usage projection of the extension), always
+// narrowed to the route and the tenant of the workspace by the studio admin api.
 
 export const PERIODS = [
   { value: '1h', label: 'Past hour', from: 'now-1h' },
@@ -62,14 +61,12 @@ export class NoExporterError extends Error {}
 export async function runQuery(wsId, query, { period = '7d', from, apikey, user, err, params = {}, compare = false, nocache = false, bucket } = {}) {
   const range = customRange(period);
   const p = PERIODS.find((x) => x.value === period) || PERIODS[2];
-  const filters = range
-    ? { from: from || new Date(range.from).toISOString(), to: new Date(range.to).toISOString(), route_id: routeIdOf(wsId) }
-    : { from: from || p.from, to: 'now', route_id: routeIdOf(wsId) };
+  const filters = range ? { from: from || new Date(range.from).toISOString(), to: new Date(range.to).toISOString() } : { from: from || p.from, to: 'now' };
   if (apikey) filters.apikey_id = apikey;
   if (err !== undefined) filters.err = err;
   const allParams = user ? { ...params, user } : params;
   try {
-    return await api.post('/bo/api/proxy/api/analytics/_query', { query, params: allParams, filters, compare, nocache, ...(bucket ? { bucket } : {}) });
+    return await backend.run('analytics.query', wsId, { body: { query, params: allParams, filters, compare, nocache, ...(bucket ? { bucket } : {}) } });
   } catch (e) {
     if (e.status === 412) throw new NoExporterError('no active user analytics exporter');
     throw e;

@@ -4,8 +4,8 @@ import { StackedBars } from '../components/charts';
 import { Icon } from '../components/icons';
 import { Badge, CopyButton, Drawer, Empty, ErrorAlert, Loading, PageHeader, Select, Tabs, useAsync, useToast } from '../components/ui';
 import { fetchAllPages, itemsOf, NoExporterError, periodSlug, runQuery, seriesOf } from '../lib/analytics';
-import { listApikeys } from '../lib/apikeys';
-import { listBudgets } from '../lib/budgets';
+import { backend } from '../lib/backend';
+import { adminLink } from '../lib/platform';
 import { exportName, downloadCsv, isoDate } from '../lib/files';
 import { fmtCost, fmtDate, fmtInt, fmtMs, fmtNumber } from '../lib/format';
 import { PeriodPicker, RefreshControl, useTimeView } from '../components/timeview';
@@ -207,7 +207,7 @@ function CallDrawer({ workspace, id, initial, onClose, onOpen, onSession, prev, 
     () => runQuery(workspace.id, 'cloudapim_llm_call_detail', { period: '90d', params: { id }, nocache: true }).then((r) => itemsOf(r)[0] || initial || null),
     [id]
   );
-  const budgets = useAsync(() => listBudgets(workspace.id), [workspace.id]);
+  const budgets = useAsync(() => backend.run('budgets.list', workspace.id), [workspace.id]);
   const d = detail.data || initial;
   if (!d) {
     return (
@@ -401,7 +401,7 @@ export function LogsPage() {
   const toast = useToast();
   // the number of calls fetched so far while exporting, null otherwise
   const [exporting, setExporting] = useState(null);
-  const keys = useAsync(() => listApikeys(workspace.id), [workspace.id]);
+  const keys = useAsync(() => backend.run('keys.list', workspace.id), [workspace.id]);
   const users = useAsync(
     () =>
       runQuery(workspace.id, 'cloudapim_llm_users_table', { period, params: { top_n: 100 } })
@@ -541,9 +541,13 @@ export function LogsPage() {
       {noExporter ? (
         <div className="alert info">
           Logs need an active <b>user analytics exporter</b> (PostgreSQL) in Otoroshi. Create one in{' '}
-          <a className="link" href="/bo/dashboard/exporters" target="_blank" rel="noreferrer">
-            data exporters
-          </a>{' '}
+          {adminLink('/exporters') ? (
+            <a className="link" href={adminLink('/exporters')} target="_blank" rel="noreferrer">
+              data exporters
+            </a>
+          ) : (
+            'data exporters'
+          )}{' '}
           and every call of this workspace will be listed here.
         </div>
       ) : (
@@ -551,7 +555,7 @@ export function LogsPage() {
           <div className="row wrap">
             {tab === 'calls' && <input className="input search sm" style={{ maxWidth: 240 }} placeholder="Search model, key, user, session, error" value={search} onChange={(e) => setSearch(e.target.value)} />}
             {tab === 'calls' && <Select className="sm" style={{ width: 'auto' }} value={model} onChange={(v) => setQuery({ model: v })} placeholder="All models" options={modelOptions} />}
-            <Select className="sm" style={{ width: 'auto' }} value={apikey} onChange={(v) => setQuery({ apikey: v })} placeholder="All API keys" options={(keys.data || []).map((k) => ({ value: k.clientId, label: k.clientName }))} />
+            <Select className="sm" style={{ width: 'auto' }} value={apikey} onChange={(v) => setQuery({ apikey: v })} placeholder="All API keys" options={(keys.data || []).map((k) => ({ value: k.client_id, label: k.name }))} />
             <Select className="sm" style={{ width: 'auto' }} value={user} onChange={(v) => setQuery({ user: v })} placeholder="All users" options={userOptions} />
             {tab === 'calls' && (
               <Select

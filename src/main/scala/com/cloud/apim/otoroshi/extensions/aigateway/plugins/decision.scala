@@ -4,10 +4,12 @@ import org.apache.pekko.stream.Materializer
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ModelTarget
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.DecisionModel
-import com.cloud.apim.otoroshi.extensions.aigateway.{DecisionErrors, DecisionModelClientInputOptions, DecisionRequests}
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.OpenAiDecisions
+import com.cloud.apim.otoroshi.extensions.aigateway.{DecisionErrors, DecisionModelClientInputOptions, DecisionRequests, DecisionResponse}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
+import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.*
@@ -124,8 +126,25 @@ object DecisionModels {
   private def failed(err: JsValue): Either[NgProxyEngineError, BackendCallResponse] =
     Left(NgProxyEngineError.NgResultProxyEngineError(resultOf(err)))
 
-  def handleRequest(config: DecisionModelsConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  /** A System One request, asked to the decision model of `refs` it is for. `openai` is the request it was made of, if any */
+  def decide(refs: Seq[String], body: JsObject, attrs: TypedMap, openai: Option[JsObject] = None)(using env: Env, ec: ExecutionContext): Future[Either[JsValue, DecisionResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
+    DecisionModelsResolver.resolve(body, refs.flatMap(ref => ext.states.decisionModel(ref))) match {
+      case None => DecisionErrors.gateway(500, "api_error", "no decision model is served here").leftf
+      case Some(resolved) => resolved.entity.getDecisionModelClient() match {
+        case None => DecisionErrors.gateway(500, "api_error", "failed to create the client of the decision model").leftf
+        case Some(client) =>
+          val options = DecisionModelClientInputOptions.format.reads(resolved.body).get.copy(openai = openai)
+          client.decide(options, resolved.body, attrs).recover {
+            // no answer at all, and nothing took over
+            case e: TimeoutException => Left(DecisionErrors.gateway(504, "timeout_error", Option(e.getMessage).getOrElse("the decision model did not answer in time")))
+            case e: Throwable => Left(DecisionErrors.gateway(502, "api_connection_error", Option(e.getMessage).getOrElse("the decision model could not be reached")))
+          }
+      }
+    }
+  }
+
+  def handleRequest(config: DecisionModelsConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
       Try(Json.parse(bodyRaw.utf8String)) match {
         case Failure(_) => failed(DecisionErrors.invalid(Seq(Json.obj("type" -> "json_invalid", "loc" -> Seq("body"), "msg" -> "JSON decode error")))).vfuture
@@ -134,21 +153,9 @@ object DecisionModels {
           if (issues.nonEmpty) {
             failed(DecisionErrors.invalid(issues)).vfuture
           } else {
-            DecisionModelsResolver.resolve(json.asObject, config.refs.flatMap(ref => ext.states.decisionModel(ref))) match {
-              case None => failed(DecisionErrors.gateway(500, "api_error", "no decision model is served here")).vfuture
-              case Some(resolved) => resolved.entity.getDecisionModelClient() match {
-                case None => failed(DecisionErrors.gateway(500, "api_error", "failed to create the client of the decision model")).vfuture
-                case Some(client) =>
-                  val options = DecisionModelClientInputOptions.format.reads(resolved.body).get
-                  client.decide(options, resolved.body, ctx.attrs).map {
-                    case Left(err) => failed(err)
-                    case Right(decision) => Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(decision.toJson(env))), None))
-                  }.recover {
-                    // no answer at all, and nothing took over
-                    case e: TimeoutException => failed(DecisionErrors.gateway(504, "timeout_error", Option(e.getMessage).getOrElse("the decision model did not answer in time")))
-                    case e: Throwable => failed(DecisionErrors.gateway(502, "api_connection_error", Option(e.getMessage).getOrElse("the decision model could not be reached")))
-                  }
-              }
+            decide(config.refs, json.asObject, ctx.attrs).map {
+              case Left(err) => failed(err)
+              case Right(decision) => Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(decision.toJson(env))), None))
             }
           }
       }
@@ -180,5 +187,73 @@ class DecisionModels extends NgBackendCall {
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(DecisionModelsConfig.format).getOrElse(DecisionModelsConfig.default)
     DecisionModels.handleRequest(config, ctx)
+  }
+}
+
+/**
+ * The decisions api of OpenAI, served by the same decision models: the request is read as a System One one
+ * (`OpenAiDecisions`), and the answers, the usage and the errors are given back in the OpenAI format.
+ */
+object OpenAICompatDecisions {
+
+  private def errorResult(status: Int, body: JsValue, retryAfter: Option[String] = None): Result = {
+    val result = Results.Status(status)(body)
+    retryAfter.map(v => result.withHeaders("Retry-After" -> v)).getOrElse(result)
+  }
+
+  /** The http answer of a failed decision call, with the statuses of `DecisionModels.resultOf` */
+  def resultOf(err: JsValue, request: Option[OpenAiDecisions.Request] = None): Result = DecisionErrors.classify(err) match {
+    case DecisionErrors.Kind.Upstream(status, body, retryAfter) => errorResult(status, OpenAiDecisions.errorOf(status, body, request), retryAfter)
+    case DecisionErrors.Kind.Budget(message) => errorResult(402, OpenAiDecisions.error(message, None, "insufficient_quota", "budget_exceeded".some))
+    case DecisionErrors.Kind.Denied => errorResult(403, OpenAiDecisions.error("you can't use this model", "model".some, "permission_error", "model_not_allowed".some))
+    case DecisionErrors.Kind.NotBillable(message) => errorResult(403, OpenAiDecisions.error(message, "model".some, "permission_error", "model_not_allowed".some))
+    case DecisionErrors.Kind.Other(_) => errorResult(500, OpenAiDecisions.error("the decision model failed to answer", None, "server_error"))
+  }
+
+  private def failed(result: Result): Either[NgProxyEngineError, BackendCallResponse] =
+    Left(NgProxyEngineError.NgResultProxyEngineError(result))
+
+  def handleRequest(config: DecisionModelsConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
+      val request = Try(Json.parse(bodyRaw.utf8String)) match {
+        case Failure(_) => Left(OpenAiDecisions.error("We could not parse the JSON body of your request."))
+        case Success(json) => OpenAiDecisions.read(json)
+      }
+      request match {
+        case Left(error) => failed(Results.BadRequest(error)).vfuture
+        case Right(request) =>
+          DecisionModels.decide(config.refs, request.systemOne, ctx.attrs, request.raw.some).map {
+            case Left(err) => failed(resultOf(err, request.some))
+            case Right(decision) => Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(OpenAiDecisions.response(request, decision, env))), None))
+          }
+      }
+    }
+  }
+}
+
+class OpenAICompatDecisions extends NgBackendCall {
+
+  override def name: String = "Cloud APIM - OpenAI decisions backend"
+  override def description: Option[String] = "Delegates call to a decision model with the decisions api of OpenAI: typed questions about an input, answered with probabilities".some
+  override def core: Boolean = false
+  override def visibility: NgPluginVisibility = NgPluginVisibility.NgUserLand
+  override def categories: Seq[NgPluginCategory] = Seq(NgPluginCategory.Custom("Cloud APIM"), NgPluginCategory.Custom("AI - LLM"))
+  override def steps: Seq[NgStep] = Seq(NgStep.CallBackend)
+  override def useDelegates: Boolean = false
+  override def defaultConfigObject: Option[NgPluginConfig] = Some(DecisionModelsConfig.default)
+  override def noJsForm: Boolean = true
+  override def configFlow: Seq[String] = DecisionModelsConfig.configFlow
+  override def configSchema: Option[JsObject] = DecisionModelsConfig.configSchema
+
+  override def start(env: Env): Future[Unit] = {
+    env.adminExtensions.extension[AiExtension].foreach { ext =>
+      ext.logger.info("the 'OpenAI decisions backend' plugin is available !")
+    }
+    ().vfuture
+  }
+
+  override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    val config = ctx.cachedConfig(internalName)(DecisionModelsConfig.format).getOrElse(DecisionModelsConfig.default)
+    OpenAICompatDecisions.handleRequest(config, ctx)
   }
 }

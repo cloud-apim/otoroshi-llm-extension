@@ -346,7 +346,7 @@ export function ModelsPage() {
 
   return (
     <div className="content wide">
-      <PageHeader title="Models" description={`Every model reachable through ${workspace.baseUrl}. Use the id as the \`model\` field of your requests.`}>
+      <PageHeader title="Models" description={`Every model reachable through ${workspace.base_url}. Use the id as the \`model\` field of your requests.`}>
         <RefreshControl
           {...reload}
           onChange={setReload}
@@ -597,7 +597,7 @@ export function ModelsPage() {
                     </Link>
                   </div>
                 )}
-                <ModelDetails model={selected} baseUrl={workspace.baseUrl} />
+                <ModelDetails model={selected} baseUrl={workspace.base_url} />
                 {hasHealth && (
                   <HealthDetails
                     health={healthOf(selected)}

@@ -34,10 +34,43 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     })
   )
 
-  val basic: String = Base64.getEncoder.encodeToString("admin-api-apikey-id:admin-api-apikey-secret".getBytes(StandardCharsets.UTF_8))
+  // a chat provider, for the calls made on behalf of a user
+  val (openaiPort, _) = createTestServerWithRoutes("openai-studio", routes => routes
+    .post("/v1/chat/completions", (req, response) => req.receive().aggregate().asString().flatMap { _ =>
+      response
+        .status(200)
+        .addHeader("Content-Type", "application/json")
+        .sendString(Mono.just(
+          """{"id":"chatcmpl-studio","object":"chat.completion","created":1700000000,"model":"gpt-4o-mini",
+            |"choices":[{"index":0,"message":{"role":"assistant","content":"hello from the workspace"},"finish_reason":"stop"}],
+            |"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}""".stripMargin))
+        .`then`()
+    })
+  )
 
-  def studio(method: String, path: String, body: JsValue = null): WSResponse =
-    client.call(method, s"http://otoroshi-api.oto.tools:$port/api/extensions/cloud-apim/extensions/ai-extension/studio$path", Map("Authorization" -> s"Basic $basic"), Option(body)).awaitf(30.seconds)
+  def basicOf(id: String, secret: String): String = Base64.getEncoder.encodeToString(s"$id:$secret".getBytes(StandardCharsets.UTF_8))
+
+  val basic: String = basicOf("admin-api-apikey-id", "admin-api-apikey-secret")
+
+  def studioAs(auth: String, method: String, path: String, body: JsValue = null, headers: Map[String, String] = Map.empty): WSResponse =
+    client.call(method, s"http://otoroshi-api.oto.tools:$port/api/extensions/cloud-apim/extensions/ai-extension/studio$path", Map("Authorization" -> s"Basic $auth") ++ headers, Option(body)).awaitf(30.seconds)
+
+  def studio(method: String, path: String, body: JsValue = null): WSResponse = studioAs(basic, method, path, body)
+
+  // an api key of the admin api with the rights of its `otoroshi-access-rights` metadata
+  def adminApikey(id: String, rights: JsValue): String = {
+    val url = s"http://otoroshi-api.oto.tools:$port/apis/apim.otoroshi.io/v1/apikeys"
+    val template = client.call("GET", s"$url/_template", Map("Authorization" -> s"Basic $basic"), None).awaitf(30.seconds).json.as[JsObject]
+    val created = client.call("POST", url, Map("Authorization" -> s"Basic $basic"), Some(template ++ Json.obj(
+      "clientId" -> id,
+      "clientSecret" -> s"$id-secret",
+      "clientName" -> id,
+      "authorizedEntities" -> Json.arr("group_admin-api-group"),
+      "metadata" -> Json.obj("otoroshi-access-rights" -> rights.stringify),
+    ))).awaitf(30.seconds)
+    assert(created.status == 200 || created.status == 201, created.body)
+    basicOf(id, s"$id-secret")
+  }
 
   def entity(group: String, plural: String, id: String): Option[JsObject] = {
     val resp = client.call("GET", s"http://otoroshi-api.oto.tools:$port/apis/$group/v1/$plural/$id", Map("Authorization" -> s"Basic $basic"), None).awaitf(30.seconds)
@@ -442,11 +475,11 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(decisionEntity.select("metadata").select("ai_studio_kind").asString, "decision-model")
     assertEquals(compat(wsId).select("decision_model_refs").as[Seq[String]], Seq(decisionId))
     val listing = expect(studio("GET", s"/workspaces/$wsId/models"), 200)
-    assertEquals(listing.select("models").as[Seq[JsObject]].map(m => (m.select("id").asString, m.select("metadata").select("kinds").as[Seq[String]], m.select("metadata").select("endpoints").as[Seq[String]])), Seq(("jev-latest", Seq("decision"), Seq("systemone"))))
+    assertEquals(listing.select("models").as[Seq[JsObject]].map(m => (m.select("id").asString, m.select("metadata").select("kinds").as[Seq[String]], m.select("metadata").select("endpoints").as[Seq[String]])), Seq(("jev-latest", Seq("decision"), Seq("systemone", "decisions"))))
     assertEquals(listing.select("models").as[Seq[JsObject]].head.select("metadata").select("has_cost").asOpt[Boolean], Some(true), "jev is in the price table")
     // how the model is shown: its id is what a request names, and it gets a `###` when the model has a slash
     assertEquals(listing.select("models").as[Seq[JsObject]].head.select("owned_by_with_model").asOpt[String], Some("typesafe / jev-latest"))
-    assertEquals(listing.select("providers").as[Seq[JsObject]].map(i => (i.select("modality").asString, i.select("endpoints").as[Seq[String]])), Seq(("decision", Seq("systemone"))))
+    assertEquals(listing.select("providers").as[Seq[JsObject]].map(i => (i.select("modality").asString, i.select("endpoints").as[Seq[String]])), Seq(("decision", Seq("systemone", "decisions"))))
 
     // a text provider deciding: it has to be one of the workspace, and its model is the one asked by default
     val ollama = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj("kind" -> "ollama", "base_url" -> s"http://localhost:$ollamaPort", "modalities" -> Json.obj("text" -> Json.obj("model" -> "llama3.2")))), 201)
@@ -513,5 +546,142 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     expect(studio("DELETE", s"/workspaces/$wsId"), 204)
     assert(aiEntity("decision-models", decisionId).isEmpty)
     expect(studio("DELETE", s"/workspaces/$other"), 204)
+  }
+
+  test("the studio api applies the rights of its caller") {
+    // a key writing the default team and its own team, one reading its own team only
+    val writer = adminApikey("studio-writer", Json.arr(Json.obj("tenant" -> "default:rw", "teams" -> Json.arr("default:rw", "team_studio_rights:rw"))))
+    val reader = adminApikey("studio-reader", Json.arr(Json.obj("tenant" -> "default:r", "teams" -> Json.arr("team_studio_rights:r"))))
+    // the gateway knows a new api key once its state is synced
+    await(3.seconds)
+
+    val foreign = expect(studio("POST", "/workspaces", Json.obj("name" -> "Not for them")), 201).select("id").asString
+    val preset = expect(studio("POST", s"/workspaces/$foreign/presets", Json.obj("name" -> "secret-preset", "system" -> "be nice")), 201).select("id").asString
+
+    // what it creates stays in the teams it can write, so it keeps seeing it
+    val mine = expect(studioAs(writer, "POST", "/workspaces", Json.obj("name" -> "For the team")), 201).select("id").asString
+    assertEquals(route(mine).select("_loc").select("teams").as[Seq[String]], Seq(s"team_ai_studio_$mine", "default", "team_studio_rights"))
+    // an admin of the tenant only needs the team of the workspace
+    assertEquals(route(foreign).select("_loc").select("teams").as[Seq[String]], Seq(s"team_ai_studio_$foreign"))
+
+    // what a caller cannot read does not exist for it
+    val listed = expect(studioAs(writer, "GET", "/workspaces"), 200).as[Seq[JsObject]].map(_.select("id").asString)
+    assert(listed.contains(mine))
+    assert(!listed.contains(foreign))
+    expect(studioAs(writer, "GET", s"/workspaces/$foreign"), 404)
+    expect(studioAs(writer, "GET", s"/workspaces/$foreign/presets/$preset"), 404)
+    expect(studioAs(writer, "POST", s"/workspaces/$foreign/presets", Json.obj("name" -> "intruder")), 404)
+    expect(studioAs(writer, "DELETE", s"/workspaces/$foreign"), 404)
+    // nor through a workspace it can read
+    expect(studioAs(writer, "GET", s"/workspaces/$mine/presets/$preset"), 404)
+    // a slug stays unique among the workspaces it cannot see
+    expect(studioAs(writer, "POST", "/workspaces", Json.obj("name" -> "Not for them")), 409)
+
+    // what each one can do comes with the workspace
+    val writerPermissions = expect(studioAs(writer, "GET", s"/workspaces/$mine"), 200).select("permissions").as[Seq[String]]
+    assert(Seq("config:write", "keys:manage", "workspace:delete").forall(writerPermissions.contains), writerPermissions.toString)
+    val readerView = expect(studioAs(reader, "GET", s"/workspaces/$mine"), 200)
+    assertEquals(readerView.select("permissions").as[Seq[String]].sorted, Seq("activity:read", "chat:use", "config:read", "usage:own", "workspace:read"))
+
+    // what it can read but not write is refused
+    assertEquals(readerView.select("name").asString, "For the team")
+    expect(studioAs(reader, "POST", s"/workspaces/$mine/presets", Json.obj("name" -> "read-only")), 403)
+    expect(studioAs(reader, "PATCH", s"/workspaces/$mine", Json.obj("description" -> "read-only")), 403)
+    expect(studioAs(reader, "DELETE", s"/workspaces/$mine"), 403)
+    assertEquals(expect(studio("GET", s"/workspaces/$mine/presets"), 200).as[Seq[JsObject]], Seq.empty[JsObject])
+    assertEquals(route(mine).select("description").asString, "")
+
+    expect(studioAs(writer, "DELETE", s"/workspaces/$mine"), 204)
+    expect(studio("DELETE", s"/workspaces/$foreign"), 204)
+  }
+
+  test("the studio api serves what the studio front needs, and calls a workspace on behalf of a user") {
+    val info = expect(studio("GET", "/_info"), 200)
+    assert(info.select("features").as[Seq[String]].contains("proxy-on-behalf-of"))
+    assertEquals(info.select("config").select("domain").asString, "oto.tools")
+
+    val wsId = expect(studio("POST", "/workspaces", Json.obj("name" -> "Studio contract")), 201).select("id").asString
+    val ws = expect(studio("GET", s"/workspaces/$wsId"), 200)
+    assertEquals(ws.select("needs_repair").asBoolean, false)
+    assertEquals(ws.select("mcp_server_ref").asOpt[String], None)
+
+    // the raw options of the text provider: its model is the one of the text capability
+    val openai = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj(
+      "kind" -> "openai",
+      "token" -> "sk-studio",
+      "base_url" -> s"http://localhost:$openaiPort/v1",
+      "modalities" -> Json.obj("text" -> Json.obj("model" -> "gpt-4o-mini")),
+      "options" -> Json.obj("temperature" -> 0.2, "max_tokens" -> 256, "model" -> "ignored"),
+    )), 201)
+    val openaiId = openai.select("id").asString
+    val openaiText = openai.select("entities").select("text").asString
+    assertEquals(openai.select("options").select("temperature").as[BigDecimal], BigDecimal("0.2"))
+    assertEquals(openai.select("options").select("model").asString, "gpt-4o-mini")
+    // absent keeps them, null clears them
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/providers/$openaiId", Json.obj("description" -> "kept")), 200).select("options").select("max_tokens").asOpt[Int], Some(256))
+    val cleared = expect(studio("PUT", s"/workspaces/$wsId/providers/$openaiId", Json.obj("options" -> JsNull)), 200).select("options")
+    assertEquals((cleared.select("max_tokens").asOpt[Int], cleared.select("model").asOpt[String]), (None, Some("gpt-4o-mini")))
+    // a secret shown masked comes back as the sentinel: the stored one is kept
+    val sentinel = "__ai_studio_secret__"
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/providers/$openaiId", Json.obj("token" -> sentinel, "description" -> "masked")), 200).select("token").asString, "sk-studio")
+
+    // the models of a saved provider, with its stored settings, every model listed even for a strict provider
+    val ollama = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj(
+      "kind" -> "ollama",
+      "base_url" -> s"http://localhost:$ollamaPort",
+      "require_known_costs" -> true,
+      "modalities" -> Json.obj("text" -> Json.obj("model" -> "llama3.2")),
+    )), 201)
+    assertEquals(expect(studio("POST", s"/workspaces/$wsId/providers/_models", Json.obj("connection_id" -> ollama.select("id").asString)), 200).select("models").as[Seq[String]], Seq("llama3.2", "qwen3"))
+    expect(studio("POST", s"/workspaces/$wsId/providers/_models", Json.obj("connection_id" -> ollama.select("id").asString, "kind" -> "openai")), 400)
+    expect(studio("POST", s"/workspaces/$wsId/providers/_models", Json.obj("connection_id" -> "conn_of_another_workspace")), 404)
+
+    // what the pickers offer: every model entity, virtual ones included, and every tool
+    val balancer = expect(studio("POST", s"/workspaces/$wsId/load-balancers", Json.obj("name" -> "both", "targets" -> Json.arr(openaiText, ollama.select("entities").select("text").asString))), 201)
+    val entities = expect(studio("GET", s"/workspaces/$wsId/model-entities"), 200).as[Seq[JsObject]]
+    assertEquals(entities.map(e => (e.select("name").asString, e.select("modality").asString, e.select("virtual").asBoolean)), Seq(("both", "text", true), ("ollama", "text", false), ("openai", "text", false)))
+    assertEquals(entities.find(_.select("id").asString == openaiText).get.select("connection").asString, openaiId)
+    assertEquals(entities.find(_.select("id").asString == openaiText).get.select("model").asString, "gpt-4o-mini")
+    expect(studio("POST", s"/workspaces/$wsId/tools/functions", Json.obj("template" -> "web_fetch")), 201)
+    expect(studio("POST", s"/workspaces/$wsId/tools/search", Json.obj("name" -> "search", "search_provider" -> "duckduckgo")), 201)
+    val secured = expect(studio("POST", s"/workspaces/$wsId/tools/functions", Json.obj("name" -> "secured", "url" -> "https://example.com", "headers" -> Json.obj("Authorization" -> "Bearer secret-value"))), 201)
+    val resaved = expect(studio("PUT", s"/workspaces/$wsId/tools/functions/${secured.select("id").asString}", Json.obj("headers" -> Json.obj("Authorization" -> sentinel, "X-Trace" -> "1"))), 200)
+    assertEquals(resaved.select("headers").as[JsObject], Json.obj("Authorization" -> "Bearer secret-value", "X-Trace" -> "1"))
+    expect(studio("DELETE", s"/workspaces/$wsId/tools/functions/${secured.select("id").asString}"), 204)
+    val tools = expect(studio("GET", s"/workspaces/$wsId/tools"), 200).as[Seq[JsObject]]
+    assertEquals(tools.map(t => (t.select("name").asString, t.select("kind").asString)), Seq(("search", "search"), ("web_fetch", "functions")))
+    assertEquals(tools.find(_.select("kind").asString == "functions").get.select("method").asString, "GET")
+
+    // the meta mode of the MCP server
+    val server = expect(studio("PUT", s"/workspaces/$wsId/mcp-server", Json.obj("name" -> "tools", "expose_as_meta" -> true)), 200)
+    assertEquals((server.select("expose_as_meta").asBoolean, server.select("meta_semantic_search").asBoolean), (true, false))
+    assertEquals(expect(studio("PUT", s"/workspaces/$wsId/mcp-server", Json.obj("meta_semantic_search" -> true)), 200).select("expose_as_meta").asBoolean, true)
+    assertEquals(expect(studio("GET", s"/workspaces/$wsId"), 200).select("mcp_server_ref").asOpt[String], server.select("id").asOpt[String])
+    expect(studio("DELETE", s"/workspaces/$wsId/mcp-server"), 204)
+    expect(studio("DELETE", s"/workspaces/$wsId/load-balancers/${balancer.select("id").asString}"), 204)
+    expect(studio("DELETE", s"/workspaces/$wsId/providers/${ollama.select("id").asString}"), 204)
+
+    // a call on behalf of a user is the call of that user: its budgets count it, the ones of others do not
+    val alice = "alice@studio.test"
+    val aliceBudget = expect(studio("POST", s"/workspaces/$wsId/budgets", Json.obj("name" -> "alice", "tokens" -> 1000, "scope" -> "custom", "users" -> Json.arr(alice))), 201).select("id").asString
+    val bobBudget = expect(studio("POST", s"/workspaces/$wsId/budgets", Json.obj("name" -> "bob", "tokens" -> 1000, "scope" -> "custom", "users" -> Json.arr("bob@studio.test"))), 201).select("id").asString
+    val chat = Json.obj("model" -> "gpt-4o-mini", "messages" -> Json.arr(Json.obj("role" -> "user", "content" -> "hello")))
+    expect(studio("POST", s"/workspaces/$wsId/proxy/chat/completions", chat), 400)
+    expect(studioAs(basic, "POST", s"/workspaces/$wsId/proxy/chat/completions", chat, Map("AI-Studio-User-Email" -> "not an email")), 400)
+    expect(studioAs(basic, "POST", s"/workspaces/nope/proxy/chat/completions", chat, Map("AI-Studio-User-Email" -> alice)), 404)
+    val reader = adminApikey("studio-chat-reader", Json.arr(Json.obj("tenant" -> "default:r", "teams" -> Json.arr("*:r"))))
+    await(3.seconds)
+    expect(studioAs(reader, "POST", s"/workspaces/$wsId/proxy/chat/completions", chat, Map("AI-Studio-User-Email" -> alice)), 403)
+    val answer = expect(studioAs(basic, "POST", s"/workspaces/$wsId/proxy/chat/completions", chat, Map("AI-Studio-User-Email" -> alice, "AI-Studio-User-Name" -> "Alice%20Martin")), 200)
+    assertEquals(answer.select("choices").as[Seq[JsObject]].head.select("message").select("content").asString, "hello from the workspace")
+    await(1.second)
+    def remaining(budgetId: String): Option[BigDecimal] = studio("GET", s"/workspaces/$wsId/budgets/$budgetId/consumption") match {
+      case r if r.status == 200 => r.json.select("remaining_total_tokens").asOpt[BigDecimal]
+      case _ => None
+    }
+    assertEquals(remaining(aliceBudget), Some(BigDecimal(985)))
+    assert(!remaining(bobBudget).exists(_ < 1000), "the call is not counted for another user")
+
+    expect(studio("DELETE", s"/workspaces/$wsId"), 204)
   }
 }

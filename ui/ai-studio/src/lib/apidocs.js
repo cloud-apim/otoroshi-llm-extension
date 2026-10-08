@@ -3,7 +3,6 @@
 // request can carry and a snippet to start from. A guide, not a reference: the full one is in the docs.
 
 import { chatUsable, endpointsOf } from './modelmeta';
-import { findPlugin, OPENAI_COMPAT_PLUGIN } from './workspaces';
 
 export const DOCS_URL = 'https://cloud-apim.github.io/otoroshi-llm-extension/docs';
 
@@ -427,14 +426,14 @@ console.log(result.results[0].flagged);`,
     method: 'POST',
     path: '/systemone',
     title: 'Decisions',
-    summary: 'The System One format: closed questions about a state, each answered with the probability of its outcomes. Also served on /decisions.',
+    summary: 'The System One format: closed questions about a state, each answered with the probability of its outcomes.',
     needs: { modality: 'decision', endpoint: 'systemone' },
     quickstart: 'Decision',
     features: [
       'Yes or no questions (noul), choices among options (choice) and scores on a scale (score)',
       'Several questions about the same state in one call',
       'A confidence with every choice and every score',
-      '/systemone is the path the TypeSafe SDKs call, /decisions the same endpoint under a plainer name',
+      'The path the TypeSafe SDKs call',
     ],
     docs: '/decision-models/plugins',
     snippets: ({ baseUrl, model }) => {
@@ -478,6 +477,83 @@ print(result.nouls["urgent"].noul)
 print(result.choices["team"].choice)`,
       };
     },
+  },
+  {
+    id: 'openai-decisions',
+    group: 'decision',
+    method: 'POST',
+    path: '/decisions',
+    title: 'Decisions (OpenAI)',
+    summary: 'The decisions format of OpenAI, for the same decision models: ask them from the OpenAI SDKs.',
+    needs: { modality: 'decision', endpoint: 'decisions' },
+    features: [
+      'Predicates, choices among typed values and scores on labelled levels',
+      'The answers in the order of the questions, a refusal for one a model would not answer',
+      'Text or user messages as input, with pictures for the decision models that look at them',
+    ],
+    docs: '/decision-models/openai-api',
+    snippets: ({ baseUrl, model }) => ({
+      curl: `curl ${baseUrl}/decisions \\
+  ${auth} \\
+  ${json} \\
+  -d '{
+    "model": "${model}",
+    "input": "The checkout has been failing for every customer for the last hour.",
+    "questions": [
+      {"type": "predicate", "name": "urgent", "instructions": "Is this support request urgent?"},
+      {
+        "type": "choice",
+        "name": "team",
+        "instructions": "Which team should handle this request?",
+        "choices": [
+          {"value": "billing", "description": "Invoices and payments"},
+          {"value": "technical", "description": "Outages and bugs"}
+        ]
+      }
+    ]
+  }'`,
+      python: `${openaiPython(baseUrl)}
+
+result = client.decisions.create(
+    model="${model}",
+    input="The checkout has been failing for every customer for the last hour.",
+    questions=[
+        {"type": "predicate", "name": "urgent", "instructions": "Is this support request urgent?"},
+        {
+            "type": "choice",
+            "name": "team",
+            "instructions": "Which team should handle this request?",
+            "choices": [
+                {"value": "billing", "description": "Invoices and payments"},
+                {"value": "technical", "description": "Outages and bugs"},
+            ],
+        },
+    ],
+)
+urgent, team = result.answers
+print(urgent.probability)
+print(team.choice)`,
+      typescript: `${openaiTypescript(baseUrl)}
+
+const result = await client.decisions.create({
+  model: '${model}',
+  input: 'The checkout has been failing for every customer for the last hour.',
+  questions: [
+    { type: 'predicate', name: 'urgent', instructions: 'Is this support request urgent?' },
+    {
+      type: 'choice',
+      name: 'team',
+      instructions: 'Which team should handle this request?',
+      choices: [
+        { value: 'billing', description: 'Invoices and payments' },
+        { value: 'technical', description: 'Outages and bugs' },
+      ],
+    },
+  ],
+});
+// one answer per question, in their order
+console.log(result.answers);`,
+    }),
   },
   {
     id: 'mcp',
@@ -569,10 +645,7 @@ const PLACEHOLDER_MODEL = 'provider/model';
 export function servingOf(endpoint, workspace, listing) {
   const needs = endpoint.needs;
   if (!needs) return { available: true, model: null };
-  if (needs.mcp) {
-    const plugin = findPlugin(workspace.route, OPENAI_COMPAT_PLUGIN);
-    return { available: !!(plugin && plugin.config && plugin.config.mcp_server_ref), model: null };
-  }
+  if (needs.mcp) return { available: !!workspace.mcp_server_ref, model: null };
   const providers = (listing && listing.providers) || [];
   const models = ((listing && listing.models) || []).filter((m) => m.modality === needs.modality);
   if (needs.modality === 'text') {
@@ -589,5 +662,5 @@ export function servingOf(endpoint, workspace, listing) {
 
 // the snippets of an endpoint for this workspace, by language
 export function snippetsOf(endpoint, workspace, model) {
-  return endpoint.snippets({ baseUrl: workspace.baseUrl, model: model || PLACEHOLDER_MODEL });
+  return endpoint.snippets({ baseUrl: workspace.base_url, model: model || PLACEHOLDER_MODEL });
 }

@@ -2,8 +2,7 @@
 // endpoint, and edited from the playground on its `/images/edits` endpoint. Chat models that draw instead of
 // writing answer on the chat endpoint, with their images in the message: see `imagesOf` in `chat.js`.
 
-import { gatewayError } from './api';
-import { currentTenant } from './bootstrap';
+import { gatewayError, studioHeaders } from './api';
 import { blobDataUrl } from './attachments';
 import { billedProxyUrl } from './models';
 
@@ -49,7 +48,7 @@ export async function generateImage({ workspace, model, prompt, signal, sessionI
     headers: {
       'Content-Type': 'application/json',
       Accept: 'application/json',
-      'Otoroshi-Tenant': currentTenant(),
+      ...studioHeaders(),
       ...(sessionId ? { 'X-Session-Id': sessionId } : {}),
     },
     body: JSON.stringify({ model, prompt, n: 1 }),
@@ -70,7 +69,7 @@ export async function editImage({ workspace, model, prompt, images, signal }) {
     credentials: 'include',
     signal,
     // a FormData body carries its own content type, with the boundary the gateway parses
-    headers: { Accept: 'application/json', 'Otoroshi-Tenant': currentTenant() },
+    headers: { Accept: 'application/json', ...studioHeaders() },
     body: form,
   });
   return answerOf(res, started);

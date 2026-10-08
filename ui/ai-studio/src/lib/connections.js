@@ -1,12 +1,11 @@
-import { api, EXT_BO_API } from './api';
-import { META, Resources, randomId, workspaceFilter } from './entities';
-import { MODALITIES, syncWorkspaceRefs, workspaceLocation, workspaceMetadata } from './workspaces';
+import { randomId } from './ids';
+import { backend } from './backend';
 
-// A "connection" is what the user sees in the Providers page: one provider kind + credentials,
-// materialized as one otoroshi entity per enabled modality (text provider, embedding model, image
-// model, ...). Entities of the same connection share `metadata.ai_studio_connection`.
-
-export const DISABLED_META = 'ai_studio_disabled';
+// A "connection" is what the user sees in the Providers page: one provider kind + credentials, materialized
+// as one otoroshi entity per enabled capability (text provider, embedding model, image model, ...). The studio
+// admin api builds those entities and shows a connection as one view (`connectionJson` in studio/api.scala):
+// `entities` gives the id of the entity of each capability, `tools` the tools its text models can call,
+// `options` the raw options of its text provider. What is left here helps the provider form.
 
 export const MODALITY_LABELS = {
   text: 'Text',
@@ -31,226 +30,12 @@ export function connectionName(value) {
     .substring(0, 40);
 }
 
-function modelOfEntity(modality, entity) {
-  if (modality === 'text') return entity.options && entity.options.model;
-  const config = entity.config || {};
-  const options = config.options || {};
-  if (modality === 'image') return (options.generation && options.generation.model) || options.model;
-  if (modality === 'audio') return (config.tts && config.tts.model) || (options.tts && options.tts.model);
-  return options.model;
-}
-
-function sttModelOfEntity(entity) {
-  const config = entity.config || {};
-  const options = config.options || {};
-  return (config.stt && (config.stt.model || config.stt.model_id)) || (options.stt && options.stt.model);
-}
-
-function connectionOfEntity(modality, entity) {
-  return (modality === 'text' ? entity.connection : entity.config && entity.config.connection) || {};
-}
-
-export async function listConnections(wsId) {
-  const filter = workspaceFilter(wsId);
-  const lists = await Promise.all(MODALITIES.map((m) => Resources[m.resource].list(filter)));
-  const byId = {};
-  MODALITIES.forEach((m, idx) => {
-    lists[idx].forEach((entity) => {
-      const connId = (entity.metadata && entity.metadata[META.connection]) || entity.id;
-      if (!byId[connId]) {
-        byId[connId] = { id: connId, name: entity.name, kind: entity.provider, description: entity.description || '', modalities: {}, entities: {} };
-      }
-      const conn = byId[connId];
-      conn.entities[m.id] = entity;
-      conn.modalities[m.id] = {
-        enabled: true,
-        model: modelOfEntity(m.id, entity) || '',
-        stt_model: m.id === 'audio' ? sttModelOfEntity(entity) || '' : undefined,
-      };
-      // the text provider (or the first entity found) carries the connection settings
-      if (m.id === 'text' || !conn.connection) {
-        const c = connectionOfEntity(m.id, entity);
-        conn.connection = c;
-        conn.base_url = c.base_url || c.base_domain || '';
-        conn.token = c.token || c.api_key || '';
-        conn.timeout = c.timeout || 180000;
-        conn.enabled = !(entity.metadata && entity.metadata[DISABLED_META] === 'true');
-        conn.require_known_costs = !!(entity.models && entity.models.require_known_costs);
-      }
-    });
-  });
-  return Object.values(byId).sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function buildConnection(kind, conn, catalogEntry) {
-  const c = { timeout: Number(conn.timeout) || 180000 };
-  if (conn.base_url) c.base_url = conn.base_url;
-  else if (catalogEntry && catalogEntry.base_url) c.base_url = catalogEntry.base_url;
-  if (conn.token) c.token = conn.token;
-  (catalogEntry && catalogEntry.fields ? catalogEntry.fields : []).forEach((f) => {
-    const v = conn.fields && conn.fields[f.name];
-    if (v !== undefined && v !== '') c[f.name] = v;
-    else if (f.default) c[f.name] = f.default;
-  });
-  if (kind === 'azure-openai') {
-    // pre-v1 azure apis use the `api-key` header, v1 uses a bearer token
-    c.api_key = conn.token;
-    c.resource_name = c.resource_name || '';
-    c.deployment_id = c.deployment_id || '';
-  }
-  if (kind === 'anthropic') c.version = (conn.connection && conn.connection.version) || '2023-06-01';
-  if (kind === 'openai-compatible') {
-    Object.assign(c, {
-      supports_completion: true,
-      supports_tools: true,
-      supports_streaming: true,
-      models_path: '/models',
-      headers: { Authorization: 'Bearer {api_key}' },
-      ...((conn.connection && pick(conn.connection, ['supports_completion', 'supports_tools', 'supports_streaming', 'models_path', 'headers', 'param_mappings', 'additional_body_params'])) || {}),
-    });
-  }
-  return c;
-}
-
-function pick(obj, keys) {
-  const r = {};
-  keys.forEach((k) => {
-    if (obj[k] !== undefined) r[k] = obj[k];
-  });
-  return r;
-}
-
-const ID_PREFIX = {
-  text: 'provider',
-  embedding: 'embedding-model',
-  image: 'image-model',
-  audio: 'audio-model',
-  moderation: 'moderation-model',
-  ocr: 'ocr-model',
-  video: 'video-model',
-  decision: 'decision-model',
-};
-
-export function buildEntity(modality, wsId, conn, catalogEntry, existing) {
-  const kind = conn.kind;
-  const mod = conn.modalities[modality] || {};
-  const model = (mod.model || '').trim();
-  const connection = buildConnection(kind, conn, catalogEntry);
-  const metadata = {
-    ...((existing && existing.metadata) || {}),
-    ...workspaceMetadata(wsId, MODALITIES.find((m) => m.id === modality).kind, { [META.connection]: conn.id }),
-  };
-  if (conn.enabled === false) metadata[DISABLED_META] = 'true';
-  else delete metadata[DISABLED_META];
-  const base = {
-    ...(existing || {}),
-    _loc: (existing && existing._loc) || workspaceLocation(wsId),
-    id: (existing && existing.id) || `${ID_PREFIX[modality]}_ais_${randomId(20)}`,
-    name: conn.name,
-    description: conn.description || '',
-    tags: (existing && existing.tags) || [],
-    metadata,
-    provider: kind,
-  };
-  // the model access of the workspace (include / exclude) is kept, the known costs requirement is the connection's
-  const models = { include: [], exclude: [], ...((existing && existing.models) || {}), require_known_costs: !!conn.require_known_costs };
-  if (modality === 'text') {
-    const options = { ...((existing && existing.options) || {}) };
-    if (model) options.model = model;
-    else delete options.model;
-    return {
-      guardrails: [],
-      guardrails_fail_on_deny: false,
-      ...base,
-      models,
-      connection: { ...((existing && existing.connection) || {}), ...connection },
-      options,
-    };
-  }
-  const prevConfig = (existing && existing.config) || {};
-  const prevOptions = prevConfig.options || {};
-  let config;
-  if (modality === 'image') {
-    config = {
-      ...prevConfig,
-      connection,
-      options: {
-        ...prevOptions,
-        generation: { enabled: true, ...(prevOptions.generation || {}), model },
-        // the image capability of a connection draws and edits: its client knows whether the provider can edit
-        edition: { ...(prevOptions.edition || {}), enabled: true, model },
-      },
-    };
-  } else if (modality === 'audio') {
-    const tts = (mod.model || '').trim();
-    const stt = (mod.stt_model || '').trim();
-    const ttsConf =
-      kind === 'elevenlabs'
-        ? { enabled: !!tts, model_id: tts, voice_id: '21m00Tcm4TlvDq8ikWAM', output_format: 'mp3_44100_128' }
-        : { enabled: !!tts, model: tts, voice: 'alloy', response_format: 'mp3' };
-    const sttConf = kind === 'elevenlabs' ? { enabled: !!stt, model_id: stt } : { enabled: !!stt, model: stt };
-    // a connection that transcribes also translates: its client knows whether the provider can
-    const translate = { enabled: !!stt };
-    // the audio client reads tts/stt at the root of the config, the admin ui writes them in options:
-    // write both so the entity behaves the same in both places
-    config = {
-      ...prevConfig,
-      connection,
-      tts: { ...(prevConfig.tts || {}), ...ttsConf },
-      stt: { ...(prevConfig.stt || {}), ...sttConf },
-      translate: { ...(prevConfig.translate || {}), ...translate },
-      options: {
-        ...prevOptions,
-        tts: { ...(prevOptions.tts || {}), ...ttsConf },
-        stt: { ...(prevOptions.stt || {}), ...sttConf },
-        translation: { ...(prevOptions.translation || {}), ...translate },
-      },
-    };
-  } else if (modality === 'video') {
-    config = { ...prevConfig, connection, options: { enabled: true, ...prevOptions, model } };
-  } else {
-    config = { ...prevConfig, connection, options: { ...prevOptions, model } };
-  }
-  return { ...base, models, config };
-}
-
-export async function saveConnection(wsId, conn, catalogEntry) {
-  const capabilities = (catalogEntry && catalogEntry.capabilities) || Object.keys(conn.modalities);
-  for (const m of MODALITIES) {
-    const resource = Resources[m.resource];
-    const existing = conn.entities && conn.entities[m.id];
-    const wanted = capabilities.includes(m.id) && conn.modalities[m.id] && conn.modalities[m.id].enabled;
-    if (wanted) {
-      const entity = buildEntity(m.id, wsId, conn, catalogEntry, existing);
-      if (existing && existing.id) await resource.update(entity);
-      else await resource.create(entity);
-    } else if (existing && existing.id) {
-      await resource.delete(existing.id);
-    }
-  }
-  await syncWorkspaceRefs(wsId);
-}
-
-export async function deleteConnection(wsId, conn) {
-  for (const m of MODALITIES) {
-    const existing = conn.entities && conn.entities[m.id];
-    if (existing) await Resources[m.resource].delete(existing.id);
-  }
-  await syncWorkspaceRefs(wsId);
-}
-
-// the models of a connection, each with what the gateway knows of it (`details`, see lib/modelmeta.js)
-export async function fetchProviderModels(wsId, conn, catalogEntry, force = false) {
-  // every model, the ones with no known price included: the form tells which ones a strict provider refuses
-  const draft = buildEntity(
-    'text',
-    wsId,
-    { ...conn, require_known_costs: false, modalities: { ...conn.modalities, text: { enabled: true, model: 'x' } } },
-    catalogEntry,
-    conn.entities && conn.entities.text
-  );
-  const res = await api.post(`${EXT_BO_API}/providers/_models?enriched=true${force ? '&force=true' : ''}`, draft);
-  if (!res || !res.done) throw new Error((res && (typeof res.error === 'string' ? res.error : JSON.stringify(res.error))) || 'unable to fetch models');
+// The models of a connection being edited, each with what the gateway knows of it (`details`, see
+// lib/modelmeta.js): from its saved settings for a saved connection, with what the form changed on top. Every
+// model is listed, the ones with no known price included: the form tells which ones a strict provider refuses.
+export async function fetchProviderModels(wsId, conn, isNew, force = false) {
+  const body = { kind: conn.kind, base_url: conn.base_url || '', token: conn.token || '', fields: conn.fields || {}, ...(isNew ? {} : { connection_id: conn.id }) };
+  const res = await backend.run('providers.draftModels', wsId, { query: { enriched: true, force }, body });
   const details = res.details || {};
   return (res.models || []).map((id) => ({ id: String(id), model: String(id), provider: conn.name, modality: 'text', details: details[id] }));
 }
@@ -304,8 +89,4 @@ export function newConnection(catalogEntry, existingNames = []) {
     modalities,
     entities: {},
   };
-}
-
-export function fieldsFromConnection(conn, catalogEntry) {
-  return Object.fromEntries(((catalogEntry && catalogEntry.fields) || []).map((f) => [f.name, (conn.connection && conn.connection[f.name]) || f.default || '']));
 }

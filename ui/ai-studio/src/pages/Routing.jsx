@@ -1,60 +1,37 @@
 import { useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Badge, Checks, CopyButton, Empty, ErrorAlert, Field, LinesInput, Loading, Modal, NumberInput, PageHeader, Segmented, Select, TextInput, useAsync, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
+import { backend } from '../lib/backend';
 import { connectionName } from '../lib/connections';
-import { META, Resources, randomId, workspaceFilter } from '../lib/entities';
 import { Link } from '../lib/router';
-import { findPlugin, OPENAI_COMPAT_PLUGIN, routeIdOf, syncWorkspaceRefs, updateWorkspaceRoute, setOpenAiConfig, workspaceLocation, workspaceMetadata } from '../lib/workspaces';
 
-export const VIRTUAL_KINDS = ['loadbalancer', 'otoroshi'];
-
-function chainOf(provider, byId) {
-  const chain = [provider.name];
-  const seen = new Set([provider.id]);
-  let current = provider;
-  while (current && current.provider_fallback && byId[current.provider_fallback] && !seen.has(current.provider_fallback)) {
-    current = byId[current.provider_fallback];
-    seen.add(current.id);
-    chain.push(current.name);
-  }
-  return chain;
-}
+// The routing of a workspace, as the studio api shows it (`routingJson`, `balancerJson` and `routerJson` in
+// studio/api.scala): the real providers with their fallback chain, the load balancers and the routers, and the
+// order in which the route serves them (the first one answers the requests naming no provider).
 
 function LoadBalancerModal({ workspace, balancer, providers, existingNames, onClose, onSaved }) {
   const toast = useToast();
-  const refs = (balancer && balancer.options && balancer.options.refs) || [];
   const [form, setForm] = useState({
     name: balancer ? balancer.name : 'balanced',
-    strategy: (balancer && balancer.options && balancer.options.loadbalancing) || 'round_robin',
-    targets: refs.length ? refs.map((r) => (typeof r === 'string' ? { ref: r, weight: 1, model: '' } : { ref: r.ref, weight: r.weight || 1, model: r.model || '' })) : providers.slice(0, 2).map((p) => ({ ref: p.id, weight: 1, model: '' })),
+    strategy: (balancer && balancer.strategy) || 'round_robin',
+    targets: balancer ? balancer.targets.map((t) => ({ ref: t.ref, weight: t.weight || 1, model: t.model || '' })) : providers.slice(0, 2).map((p) => ({ ref: p.id, weight: 1, model: '' })),
   });
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const nameTaken = existingNames.includes(form.name) && (!balancer || balancer.name !== form.name);
 
+  // the api serves the balancer on the workspace route as soon as it is saved
   const save = async () => {
     setSaving(true);
     try {
-      const id = (balancer && balancer.id) || `provider_ais_${randomId(20)}`;
-      const entity = {
-        models: { include: [], exclude: [] },
-        guardrails: [],
-        guardrails_fail_on_deny: false,
-        ...(balancer || {}),
-        _loc: (balancer && balancer._loc) || workspaceLocation(workspace.id),
-        id,
+      const body = {
         name: form.name,
-        description: 'Load balancer',
-        tags: (balancer && balancer.tags) || [],
-        metadata: { ...((balancer && balancer.metadata) || {}), ...workspaceMetadata(workspace.id, 'provider', { [META.connection]: id }) },
-        provider: 'loadbalancer',
-        connection: {},
-        options: { ...((balancer && balancer.options) || {}), refs: form.targets.filter((t) => t.ref).map((t) => ({ ref: t.ref, weight: Number(t.weight) || 1, ...(t.model && t.model.trim() ? { model: t.model.trim() } : {}) })), loadbalancing: form.strategy },
+        strategy: form.strategy,
+        targets: form.targets.filter((t) => t.ref).map((t) => ({ ref: t.ref, weight: Number(t.weight) || 1, model: (t.model || '').trim() || null })),
       };
-      if (balancer) await Resources.providers.update(entity);
-      else await Resources.providers.create(entity);
-      await syncWorkspaceRefs(workspace.id);
+      if (balancer) await backend.run('balancers.update', workspace.id, { lid: balancer.id, body });
+      else await backend.run('balancers.create', workspace.id, { body });
       toast.success(balancer ? 'Load balancer saved' : 'Load balancer created');
       onSaved();
     } catch (e) {
@@ -100,7 +77,7 @@ function LoadBalancerModal({ workspace, balancer, providers, existingNames, onCl
         <div className="stack tight">
           {form.targets.map((t, idx) => (
             <div key={idx} className="row">
-              <Select className="grow" value={t.ref} onChange={(v) => set({ targets: form.targets.map((x, i) => (i === idx ? { ...x, ref: v } : x)) })} placeholder="Select a provider" options={providers.map((p) => ({ value: p.id, label: `${p.name} (${(p.options || {}).model || 'default'})` }))} />
+              <Select className="grow" value={t.ref} onChange={(v) => set({ targets: form.targets.map((x, i) => (i === idx ? { ...x, ref: v } : x)) })} placeholder="Select a provider" options={providers.map((p) => ({ value: p.id, label: `${p.name} (${p.model || 'default'})` }))} />
               <div style={{ width: 170 }}>
                 <TextInput value={t.model} onChange={(v) => set({ targets: form.targets.map((x, i) => (i === idx ? { ...x, model: v } : x)) })} placeholder="Default model" />
               </div>
@@ -163,17 +140,14 @@ export const ROUTER_MODES = [
 
 const refsOf = (value) => (value || []).map((r) => (typeof r === 'string' ? r : r.ref)).filter(Boolean);
 
-// the selected candidates, keeping the entries (and their model) already configured for them
-const keepEntries = (previous, ids) => ids.map((id) => (previous || []).find((r) => typeof r === 'object' && r && r.ref === id) || id);
-
-export const configuredModes = (router) => ROUTER_MODES.filter((m) => refsOf((router.options || {})[m.refs]).length > 0);
+export const configuredModes = (router) => ROUTER_MODES.filter((m) => (router.modes || []).includes(m.id));
 
 // the candidates of the intent router as the form edits them: a provider, the model it serves, what it is good at
 const describedOf = (value) => (value || []).map((r) => (typeof r === 'string' ? { ref: r, model: '', description: '' } : { ...r, ref: r.ref || '', model: r.model || '', description: r.description || '' }));
 
 function RouterModal({ workspace, router, providers, decisionModels, existingNames, onClose, onSaved }) {
   const toast = useToast();
-  const o = (router && router.options) || {};
+  const o = router || {};
   const [mode, setMode] = useState((router && (configuredModes(router)[0] || {}).id) || 'auto');
   const [form, setForm] = useState({
     name: router ? router.name : 'router',
@@ -202,7 +176,7 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
   const countOf = (m) => form[m.refs].filter((r) => (typeof r === 'string' ? r : r.ref)).length;
   const hasCandidates = ROUTER_MODES.some((m) => countOf(m) > 0);
   const decisionOptions = (decisionModels || []).map((d) => ({ value: d.id, label: d.name }));
-  const decisionDefault = (((decisionModels || []).find((d) => d.id === form.decision_model_ref) || {}).config || {}).options?.model;
+  const decisionDefault = ((decisionModels || []).find((d) => d.id === form.decision_model_ref) || {}).model;
   // the decision model of the smart and the intent routers, shared by both, and the model it answers with
   const decisionFields = (hint) => (
     <div className="form-grid">
@@ -215,53 +189,37 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
     </div>
   );
   const setIntent = (idx, patch) => set({ intent_router_refs: form.intent_router_refs.map((c, i) => (i === idx ? { ...c, ...patch } : c)) });
-  const candidateOptions = providers.map((p) => ({ value: p.id, label: `${p.name} (${(p.options || {}).model || 'default model'})` }));
+  const candidateOptions = providers.map((p) => ({ value: p.id, label: `${p.name} (${p.model || 'default model'})` }));
   const providerOptions = providers.map((p) => ({ value: p.id, label: p.name }));
 
+  // Candidates are sent by id: the api keeps the model already configured for each of them, and what the form
+  // does not show (the models of the judges) as it is. It bounds the numbers.
   const save = async () => {
     setSaving(true);
     try {
-      const id = (router && router.id) || `provider_ais_${randomId(20)}`;
       const num = (v, def) => (v === null || v === '' || Number.isNaN(Number(v)) ? def : Number(v));
-      const entity = {
-        models: { include: [], exclude: [] },
-        guardrails: [],
-        guardrails_fail_on_deny: false,
-        ...(router || {}),
-        _loc: (router && router._loc) || workspaceLocation(workspace.id),
-        id,
+      const body = {
         name: form.name,
-        description: 'Otoroshi router',
-        tags: (router && router.tags) || [],
-        metadata: { ...((router && router.metadata) || {}), ...workspaceMetadata(workspace.id, 'provider', { [META.connection]: id }) },
-        provider: 'otoroshi',
-        connection: {},
-        options: {
-          ...o,
-          code_router_refs: keepEntries(o.code_router_refs, form.code_router_refs),
-          min_coding_score: Math.min(1, Math.max(0, num(form.min_coding_score, 0.5))),
-          auto_router_refs: keepEntries(o.auto_router_refs, form.auto_router_refs),
-          auto_router_classifier_ref: form.auto_router_classifier_ref || null,
-          cost_quality_tradeoff: Math.min(10, Math.max(0, num(form.cost_quality_tradeoff, 7))),
-          allowed_models: form.allowed_models.map((m) => m.trim()).filter(Boolean),
-          decision_model_ref: form.decision_model_ref || null,
-          decision_model_model: (form.decision_model_ref && form.decision_model_model.trim()) || null,
-          smart_router_refs: keepEntries(o.smart_router_refs, form.smart_router_refs),
-          smart_router_min_score: Math.min(1, Math.max(0, num(form.smart_router_min_score, 0))),
-          smart_router_max_score: Math.min(1, Math.max(0, num(form.smart_router_max_score, 1))),
-          intent_router_refs: form.intent_router_refs
-            .filter((c) => c.ref)
-            .map((c) => ({ ...c, model: (c.model || '').trim() || undefined, description: (c.description || '').trim() || undefined })),
-          intent_router_instructions: form.intent_router_instructions.trim() || null,
-          intent_router_min_confidence: form.intent_router_min_confidence === '' || form.intent_router_min_confidence === null ? null : Math.min(1, Math.max(0, num(form.intent_router_min_confidence, 0))),
-          fusion_router_refs: keepEntries(o.fusion_router_refs, form.fusion_router_refs.slice(0, 8)),
-          fusion_router_judge_ref: form.fusion_router_judge_ref || null,
-          fusion_router_synthesizer_ref: form.fusion_router_synthesizer_ref || null,
-        },
+        code_router_refs: form.code_router_refs,
+        min_coding_score: num(form.min_coding_score, 0.5),
+        auto_router_refs: form.auto_router_refs,
+        auto_router_classifier_ref: form.auto_router_classifier_ref || null,
+        cost_quality_tradeoff: num(form.cost_quality_tradeoff, 7),
+        allowed_models: form.allowed_models.map((m) => m.trim()).filter(Boolean),
+        decision_model_ref: form.decision_model_ref || null,
+        decision_model_model: (form.decision_model_ref && form.decision_model_model.trim()) || null,
+        smart_router_refs: form.smart_router_refs,
+        smart_router_min_score: num(form.smart_router_min_score, 0),
+        smart_router_max_score: num(form.smart_router_max_score, 1),
+        intent_router_refs: form.intent_router_refs.filter((c) => c.ref),
+        intent_router_instructions: form.intent_router_instructions.trim() || null,
+        intent_router_min_confidence: form.intent_router_min_confidence === '' || form.intent_router_min_confidence === null ? null : num(form.intent_router_min_confidence, 0),
+        fusion_router_refs: form.fusion_router_refs.slice(0, 8),
+        fusion_router_judge_ref: form.fusion_router_judge_ref || null,
+        fusion_router_synthesizer_ref: form.fusion_router_synthesizer_ref || null,
       };
-      if (router) await Resources.providers.update(entity);
-      else await Resources.providers.create(entity);
-      await syncWorkspaceRefs(workspace.id);
+      if (router) await backend.run('routers.update', workspace.id, { rid: router.id, body });
+      else await backend.run('routers.create', workspace.id, { body });
       toast.success(router ? 'Router saved' : 'Router created');
       onSaved();
     } catch (e) {
@@ -413,31 +371,33 @@ function RouterModal({ workspace, router, providers, decisionModels, existingNam
 
 export function RoutingPage() {
   const { workspace } = useWorkspace();
+  const write = useCan()('config:write');
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState(null);
   const [editingRouter, setEditingRouter] = useState(null);
   const data = useAsync(async () => {
-    const [providers, route, decisionModels] = await Promise.all([
-      Resources.providers.list(workspaceFilter(workspace.id)),
-      Resources.routes.get(routeIdOf(workspace.id)),
-      Resources.decisionModels.list(workspaceFilter(workspace.id)),
-    ]);
-    return { providers, route, decisionModels };
+    const [routing, entities] = await Promise.all([backend.run('routing.get', workspace.id), backend.run('modelEntities.list', workspace.id)]);
+    return { routing, decisionModels: entities.filter((e) => e.modality === 'decision') };
   }, [workspace.id]);
 
-  const all = (data.data && data.data.providers) || [];
-  const real = all.filter((p) => !VIRTUAL_KINDS.includes(p.provider));
-  const balancers = all.filter((p) => p.provider === 'loadbalancer');
-  const routers = all.filter((p) => p.provider === 'otoroshi');
+  const routing = (data.data && data.data.routing) || { providers: [], load_balancers: [], routers: [], order: [] };
+  const real = routing.providers;
+  const balancers = routing.load_balancers;
+  const routers = routing.routers;
+  // every text provider of the workspace, virtual ones included, with what tells them apart in a list
+  const all = [
+    ...real.map((p) => ({ ...p, label: p.model || 'default model' })),
+    ...balancers.map((b) => ({ ...b, label: 'load balancer' })),
+    ...routers.map((r) => ({ ...r, label: 'router' })),
+  ];
   const byId = Object.fromEntries(all.map((p) => [p.id, p]));
-  const refs = data.data ? ((findPlugin(data.data.route, OPENAI_COMPAT_PLUGIN) || { config: {} }).config.language_model_refs || []) : [];
-  const ordered = refs.map((id) => byId[id]).filter(Boolean);
+  const ordered = routing.order.map((id) => byId[id]).filter(Boolean);
   const defaultProvider = ordered[0];
 
   const setFallback = (provider, fallback) => {
-    Resources.providers
-      .update({ ...provider, provider_fallback: fallback || null })
+    backend
+      .run('routing.save', workspace.id, { body: { fallbacks: { [provider.id]: fallback || null } } })
       .then(() => {
         toast.success('Fallback saved');
         data.reload();
@@ -446,10 +406,8 @@ export function RoutingPage() {
   };
 
   const makeDefault = (provider) => {
-    updateWorkspaceRoute(workspace.id, (route) => {
-      const current = (findPlugin(route, OPENAI_COMPAT_PLUGIN) || { config: {} }).config.language_model_refs || [];
-      return setOpenAiConfig(route, { language_model_refs: [provider.id, ...current.filter((id) => id !== provider.id)] });
-    })
+    backend
+      .run('routing.save', workspace.id, { body: { default_provider: provider.id } })
       .then(() => {
         toast.success(`${provider.name} is now the default provider`);
         data.reload();
@@ -460,9 +418,7 @@ export function RoutingPage() {
   const removeVirtual = (b, label) => {
     confirm({ title: `Delete ${b.name}?`, message: `Requests using ${b.name}/… will fail.`, danger: true, confirmLabel: 'Delete' }).then((ok) => {
       if (!ok) return;
-      Resources.providers
-        .delete(b.id)
-        .then(() => syncWorkspaceRefs(workspace.id))
+      (label === 'Router' ? backend.run('routers.delete', workspace.id, { rid: b.id }) : backend.run('balancers.delete', workspace.id, { lid: b.id }))
         .then(() => {
           toast.success(`${label} deleted`);
           data.reload();
@@ -505,17 +461,17 @@ export function RoutingPage() {
                     {real.map((p) => (
                       <tr key={p.id}>
                         <td>
-                          {p.name} <span className="faint small">({p.provider})</span>
+                          {p.name} <span className="faint small">({p.kind})</span>
                         </td>
-                        <td className="mono">{(p.options || {}).model || '—'}</td>
+                        <td className="mono">{p.model || '—'}</td>
                         <td>
-                          <Select className="sm" value={p.provider_fallback || ''} onChange={(v) => setFallback(p, v)} placeholder="None" options={all.filter((o) => o.id !== p.id).map((o) => ({ value: o.id, label: o.name }))} />
+                          <Select className="sm" disabled={!write} value={p.fallback || ''} onChange={(v) => setFallback(p, v)} placeholder="None" options={all.filter((o) => o.id !== p.id).map((o) => ({ value: o.id, label: o.name }))} />
                         </td>
                         <td>
                           <div className="badges">
-                            {chainOf(p, byId).map((n, i) => (
+                            {p.chain.map((c, i) => (
                               <Badge key={i} kind="accent">
-                                {n}
+                                {c.name}
                               </Badge>
                             ))}
                           </div>
@@ -534,7 +490,7 @@ export function RoutingPage() {
                 <h2>Load balancing</h2>
                 <p>Spread the traffic over several providers. A load balancer is exposed like a provider of the workspace.</p>
               </div>
-              <button className="btn sm primary" disabled={real.length === 0} onClick={() => setEditing({})}>
+              <button className="btn sm primary" hidden={!write} disabled={real.length === 0} onClick={() => setEditing({})}>
                 New load balancer
               </button>
             </div>
@@ -555,19 +511,16 @@ export function RoutingPage() {
                     {balancers.map((b) => (
                       <tr key={b.id}>
                         <td>{b.name}</td>
-                        <td className="muted">{((b.options || {}).loadbalancing || 'round_robin').replace(/_/g, ' ')}</td>
+                        <td className="muted">{(b.strategy || 'round_robin').replace(/_/g, ' ')}</td>
                         <td>
                           <div className="badges">
-                            {((b.options || {}).refs || []).map((r, i) => {
-                              const ref = typeof r === 'string' ? r : r.ref;
-                              return (
-                                <Badge key={i} kind="accent">
-                                  {(byId[ref] || { name: ref }).name}
-                                  {typeof r === 'object' && r.model ? ` · ${r.model}` : ''}
-                                  {typeof r === 'object' && r.weight > 1 ? ` ×${r.weight}` : ''}
-                                </Badge>
-                              );
-                            })}
+                            {b.targets.map((t, i) => (
+                              <Badge key={i} kind="accent">
+                                {(byId[t.ref] || { name: t.ref }).name}
+                                {t.model ? ` · ${t.model}` : ''}
+                                {t.weight > 1 ? ` ×${t.weight}` : ''}
+                              </Badge>
+                            ))}
                           </div>
                         </td>
                         <td>
@@ -577,10 +530,10 @@ export function RoutingPage() {
                           </span>
                         </td>
                         <td className="actions">
-                          <button className="btn sm" onClick={() => setEditing({ balancer: b })}>
+                          <button className="btn sm" hidden={!write} onClick={() => setEditing({ balancer: b })}>
                             Edit
                           </button>
-                          <button className="btn sm ghost" onClick={() => removeVirtual(b, 'Load balancer')}>
+                          <button className="btn sm ghost" hidden={!write} onClick={() => removeVirtual(b, 'Load balancer')}>
                             Delete
                           </button>
                         </td>
@@ -598,7 +551,7 @@ export function RoutingPage() {
                 <h2>Smart routing</h2>
                 <p>Let the gateway pick the model: the cheapest good coder, the best model for each prompt, the one a decision model picks, or a panel of models answering together.</p>
               </div>
-              <button className="btn sm primary" disabled={real.length === 0} onClick={() => setEditingRouter({})}>
+              <button className="btn sm primary" hidden={!write} disabled={real.length === 0} onClick={() => setEditingRouter({})}>
                 New router
               </button>
             </div>
@@ -617,7 +570,7 @@ export function RoutingPage() {
                   <tbody>
                     {routers.map((r) => {
                       const modes = configuredModes(r);
-                      const ids = [...new Set(modes.flatMap((m) => ((r.options || {})[m.refs] || []).map((x) => (typeof x === 'string' ? x : x.ref))))];
+                      const ids = [...new Set(modes.flatMap((m) => refsOf(r[m.refs])))];
                       return (
                         <tr key={r.id}>
                           <td>{r.name}</td>
@@ -644,10 +597,10 @@ export function RoutingPage() {
                             </div>
                           </td>
                           <td className="actions">
-                            <button className="btn sm" onClick={() => setEditingRouter({ router: r })}>
+                            <button className="btn sm" hidden={!write} onClick={() => setEditingRouter({ router: r })}>
                               Edit
                             </button>
-                            <button className="btn sm ghost" onClick={() => removeVirtual(r, 'Router')}>
+                            <button className="btn sm ghost" hidden={!write} onClick={() => removeVirtual(r, 'Router')}>
                               Delete
                             </button>
                           </td>
@@ -667,12 +620,8 @@ export function RoutingPage() {
             </p>
             {defaultProvider ? (
               <div className="form-grid">
-                <Field label="Provider" hint={`Serves requests with ${(defaultProvider.options || {}).model ? `\`${defaultProvider.options.model}\` when they do not ask for a model` : 'its default model when they do not ask for a model'}.`}>
-                  <Select
-                    value={defaultProvider.id}
-                    onChange={(v) => v !== defaultProvider.id && byId[v] && makeDefault(byId[v])}
-                    options={ordered.map((p) => ({ value: p.id, label: `${p.name} (${p.provider === 'loadbalancer' ? 'load balancer' : p.provider === 'otoroshi' ? 'router' : (p.options || {}).model || 'default model'})` }))}
-                  />
+                <Field label="Provider" hint={`Serves requests with ${defaultProvider.model ? `\`${defaultProvider.model}\` when they do not ask for a model` : 'its default model when they do not ask for a model'}.`}>
+                  <Select disabled={!write} value={defaultProvider.id} onChange={(v) => v !== defaultProvider.id && byId[v] && makeDefault(byId[v])} options={ordered.map((p) => ({ value: p.id, label: `${p.name} (${p.label})` }))} />
                 </Field>
               </div>
             ) : (

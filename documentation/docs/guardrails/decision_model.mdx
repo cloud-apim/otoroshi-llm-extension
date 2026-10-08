@@ -77,6 +77,8 @@ A yes/no question covers most checks. For the others, give the whole question in
 | `choice` | The chosen option is one of the denied ones, with at least the given confidence | `deny_choices`, `min_confidence` |
 | `score` | The score reaches the maximum | `max_score` |
 
+Some models, like the ones of OpenAI, can decline to answer a question. What the decision model refused to judge is denied.
+
 ## Billing and budgets
 
 The decision is a call of its own: it is priced, logged and counted against the budgets of the decision model, while the guarded LLM call keeps counting for its own provider.

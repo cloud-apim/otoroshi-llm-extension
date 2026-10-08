@@ -3,12 +3,12 @@ package com.cloud.apim.otoroshi.extensions.aigateway.studio
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
 import org.apache.pekko.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsMetadata
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.{ModelEndpoints, ModelsMetadata}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, ImageModel}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.SystemOneProviders
 import otoroshi.env.Env
 import otoroshi.models.{BackOfficeUser, EntityLocation, PrivateAppsUser}
-import otoroshi.next.models.NgTarget
+import otoroshi.next.models.{NgRoute, NgTarget}
 import otoroshi.next.plugins.api.{NgBackendCall, NgPluginHttpRequest, NgbBackendCallContext}
 import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.next.extensions.*
@@ -240,97 +240,102 @@ class AiStudio(env: Env, ext: AiExtension) {
     }
   }
 
-  // Serves a call of the studio chat with the OpenAI compatible plugin of the workspace route, invoked
-  // in process for the backoffice user: no api key, no http hop. The engine is bypassed, so only what
-  // the plugin and the providers do applies (guardrails, budgets, fallbacks, costs, audit), and the
-  // backoffice user becomes the request user so usage and budgets can be tracked per user.
+  // Serves a call of the studio chat for the backoffice user (see callWorkspace)
   def handleWorkspaceCall(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
     user match {
       case None => unauthorized
       case Some(u) =>
         val wsId = ctx.named("id").getOrElse("--")
         withWorkspaceRoute(wsId, u, write = false) { route =>
-          val slot = route.plugins.slots.find(s => s.plugin == openAiCompatPlugin && s.enabled)
-          (slot, env.scriptManager.getAnyScript[NgBackendCall](openAiCompatPlugin)) match {
-            case _ if !route.enabled =>
-              Results.Forbidden(Json.obj("error" -> "forbidden", "error_description" -> "this workspace is disabled")).vfuture
-            case (None, _) =>
-              Results.NotFound(Json.obj("error" -> "not_found", "error_description" -> "the workspace route has no enabled OpenAI compatible plugin")).vfuture
-            case (_, Left(err)) =>
-              Results.InternalServerError(Json.obj("error" -> "internal_error", "error_description" -> s"OpenAI compatible plugin not available: $err")).vfuture
-            case (Some(instance), Right(plugin)) =>
-              body.map(_.runFold(ByteString.empty)(_ ++ _)).getOrElse(ByteString.empty.vfuture).flatMap { bytes =>
-                val domain = route.frontend.domains.head
-                val path = req.path.split(s"/workspaces/$wsId/proxy", 2).lastOption.filter(_.nonEmpty).getOrElse("/")
-                val query = req.rawQueryString match {
-                  case "" => ""
-                  case q  => s"?$q"
-                }
-                val snowflake = env.snowflakeGenerator.nextIdStr()
-                val requestUser = studioUser(u)
-                val headers = Map(
-                  "Host" -> domain.domain,
-                  "Accept" -> req.headers.get("Accept").getOrElse("application/json"),
-                ) ++ req.headers.get("Content-Type").map(ct => "Content-Type" -> ct) ++
-                  (if (bytes.nonEmpty) Map("Content-Length" -> bytes.size.toString) else Map.empty)
-                val request = NgPluginHttpRequest(
-                  url = s"${AiStudioConfig.current(env).publicScheme(env)}://${domain.domain}${domain.path.stripSuffix("/")}$path$query",
-                  method = req.method,
-                  headers = headers,
-                  cookies = Seq.empty,
-                  version = req.version,
-                  clientCertificateChain = () => None,
-                  body = if (bytes.isEmpty) Source.empty else Source.single(bytes),
-                  backend = None
-                )
-                // what the proxy engine puts in the attributes and the plugins of the extension read
-                val attrs = otoroshi.utils.TypedMap.empty.put(
-                  otoroshi.plugins.Keys.RequestKey -> req,
-                  otoroshi.plugins.Keys.SnowFlakeKey -> snowflake,
-                  otoroshi.plugins.Keys.RequestTimestampKey -> org.joda.time.DateTime.now(),
-                  otoroshi.plugins.Keys.RequestStartKey -> System.currentTimeMillis(),
-                  otoroshi.plugins.Keys.ElCtxKey -> Map("requestId" -> snowflake, "requestSnowflake" -> snowflake),
-                  otoroshi.plugins.Keys.UserKey -> requestUser,
-                  otoroshi.next.plugins.Keys.RouteKey -> route,
-                )
-                val callCtx = NgbBackendCallContext(
-                  snowflake = snowflake,
-                  rawRequest = req,
-                  request = request,
-                  route = route,
-                  backend = route.backend.targets.headOption.getOrElse(NgTarget.default),
-                  user = Some(requestUser),
-                  apikey = None,
-                  config = instance.config.raw,
-                  globalConfig = env.datastores.globalConfigDataStore.latest().plugins.config,
-                  attrs = attrs,
-                  idx = route.plugins.slots.indexOf(instance),
-                )
-                val noDelegates = () => Left(NgProxyEngineError.NgResultProxyEngineError(Results.NotFound(Json.obj("error" -> "not_found")))).vfuture
-                plugin.callBackend(callCtx, noDelegates).flatMap {
-                  case Left(err) => err.asResult()
-                  case Right(resp) =>
-                    val r = resp.response
-                    val skipped = Set("content-type", "content-length", "transfer-encoding")
-                    Results.Status(r.status)
-                      .sendEntity(HttpEntity.Streamed(r.body, r.header("Content-Length").flatMap(_.toLongOption), r.header("Content-Type")))
-                      .withHeaders(r.headers.toSeq.filterNot { case (k, _) => skipped.contains(k.toLowerCase) }*)
-                      .vfuture
-                }.recover { case e: Throwable =>
-                  Results.InternalServerError(Json.obj("error" -> "internal_error", "error_description" -> e.getMessage))
-                }
-              }
+          callWorkspace(route, wsId, req, studioUser(u.email, u.name), body)
+        }
+    }
+  }
+
+  // Serves a call of the studio chat with the OpenAI compatible plugin of the workspace route, invoked
+  // in process for a studio user: no api key, no http hop. The engine is bypassed, so only what the
+  // plugin and the providers do applies (guardrails, budgets, fallbacks, costs, audit), and the studio
+  // user becomes the request user so usage and budgets can be tracked per user. The backoffice route
+  // calls it for the backoffice user, the studio admin api on behalf of the user it names.
+  def callWorkspace(route: NgRoute, wsId: String, req: RequestHeader, requestUser: PrivateAppsUser, body: Option[Source[ByteString, ?]]): Future[Result] = {
+    val slot = route.plugins.slots.find(s => s.plugin == openAiCompatPlugin && s.enabled)
+    (slot, env.scriptManager.getAnyScript[NgBackendCall](openAiCompatPlugin)) match {
+      case _ if !route.enabled =>
+        Results.Forbidden(Json.obj("error" -> "forbidden", "error_description" -> "this workspace is disabled")).vfuture
+      case (None, _) =>
+        Results.NotFound(Json.obj("error" -> "not_found", "error_description" -> "the workspace route has no enabled OpenAI compatible plugin")).vfuture
+      case (_, Left(err)) =>
+        Results.InternalServerError(Json.obj("error" -> "internal_error", "error_description" -> s"OpenAI compatible plugin not available: $err")).vfuture
+      case (Some(instance), Right(plugin)) =>
+        body.map(_.runFold(ByteString.empty)(_ ++ _)).getOrElse(ByteString.empty.vfuture).flatMap { bytes =>
+          val domain = route.frontend.domains.head
+          val path = req.path.split(s"/workspaces/$wsId/proxy", 2).lastOption.filter(_.nonEmpty).getOrElse("/")
+          val query = req.rawQueryString match {
+            case "" => ""
+            case q  => s"?$q"
+          }
+          val snowflake = env.snowflakeGenerator.nextIdStr()
+          val headers = Map(
+            "Host" -> domain.domain,
+            "Accept" -> req.headers.get("Accept").getOrElse("application/json"),
+          ) ++ req.headers.get("Content-Type").map(ct => "Content-Type" -> ct) ++
+            (if (bytes.nonEmpty) Map("Content-Length" -> bytes.size.toString) else Map.empty)
+          val request = NgPluginHttpRequest(
+            url = s"${AiStudioConfig.current(env).publicScheme(env)}://${domain.domain}${domain.path.stripSuffix("/")}$path$query",
+            method = req.method,
+            headers = headers,
+            cookies = Seq.empty,
+            version = req.version,
+            clientCertificateChain = () => None,
+            body = if (bytes.isEmpty) Source.empty else Source.single(bytes),
+            backend = None
+          )
+          // what the proxy engine puts in the attributes and the plugins of the extension read
+          val attrs = otoroshi.utils.TypedMap.empty.put(
+            otoroshi.plugins.Keys.RequestKey -> req,
+            otoroshi.plugins.Keys.SnowFlakeKey -> snowflake,
+            otoroshi.plugins.Keys.RequestTimestampKey -> org.joda.time.DateTime.now(),
+            otoroshi.plugins.Keys.RequestStartKey -> System.currentTimeMillis(),
+            otoroshi.plugins.Keys.ElCtxKey -> Map("requestId" -> snowflake, "requestSnowflake" -> snowflake),
+            otoroshi.plugins.Keys.UserKey -> requestUser,
+            otoroshi.next.plugins.Keys.RouteKey -> route,
+          )
+          val callCtx = NgbBackendCallContext(
+            snowflake = snowflake,
+            rawRequest = req,
+            request = request,
+            route = route,
+            backend = route.backend.targets.headOption.getOrElse(NgTarget.default),
+            user = Some(requestUser),
+            apikey = None,
+            config = instance.config.raw,
+            globalConfig = env.datastores.globalConfigDataStore.latest().plugins.config,
+            attrs = attrs,
+            idx = route.plugins.slots.indexOf(instance),
+          )
+          val noDelegates = () => Left(NgProxyEngineError.NgResultProxyEngineError(Results.NotFound(Json.obj("error" -> "not_found")))).vfuture
+          plugin.callBackend(callCtx, noDelegates).flatMap {
+            case Left(err) => err.asResult()
+            case Right(resp) =>
+              val r = resp.response
+              val skipped = Set("content-type", "content-length", "transfer-encoding")
+              Results.Status(r.status)
+                .sendEntity(HttpEntity.Streamed(r.body, r.header("Content-Length").flatMap(_.toLongOption), r.header("Content-Type")))
+                .withHeaders(r.headers.toSeq.filterNot { case (k, _) => skipped.contains(k.toLowerCase) }*)
+                .vfuture
+          }.recover { case e: Throwable =>
+            Results.InternalServerError(Json.obj("error" -> "internal_error", "error_description" -> e.getMessage))
           }
         }
     }
   }
 
-  // the backoffice user, as the request user the plugins see (audit events, budgets scoped on users)
-  private def studioUser(u: BackOfficeUser): PrivateAppsUser = PrivateAppsUser(
-    randomId = s"ai-studio-${u.email.sha256.take(16)}",
-    name = u.name,
-    email = u.email,
-    profile = Json.obj("email" -> u.email, "name" -> u.name),
+  // the studio user, as the request user the plugins see (audit events, budgets scoped on users)
+  def studioUser(email: String, name: String): PrivateAppsUser = PrivateAppsUser(
+    randomId = s"ai-studio-${email.sha256.take(16)}",
+    name = name,
+    email = email,
+    profile = Json.obj("email" -> email, "name" -> name),
     realm = "ai-studio",
     authConfigId = "ai-studio",
     otoroshiData = None,
@@ -347,7 +352,6 @@ class AiStudio(env: Env, ext: AiExtension) {
     "moderation" -> "moderations",
     "ocr" -> "ocr",
     "video" -> "videos",
-    "decision" -> "systemone",
   )
 
   /**
@@ -375,6 +379,8 @@ class AiStudio(env: Env, ext: AiExtension) {
           Option.when(on("stt"))("audio_transcriptions"),
           Option.when(client.map(_.supportsTranslation).getOrElse(on("translate")))("audio_translations"),
         ).flatten
+      // both decision apis, the one the provider speaks first
+      case "decision" => ModelEndpoints.decisions(entity.select("provider").asOptString.getOrElse(""))
       case other   => modalityEndpoints.get(other).toSeq
     }
   }
@@ -383,9 +389,10 @@ class AiStudio(env: Env, ext: AiExtension) {
    * The models an entity of this modality serves, each with the endpoint it is called on. An audio model
    * carries two of them: a voice, served on `/audio/speech`, and a transcription model, served on
    * `/audio/transcriptions` — they are two different models and both belong in the listing. The same goes for
-   * the model an image entity edits with, when it is not the one it draws with.
+   * the model an image entity edits with, when it is not the one it draws with. The model of another entity is
+   * served on every endpoint of the entity, `endpoints`.
    */
-  private def modelsOf(config: JsValue, modality: String): Seq[(String, String)] = {
+  private def modelsOf(config: JsValue, modality: String, endpoints: Seq[String]): Seq[(String, String)] = {
     val options = config.select("options")
     def modelIn(values: JsLookupResult*): Option[String] = values
       .filterNot(_.select("enabled").asOpt[Boolean].contains(false))
@@ -398,7 +405,7 @@ class AiStudio(env: Env, ext: AiExtension) {
       case "audio" => modelIn(config.select("tts"), options.select("tts")).toSeq.map(m => (m, "audio_speech")) ++
         modelIn(config.select("stt"), options.select("stt")).toSeq.map(m => (m, "audio_transcriptions")) ++
         modelIn(config.select("translate"), options.select("translation")).toSeq.map(m => (m, "audio_translations"))
-      case _ => modelIn(options).toSeq.map(m => (m, endpoint))
+      case _ => modelIn(options).toSeq.flatMap(m => endpoints.map(e => (m, e)))
     }
   }
 
@@ -529,9 +536,9 @@ class AiStudio(env: Env, ext: AiExtension) {
             val slug = entity.select("metadata").select("endpoint_name").asOptString
               .orElse(entity.select("metadata").select("provider_name").asOptString)
               .getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
-            val served = modelsOf(entity.select("config").asOpt[JsValue].getOrElse(Json.obj()), modality)
-            val config = entity.select("config").asOpt[JsValue].getOrElse(Json.obj())
             val endpoints = endpointsOf(entity, modality)
+            val served = modelsOf(entity.select("config").asOpt[JsValue].getOrElse(Json.obj()), modality, endpoints)
+            val config = entity.select("config").asOpt[JsValue].getOrElse(Json.obj())
             val info = Json.obj(
               "id" -> ref, "name" -> name, "slug" -> slug, "kind" -> entity.select("provider").asOptString.getOrElse("--").json,
               "modality" -> modality,

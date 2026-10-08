@@ -1079,3 +1079,16 @@ i.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex
   .api-text { grid-column: 2 / -1; grid-row: 2; }
   .api-endpoint-body { padding-left: 22px; }
 }
+
+/* a group of fields disabled at once, for who can only read them */
+fieldset.bare {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
+/* `hidden` wins over the display of a component class (a button the user cannot use) */
+[hidden] {
+  display: none !important;
+}

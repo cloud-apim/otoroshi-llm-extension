@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Checks, CopyButton, Empty, ErrorAlert, Field, Loading, PageHeader, Readonly, Select, StatusBadge, TextArea, TextInput, Toggle, useAsync, useConfirm, useToast } from '../components/ui';
 import { Icon } from '../components/icons';
-import { Resources, workspaceFilter } from '../lib/entities';
+import { backend } from '../lib/backend';
 import { Link } from '../lib/router';
-import { clientConfigOf, deleteMcpServer, exampleArguments, loadMcpServer, mcpCall, mcpUrlOf, saveMcpServer, toolRefsOf } from '../lib/mcpserver';
+import { clientConfigOf, exampleArguments, mcpCall, mcpUrlOf } from '../lib/mcpserver';
 import { fmtMs } from '../lib/format';
 
 const emptyForm = (workspace) => ({
@@ -17,17 +17,17 @@ const emptyForm = (workspace) => ({
   metaSemanticSearch: false,
 });
 
+// `server` is the view of the studio api, null while the workspace serves no MCP server
 function formOf(workspace, server) {
   if (!server) return emptyForm(workspace);
-  const refs = toolRefsOf(server);
   return {
     name: server.name || '',
     description: server.description || '',
     enabled: server.enabled !== false,
-    functions: refs.functions,
-    connectors: refs.connectors,
-    exposeAsMeta: !!(server.config && server.config.expose_as_meta),
-    metaSemanticSearch: !!(server.config && server.config.meta_semantic_search),
+    functions: server.functions,
+    connectors: server.connectors,
+    exposeAsMeta: !!server.expose_as_meta,
+    metaSemanticSearch: !!server.meta_semantic_search,
   };
 }
 
@@ -231,6 +231,7 @@ function PlaygroundCard({ workspace }) {
 
 export function McpServerPage() {
   const { workspace, reload } = useWorkspace();
+  const write = useCan()('config:write');
   const toast = useToast();
   const confirm = useConfirm();
   const [form, setForm] = useState(null);
@@ -238,13 +239,8 @@ export function McpServerPage() {
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
   const data = useAsync(async () => {
-    const filter = workspaceFilter(workspace.id);
-    const [server, functions, mcp] = await Promise.all([
-      loadMcpServer(workspace.id),
-      Resources.functions.list(filter),
-      Resources.mcpConnectors.list(filter),
-    ]);
-    return { server, functions, mcp };
+    const [server, tools] = await Promise.all([backend.run('mcpServer.get', workspace.id), backend.run('tools.list', workspace.id)]);
+    return { server: server.served ? server : null, functions: tools.filter((t) => t.kind === 'functions'), mcp: tools.filter((t) => t.kind === 'mcp') };
   }, [workspace.id]);
 
   const server = data.data && data.data.server;
@@ -255,7 +251,17 @@ export function McpServerPage() {
   const save = async () => {
     setSaving(true);
     try {
-      await saveMcpServer(workspace, form);
+      await backend.run('mcpServer.save', workspace.id, {
+        body: {
+          name: form.name,
+          description: form.description,
+          enabled: form.enabled,
+          functions: form.functions,
+          connectors: form.connectors,
+          expose_as_meta: form.exposeAsMeta,
+          meta_semantic_search: form.metaSemanticSearch,
+        },
+      });
       toast.success(server ? 'MCP server saved' : 'MCP server enabled');
       data.reload();
       reload();
@@ -275,7 +281,7 @@ export function McpServerPage() {
     });
     if (!ok) return;
     try {
-      await deleteMcpServer(workspace);
+      await backend.run('mcpServer.delete', workspace.id);
       toast.success('MCP server removed');
       data.reload();
       reload();
@@ -290,13 +296,13 @@ export function McpServerPage() {
         title="MCP server"
         description="Expose the tools of this workspace to MCP clients — Claude, Cursor, your own agents — on the same endpoint and with the same API keys as the models."
       >
-        {server && (
+        {server && write && (
           <button className="btn ghost" onClick={remove}>
             <Icon name="trash" />
             Stop serving
           </button>
         )}
-        {form && (
+        {form && write && (
           <button className="btn primary" onClick={save} disabled={saving || !form.name}>
             {saving ? 'Saving…' : server ? 'Save' : 'Enable MCP server'}
           </button>
@@ -306,42 +312,44 @@ export function McpServerPage() {
       {data.loading && !data.data && <Loading />}
       {form && (
         <div className="stack">
-          <div className="card">
-            <div className="row between center">
-              <div>
-                <h2 style={{ margin: 0 }}>
-                  {server ? 'Serving' : 'Not served yet'}{' '}
-                  {server && <StatusBadge enabled={form.enabled} on="Enabled" off="Disabled" />}
-                </h2>
-                <p className="muted" style={{ margin: '4px 0 0' }}>
-                  {server
-                    ? `Exposed on ${mcpUrlOf(workspace)}`
-                    : 'Pick the tools to expose, then enable the server: the endpoint returns 404 until then.'}
-                </p>
+          <fieldset className="bare stack" disabled={!write}>
+            <div className="card">
+              <div className="row between center">
+                <div>
+                  <h2 style={{ margin: 0 }}>
+                    {server ? 'Serving' : 'Not served yet'}{' '}
+                    {server && <StatusBadge enabled={form.enabled} on="Enabled" off="Disabled" />}
+                  </h2>
+                  <p className="muted" style={{ margin: '4px 0 0' }}>
+                    {server
+                      ? `Exposed on ${mcpUrlOf(workspace)}`
+                      : 'Pick the tools to expose, then enable the server: the endpoint returns 404 until then.'}
+                  </p>
+                </div>
+                {server && <Toggle value={form.enabled} onChange={(enabled) => set({ enabled })} title="Serve this MCP server" />}
               </div>
-              {server && <Toggle value={form.enabled} onChange={(enabled) => set({ enabled })} title="Serve this MCP server" />}
+              <div className="grid cols-2" style={{ marginTop: 16 }}>
+                <Field label="Name" hint="What clients display for this server.">
+                  <TextInput value={form.name} onChange={(name) => set({ name })} placeholder="Acme tools" />
+                </Field>
+                <Field label="Description">
+                  <TextArea rows={2} value={form.description} onChange={(description) => set({ description })} placeholder="The tools of the Acme workspace" />
+                </Field>
+                <Field
+                  label="Meta mode"
+                  hint="The MCP connectors are exposed through five tools — list_servers, list_tools, get_tool_schema, search_tools and execute — instead of their full tool list."
+                >
+                  <Toggle value={form.exposeAsMeta} onChange={(exposeAsMeta) => set({ exposeAsMeta })} title="Expose as meta" />
+                </Field>
+                <Field label="Semantic tool search" hint="In meta mode, search_tools also ranks the tools by meaning, on top of their keywords.">
+                  <Toggle value={form.metaSemanticSearch} onChange={(metaSemanticSearch) => set({ metaSemanticSearch })} title="Semantic tool search" />
+                </Field>
+              </div>
             </div>
-            <div className="grid cols-2" style={{ marginTop: 16 }}>
-              <Field label="Name" hint="What clients display for this server.">
-                <TextInput value={form.name} onChange={(name) => set({ name })} placeholder="Acme tools" />
-              </Field>
-              <Field label="Description">
-                <TextArea rows={2} value={form.description} onChange={(description) => set({ description })} placeholder="The tools of the Acme workspace" />
-              </Field>
-              <Field
-                label="Meta mode"
-                hint="The MCP connectors are exposed through five tools — list_servers, list_tools, get_tool_schema, search_tools and execute — instead of their full tool list."
-              >
-                <Toggle value={form.exposeAsMeta} onChange={(exposeAsMeta) => set({ exposeAsMeta })} title="Expose as meta" />
-              </Field>
-              <Field label="Semantic tool search" hint="In meta mode, search_tools also ranks the tools by meaning, on top of their keywords.">
-                <Toggle value={form.metaSemanticSearch} onChange={(metaSemanticSearch) => set({ metaSemanticSearch })} title="Semantic tool search" />
-              </Field>
-            </div>
-          </div>
-          <ToolsCard workspace={workspace} form={form} set={set} tools={data.data} />
+            <ToolsCard workspace={workspace} form={form} set={set} tools={data.data} />
+          </fieldset>
           {server && <ConnectCard workspace={workspace} />}
-          {server && server.enabled !== false && <PlaygroundCard key={JSON.stringify([toolRefsOf(server), server.config && server.config.expose_as_meta])} workspace={workspace} />}
+          {server && server.enabled !== false && <PlaygroundCard key={JSON.stringify([server.functions, server.connectors, server.expose_as_meta])} workspace={workspace} />}
           {server && (
             <div className="card">
               <h2>Activity</h2>

@@ -360,7 +360,7 @@ export function Playground({ model, workspace, providers }) {
         <textarea rows={4} placeholder={current.placeholder} value={text} onChange={(e) => setText(e.target.value)} />
       )}
       <div className="row between">
-        <span className="faint small">{current.input === 'file' ? `Sent to ${workspace.baseUrl}` : current.hint}</span>
+        <span className="faint small">{current.input === 'file' ? `Sent to ${workspace.base_url}` : current.hint}</span>
         <div className="row">
           {busy && (
             <button className="btn sm" onClick={() => abort.current && abort.current.abort()}>

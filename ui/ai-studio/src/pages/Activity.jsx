@@ -5,7 +5,8 @@ import { Icon } from '../components/icons';
 import { Empty, ErrorAlert, Loading, MenuButton, PageHeader, Pager, Select, Tabs, useAsync, usePaged, useToast } from '../components/ui';
 import { BudgetsCard, ConsumersCard, Kpi, UsageCard } from '../components/usage';
 import { compareOf, itemsOf, NoExporterError, periodSlug, periodSpan, runQuery, scalarOf, seriesOf, totalPoints } from '../lib/analytics';
-import { listApikeys } from '../lib/apikeys';
+import { backend } from '../lib/backend';
+import { adminLink } from '../lib/platform';
 import { downloadCsv, exportName, isoDate } from '../lib/files';
 import { fmtCost, fmtInt, fmtMs, fmtNumber, fmtPercent } from '../lib/format';
 import { PeriodPicker, RefreshControl, useTimeView } from '../components/timeview';
@@ -234,7 +235,7 @@ export function ActivityPage() {
   const [refresh, setRefresh] = useState(0);
   const [exporting, setExporting] = useState(false);
   const toast = useToast();
-  const keys = useAsync(() => listApikeys(workspace.id), [workspace.id]);
+  const keys = useAsync(() => backend.run('keys.list', workspace.id), [workspace.id]);
   // the users that called the workspace in the period, whatever the user filter, to fill the picker
   const users = useAsync(
     () =>
@@ -246,8 +247,8 @@ export function ActivityPage() {
 
   const opts = { period, apikey: apikey || undefined, user: user || undefined, nocache: refresh > 0, refresh };
   const q = (id, extra = {}) => runQuery(workspace.id, id, { ...opts, ...extra });
-  const clientIdOf = (name) => ((keys.data || []).find((k) => k.clientName === name) || (keys.data || []).find((k) => k.clientId === name) || {}).clientId;
-  const keyName = (clientId) => ((keys.data || []).find((k) => k.clientId === clientId) || { clientName: clientId }).clientName;
+  const clientIdOf = (name) => ((keys.data || []).find((k) => k.name === name) || (keys.data || []).find((k) => k.client_id === name) || {}).client_id;
+  const keyName = (clientId) => ((keys.data || []).find((k) => k.client_id === clientId) || { name: clientId }).name;
   const userOptions = [...new Set([...(users.data || []).map((u) => u.user), ...(user ? [user] : [])])].map((u) => ({ value: u, label: u }));
 
   const kpis = useAsync(async () => {
@@ -323,8 +324,8 @@ export function ActivityPage() {
           onChange={(v) => setFilters({ apikey: v })}
           placeholder="All API keys"
           options={[
-            ...(keys.data || []).map((key) => ({ value: key.clientId, label: key.clientName })),
-            ...(apikey && keys.data && !keys.data.some((k) => k.clientId === apikey) ? [{ value: apikey, label: apikey }] : []),
+            ...(keys.data || []).map((key) => ({ value: key.client_id, label: key.name })),
+            ...(apikey && keys.data && !keys.data.some((k) => k.client_id === apikey) ? [{ value: apikey, label: apikey }] : []),
           ]}
         />
         <Select className="sm" value={user} onChange={(v) => setFilters({ user: v })} placeholder="All users" options={userOptions} />
@@ -387,9 +388,13 @@ export function ActivityPage() {
         <div className="stack">
           <div className="alert info">
             Usage analytics need an active <b>user analytics exporter</b> (PostgreSQL) in Otoroshi. Create one in{' '}
-            <a className="link" href="/bo/dashboard/exporters" target="_blank" rel="noreferrer">
-              data exporters
-            </a>{' '}
+            {adminLink('/exporters') ? (
+              <a className="link" href={adminLink('/exporters')} target="_blank" rel="noreferrer">
+                data exporters
+              </a>
+            ) : (
+              'data exporters'
+            )}{' '}
             and every call of this workspace will show up here. Budgets below are live counters and work without it.
           </div>
           <BudgetsCard workspace={workspace} />

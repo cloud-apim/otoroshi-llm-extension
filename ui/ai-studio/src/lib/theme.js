@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { api } from './api';
+import { backend } from './backend';
 import { bootstrap } from './bootstrap';
 
 // The theme preference (light, dark or system) is stored in the otoroshi preferences of the
 // backoffice user, so it follows the user across browsers. `system` follows the OS setting live.
 
-const PREFERENCE = '/bo/api/me/preferences/ai_studio_theme';
+const PREFERENCE = 'ai_studio_theme';
 export const THEMES = ['light', 'dark', 'system'];
 
 function systemTheme() {
@@ -37,7 +37,7 @@ export function useTheme() {
   const choose = (value) => {
     setPreference(value);
     bootstrap.theme = value;
-    api.post(PREFERENCE, value).catch(() => {});
+    backend.prefs.set(PREFERENCE, value).catch(() => {});
   };
 
   return { theme, preference, choose };

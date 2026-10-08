@@ -1,0 +1,183 @@
+---
+sidebar_position: 4
+---
+
+# OpenAI decisions API
+
+Your decision models also answer the **decisions API of OpenAI**. An application written with the OpenAI SDKs calls `client.decisions.create(...)` against the gateway, and the decision is made by the model you chose for it: Jev, Clef, a model you host, or one of your LLMs. Same entities, same API keys, same budgets and cost tracking as the System One endpoint.
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://api.domain.tld/v1",
+    api_key="your-otoroshi-api-key",
+)
+
+result = client.decisions.create(
+    model="jev-latest",
+    input="The package arrived with a broken screen. I want my money back.",
+    questions=[
+        {"type": "predicate", "name": "damaged", "instructions": "Does the customer report a damaged item?"},
+        {
+            "type": "choice",
+            "name": "action",
+            "instructions": "What should we do?",
+            "choices": [
+                {"value": "refund", "description": "Refund the order"},
+                {"value": "replace", "description": "Send a new one"},
+                {"value": "escalate", "description": "Ask a human"},
+            ],
+        },
+    ],
+)
+
+damaged, action = result.answers
+print(damaged.probability)
+print(action.choice)
+```
+
+## Endpoints
+
+| Plugin | Path |
+|--------|------|
+| [LLM OpenAI Compatible API](/docs/llm-gateway/openai-compat-api) | `/v1/decisions`, next to `/v1/systemone` and the other endpoints, with the decision models of `decision_model_refs` |
+| **OpenAI decisions backend** | Any path of its route, with the decision models of its `refs` |
+
+```js
+{
+  "enabled": true,
+  "plugin": "cp:otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAICompatDecisions",
+  "config": {
+    "refs": ["decision-model-entity-id"]
+  }
+}
+```
+
+The `model` of a request picks the decision model and the model it is asked for, with the [same rules](/docs/decision-models/plugins#model-routing) as the System One endpoint. Without a `model`, the first decision model answers with its own.
+
+## Request
+
+```sh
+curl https://api.domain.tld/v1/decisions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
+  -d '{
+    "model": "jev-latest",
+    "input": "The package arrived with a broken screen.",
+    "questions": [
+      { "type": "predicate", "name": "damaged", "instructions": "Does the customer report a damaged item?" },
+      {
+        "type": "choice",
+        "name": "refund",
+        "instructions": "Should we refund the order?",
+        "choices": [
+          { "value": true, "description": "Refund it" },
+          { "value": false, "description": "Do not refund it" }
+        ]
+      },
+      {
+        "type": "score",
+        "name": "anger",
+        "instructions": "How angry is the customer?",
+        "levels": [
+          { "label": "calm" },
+          { "label": "upset", "description": "Complains but stays polite" },
+          { "label": "furious" }
+        ]
+      }
+    ]
+  }'
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `input` | string or array | What the questions are about: a text, or `user` messages made of `input_text` and `input_image` parts |
+| `questions` | array | The questions. Each has a `type`, `instructions` and an optional `name` |
+| `model` | string | The model to ask. Optional: the model of the decision model entity is used when omitted |
+
+| Type | Asks | With |
+|------|------|------|
+| `predicate` | How likely a statement about the input is true | Nothing more |
+| `choice` | One value among several | `choices`: each `value`, a string or a boolean, and an optional `description` |
+| `score` | A position on an ordered scale | `levels`: each `label` and an optional `description`, from the lowest to the highest |
+
+Every question is asked in one call, against the same input. The gateway checks a request before any provider is called, and answers what it cannot read with a `400` naming the parameter at fault.
+
+## Response
+
+```js
+{
+  "model": "jev-latest",
+  "answers": [
+    { "type": "predicate", "name": "damaged", "probability": 0.95 },
+    {
+      "type": "choice",
+      "name": "refund",
+      "choice": true,
+      "confidence": 0.62,
+      "probabilities": [
+        { "value": true, "probability": 0.81 },
+        { "value": false, "probability": 0.19 }
+      ]
+    },
+    {
+      "type": "score",
+      "name": "anger",
+      "score": 1.12,
+      "confidence": 0.4,
+      "probabilities": [
+        { "label": "calm", "value": 0, "probability": 0.14 },
+        { "label": "upset", "value": 1, "probability": 0.6 },
+        { "label": "furious", "value": 2, "probability": 0.26 }
+      ]
+    }
+  ],
+  "usage": {
+    "input_tokens": 96,
+    "input_tokens_details": { "cached_tokens": 0, "cache_write_tokens": 0 },
+    "output_tokens": 0,
+    "output_tokens_details": { "reasoning_tokens": 0 },
+    "total_tokens": 96
+  }
+}
+```
+
+The answers come in the order of the questions, each with the `name` it was given (`null` without one). A choice answers with the value as it was asked: a boolean choice is a boolean again. A question the model does not answer is a `refusal`, and the other questions are answered all the same:
+
+```js
+{ "type": "refusal", "name": "anger" }
+```
+
+Add `?embed_costs=true` to a request to get what it cost in a `costs` field.
+
+## One API, every decision model
+
+The questions are the same as the ones of the [System One API](/docs/decision-models/overview), in other words: a `predicate` is a `noul`, the `choices` of a choice and the `levels` of a score are its `criteria`, the `input` is the `state`. So every [provider](/docs/decision-models/providers) answers an OpenAI request, OpenAI itself receiving it exactly as it was written, the [fallback](/docs/decision-models/providers#fallback) works across all of them, and the [guardrails](/docs/guardrails/decision_model) and [workflows](/docs/workflows/decision-call) built on your decision models keep working whatever API your applications call.
+
+### Pictures
+
+`input_image` parts carry pictures as data URLs (`data:image/png;base64,...`). They are shown to the decision models that look at them, like the ones of OpenAI, Clef on Cloudflare Workers AI or a self-hosted server. A model that reads text only refuses the request with a `400`: a decision is never made on a part of what it is about.
+
+## Errors
+
+Errors come in the format of the OpenAI API, so the SDKs raise the exception they would raise against OpenAI:
+
+```js
+{
+  "error": {
+    "message": "Invalid value: 'rank'. Supported values are: 'predicate', 'choice', 'score'.",
+    "type": "invalid_request_error",
+    "param": "questions[0].type",
+    "code": null
+  }
+}
+```
+
+| Status | When |
+|--------|------|
+| `400` | The request cannot be read, or it holds pictures for a model that reads text only |
+| `401`, `422`, `429`, `529`... | What the provider answered, said in the words of the OpenAI API. A `Retry-After` header is passed along |
+| `402` | A [budget](/docs/cost-optimizations/budgets) is exhausted |
+| `403` | The model is not one the consumer may use, or it has no known price while the decision model requires one |
+| `504`, `502` | The provider did not answer in time, or could not be reached, and no [fallback](/docs/decision-models/providers#fallback) took over |

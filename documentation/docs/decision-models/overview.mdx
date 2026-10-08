@@ -10,11 +10,12 @@ Decision models are a class of models built to **decide rather than write**. You
 
 They answer in a fraction of a second and cost a fraction of an LLM call, which makes them the right tool wherever an application needs a judgment in its hot path: routing a ticket, gating a tool call, scoring a lead, guarding a prompt.
 
-The Otoroshi LLM extension makes decision models a first-class model type. It speaks the **System One API** introduced by TypeSafe with its Jev model and adopted since by Cloudflare, Liquid AI, Telnyx, Prem AI, OpenRouter and Vercel — so the same request reaches any of them, behind one endpoint, one set of API keys and one budget.
+The Otoroshi LLM extension makes decision models a first-class model type. It speaks the **System One API** introduced by TypeSafe with its Jev model and adopted since by Cloudflare, Liquid AI, Telnyx, Prem AI, OpenRouter and Vercel — so the same request reaches any of them, behind one endpoint, one set of API keys and one budget. Your applications written with the OpenAI SDKs ask the same models through the [decisions API of OpenAI](/docs/decision-models/openai-api).
 
 ## Features
 
 - **The System One API, as it is** — your requests and the provider answers go through untouched, so the official TypeSafe SDKs work by changing their base URL
+- **The OpenAI decisions API too** — the OpenAI SDKs ask the same decision models, whatever provider serves them
 - **Many providers, one contract** — TypeSafe, OpenRouter, Cloudflare Workers AI, Liquid AI, Telnyx, Prem AI, Vercel AI Gateway, and any self-hosted System One server (Laya, vLLM, LiteLLM...)
 - **Swap the model without touching the clients** — the model served is a gateway setting, not something hardcoded in every application
 - **Fallback** — another decision model takes over when one cannot answer
@@ -29,7 +30,7 @@ The Otoroshi LLM extension makes decision models a first-class model type. It sp
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/v1/systemone` | POST | Ask typed questions about a state. The path the TypeSafe SDKs call |
-| `/v1/decisions` | POST | The same endpoint, under the name of what it does |
+| `/v1/decisions` | POST | The same questions with the [decisions API of OpenAI](/docs/decision-models/openai-api). The path the OpenAI SDKs call |
 
 ## Request
 

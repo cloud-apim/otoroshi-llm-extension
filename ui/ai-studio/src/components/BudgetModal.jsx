@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { extraRulesOf, PERIODS, periodOf, saveBudget, scopeModeOf } from '../lib/budgets';
+import { backend } from '../lib/backend';
+import { extraRulesOf, PERIODS, periodOf, scopeModeOf } from '../lib/budgets';
 import { Badge, Checks, Field, LinesInput, Modal, NumberInput, Segmented, Select, TextInput, Toggle, useToast } from './ui';
 import { Icon } from './icons';
 
@@ -7,35 +8,36 @@ import { Icon } from './icons';
 // narrows it to one api key, or to a custom set of consumers, models and conditions.
 export function BudgetModal({ workspace, budget, keys, apikey, onClose, onSaved }) {
   const toast = useToast();
-  const key = apikey && keys.find((k) => k.clientId === apikey);
+  const key = apikey && keys.find((k) => k.client_id === apikey);
   const [form, setForm] = useState(() => ({
-    name: budget ? budget.name : key ? `${key.clientName} budget` : '',
+    name: budget ? budget.name : key ? `${key.name} budget` : '',
     description: budget ? budget.description : '',
     enabled: budget ? budget.enabled : true,
-    usd: budget && budget.limits ? budget.limits.total_usd ?? null : null,
-    tokens: budget && budget.limits ? budget.limits.total_tokens ?? null : null,
+    usd: budget ? budget.usd ?? null : null,
+    tokens: budget ? budget.tokens ?? null : null,
     period: budget ? periodOf(budget) : 'monthly',
-    mode: budget && budget.action_on_exceed ? budget.action_on_exceed.mode : 'block',
-    alert: budget && budget.action_on_exceed ? budget.action_on_exceed.alert_on_almost_exceed_percentage : 80,
+    mode: budget ? budget.mode : 'block',
+    alert: budget ? budget.alert : 80,
     scope: budget ? scopeModeOf(budget) : apikey ? 'apikey' : 'workspace',
-    models: budget && budget.scope ? budget.scope.models || [] : [],
-    apikeys: budget && budget.scope ? budget.scope.apikeys || [] : apikey ? [apikey] : [],
-    users: budget && budget.scope ? budget.scope.users || [] : [],
+    models: budget ? budget.models || [] : [],
+    apikeys: budget ? budget.apikeys || [] : apikey ? [apikey] : [],
+    users: budget ? budget.users || [] : [],
     rules: budget ? extraRulesOf(budget) : [],
   }));
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
   const valid = form.name.trim() && (form.usd !== null || form.tokens !== null) && (form.scope !== 'apikey' || form.apikeys.length === 1);
 
+  // the scope decides which consumers the api keeps: none for the workspace, the key for one api key
   const save = () => {
     setSaving(true);
-    const scoped =
-      form.scope === 'workspace'
-        ? { apikeys: [], users: [], rules: [] }
-        : form.scope === 'apikey'
-          ? { apikeys: form.apikeys.slice(0, 1), users: [], rules: [] }
-          : { apikeys: form.apikeys, users: form.users, rules: form.rules };
-    saveBudget(workspace.id, { ...form, ...scoped }, budget)
+    const body = {
+      ...form,
+      usd: form.usd === '' ? null : form.usd,
+      tokens: form.tokens === '' ? null : form.tokens,
+      rules: form.rules.filter((r) => r.path && r.path.trim()),
+    };
+    (budget ? backend.run('budgets.update', workspace.id, { bid: budget.id, body }) : backend.run('budgets.create', workspace.id, { body }))
       .then(() => {
         toast.success(budget ? 'Budget saved' : 'Budget created');
         onSaved();
@@ -121,7 +123,7 @@ export function BudgetModal({ workspace, budget, keys, apikey, onClose, onSaved 
 
         {form.scope === 'apikey' && (
           <Field label="API key">
-            <Select value={form.apikeys[0] || ''} onChange={(v) => set({ apikeys: v ? [v] : [] })} placeholder="Select an API key" options={keys.map((k) => ({ value: k.clientId, label: k.clientName }))} />
+            <Select value={form.apikeys[0] || ''} onChange={(v) => set({ apikeys: v ? [v] : [] })} placeholder="Select an API key" options={keys.map((k) => ({ value: k.client_id, label: k.name }))} />
           </Field>
         )}
 
@@ -129,7 +131,7 @@ export function BudgetModal({ workspace, budget, keys, apikey, onClose, onSaved 
           <>
             <p className="muted small">The selected consumers share this budget. A call counts when it comes from one of them and matches every condition.</p>
             <Field label="API keys">
-              {keys.length === 0 ? <span className="muted">No API key in this workspace.</span> : <Checks options={keys.map((k) => ({ value: k.clientId, label: k.clientName }))} value={form.apikeys} onChange={(v) => set({ apikeys: v })} />}
+              {keys.length === 0 ? <span className="muted">No API key in this workspace.</span> : <Checks options={keys.map((k) => ({ value: k.client_id, label: k.name }))} value={form.apikeys} onChange={(v) => set({ apikeys: v })} />}
             </Field>
             <Field label="Users" hint="One email (or regex) per line: their chats in AI Studio and the calls of the API keys they own.">
               <LinesInput value={form.users} onChange={(v) => set({ users: v })} rows={2} />

@@ -1,20 +1,23 @@
-import { api, EXT_ADMIN_API } from './api';
-import { Resources, randomId, workspaceFilter } from './entities';
-import { workspaceLocation, workspaceMetadata } from './workspaces';
+// The budgets of a workspace, as the studio admin api shows them (`budgetJson` in studio/api.scala) and the
+// budget form writes them: limits, period and consumers at the top level, `scope` being how the consumers
+// are picked (the whole workspace, one api key, or custom). The api keeps every budget scoped to its
+// workspace whatever the form says.
+
+import { platform } from './platform';
+
+// the budgets a person sees: every budget when they read the configuration, the ones counting their usage otherwise
+export const budgetsListOp = (workspace) => (platform.can('config:read', workspace) ? 'budgets.list' : 'mybudgets.list');
 
 export const PERIODS = [
-  { value: 'lifetime', label: 'Never (lifetime)', duration: { value: 100, unit: 'year' } },
-  { value: 'daily', label: 'Daily', duration: { value: 1, unit: 'day' } },
-  { value: 'weekly', label: 'Weekly (7 days)', duration: { value: 7, unit: 'day' } },
-  { value: 'monthly', label: 'Monthly (30 days)', duration: { value: 30, unit: 'day' } },
-  { value: 'yearly', label: 'Yearly', duration: { value: 1, unit: 'year' } },
+  { value: 'lifetime', label: 'Never (lifetime)' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly (7 days)' },
+  { value: 'monthly', label: 'Monthly (30 days)' },
+  { value: 'yearly', label: 'Yearly' },
 ];
 
-export function periodOf(budget) {
-  const d = (budget && budget.duration) || {};
-  const found = PERIODS.find((p) => p.duration.value === d.value && p.duration.unit === d.unit);
-  return found ? found.value : 'custom';
-}
+// one of `PERIODS`, or `custom` for a duration set outside of the studio
+export const periodOf = (budget) => (budget && budget.period) || 'custom';
 
 export function periodLabel(budget) {
   const p = PERIODS.find((x) => x.value === periodOf(budget));
@@ -23,22 +26,17 @@ export function periodLabel(budget) {
   return `every ${d.value} ${d.unit}${d.value > 1 ? 's' : ''}`;
 }
 
-export function listBudgets(wsId) {
-  return Resources.budgets.list(workspaceFilter(wsId));
-}
+// the conditions a user added on top of the rule scoping the budget to its workspace
+export const extraRulesOf = (budget) => (budget && budget.rules) || [];
 
-export const WORKSPACE_RULE_PATH = '$.provider.metadata.ai_studio_workspace';
-
-// the conditions a user added on top of the workspace rule
-export function extraRulesOf(budget) {
-  return ((budget && budget.scope && budget.scope.rules) || []).filter((r) => r.path !== WORKSPACE_RULE_PATH).map((r) => ({ path: r.path, value: r.value }));
-}
+// how the consumers of a budget are picked: `workspace`, `apikey` or `custom`
+export const scopeModeOf = (budget) => (budget && budget.scope) || 'workspace';
 
 // whether a budget names a user: its users are regexes matched against the whole email, as the gateway does
 export function budgetNamesUser(budget, email) {
   return (
     !!email &&
-    ((budget.scope && budget.scope.users) || []).some((u) => {
+    (budget.users || []).some((u) => {
       try {
         return new RegExp(`^(?:${u})$`).test(email);
       } catch (e) {
@@ -48,105 +46,14 @@ export function budgetNamesUser(budget, email) {
   );
 }
 
-// workspace wide budgets: no key and no user in their scope
-export function isWorkspaceWide(budget) {
-  return ((budget.scope && budget.scope.apikeys) || []).length === 0 && ((budget.scope && budget.scope.users) || []).length === 0;
-}
+// workspace wide budgets: no key and no user among their consumers
+export const isWorkspaceWide = (budget) => (budget.apikeys || []).length === 0 && (budget.users || []).length === 0;
 
 // the budgets counting the calls of an api key: workspace wide ones, the ones naming the key and the
 // ones naming its owner
 export function budgetsOfKey(budgets, apikey, owner) {
-  return budgets.filter((b) => b.enabled && (isWorkspaceWide(b) || ((b.scope && b.scope.apikeys) || []).includes(apikey) || budgetNamesUser(b, owner)));
+  return budgets.filter((b) => b.enabled && (isWorkspaceWide(b) || (b.apikeys || []).includes(apikey) || budgetNamesUser(b, owner)));
 }
 
-// how the scope of an existing budget is presented: the whole workspace, one api key or custom
-export function scopeModeOf(budget) {
-  const scope = (budget && budget.scope) || {};
-  const keys = scope.apikeys || [];
-  const users = scope.users || [];
-  if (users.length === 0 && extraRulesOf(budget).length === 0) {
-    if (keys.length === 0) return 'workspace';
-    if (keys.length === 1) return 'apikey';
-  }
-  return 'custom';
-}
-
-// Every budget of a workspace is scoped to the workspace first (a rule matching the workspace
-// metadata of the provider serving the call, that the user cannot remove), then optionally narrowed
-// with consumers (api keys, studio users), models and extra json path conditions, all of them
-// combined with the workspace rule.
-export function buildBudget(wsId, form, existing) {
-  const period = PERIODS.find((p) => p.value === form.period) || PERIODS[0];
-  const now = new Date();
-  const limits = { ...((existing && existing.limits) || {}) };
-  ['total_usd', 'total_tokens'].forEach((k) => delete limits[k]);
-  if (form.usd !== null && form.usd !== undefined && form.usd !== '') limits.total_usd = Number(form.usd);
-  if (form.tokens !== null && form.tokens !== undefined && form.tokens !== '') limits.total_tokens = Number(form.tokens);
-  const prevScope = (existing && existing.scope) || {};
-  return {
-    ...(existing || {}),
-    _loc: (existing && existing._loc) || workspaceLocation(wsId),
-    id: (existing && existing.id) || `ai-budget_ais_${randomId(20)}`,
-    name: form.name,
-    description: form.description || '',
-    tags: (existing && existing.tags) || [],
-    metadata: { ...((existing && existing.metadata) || {}), ...(form.metadata || {}), ...workspaceMetadata(wsId, 'budget') },
-    enabled: form.enabled !== false,
-    start_at: (existing && existing.start_at) || now.toISOString(),
-    end_at: (existing && existing.end_at && form.period === periodOf(existing)) ? existing.end_at : new Date(now.getTime() + 100 * 365 * 24 * 3600 * 1000).toISOString(),
-    duration: form.period === 'custom' && existing ? existing.duration : period.duration,
-    limits,
-    scope: {
-      extract_from_apikey_meta: false,
-      extract_from_apikey_group_meta: false,
-      extract_from_user_meta: false,
-      extract_from_user_auth_module_meta: false,
-      extract_from_provider_meta: false,
-      groups: [],
-      providers: [],
-      ...prevScope,
-      apikeys: form.apikeys || [],
-      users: form.users !== undefined ? form.users : prevScope.users || [],
-      models: form.models || [],
-      always_apply_rules: true,
-      rules: [
-        { path: WORKSPACE_RULE_PATH, value: wsId },
-        ...(form.rules !== undefined ? form.rules : extraRulesOf(existing))
-          .filter((r) => r.path && r.path.trim() && r.path.trim() !== WORKSPACE_RULE_PATH)
-          .map((r) => ({ path: r.path.trim(), value: r.value })),
-      ],
-      rules_match_mode: 'all',
-    },
-    action_on_exceed: {
-      ...((existing && existing.action_on_exceed) || {}),
-      mode: form.mode || 'block',
-      alert_on_exceed: true,
-      alert_on_almost_exceed: true,
-      alert_on_almost_exceed_percentage: Number(form.alert) || 80,
-    },
-  };
-}
-
-export async function saveBudget(wsId, form, existing) {
-  const budget = buildBudget(wsId, form, existing);
-  if (existing && existing.id) await Resources.budgets.update(budget);
-  else await Resources.budgets.create(budget);
-  return budget;
-}
-
-export function budgetConsumption(id) {
-  return api.get(`${EXT_ADMIN_API}/budgets/${encodeURIComponent(id)}/consumption`);
-}
-
-export function resetBudget(id) {
-  return api.post(`${EXT_ADMIN_API}/budgets/${encodeURIComponent(id)}/consumption/_reset`, {});
-}
-
-export function apikeyQuotas(clientId) {
-  return api.get(`/bo/api/proxy/api/apikeys/${encodeURIComponent(clientId)}/quotas`);
-}
-
-// budget dedicated to a single key (the "credit limit" of the api keys page)
-export function keyBudgetOf(budgets, clientId) {
-  return budgets.find((b) => b.metadata && b.metadata.ai_studio_key_limit === clientId);
-}
+// the budget dedicated to a single key, the "credit limit" of the api keys page
+export const keyBudgetOf = (budgets, clientId) => budgets.find((b) => b.key_limit === clientId);

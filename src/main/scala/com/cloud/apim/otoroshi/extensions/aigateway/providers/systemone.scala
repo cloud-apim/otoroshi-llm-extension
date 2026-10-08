@@ -90,12 +90,12 @@ object SystemOneResponses {
   val noModel: JsValue = DecisionErrors.invalid(Seq(Json.obj("type" -> "missing", "loc" -> Seq("body", "model"), "msg" -> "Field required")))
 
   // an error page is not json: it is given back as the text it is
-  private def bodyOf(resp: WSResponse): JsValue = {
+  def bodyOf(resp: WSResponse): JsValue = {
     val raw: String = resp.body
     Try(Json.parse(raw)).getOrElse(JsString(raw.take(ProviderHelpers.defaultMaxErrorBodySize)))
   }
 
-  private def rateLimitOf(resp: WSResponse): ChatResponseMetadataRateLimit = {
+  def rateLimitOf(resp: WSResponse): ChatResponseMetadataRateLimit = {
     def header(name: String): Long = resp.header(name).flatMap(v => Try(v.toLong).toOption).getOrElse(-1L)
     ChatResponseMetadataRateLimit(
       requestsLimit = header("x-ratelimit-limit-requests"),
@@ -110,6 +110,12 @@ object SystemOneResponses {
    * `{result, success, errors}` envelope: the answers are looked for in both places, so the server is read
    * right whichever way it answers.
    */
+  // the pictures of a state: Cloudflare takes them in an `images` array, the System One api has none
+  def hasImages(rawBody: JsObject): Boolean = rawBody.select("images").asOpt[JsArray].exists(_.value.nonEmpty)
+
+  def noImages(providerName: String): JsValue =
+    DecisionErrors.gateway(400, "invalid_request_error", s"the decision models of ${providerName} do not look at images")
+
   def read(providerName: String, resp: WSResponse, requestedModel: String, env: Env): Either[JsValue, DecisionResponse] = {
     if (env.isDev || AiExtension.logger.isDebugEnabled) {
       val msg = s"provider response '${providerName}' - ${resp.status} - ${resp.body}"
@@ -156,11 +162,15 @@ class SystemOneDecisionModelClient(
   options: DecisionModelClientOptions,
   // whether the `provider` object of the request (OpenRouter routing preferences) means something upstream
   forwardsRouting: Boolean,
+  // whether the server is shown the pictures of a state: a self hosted one may well be, the System One api is not
+  takesImages: Boolean = false,
 ) extends DecisionModelClient {
 
   override def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]] = {
     opts.model.orElse(options.model) match {
       case None => SystemOneResponses.noModel.leftf
+      // a decision made without looking at what it is about is worse than none
+      case Some(_) if !takesImages && SystemOneResponses.hasImages(rawBody) => SystemOneResponses.noImages(providerName).leftf
       case Some(model) =>
         // the body goes through as the caller wrote it: the questions and their criteria are the provider's business
         val body = (if (forwardsRouting) rawBody else rawBody - "provider") ++ Json.obj("model" -> model)
@@ -212,6 +222,8 @@ class LlmDecisionModelClient(
     val issues = DecisionRequests.issues(Json.obj("state" -> opts.state, "questions" -> opts.questions), strict = true)
     if (issues.nonEmpty) {
       DecisionErrors.invalid(issues).leftf
+    } else if (SystemOneResponses.hasImages(rawBody)) {
+      SystemOneResponses.noImages("text providers").leftf
     } else {
       val model = opts.model.orElse(options.model)
       val provider = env.adminExtensions.extension[AiExtension]

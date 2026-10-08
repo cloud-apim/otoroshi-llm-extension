@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Icon } from './icons';
+import { SECRET_SENTINEL } from '../core/secrets.js';
 
 /* ---------- async data ---------- */
 
@@ -411,21 +412,26 @@ export function Readonly({ value, mono = true, copy = true }) {
   );
 }
 
+// A secret the server did not send (AI Studio Enterprise masks them) arrives as the sentinel: the field shows it
+// is stored, and saving the form without typing in it keeps it.
 export function SecretInput({ value, onChange, placeholder }) {
   const [visible, setVisible] = useState(false);
+  const masked = value === SECRET_SENTINEL;
   return (
     <div className="input-with-btn">
       <input
         className="input"
         type={visible ? 'text' : 'password'}
         autoComplete="new-password"
-        value={value ?? ''}
-        placeholder={placeholder}
+        value={masked ? '' : value ?? ''}
+        placeholder={masked ? 'Stored: unchanged unless you type a new one' : placeholder}
         onChange={(e) => onChange(e.target.value)}
       />
-      <button type="button" className="copy-btn" onClick={() => setVisible(!visible)} title={visible ? 'Hide' : 'Show'}>
-        <Icon name={visible ? 'eyeOff' : 'eye'} />
-      </button>
+      {!masked && (
+        <button type="button" className="copy-btn" onClick={() => setVisible(!visible)} title={visible ? 'Hide' : 'Show'}>
+          <Icon name={visible ? 'eyeOff' : 'eye'} />
+        </button>
+      )}
     </div>
   );
 }

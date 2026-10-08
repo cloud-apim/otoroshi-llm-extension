@@ -330,11 +330,15 @@ class OpenAiCompatApi extends NgBackendCall {
       val moderationConfig = OpenAICompatModerationConfig(config.moderationModelRefs)
       OpenAICompatModeration.handleRequest(moderationConfig, ctx)
 
-    } else if (method == "POST" && (path.endsWith("/systemone") || path.endsWith("/decisions"))) {
-      // decision models speak the System One api of TypeSafe, whose sdks call `<base url>/v1/systemone`.
-      // `/decisions` is the same endpoint under the name of what it does
+    } else if (method == "POST" && path.endsWith("/systemone")) {
+      // decision models speak the System One api of TypeSafe, whose sdks call `<base url>/v1/systemone`
       val decisionConfig = DecisionModelsConfig(config.decisionModelRefs)
       DecisionModels.handleRequest(decisionConfig, ctx)
+
+    } else if (method == "POST" && path.endsWith("/decisions")) {
+      // the same decision models, with the decisions api of OpenAI
+      val decisionConfig = DecisionModelsConfig(config.decisionModelRefs)
+      OpenAICompatDecisions.handleRequest(decisionConfig, ctx)
 
     } else if (method == "POST" && path.endsWith("/ocr")) {
       val ocrConfig = OpenAICompatOcrConfig(config.ocrModelRefs, config.maxSizeUpload)

@@ -45,7 +45,8 @@ This makes it the ideal choice when you want to expose a single, coherent API su
 | `POST` | `/audio/transcriptions` | OpenAI Speech-to-Text API | `audio_model_refs` |
 | `POST` | `/audio/translations` | OpenAI Audio Translation API | `audio_model_refs` |
 | `POST` | `/moderations` | OpenAI Moderation API | `moderation_model_refs` |
-| `POST` | `/systemone`, `/decisions` | System One API of the [decision models](/docs/decision-models/overview) | `decision_model_refs` |
+| `POST` | `/systemone` | System One API of the [decision models](/docs/decision-models/overview) | `decision_model_refs` |
+| `POST` | `/decisions` | [Decisions API of OpenAI](/docs/decision-models/openai-api), with the same decision models | `decision_model_refs` |
 | `POST` | `/ocr` | OCR (text extraction from images and pdf) | `ocr_model_refs` |
 | `POST` | `/mcp` | [MCP](/docs/mcp/overview) Streamable HTTP endpoint serving an [MCP virtual server](/docs/mcp/mcp-virtual-servers) | `mcp_server_ref` |
 
@@ -148,7 +149,7 @@ When multiple providers are configured, model IDs are prefixed with the provider
 |-----------|--------|-------------|
 | `enriched` | `true`, `1` or no value | Adds a `_metadata` object to each model: types, cost, API, capabilities, modalities, limits and prices. See [enriched models](#enriched-models) |
 | `kind` (or `kinds`) | `text`, `audio`, `image`, `ocr`, `embedding`, `moderation`, `video`, `decision` | Only lists the models of at least one of these types. See [filter models by type](#filter-models-by-type) |
-| `endpoint` (or `endpoints`) | `chat_completions`, `completions`, `responses`, `embeddings`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `audio_translations`, `moderations`, `ocr`, `realtime`, `videos`, `systemone` | Only lists the models served on at least one of these API endpoints. See [filter models by endpoint](#filter-models-by-endpoint) |
+| `endpoint` (or `endpoints`) | `chat_completions`, `completions`, `responses`, `embeddings`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `audio_translations`, `moderations`, `ocr`, `realtime`, `videos`, `systemone`, `decisions` | Only lists the models served on at least one of these API endpoints. See [filter models by endpoint](#filter-models-by-endpoint) |
 | `has_cost` | `true`, `1` or no value / `false`, `0` | Only lists the models cost tracking can (or cannot) put a price on. See [filter models by cost](#filter-models-by-cost) |
 | `raw` | `true` | Asks the provider for the model ids of its API rather than its model names, for the providers making the difference (OVH AI Endpoints, when not unified) |
 
@@ -278,7 +279,7 @@ Rerankers belong to none of these types, so they only show up when no filter is 
 
 #### Filter models by endpoint
 
-Add `?endpoint=` to only list the models their provider serves on one of these OpenAI API endpoints: `chat_completions`, `completions`, `responses`, `embeddings`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `audio_translations`, `moderations`, `ocr`, `realtime`, `videos` or `systemone` (the decision models). It keeps out of a chat the models that would fail there, like `gpt-5-pro`, only served on `responses`, or the realtime models.
+Add `?endpoint=` to only list the models their provider serves on one of these OpenAI API endpoints: `chat_completions`, `completions`, `responses`, `embeddings`, `images_generations`, `images_edits`, `audio_speech`, `audio_transcriptions`, `audio_translations`, `moderations`, `ocr`, `realtime`, `videos`, `systemone` or `decisions` (the decision models, which answer both decision APIs). It keeps out of a chat the models that would fail there, like `gpt-5-pro`, only served on `responses`, or the realtime models.
 
 ```sh
 curl "https://api.domain.tld/v1/models?endpoint=chat_completions" \
@@ -727,9 +728,9 @@ curl https://api.domain.tld/v1/moderations \
   }'
 ```
 
-### POST /systemone and /decisions
+### POST /systemone
 
-System One API of the [decision models](/docs/decision-models/overview): typed questions about a state, answered with probabilities. Both paths serve the same endpoint, `/systemone` being the one the TypeSafe SDKs call. Backed by the decision model entities referenced in `decision_model_refs`.
+System One API of the [decision models](/docs/decision-models/overview): typed questions about a state, answered with probabilities. The path the TypeSafe SDKs call. Backed by the decision model entities referenced in `decision_model_refs`.
 
 ```sh
 curl https://api.domain.tld/v1/systemone \
@@ -744,6 +745,22 @@ curl https://api.domain.tld/v1/systemone \
 ```
 
 See the [Decision Models](/docs/decision-models/plugins) documentation for the question types, the model routing and the errors.
+
+### POST /decisions
+
+The [decisions API of OpenAI](/docs/decision-models/openai-api), answered by the same decision models: what the OpenAI SDKs call with `client.decisions.create(...)`.
+
+```sh
+curl https://api.domain.tld/v1/decisions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
+  -d '{
+    "input": "The checkout has been failing for every customer for the last hour.",
+    "questions": [
+      { "type": "predicate", "name": "urgent", "instructions": "Is this support request urgent?" }
+    ]
+  }'
+```
 
 ### POST /ocr
 

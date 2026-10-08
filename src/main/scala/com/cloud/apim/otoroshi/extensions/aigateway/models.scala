@@ -1577,11 +1577,14 @@ case class DecisionResponse(model: String, answers: JsObject, metadata: Decision
   // the System One body, with whatever the provider adds to the contract (`id`, `provider`, `usage.cost`)
   def toJson(env: Env): JsObject = {
     val usage = raw.select("usage").asOpt[JsObject].getOrElse(Json.obj()) ++ metadata.usage.json
-    (raw ++ Json.obj("model" -> model, "answers" -> answers, "usage" -> usage)).applyOnWithOpt(metadata.impacts) {
-      case (obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
-    }.applyOnWithOpt(metadata.costs) {
-      case (obj, costs) => obj ++ Json.obj("costs" -> costs.json)
-    }
+    withExtras(raw ++ Json.obj("model" -> model, "answers" -> answers, "usage" -> usage), env)
+  }
+
+  // what the gateway adds to a decision, whatever the format it is given back in: its footprint and its cost
+  def withExtras(body: JsObject, env: Env): JsObject = body.applyOnWithOpt(metadata.impacts) {
+    case (obj, impacts) => obj ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
+  }.applyOnWithOpt(metadata.costs) {
+    case (obj, costs) => obj ++ Json.obj("costs" -> costs.json)
   }
 }
 
@@ -1589,6 +1592,9 @@ case class DecisionModelClientInputOptions(
   state: JsValue,
   questions: JsObject,
   model: Option[String] = None,
+  // the request in the decisions api of OpenAI, as the caller wrote it, when that is the api it was asked with:
+  // an OpenAI server is given it as it is, the others read `state` and `questions`, made of it
+  openai: Option[JsObject] = None,
 ) {
   def json: JsValue = DecisionModelClientInputOptions.format.writes(this)
 }
@@ -1620,6 +1626,8 @@ object DecisionRequests {
   val Choice = "choice"
   val Score = "score"
   val knownTypes: Set[String] = Set(Noul, Choice, Score)
+  // the answer to a question a model would not answer (OpenAI says so): the other questions are answered all the same
+  val Refusal = "refusal"
 
   private def issue(kind: String, message: String, loc: String*): JsObject =
     Json.obj("type" -> kind, "loc" -> ("body" +: loc), "msg" -> message)
@@ -1740,6 +1748,10 @@ object DecisionAnswers {
   }
 
   def noul(probability: Double): JsObject = Json.obj("type" -> DecisionRequests.Noul, "noul" -> rounded(clamped(probability)))
+
+  val refusal: JsObject = Json.obj("type" -> DecisionRequests.Refusal)
+
+  def isRefusal(answer: JsValue): Boolean = answer.select("type").asOptString.contains(DecisionRequests.Refusal)
 
   def choice(options: Seq[(String, Double)]): JsObject = {
     val names = options.map(_._1)

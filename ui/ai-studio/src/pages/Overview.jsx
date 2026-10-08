@@ -1,27 +1,26 @@
 import { useState } from 'react';
-import { useWorkspace } from '../App';
+import { useCan, useWorkspace } from '../App';
 import { Badge, CopyButton, useAsync } from '../components/ui';
 import { Snippets } from '../components/snippets';
 import { WeekUsage } from '../components/usage';
 import { QUICKSTARTS, servingOf, snippetsOf } from '../lib/apidocs';
-import { Resources, workspaceFilter } from '../lib/entities';
+import { backend } from '../lib/backend';
 import { modelLabel } from '../lib/modelmeta';
 import { Link, useRouter } from '../lib/router';
 import { listWorkspaceModels } from '../lib/models';
 
 export function OverviewPage() {
   const { workspace } = useWorkspace();
+  const can = useCan();
   const { navigate } = useRouter();
   const [lang, setLang] = useState('curl');
   const [quickstart, setQuickstart] = useState(QUICKSTARTS[0].id);
-  const filter = workspaceFilter(workspace.id);
-  const data = useAsync(async () => {
-    const [providers, keys] = await Promise.all([Resources.providers.list(filter), Resources.apikeys.list(filter)]);
-    return { providers, keys };
-  }, [workspace.id]);
+  // the providers are a part of the configuration
+  const data = useAsync(async () => ({ providers: can('config:read') ? await backend.run('providers.list', workspace.id) : null }), [workspace.id]);
   const models = useAsync(() => listWorkspaceModels(workspace), [workspace.id]);
 
   const providers = (data.data && data.data.providers) || [];
+  const knowsProviders = !!(data.data && data.data.providers);
   const modelList = (models.data && models.data.models) || [];
   // the quickstart shows the endpoints this workspace serves, the chat one whatever happens
   const quickstarts = QUICKSTARTS.filter((e, idx) => idx === 0 || servingOf(e, workspace, models.data).available);
@@ -34,26 +33,27 @@ export function OverviewPage() {
       <div className="hero">
         <h1>One API for every model</h1>
         <p>
-          Route requests to {providers.length} provider{providers.length === 1 ? '' : 's'} and {modelList.length} model{modelList.length === 1 ? '' : 's'} through{' '}
+          Route requests to {knowsProviders ? `${providers.length} provider${providers.length === 1 ? '' : 's'} and ` : ''}
+          {modelList.length} model{modelList.length === 1 ? '' : 's'} through{' '}
           <span className="hero-url">
-            <code>{workspace.baseUrl.replace(/^https?:\/\//, '')}</code>
-            <CopyButton text={workspace.baseUrl} title="Copy the base URL" />
+            <code>{workspace.base_url.replace(/^https?:\/\//, '')}</code>
+            <CopyButton text={workspace.base_url} title="Copy the base URL" />
           </span>
         </p>
         <div className="row">
-          <button className="btn primary" onClick={() => navigate(`/workspaces/${workspace.id}/chat`)}>
+          <button className="btn primary" hidden={!can('chat:use')} onClick={() => navigate(`/workspaces/${workspace.id}/chat`)}>
             Open the chat
           </button>
           <button className="btn" onClick={() => navigate(`/workspaces/${workspace.id}/models`)}>
             Browse models
           </button>
-          <button className="btn" onClick={() => navigate(`/workspaces/${workspace.id}/keys`)}>
+          <button className="btn" hidden={!can(['keys:own', 'keys:manage'])} onClick={() => navigate(`/workspaces/${workspace.id}/keys`)}>
             Get an API key
           </button>
         </div>
       </div>
 
-      {data.data && providers.length === 0 && (
+      {knowsProviders && providers.length === 0 && (
         <div className="alert info mb">
           This workspace has no provider yet. <Link className="link" to={`/workspaces/${workspace.id}/providers`}>Connect a provider</Link> to start routing requests.
         </div>
@@ -94,7 +94,7 @@ export function OverviewPage() {
                 ))}
               </select>
             )}
-            <CopyButton text={workspace.baseUrl} className="btn sm" label="Copy URL" title="Copy the base URL" />
+            <CopyButton text={workspace.base_url} className="btn sm" label="Copy URL" title="Copy the base URL" />
             <CopyButton text={() => snippets[snippets[lang] ? lang : 'curl']} className="btn sm" label="Copy code" title="Copy the code" />
           </div>
         </div>
