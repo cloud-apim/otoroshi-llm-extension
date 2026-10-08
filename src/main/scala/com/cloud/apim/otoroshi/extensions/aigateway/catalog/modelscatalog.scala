@@ -2,6 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.catalog
 
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{CostModel, CostsOutput, ModalityCosts}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AiProvidersCatalog}
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.OpenAiDecisionRequests
 import com.github.blemale.scaffeine.Scaffeine
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.NgbBackendCallContext
@@ -557,6 +558,8 @@ object ModelEndpoints {
   val AudioTranslations = "audio_translations"
   // the System One api of the decision models, not an OpenAI endpoint either
   val SystemOne = "systemone"
+  // the decisions api of OpenAI
+  val Decisions = "decisions"
   val conversational = Set("chat_completions", "completions", "responses", Messages)
 
   private val paths = Map(
@@ -577,6 +580,8 @@ object ModelEndpoints {
     "/v1/videos" -> "videos",
     "/v1/messages" -> Messages,
     "/v1/systemone" -> SystemOne,
+    // `/v1/decisions` is not read: OpenAI serves chat models there too, and a text connection is never asked for
+    // a decision
   )
 
   private val modes = Map(
@@ -616,6 +621,11 @@ object ModelEndpoints {
     }).toSeq
   }
 
+  // A decision model is asked in both apis, the gateway translating the one its provider does not speak. That
+  // one comes first: it is called as it is
+  def decisions(providerKind: String): Seq[String] =
+    if (providerKind.toLowerCase(Locale.ROOT) == OpenAiDecisionRequests.Provider) Seq(Decisions, SystemOne) else Seq(SystemOne, Decisions)
+
   // what a model of these types is called with, when nothing else is known
   def ofKinds(kinds: Seq[String], names: Seq[String], input: Seq[String]): Seq[String] = kinds.flatMap {
     case Text => Seq("chat_completions")
@@ -628,7 +638,7 @@ object ModelEndpoints {
     case Moderation => Seq("moderations")
     case Ocr => Seq("ocr")
     case Video => Seq("videos")
-    case Decision => Seq(SystemOne)
+    case Decision => Seq(SystemOne, Decisions)
     case _ => Seq.empty
   }.distinct
 }
@@ -717,14 +727,14 @@ object ModelsMetadata {
     // through another sdk) and on an OpenAI endpoint. A router serves nothing itself.
     val kind = provider.provider.toLowerCase(Locale.ROOT)
     val servedByOpenAiSdk = served.forall(m => m.shape.isDefined || m.sdk.forall(ModelsCatalog.openAiSdks.contains))
-    // a decision model is called with the System One api, whoever serves it
+    // a decision model is called with the decision apis, whoever serves it
     val decides = kinds == Seq(AiProvidersCatalog.Decision)
     val openAiCompatible = Option.when(!AiProvider.routingProviders.contains(kind)) {
       AiProvider.openAiCompatibleProviders.contains(kind) && servedByOpenAiSdk && !decides &&
         (knownEndpoints.isEmpty || knownEndpoints.exists(_ != ModelEndpoints.Messages))
     }
     val endpoints = ModelEndpoints.withTranslations(
-      if (decides) Seq(ModelEndpoints.SystemOne)
+      if (decides) ModelEndpoints.decisions(kind)
       else if (!openAiCompatible.contains(true)) Seq.empty
       else if (knownEndpoints.nonEmpty) knownEndpoints.filterNot(_ == ModelEndpoints.Messages)
       else ModelEndpoints.ofKinds(kinds, names, input.getOrElse(Seq.empty)),

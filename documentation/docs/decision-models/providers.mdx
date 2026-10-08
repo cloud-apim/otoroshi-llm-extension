@@ -13,6 +13,7 @@ A decision model entity connects the gateway to one provider. Every provider bel
 | TypeSafe | `typesafe` | `https://api.typesafe.ai/v1` | `jev-latest` |
 | OpenRouter | `openrouter` | `https://openrouter.ai/api/v1` | `typesafe/jev-1.13` |
 | Cloudflare Workers AI | `cloudflare` | `https://api.cloudflare.com/client/v4` | `@cf/cloudflare/clef-flash` |
+| OpenAI | `openai` | `https://api.openai.com/v1` | `gpt-6-luna` |
 | Liquid AI | `liquid` | `https://api.liquid.ai/decisions/v1` | `d1:free` |
 | Telnyx | `telnyx` | `https://api.telnyx.com/v2/ai/typesafe/v1` | `telnyx/decision-flash` |
 | Prem AI | `prem` | `https://gateway.prem.io/typesafe/v1` | `dgemma` |
@@ -42,7 +43,7 @@ A decision model entity connects the gateway to one provider. Every provider bel
 
 | Field | Description |
 |-------|-------------|
-| `config.connection.base_url` | Where the provider is reached. The gateway calls `<base_url>/systemone` |
+| `config.connection.base_url` | Where the provider is reached. The gateway calls `<base_url>/systemone`, `<base_url>/decisions` for OpenAI |
 | `config.connection.token` | The API key of the provider. Several keys separated by commas are used in turn |
 | `config.connection.timeout` | How long to wait for the answer, in milliseconds |
 | `config.options.model` | The model used when a request names none |
@@ -82,6 +83,27 @@ Clef and Clef-flash, the open-weight decision models of Cloudflare. They take th
 ```
 
 The model is named the way Workers AI names it (`@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash`).
+
+## OpenAI
+
+The decision models of OpenAI, on its [decisions API](https://developers.openai.com/api/reference/resources/decisions/methods/create). They answer the System One requests of your applications like any other provider: the gateway asks the questions in the format of OpenAI and gives the answers back in the one they were asked with. A request written with the OpenAI SDKs on the [OpenAI decisions API](/docs/decision-models/openai-api) of the gateway reaches OpenAI exactly as it was written, end user identifier and picture details included.
+
+```js
+{
+  "provider": "openai",
+  "config": {
+    "connection": {
+      "base_url": "https://api.openai.com/v1",
+      "token": "${vault://local/openai-token}"
+    },
+    "options": {
+      "model": "gpt-6-luna"
+    }
+  }
+}
+```
+
+OpenAI models look at pictures. They can also decline a question: that answer is a `refusal`, the other questions of the request being answered all the same. A [guardrail](/docs/guardrails/decision_model) denies what its model refused to judge, and a [decision router](/docs/workflows/decision-router) takes its default path.
 
 ## Liquid AI, Telnyx, Prem AI, Vercel AI Gateway
 

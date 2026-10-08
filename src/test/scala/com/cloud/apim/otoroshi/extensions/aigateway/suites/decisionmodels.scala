@@ -298,16 +298,14 @@ class DecisionModelsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(okBody.get().select("model").asString, jev)
   }
 
-  test("the unified api serves decisions on /systemone and /decisions, and bills them per input token") {
+  // `/decisions` is the decisions api of OpenAI (suite `OpenAiDecisionsSuite`)
+  test("the unified api serves decisions on /systemone, and bills them per input token") {
     setup
     val systemone = post(s"http://unified-decisions.oto.tools:${port}/v1/systemone?embed_costs=true", request ++ Json.obj("model" -> "jev-latest"))
     assertEquals(systemone.status, 200, s"status should be 200, got ${systemone.body}")
     assertEquals(systemone.json.at("answers.urgent.noul").as[BigDecimal], BigDecimal("0.95"))
     assertEquals(okBody.get().select("model").asString, "jev-latest", "the model of the request is the one asked to the provider")
     assertEquals(systemone.json.at("costs.total_cost").asOpt[BigDecimal], expectedCost.some, s"unexpected costs: ${systemone.body}")
-    val decisions = post(s"http://unified-decisions.oto.tools:${port}/v1/decisions", request)
-    assertEquals(decisions.status, 200, s"status should be 200, got ${decisions.body}")
-    assertEquals(decisions.json.select("answers").as[JsObject], systemone.json.select("answers").as[JsObject])
   }
 
   test("a request that is not a System One one is refused with a 422, before any provider is called") {

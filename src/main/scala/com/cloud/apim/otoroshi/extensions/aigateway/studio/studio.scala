@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.studio
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.{Source, StreamConverters}
 import org.apache.pekko.util.ByteString
-import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsMetadata
+import com.cloud.apim.otoroshi.extensions.aigateway.catalog.{ModelEndpoints, ModelsMetadata}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, AudioModel, ImageModel}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.SystemOneProviders
 import otoroshi.env.Env
@@ -352,7 +352,6 @@ class AiStudio(env: Env, ext: AiExtension) {
     "moderation" -> "moderations",
     "ocr" -> "ocr",
     "video" -> "videos",
-    "decision" -> "systemone",
   )
 
   /**
@@ -380,6 +379,8 @@ class AiStudio(env: Env, ext: AiExtension) {
           Option.when(on("stt"))("audio_transcriptions"),
           Option.when(client.map(_.supportsTranslation).getOrElse(on("translate")))("audio_translations"),
         ).flatten
+      // both decision apis, the one the provider speaks first
+      case "decision" => ModelEndpoints.decisions(entity.select("provider").asOptString.getOrElse(""))
       case other   => modalityEndpoints.get(other).toSeq
     }
   }
@@ -388,9 +389,10 @@ class AiStudio(env: Env, ext: AiExtension) {
    * The models an entity of this modality serves, each with the endpoint it is called on. An audio model
    * carries two of them: a voice, served on `/audio/speech`, and a transcription model, served on
    * `/audio/transcriptions` — they are two different models and both belong in the listing. The same goes for
-   * the model an image entity edits with, when it is not the one it draws with.
+   * the model an image entity edits with, when it is not the one it draws with. The model of another entity is
+   * served on every endpoint of the entity, `endpoints`.
    */
-  private def modelsOf(config: JsValue, modality: String): Seq[(String, String)] = {
+  private def modelsOf(config: JsValue, modality: String, endpoints: Seq[String]): Seq[(String, String)] = {
     val options = config.select("options")
     def modelIn(values: JsLookupResult*): Option[String] = values
       .filterNot(_.select("enabled").asOpt[Boolean].contains(false))
@@ -403,7 +405,7 @@ class AiStudio(env: Env, ext: AiExtension) {
       case "audio" => modelIn(config.select("tts"), options.select("tts")).toSeq.map(m => (m, "audio_speech")) ++
         modelIn(config.select("stt"), options.select("stt")).toSeq.map(m => (m, "audio_transcriptions")) ++
         modelIn(config.select("translate"), options.select("translation")).toSeq.map(m => (m, "audio_translations"))
-      case _ => modelIn(options).toSeq.map(m => (m, endpoint))
+      case _ => modelIn(options).toSeq.flatMap(m => endpoints.map(e => (m, e)))
     }
   }
 
@@ -534,9 +536,9 @@ class AiStudio(env: Env, ext: AiExtension) {
             val slug = entity.select("metadata").select("endpoint_name").asOptString
               .orElse(entity.select("metadata").select("provider_name").asOptString)
               .getOrElse(name).slugifyWithSlash.replaceAll("-+", "_")
-            val served = modelsOf(entity.select("config").asOpt[JsValue].getOrElse(Json.obj()), modality)
-            val config = entity.select("config").asOpt[JsValue].getOrElse(Json.obj())
             val endpoints = endpointsOf(entity, modality)
+            val served = modelsOf(entity.select("config").asOpt[JsValue].getOrElse(Json.obj()), modality, endpoints)
+            val config = entity.select("config").asOpt[JsValue].getOrElse(Json.obj())
             val info = Json.obj(
               "id" -> ref, "name" -> name, "slug" -> slug, "kind" -> entity.select("provider").asOptString.getOrElse("--").json,
               "modality" -> modality,

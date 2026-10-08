@@ -92,7 +92,8 @@ object DecisionModel {
 
   final case class ClientContext(self: DecisionModel, connection: JsObject, baseUrl: Option[String], token: String, timeout: Option[FiniteDuration], options: JsObject, id: String, env: Env) {
     def headers: Map[String, String] = connection.select("headers").asOpt[Map[String, String]].getOrElse(Map("Authorization" -> "Bearer {api_key}"))
-    def path: String = connection.select("path").asOptString.map(_.trim).filter(_.nonEmpty).getOrElse(SystemOneProviders.defaultPath)
+    def path: String = pathOr(SystemOneProviders.defaultPath)
+    def pathOr(default: String): String = connection.select("path").asOptString.map(_.trim).filter(_.nonEmpty).getOrElse(default)
     def api(providerName: String): SystemOneApi =
       new SystemOneApi(token, timeout.getOrElse(SystemOneProviders.defaultTimeout), providerName, headers, env, id.some)
   }
@@ -117,13 +118,18 @@ object DecisionModel {
         val providerName = c.connection.select("provider_name").asOptString
           .orElse(c.connection.select("name").asOptString)
           .getOrElse("System One Compatible")
-        new SystemOneDecisionModelClient(c.api(providerName), s"${baseUrl.stripSuffix("/")}${c.path}", providerName, DecisionModelClientOptions.fromJson(c.options), forwardsRouting = false)
+        new SystemOneDecisionModelClient(c.api(providerName), s"${baseUrl.stripSuffix("/")}${c.path}", providerName, DecisionModelClientOptions.fromJson(c.options), forwardsRouting = false, takesImages = true)
       }
     },
     SystemOneProviders.Cloudflare -> { (c: ClientContext) =>
       c.connection.select("account_id").asOptString.map(_.trim).filter(_.nonEmpty).map { accountId =>
         new CloudflareDecisionModelClient(c.api("Cloudflare"), c.baseUrl.getOrElse(SystemOneProviders.cloudflareBaseUrl).stripSuffix("/"), accountId, DecisionModelClientOptions.fromJson(c.options))
       }
+    },
+    // the decisions api of OpenAI: a System One request is asked in its format
+    OpenAiDecisionRequests.Provider -> { (c: ClientContext) =>
+      val url = s"${c.baseUrl.getOrElse(OpenAiApi.baseUrl).stripSuffix("/")}${c.pathOr(OpenAiDecisionRequests.defaultPath)}"
+      new OpenAiDecisionModelClient(c.api("OpenAI"), url, DecisionModelClientOptions.fromJson(c.options)).some
     },
     SystemOneProviders.LlmEmulation -> { (c: ClientContext) =>
       c.connection.select("provider").asOptString.map(_.trim).filter(_.nonEmpty).map { providerRef =>
@@ -181,6 +187,10 @@ object DecisionModel {
       case SystemOneProviders.LlmEmulation => Json.obj(
         "connection" -> Json.obj("provider" -> ""),
         "options" -> Json.obj(),
+      )
+      case OpenAiDecisionRequests.Provider => Json.obj(
+        "connection" -> Json.obj("base_url" -> OpenAiApi.baseUrl, "token" -> "xxxxx", "timeout" -> timeout),
+        "options" -> Json.obj("model" -> OpenAiDecisionRequests.defaultModel),
       )
       case SystemOneProviders.Compatible => Json.obj(
         "connection" -> Json.obj("base_url" -> "http://localhost:8000/v1", "path" -> SystemOneProviders.defaultPath, "token" -> "xxxxx", "timeout" -> timeout),

@@ -39,6 +39,7 @@ object AiStudioCatalog {
     "openai" -> Blueprint(OpenAiApi.baseUrl.some, Map(
       "text" -> "gpt-4o-mini", "embedding" -> "text-embedding-3-small", "image" -> "gpt-image-2",
       "audio_tts" -> "gpt-4o-mini-tts", "audio_stt" -> "gpt-transcribe", "moderation" -> "omni-moderation-latest",
+      "decision" -> OpenAiDecisionRequests.defaultModel,
     )),
     "openai-compatible" -> Blueprint(None, Map.empty, baseUrlRequired = true),
     "azure-openai" -> Blueprint(None, Map("text" -> "", "embedding" -> "text-embedding-3-large", "image" -> "gpt-image-2", "audio_tts" -> "gpt-4o-mini-tts", "audio_stt" -> "gpt-4o-transcribe"), fields = Seq(

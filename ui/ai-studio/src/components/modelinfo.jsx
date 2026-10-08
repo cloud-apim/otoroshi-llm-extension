@@ -162,10 +162,13 @@ export function ModelDetails({ model, baseUrl }) {
   const reasoningOptions = caps.reasoning_options || [];
   const kinds = kindsOf(model);
   const endpoint = (meta.endpoints || [])[0];
-  const path = endpoint === 'systemone' ? '/systemone' : endpoint === 'responses' ? '/responses' : endpoint === 'embeddings' ? '/embeddings' : '/chat/completions';
+  const paths = { systemone: '/systemone', decisions: '/decisions', responses: '/responses', embeddings: '/embeddings' };
+  const path = paths[endpoint] || '/chat/completions';
   const body =
     path === '/systemone'
       ? { model: model.id, state: 'The checkout is failing.', questions: { urgent: { type: 'noul', instructions: 'Is it urgent?' } } }
+      : path === '/decisions'
+      ? { model: model.id, input: 'The checkout is failing.', questions: [{ type: 'predicate', name: 'urgent', instructions: 'Is it urgent?' }] }
       : path === '/embeddings'
       ? { model: model.id, input: 'Hello!' }
       : path === '/responses'
@@ -195,7 +198,7 @@ export function ModelDetails({ model, baseUrl }) {
           <Row label="Types">{kinds.map((k) => KIND_LABELS[k] || k).join(', ') || <span className="faint">None</span>}</Row>
           <Row label="API">
             {kinds.includes('decision') ? (
-              <span title="A decision model answers typed questions with probabilities, it does not chat">System One, on /systemone and /decisions</span>
+              <span title="A decision model answers typed questions with probabilities, it does not chat">System One on /systemone, OpenAI on /decisions</span>
             ) : meta.openai_compatible === true ? (
               (meta.endpoints || []).map((e) => ENDPOINT_LABELS[e] || e).join(', ') || 'OpenAI compatible'
             ) : meta.openai_compatible === false ? (

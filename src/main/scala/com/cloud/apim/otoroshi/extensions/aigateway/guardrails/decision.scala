@@ -37,8 +37,10 @@ object DecisionGuardrail {
    * - noul: the probability of yes reaches `threshold`
    * - choice: the chosen option is one of `deny_choices`, with at least `min_confidence`
    * - score: the score reaches `max_score`
+   * - a refusal to answer: what a model will not judge does not go through
    */
   def denies(config: JsObject, answer: JsValue): Boolean = answer.select("type").asOptString match {
+    case Some(DecisionRequests.Refusal) => true
     case Some(DecisionRequests.Noul) =>
       answer.select("noul").asOpt[Double].exists(_ >= config.select("threshold").asOpt[Double].getOrElse(defaultThreshold))
     case Some(DecisionRequests.Choice) =>

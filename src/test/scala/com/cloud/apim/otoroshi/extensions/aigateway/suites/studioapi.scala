@@ -475,11 +475,11 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(decisionEntity.select("metadata").select("ai_studio_kind").asString, "decision-model")
     assertEquals(compat(wsId).select("decision_model_refs").as[Seq[String]], Seq(decisionId))
     val listing = expect(studio("GET", s"/workspaces/$wsId/models"), 200)
-    assertEquals(listing.select("models").as[Seq[JsObject]].map(m => (m.select("id").asString, m.select("metadata").select("kinds").as[Seq[String]], m.select("metadata").select("endpoints").as[Seq[String]])), Seq(("jev-latest", Seq("decision"), Seq("systemone"))))
+    assertEquals(listing.select("models").as[Seq[JsObject]].map(m => (m.select("id").asString, m.select("metadata").select("kinds").as[Seq[String]], m.select("metadata").select("endpoints").as[Seq[String]])), Seq(("jev-latest", Seq("decision"), Seq("systemone", "decisions"))))
     assertEquals(listing.select("models").as[Seq[JsObject]].head.select("metadata").select("has_cost").asOpt[Boolean], Some(true), "jev is in the price table")
     // how the model is shown: its id is what a request names, and it gets a `###` when the model has a slash
     assertEquals(listing.select("models").as[Seq[JsObject]].head.select("owned_by_with_model").asOpt[String], Some("typesafe / jev-latest"))
-    assertEquals(listing.select("providers").as[Seq[JsObject]].map(i => (i.select("modality").asString, i.select("endpoints").as[Seq[String]])), Seq(("decision", Seq("systemone"))))
+    assertEquals(listing.select("providers").as[Seq[JsObject]].map(i => (i.select("modality").asString, i.select("endpoints").as[Seq[String]])), Seq(("decision", Seq("systemone", "decisions"))))
 
     // a text provider deciding: it has to be one of the workspace, and its model is the one asked by default
     val ollama = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj("kind" -> "ollama", "base_url" -> s"http://localhost:$ollamaPort", "modalities" -> Json.obj("text" -> Json.obj("model" -> "llama3.2")))), 201)

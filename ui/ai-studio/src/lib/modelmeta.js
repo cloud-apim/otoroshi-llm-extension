@@ -29,7 +29,8 @@ export const ENDPOINT_LABELS = {
   ocr: 'OCR',
   realtime: 'Realtime',
   videos: 'Videos',
-  systemone: 'Decisions',
+  systemone: 'Decisions (System One)',
+  decisions: 'Decisions (OpenAI)',
 };
 
 export const MODALITY_NAMES = { text: 'text', image: 'images', pdf: 'PDF', audio: 'audio', video: 'video' };
