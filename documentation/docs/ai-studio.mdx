@@ -600,3 +600,28 @@ with the entities you edit there.
 In the backoffice, the entities a workspace is made of carry an **AI Studio** marker — a column in the
 listings and a line at the top of the entity — with a link back to the workspace they belong to. Editing
 them there is fine: a save from the studio only rewrites the fields its own forms manage.
+
+## AI Studio Enterprise
+
+AI Studio lives in the Otoroshi backoffice, so the people who use it are the administrators of your gateway.
+To open it to the rest of your company (the teams building with AI, the product owners following their
+spend, the developers who just need a key), **AI Studio Enterprise** serves the same studio as a standalone
+application, with the access control an organization expects.
+
+- **Your company login**: users sign in with your identity provider, through the authentication modules of
+  Otoroshi (OpenID Connect, SAML, LDAP...). Nobody needs an Otoroshi account.
+- **Members and roles in every workspace**: add members by email or by group of your directory, each with a
+  role. An `owner` manages the workspace and its members, an `editor` its configuration and its keys, a
+  `member` chats and uses their own keys, a `viewer` follows the configuration and the activity.
+- **Rights checked on every call**: a user only sees the workspaces they belong to, and only what their role
+  allows. A member sees their own usage, never the one of their colleagues.
+- **Secrets kept on the server**: provider credentials never reach the browser. API keys are revealed only to
+  the people who manage them, and every reveal is recorded.
+- **An audit trail**: what is changed in a workspace is kept, with who changed it.
+- **The workspaces you already have**: Enterprise builds the same Otoroshi entities, so your existing
+  workspaces are ready to share, and the backoffice studio stays available to your gateway administrators.
+
+Every capability of AI Studio remains in the open source edition. Enterprise adds what it takes to share it
+with your whole organization.
+
+Find out more about AI Studio Enterprise on the [Cloud APIM website](https://www.cloud-apim.com/ai-studio-enterprise).
