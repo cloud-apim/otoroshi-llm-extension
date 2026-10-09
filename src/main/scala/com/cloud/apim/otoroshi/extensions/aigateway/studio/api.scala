@@ -616,7 +616,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   }
 
   private def deleteWorkspace(wsId: String)(using call: AiStudioApiRequest): Future[Unit] = {
-    val kinds = Seq(Apikeys, Budgets) ++ modalities.map(_.entities) ++ Seq(Contexts, Functions, McpConnectors, SearchEngines)
+    val kinds = Seq(Apikeys, Budgets) ++ modalities.map(_.entities) ++ Seq(Contexts, McpVirtualServers, Functions, McpConnectors, SearchEngines)
     for {
       ws <- workspace(wsId)
       // the route is removed whatever happens to it below: who cannot write it removes nothing at all

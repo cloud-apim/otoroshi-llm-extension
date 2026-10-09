@@ -437,6 +437,9 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(renamed.select("backend").select("client").select("call_and_stream_timeout").as[Long], 30000L)
     assertEquals(renamed.select("plugins").as[Seq[JsObject]].find(_.select("plugin").asString.endsWith("IpAddressAllowedList")).get.select("enabled").asBoolean, true)
 
+    // the mcp server of the workspace goes with it
+    val keptServerId = expect(studio("PUT", s"/workspaces/$wsId/mcp-server", Json.obj("name" -> "Studio tools")), 200).select("id").asString
+
     // deleting the key removes its credit limit, deleting the workspace removes everything
     expect(studio("DELETE", s"/workspaces/$wsId/apikeys/$clientId"), 204)
     assert(aiEntity("ai-budgets", keyBudgetId).isEmpty)
@@ -446,6 +449,7 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assert(aiEntity("providers", ollamaText).isEmpty)
     assert(aiEntity("ai-budgets", budget.select("id").asString).isEmpty)
     assert(aiEntity("search-engines", search.select("id").asString).isEmpty)
+    assert(aiEntity("mcp-virtual-servers", keptServerId).isEmpty)
     expect(studio("GET", s"/workspaces/$wsId"), 404)
   }
 
