@@ -156,8 +156,6 @@ object AnthropicCompatProxy {
               )
             )
           )
-        } else {
-          Files.writeString(new File(s"anthropic-${reqId}-output-config-request.json").toPath, _jsonBody.prettify)
         }
       }
       _jsonBody.select("max_tokens").asOpt[Long].foreach {
