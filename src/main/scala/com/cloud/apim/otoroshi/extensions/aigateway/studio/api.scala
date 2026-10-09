@@ -136,7 +136,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   // entities, through the resource access of the admin api
   /////////////////////////////////////////////////////////////////////////////////////////////////
 
-  private final class Entities(group: String, plural: String) {
+  // `located`: the entity with the location its rights are checked on, when it carries none itself (a team, see
+  // `teamLocated`)
+  private final class Entities(group: String, plural: String, located: JsObject => JsObject = identity) {
 
     private def lookup: Option[Resource] = env.allResources.resources.find(r => r.group == group && r.pluralName == plural)
 
@@ -146,7 +148,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
     // datastore reads, not the in-memory state, so what was just written is always returned. Whatever the
     // caller cannot read is left out, as the generic admin api does
-    def all()(using call: AiStudioApiRequest): Future[Seq[JsObject]] = everything().map(_.filter(e => call.canUserReadJson(e)))
+    def all()(using call: AiStudioApiRequest): Future[Seq[JsObject]] = everything().map(_.filter(e => call.canUserReadJson(located(e))))
 
     // every entity, readable by the caller or not: only to keep what must stay unique unique
     def everything(): Future[Seq[JsObject]] = lookup match {
@@ -158,7 +160,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
     def get(id: String)(using call: AiStudioApiRequest): Future[Option[JsObject]] = {
       val r = resource
-      r.access.findOne(r.version.name, id).map(_.collect { case o: JsObject if call.canUserReadJson(o) => o })
+      r.access.findOne(r.version.name, id).map(_.collect { case o: JsObject if call.canUserReadJson(located(o)) => o })
     }
 
     def template(params: Map[String, String] = Map.empty): JsObject = {
@@ -178,8 +180,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         (action, old) match {
           case (WriteAction.Create, Some(_)) => Future.failed(conflict(s"${r.singularName} '$id' already exists"))
           case (WriteAction.Update, None)    => Future.failed(notFound(s"${r.singularName} '$id' not found"))
-          case (WriteAction.Update, Some(o)) if !call.canUserReadJson(o) => Future.failed(notFound(s"${r.singularName} '$id' not found"))
-          case _ if !call.canUserWriteJson(entity) || old.exists(o => !call.canUserWriteJson(o)) =>
+          case (WriteAction.Update, Some(o)) if !call.canUserReadJson(located(o.asObject)) => Future.failed(notFound(s"${r.singularName} '$id' not found"))
+          case _ if !call.canUserWriteJson(located(entity)) || old.exists(o => !call.canUserWriteJson(located(o.asObject))) =>
             Future.failed(forbidden(s"you cannot write the ${r.singularName} '$id'"))
           case _ =>
             r.access.validateToJson(entity, r.singularName, Right(None)) match {
@@ -201,8 +203,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     def delete(id: String)(using call: AiStudioApiRequest): Future[Unit] = {
       val r = resource
       r.access.findOne(r.version.name, id).flatMap {
-        case Some(o) if !call.canUserReadJson(o) => Future.failed(notFound(s"${r.singularName} '$id' not found"))
-        case Some(o) if !call.canUserWriteJson(o) => Future.failed(forbidden(s"you cannot delete the ${r.singularName} '$id'"))
+        case Some(o) if !call.canUserReadJson(located(o.asObject)) => Future.failed(notFound(s"${r.singularName} '$id' not found"))
+        case Some(o) if !call.canUserWriteJson(located(o.asObject)) => Future.failed(forbidden(s"you cannot delete the ${r.singularName} '$id'"))
         case _ =>
           r.access.deleteOne(r.version.name, id, r.singularName).flatMap {
             case Left(err) => Future.failed(badRequest(s"unable to delete ${r.singularName} '$id': ${err.stringify}"))
@@ -232,7 +234,19 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   private val AiGroup = "ai-gateway.extensions.cloud-apim.com"
   private val Routes = new Entities("proxy.otoroshi.io", "routes")
   private val Apikeys = new Entities("apim.otoroshi.io", "apikeys")
-  private val Teams = new Entities("organize.otoroshi.io", "teams")
+  // A team has no `_loc`: it is in its tenant, and is its own team. Its rights are checked on that location, or on
+  // the one it is created with (the location of the entities of its workspace).
+  private def teamLocated(team: JsObject): JsObject =
+    if (team.value.contains("_loc")) team
+    else
+      team ++ Json.obj(
+        "_loc" -> Json.obj(
+          "tenant" -> team.select("tenant").asOptString.getOrElse("default"),
+          "teams"  -> Json.arr(team.select("id").asOptString.getOrElse(""))
+        )
+      )
+
+  private val Teams = new Entities("organize.otoroshi.io", "teams", teamLocated)
   private val Providers = new Entities(AiGroup, "providers")
   private val Contexts = new Entities(AiGroup, "prompt-contexts")
   private val Functions = new Entities(AiGroup, "tool-functions")
@@ -478,6 +492,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         Future.failed(conflict(s"a workspace already uses '$finalSlug'"))
       } else {
         Teams.create(Json.obj(
+          "_loc" -> location,
           "id" -> teamIdOf(wsId),
           "tenant" -> tenant,
           "name" -> s"AI Studio - $name",

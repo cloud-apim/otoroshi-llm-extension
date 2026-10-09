@@ -595,6 +595,24 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     expect(studio("DELETE", s"/workspaces/$foreign"), 204)
   }
 
+  test("an admin of a tenant makes, renames and deletes a workspace there, with its team") {
+    // a tenant of its own, and a key that administers it and nothing else (a service account of a SaaS)
+    val tenants = s"http://otoroshi-api.oto.tools:$port/apis/organize.otoroshi.io/v1/tenants"
+    val tenant = client.call("POST", tenants, Map("Authorization" -> s"Basic $basic"), Some(Json.obj("id" -> "studio-customers", "name" -> "studio-customers", "description" -> "", "metadata" -> Json.obj()))).awaitf(30.seconds)
+    assert(tenant.status == 200 || tenant.status == 201, tenant.body)
+    val admin = adminApikey("studio-tenant-admin", Json.arr(Json.obj("tenant" -> "studio-customers:rw", "teams" -> Json.arr("*:rw"))))
+    await(3.seconds)
+    val inTenant = Map("Otoroshi-Tenant" -> "studio-customers")
+
+    val wsId = expect(studioAs(admin, "POST", "/workspaces", Json.obj("name" -> "Customer workspace"), inTenant), 201).select("id").asString
+    assertEquals(route(wsId).select("_loc").select("tenant").asString, "studio-customers")
+    assertEquals(entity("organize.otoroshi.io", "teams", s"team_ai_studio_$wsId").map(_.select("tenant").asString), Some("studio-customers"))
+    expect(studioAs(admin, "PATCH", s"/workspaces/$wsId", Json.obj("name" -> "Renamed"), inTenant), 200)
+    assertEquals(entity("organize.otoroshi.io", "teams", s"team_ai_studio_$wsId").map(_.select("name").asString), Some("AI Studio - Renamed"))
+    expect(studioAs(admin, "DELETE", s"/workspaces/$wsId", null, inTenant), 204)
+    assert(entity("organize.otoroshi.io", "teams", s"team_ai_studio_$wsId").isEmpty)
+  }
+
   test("the studio api serves what the studio front needs, and calls a workspace on behalf of a user") {
     val info = expect(studio("GET", "/_info"), 200)
     assert(info.select("features").as[Seq[String]].contains("proxy-on-behalf-of"))
