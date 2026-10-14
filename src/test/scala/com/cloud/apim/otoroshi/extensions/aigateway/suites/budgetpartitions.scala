@@ -5,6 +5,8 @@ import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientWithAu
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.*
 import otoroshi.env.Env
 import otoroshi.models.*
+import com.cloud.apim.otoroshi.extensions.aigateway.analytics.AiGatewayQueries
+import otoroshi.next.analytics.queries.{AnalyticsQuery, Bucket, Filters}
 import otoroshi.plugins.Keys as OtoroshiKeys
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
@@ -302,5 +304,24 @@ class BudgetPartitionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     AiBudgetCountersCleaner.run(ext).awaitf(30.seconds)
     assert(!exists(gone), "found gone twice, its counters are removed")
     assert(exists(current))
+  }
+
+  test("the analytics of the budgets show a line by consumer for a budget counting them apart") {
+    given env: Env = otoroshi.env
+    admin("POST", budgetsApi(s"$partitionedId/consumption/_reset"))
+    count(attrsOf(caller = Some(alice)), 50L)
+    count(attrsOf(caller = Some(bob)), 20L)
+    def run(query: AiGatewayQueries.Budgets.type => AnalyticsQuery): Seq[JsObject] =
+      query(AiGatewayQueries.Budgets)
+        .execute(Filters(from = java.time.Instant.now().minusSeconds(3600), to = java.time.Instant.now()), Json.obj("top_n" -> 1000), Bucket.OneMinute, null, null)(using ec, env)
+        .awaitf(30.seconds).data.select("items").as[Seq[JsObject]]
+    val usage = run(_.UsagePercent)
+    assertEquals(usage.filter(_.select("key").asString.startsWith(partitionedId)).map(i => (i.select("key").asString, i.select("label").asString, i.select("value").as[Double])).toSet, Set(
+      (s"$partitionedId:alice@acme.io", "budget partitioned-model · alice@acme.io", 0.5),
+      (s"$partitionedId:bob@acme.io", "budget partitioned-model · bob@acme.io", 0.2),
+    ))
+    assert(usage.exists(_.select("key").asString == classicId), "a budget counted as a whole keeps its own line")
+    val table = run(_.Consumption).find(_.select("key").asString == s"$partitionedId:alice@acme.io").get
+    assertEquals((table.select("budget").asString, table.select("tokens").asString, table.select("limit_tokens").asString), ("budget partitioned-model · alice@acme.io", "50", "100"))
   }
 }
