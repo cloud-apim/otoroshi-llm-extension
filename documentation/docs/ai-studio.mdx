@@ -421,6 +421,36 @@ run. The **Budget** button of an API key creates a budget for that key in one st
 
 *A budget is always limited to its workspace, then to the whole workspace, one API key, or a custom scope.*
 
+#### One limit for each person
+
+Turn on **By consumer** and the budget gives everyone their own limit: "1,000 tokens per person per month" for
+the whole team, with a single budget. A person's chats in the studio and the calls of the API keys they own share
+their limit, whatever the application. **View consumers** shows who consumed what in the current window, with
+the extensions each one took, and lets you extend or reset the window of one person.
+
+![The consumers of a budget by consumer: their consumption of their own limit and their extensions](/img/ai-studio-budget-consumers.png)
+
+*Each person with their own limit, the extensions they took, and what you can do for them.*
+
+#### Extensions, taken by the people themselves
+
+Allow **Extensions** on a budget and set what one adds and how many can be taken in a window. When someone used
+their limit up and needs to finish their work, they take their extension themselves: right from the chat where
+their message was refused, or from their usage page. The limit grows for the current window only, and no more
+than you allowed.
+
+![A budget by consumer with an extension of 100 tokens, once per window](/img/ai-studio-budget-by-consumer.png)
+
+*Each person gets 1,000 tokens a month, and can extend them once by 100 tokens.*
+
+![A message refused by a used up budget, with the extension offered in the chat](/img/ai-studio-chat-budget-extension.png)
+
+*The chat offers the extension where the message was refused: one click, then send the message again.*
+
+![The budgets of a person on their usage page, with the extension they can still take](/img/ai-studio-my-usage-extension.png)
+
+*Everyone sees their own limit and the extensions they have left.*
+
 ### Follow the activity
 
 **Activity** shows spend, requests, tokens, cache hit rate and latency, compared to the previous

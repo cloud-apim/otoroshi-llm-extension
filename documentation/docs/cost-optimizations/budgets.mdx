@@ -40,6 +40,9 @@ moving dollars are the ones priced in a unit the gateway cannot measure — a vo
 
 ![](/img/budgets-consumptions.png)
 
+The counters of a cycle stay available for a week after it ends, so the calls a worker of a cluster counted in
+its last minutes are never lost, then they are cleaned up automatically, like the counters of a deleted budget.
+
 A budget is defined for a scope based on pretty much whatever you want (apikey, api group, user, provider, model, request, etc). You can reference a budget in entity metadata using `ai_budget_ref` (apikey, api group, user, provider, auth. module)
 
 ![](/img/budgets-scope.png)
@@ -61,6 +64,7 @@ A budget is defined for a scope based on pretty much whatever you want (apikey, 
 | `rules` | JsonPath-based rules for advanced scoping |
 | `rulesMatchMode` | Rule matching mode: `All` (all rules must match) or `Any` (at least one rule must match) |
 | `alwaysApplyRules` | When `true`, rules are always evaluated even if explicit lists match |
+| `partition_by` | An expression of the Otoroshi expression language: the budget counts apart each value it takes, each one getting the whole limit. See [budgets per consumer](#budgets-per-consumer) |
 
 #### Duration units
 
@@ -71,6 +75,59 @@ Budget limits are applied for a renewable duration between the start and end dat
 | `hour` | Limits reset every hour |
 | `day` | Limits reset every day |
 | `year` | Limits reset every year |
+
+### Budgets per consumer
+
+One budget can give each of your consumers their own limit. Set `partition_by` to an expression of the
+[Otoroshi expression language](https://maif.github.io/otoroshi/manual/topics/expression-language.html): the budget
+counts apart every value the expression takes for a call, and each value has the whole limit for itself. A team
+of 200 people gets "200 $ per person per month" with a single budget, and everyone keeps their own counter.
+
+```json
+{
+  "limits": { "total_usd": 200 },
+  "duration": { "value": 30, "unit": "day" },
+  "scope": {
+    "always_apply_rules": true,
+    "rules": [ { "path": "$.provider.metadata.ai_studio_workspace", "value": "v4e46mctfxxw" } ],
+    "partition_by": "${user.email || apikey.metadata.ai_studio_owner}"
+  }
+}
+```
+
+Pick what a consumer is with the expression:
+
+| Expression | Each consumer is |
+|------------|------------------|
+| `${user.email \|\| apikey.metadata.ai_studio_owner}` | a person: their chats and the calls of the API keys they own share one limit |
+| `${consumer.id}` | each user, and each API key |
+| `${user.email \|\| apikey.metadata.ai_studio_owner \|\| apikey.clientId}` | a person, and each API key that has no owner |
+| `${apikey.metadata.team}` | a team, from the metadata of its API keys |
+| `${user.email \|\| apikey.metadata.ai_studio_owner}/${ctx.ai.model}` | a person, for each model |
+
+Besides everything the expression language reads (the user, the API key and their metadata, the route), the
+provider and the model a call counts for are available as `${ctx.ai.provider.id}`, `${ctx.ai.provider.name}` and
+`${ctx.ai.model}`.
+
+A call the expression finds nothing for, like a call made with an API key that has no owner, is not counted by
+that budget: it stays under the other budgets of its scope. To count those calls together, give the expression a
+default value, `${apikey.metadata.team:none}`, or `${user.email || apikey.metadata.ai_studio_owner :: shared}` for
+a chain. Values are compared in lower case, so `Jane@Acme.io` and `jane@acme.io` share their counter.
+
+:::caution
+Count consumers by what they cannot choose: their identity, their API key, their route. A value the caller sets
+freely, like a request header, would let anyone start over with a whole new limit.
+:::
+
+:::tip
+In a cluster, every node counts the consumers of a budget apart once it runs a version that knows `partition_by`:
+upgrade your nodes, then create these budgets.
+:::
+
+The consumption of a budget counted per consumer is the one of a consumer: name them with `?partition=` on the
+consumption endpoints, and list them with the [admin API](#admin-api). Alerts carry the consumer too:
+`AiBudgetAlmostExceeded` has a `partition` field, `AiBudgetExceeded` a `partitions` object with the consumer of
+each budget it names.
 
 ### Action on exceed
 
@@ -99,14 +156,73 @@ The response always carries `budget_exceeded`, so clients, metrics and dashboard
 When several budgets block the same call, the message of one of them is returned. Budgets in `soft` mode never
 block a call, so their message is never returned.
 
+### Extensions
+
+Someone used their whole budget and needs to finish what they started? Let them take an extension. The
+administrator of a budget decides what an extension adds and how many can be taken in a cycle; the person the
+budget counts takes one when they need it, in [AI Studio](/docs/ai-studio) or through the admin API, without
+waiting for anyone.
+
+```json
+"extensions": {
+  "enabled": true,
+  "max_per_cycle": 1,
+  "limits": { "total_usd": 10 }
+}
+```
+
+With this budget of 200 $ per person and per month, Michel, who spent his 200 $, takes his extension of the month:
+he can go on up to 210 $, and the budget blocks him again past it. His consumption stays the one he really had,
+200 $ out of 210 $, in every report.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `false` | Whether extensions can be taken |
+| `max_per_cycle` | number | `1` | How many extensions can be taken in a cycle, by each consumer for a [budget per consumer](#budgets-per-consumer) |
+| `limits` | object | — | What one extension adds, by limit (`total_usd`, `total_tokens`, `inference_usd`…): only the limits of the budget |
+
+- An extension counts for the current cycle only: the next one starts with the limit of the budget.
+- Extensions add up, up to `max_per_cycle`. Two taken at the very same time never go past it.
+- On a budget per consumer, each person takes their own, once they consumed in the cycle. On a budget counted as a
+  whole, the extension raises a limit everyone shares, so it is taken by an administrator.
+- An administrator can cancel the extensions of a cycle: their amounts are removed, and they are not given back.
+  A reset starts the cycle over, extensions included.
+- Every extension taken or cancelled is audited (`AiBudgetExtended`, `AiBudgetExtensionCancelled`), with who it was
+  for and who took it.
+
+The consumption of a budget then tells what was extended: `allowed_total_usd` includes the extensions,
+`extra_total_usd` is what they added, `extensions_taken` and `extensions_max` how many were and can be taken, and
+`extension` what the next one would add.
+
 ### Admin API 
 
 in addition to the classic admin API endpoints for the `ai-gateway.extensions.cloud-apim.com/AiBudget` entity, you have
 
 * GET /api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption
 * POST /api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_reset
+* GET /api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/partitions
+* POST /api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_extend
+* DELETE /api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_extend
 
-the first one will return a response like:
+For a [budget per consumer](#budgets-per-consumer), name the consumer with `?partition=jane@acme.io` to read their
+consumption, reset it, take or cancel their extensions. Without it, the reset starts the cycle over for everyone.
+`/partitions` lists the consumers of the current cycle, the ones that consumed most first, with `limit`, `offset`
+and a `q` filter:
+
+```json
+{
+  "total": 2,
+  "items": [
+    { "partition": "jane@acme.io", "consumption": { "consumed_total_usd": 182.4, "allowed_total_usd": 210, "extra_total_usd": 10 } },
+    { "partition": "john@acme.io", "consumption": { "consumed_total_usd": 37.9, "allowed_total_usd": 200 } }
+  ]
+}
+```
+
+`_extend` takes one of the [extensions](#extensions) the budget allows, with no body, and returns the consumption
+it leads to; `DELETE` cancels the extensions of the cycle.
+
+the consumption endpoint returns a response like:
 
 ```json
 {
@@ -162,6 +278,9 @@ the first one will return a response like:
 ```
 
 ### Embed in responses
+
+The budget embedded in a response is the one of the caller: on a [budget per consumer](#budgets-per-consumer),
+`partition` names them, and the `extra_*` and `extensions_*` fields tell the [extensions](#extensions) they took.
 
 ```sh
 curl --request POST \
