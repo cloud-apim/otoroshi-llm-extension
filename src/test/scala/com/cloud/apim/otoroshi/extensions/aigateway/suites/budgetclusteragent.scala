@@ -62,4 +62,37 @@ class BudgetClusterAgentSuite extends munit.FunSuite {
     consume(current, 10, 0.125)
     assertEquals(pending(current), (Some(10L), Some(BigDecimal("0.125"))))
   }
+
+  // a budget counting its consumers apart: what each of them consumed
+  private def consumeApart(budget: String, partition: String, tokens: Long, usd: Double, cycle: String = "0"): Unit = {
+    agent.partitionedUnitCounters.getOrElseUpdate((budget, cycle, partition, "total_tokens"), new AtomicLong()).addAndGet(tokens)
+    agent.partitionedUsdCounters.getOrElseUpdate((budget, cycle, partition, "total_usd"), new DoubleAdder()).add(usd)
+  }
+
+  private def pendingApart(budget: String, partition: String): Option[JsObject] =
+    agent.deltas().select("partitioned").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+      .find(e => e.select("budget").asOpt[String].contains(budget) && e.select("partition").asOpt[String].contains(partition))
+      .map(_.select("counters").as[JsObject])
+
+  test("what a budget counting its consumers apart consumed is pushed by partition, in a section of its own") {
+    val id = s"budget_${UUID.randomUUID()}"
+    consumeApart(id, "alice@acme.io", 100, 0.5)
+    consumeApart(id, "bob@acme.io", 10, 0.25)
+    val pushed = agent.deltas()
+    val entries = pushed.select("partitioned").as[Seq[JsObject]].filter(_.select("budget").asString == id)
+    assertEquals(entries.map(e => (e.select("cycle").asString, e.select("partition").asString, e.select("counters").select("total_tokens").as[Long], e.select("counters").select("total_usd").as[BigDecimal])),
+      Seq(("0", "alice@acme.io", 100L, BigDecimal("0.5")), ("0", "bob@acme.io", 10L, BigDecimal("0.25"))))
+    assert(!pushed.select("total_tokens").asOpt[JsObject].exists(_.keys.exists(_.startsWith(id))), "nor in the sections of the budgets counted as a whole")
+    // a leader of a previous version does not read the section: what it held is pushed again
+    agent.acknowledge(pushed, _ => true)
+    assertEquals(pendingApart(id, "alice@acme.io").flatMap(_.select("total_tokens").asOpt[Long]), Some(100L))
+    // a leader that read it says so: what came since goes with the next push
+    consumeApart(id, "alice@acme.io", 40, 0.0)
+    agent.acknowledgePartitioned(pushed, (_, _) => true)
+    assertEquals(pendingApart(id, "alice@acme.io").map(c => (c.select("total_tokens").asOpt[Long], c.select("total_usd").asOpt[BigDecimal])), Some((Some(40L), None)))
+    assertEquals(pendingApart(id, "bob@acme.io"), None)
+    // once the cycle is over, nothing is kept of it
+    agent.acknowledgePartitioned(agent.deltas(), (_, _) => false)
+    assert(!agent.partitionedUnitCounters.keys.exists(_._1 == id) && !agent.partitionedUsdCounters.keys.exists(_._1 == id))
+  }
 }

@@ -782,7 +782,21 @@ class AiExtension(val env: Env) extends AdminExtension {
             }
           }
         }
-        Results.Ok(Json.obj("done" -> true)).vfuture
+        // What the budgets counting their consumers apart consumed, by budget, cycle and partition. A leader that reads
+        // it says so: the worker keeps it until one does
+        val partitioned = bodyJson.select("partitioned").asOpt[Seq[JsObject]]
+        partitioned.getOrElse(Seq.empty).foreach { entry =>
+          val partition = entry.select("partition").asOpt[String].map(BudgetPartition.normalize).filter(_.nonEmpty)
+          val cycle = entry.select("cycle").asOpt[String].filter(_.nonEmpty)
+          entry.select("budget").asOpt[String].flatMap(states.budget).foreach { budget =>
+            entry.select("counters").asOpt[JsObject].map(_.value).getOrElse(Map.empty[String, JsValue]).foreach { case (counter, value) =>
+              if (partition.isDefined && AiBudgetClusterAgent.counters.contains(counter)) {
+                value.asOpt[BigDecimal].foreach(v => budget.countFromWorker(counter, cycle.getOrElse(budget.cycleId), v, partition))
+              }
+            }
+          }
+        }
+        Results.Ok(Json.obj("done" -> true) ++ (if (partitioned.isDefined) Json.obj("partitioned" -> true) else Json.obj())).vfuture
       }
     }).recover {
       case e: Throwable => {

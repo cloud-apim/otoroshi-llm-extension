@@ -59,6 +59,10 @@ object AiBudgetClusterAgent {
   val decisionUsdCounters = new TrieMap[String, DoubleAdder]()
   val decisionTokensCounters = new TrieMap[String, AtomicLong]()
 
+  // what the budgets counting their consumers apart consumed here, by budget, cycle, partition and counter (`total_usd`...)
+  val partitionedUsdCounters = new TrieMap[(String, String, String, String), DoubleAdder]()
+  val partitionedUnitCounters = new TrieMap[(String, String, String, String), AtomicLong]()
+
   private val schedulerRef = new AtomicReference[Cancellable]()
   private val counter = new AtomicInteger(0)
 
@@ -93,11 +97,30 @@ object AiBudgetClusterAgent {
   // dust, far below the billionth of a dollar the leaders count in
   private def settled(usd: Double): Boolean = math.abs(usd) < 1e-10
 
-  // what was consumed here and the leaders do not know yet: for each counter, by budget and cycle
+  // what was consumed here and the leaders do not know yet: for each counter, by budget and cycle. What the budgets
+  // counting their consumers apart consumed goes in a section of its own, only there when there is something in it
   def deltas(): JsObject = JsObject(
     usdCounters.map { case (name, counters) => name -> JsObject(counters.toMap.view.mapValues(_.sum).filterNot(c => settled(c._2)).mapValues(_.json).toMap) } ++
     unitCounters.map { case (name, counters) => name -> JsObject(counters.toMap.view.mapValues(_.get).filter(_._2 != 0L).mapValues(_.json).toMap) }
-  )
+  ) ++ (partitionedDeltas() match {
+    case entries if entries.isEmpty => Json.obj()
+    case entries                    => Json.obj("partitioned" -> JsArray(entries))
+  })
+
+  // one entry by budget, cycle and partition, with what each of its counters consumed: the partition is never read
+  // out of a key, whatever it holds
+  def partitionedDeltas(): Seq[JsObject] = {
+    val usd = partitionedUsdCounters.toSeq.map { case (key, adder) => (key, adder.sum) }.filterNot(c => settled(c._2)).map { case (key, value) => (key, value.json) }
+    val units = partitionedUnitCounters.toSeq.map { case (key, counter) => (key, counter.get) }.filter(_._2 != 0L).map { case (key, value) => (key, value.json) }
+    (usd ++ units).groupBy { case ((budget, cycle, partition, _), _) => (budget, cycle, partition) }.toSeq.sortBy(_._1).map { case ((budget, cycle, partition), values) =>
+      Json.obj(
+        "budget" -> budget,
+        "cycle" -> cycle,
+        "partition" -> partition,
+        "counters" -> JsObject(values.map { case ((_, _, _, counter), value) => counter -> value }),
+      )
+    }
+  }
 
   // The leaders counted what was pushed: it is taken off the counters, which keep what calls consumed while the push
   // was on its way. Clearing them here would lose it. A counter back to zero is dropped once its cycle is over
@@ -119,6 +142,29 @@ object AiBudgetClusterAgent {
         }
       }
     }
+  }
+
+  // What the leaders counted of the `partitioned` section, once they said they read it: a leader of a previous version
+  // ignores it, and what it held is pushed again until a leader reads it
+  def acknowledgePartitioned(pushed: JsObject, current: (String, String) => Boolean): Unit = {
+    pushed.select("partitioned").asOpt[Seq[JsObject]].getOrElse(Seq.empty).foreach { entry =>
+      val budget = entry.select("budget").asOpt[String].getOrElse("")
+      val cycle = entry.select("cycle").asOpt[String].getOrElse("")
+      val partition = entry.select("partition").asOpt[String].getOrElse("")
+      entry.select("counters").asOpt[JsObject].map(_.value).getOrElse(Map.empty[String, JsValue]).foreach { case (counter, value) =>
+        val key = (budget, cycle, partition, counter)
+        partitionedUsdCounters.get(key).foreach { adder =>
+          adder.add(-value.as[Double])
+          if (settled(adder.sum) && !current(budget, cycle)) partitionedUsdCounters.remove(key, adder)
+        }
+        partitionedUnitCounters.get(key).foreach { units =>
+          if (units.addAndGet(-value.as[Long]) == 0L && !current(budget, cycle)) partitionedUnitCounters.remove(key, units)
+        }
+      }
+    }
+    // a partition stops consuming without its cycle being over: once that cycle is, its counters are dropped too
+    partitionedUsdCounters.foreach { case (key, adder) => if (settled(adder.sum) && !current(key._1, key._2)) partitionedUsdCounters.remove(key, adder) }
+    partitionedUnitCounters.foreach { case (key, units) => if (units.get == 0L && !current(key._1, key._2)) partitionedUnitCounters.remove(key, units) }
   }
 
   private def otoroshiUrl(env: Env): String = {
@@ -160,6 +206,9 @@ object AiBudgetClusterAgent {
                 Cluster.logger.debug(s"Ai budgets deltas has been pushed")
               if (resp.status == 200) {
                 acknowledge(payload, key => ext.states.budget(key.take(key.lastIndexOf(":"))).exists(_.cycleId == key.drop(key.lastIndexOf(":") + 1)))
+                if (Try(Json.parse(resp.body)).toOption.exists(_.select("partitioned").asOpt[Boolean].contains(true))) {
+                  acknowledgePartitioned(payload, (budget, cycle) => ext.states.budget(budget).exists(_.cycleId == cycle))
+                }
               }
               Some(Json.parse(resp.body))
             }
@@ -780,7 +829,7 @@ case class AiBudget(
     if (env.clusterConfig.mode.isWorker) {
       partition match {
         case None    => counters.getOrElseUpdate(s"$id:$cycle", new DoubleAdder()).add(by.toDouble)
-        case Some(_) => ()
+        case Some(p) => AiBudgetClusterAgent.partitionedUsdCounters.getOrElseUpdate((id, cycle, p, counter.replace('-', '_')), new DoubleAdder()).add(by.toDouble)
       }
     }
     count(cycle, counter, by.*(BigDecimal(1000000000)).toLong, partition)
@@ -791,7 +840,7 @@ case class AiBudget(
     if (env.clusterConfig.mode.isWorker) {
       partition match {
         case None    => counters.getOrElseUpdate(s"$id:$cycle", new AtomicLong()).addAndGet(by)
-        case Some(_) => ()
+        case Some(p) => AiBudgetClusterAgent.partitionedUnitCounters.getOrElseUpdate((id, cycle, p, counter.replace('-', '_')), new AtomicLong()).addAndGet(by)
       }
     }
     count(cycle, counter, by, partition)
