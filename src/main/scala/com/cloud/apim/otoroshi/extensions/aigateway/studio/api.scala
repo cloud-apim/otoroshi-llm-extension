@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.studio
 
 import com.cloud.apim.otoroshi.extensions.aigateway.catalog.ModelsMetadata
-import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ApikeyOwner}
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiProvider, ApikeyOwner, BudgetPartition}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.SystemOneProviders
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.scaladsl.Source
@@ -169,6 +169,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     }
 
     def create(entity: JsObject)(using call: AiStudioApiRequest): Future[JsObject] = write(entity, WriteAction.Create)
+
+    def canWrite(entity: JsObject)(using call: AiStudioApiRequest): Boolean = call.canUserWriteJson(located(entity))
 
     def update(entity: JsObject)(using call: AiStudioApiRequest): Future[JsObject] = write(entity, WriteAction.Update)
 
@@ -1096,6 +1098,15 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
   private val WorkspaceRulePath = "$.provider.metadata.ai_studio_workspace"
 
+  // A budget "by consumer" gives each person the whole limit: their chats and the calls of the api keys they own count
+  // together. The studio sets this expression and only this one: a budget counted apart by another expression, set
+  // outside of the studio, is shown as such and never changed
+  val ByConsumerExpr = "${user.email || apikey.metadata.ai_studio_owner}"
+
+  private def partitionOf(budget: JsValue): Option[String] = budget.select("scope").select("partition_by").asOptString.map(_.trim).filter(_.nonEmpty)
+
+  private def byConsumer(budget: JsValue): Boolean = partitionOf(budget).contains(ByConsumerExpr)
+
   private def periodOf(budget: JsObject): String = {
     val d = budget.select("duration")
     periods.find(p => d.select("value").asOpt[Int].contains(p.amount) && d.select("unit").asOptString.contains(p.unit)).map(_.value).getOrElse("custom")
@@ -1127,7 +1138,13 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     models: Seq[String],
     rules: Option[Seq[JsObject]],
     metadata: JsObject = Json.obj(),
+    // None: keep what the existing budget does
+    byConsumer: Option[Boolean] = None,
+    extensions: Option[ExtensionsForm] = None,
   )
+
+  // the extensions of a budget as the studio sets them: on its dollar and token limits. Absent: keep, `null`: none
+  private final case class ExtensionsForm(enabled: Option[Boolean], usd: Option[Option[BigDecimal]], tokens: Option[Option[BigDecimal]], max: Option[Int])
 
   // every budget of a workspace is scoped to the workspace first (a rule the user cannot remove), then optionally
   // narrowed with consumers (api keys, studio users), models and extra json path conditions
@@ -1154,7 +1171,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         .getOrElse(Instant.now().plus(100L * 365, ChronoUnit.DAYS).truncatedTo(ChronoUnit.MILLIS).toString),
       "duration" -> (if (form.period == "custom" && existing.isDefined) prev.select("duration").asOpt[JsValue].getOrElse(period.duration).as[JsValue] else period.duration),
       "limits" -> limits,
-      "scope" -> (Json.obj(
+      "scope" -> withPartition(form, Json.obj(
         "extract_from_apikey_meta" -> false,
         "extract_from_apikey_group_meta" -> false,
         "extract_from_user_meta" -> false,
@@ -1176,7 +1193,28 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         "alert_on_almost_exceed" -> true,
         "alert_on_almost_exceed_percentage" -> (if (form.alert != 0) form.alert else BigDecimal(80)),
       )),
-    )
+    ) ++ extensionsOf(form, prev)
+  }
+
+  // the studio sets its own expression, or removes it, and leaves any other one as it is
+  private def withPartition(form: BudgetForm, scope: JsObject): JsObject = form.byConsumer match {
+    case Some(true)                                                                  => scope ++ Json.obj("partition_by" -> ByConsumerExpr)
+    case Some(false) if scope.select("partition_by").asOptString.contains(ByConsumerExpr) => scope - "partition_by"
+    case _                                                                           => scope
+  }
+
+  private def extensionsOf(form: BudgetForm, prev: JsObject): JsObject = form.extensions match {
+    case None => Json.obj()
+    case Some(e) =>
+      val current = objOf(prev.select("extensions"))
+      val limits = objOf(current.select("limits"))
+      def amount(key: String, value: Option[Option[BigDecimal]]): JsObject =
+        value.getOrElse(limits.select(key).asOpt[BigDecimal]).map(v => Json.obj(key -> v)).getOrElse(Json.obj())
+      Json.obj("extensions" -> Json.obj(
+        "enabled" -> e.enabled.getOrElse(current.select("enabled").asOptBoolean.getOrElse(false)),
+        "max_per_cycle" -> e.max.getOrElse(current.select("max_per_cycle").asOpt[Int].getOrElse(1)),
+        "limits" -> ((limits - "total_usd" - "total_tokens") ++ amount("total_usd", e.usd) ++ amount("total_tokens", e.tokens)),
+      ))
   }
 
   private def saveBudget(ws: Workspace, form: BudgetForm, existing: Option[JsObject])(using call: AiStudioApiRequest): Future[JsObject] = {
@@ -1186,15 +1224,70 @@ class AiStudioApi(env: Env, ext: AiExtension) {
 
   private def keyBudgetOf(budgets: Seq[JsObject], clientId: String): Option[JsObject] = budgets.find(b => metaOf(b, MetaKeyLimit).contains(clientId))
 
-  private def consumptionOf(budgetId: String): Future[Option[JsValue]] =
+  // the consumption of the current cycle: of the budget, or of a consumer for a budget counting its consumers apart,
+  // which has no consumption of its own
+  private def consumptionOf(budgetId: String, consumer: Option[String] = None): Future[Option[JsValue]] =
     ext.datastores.budgetsDataStore.findById(budgetId).flatMap {
       case None => None.vfuture
+      case Some(budget) if budget.partitioned => consumer match {
+        case None    => None.vfuture
+        case Some(c) => budget.getConsumptions(Some(c)).map(c => Some(c.jsonWithRemaining(budget)))
+      }
       case Some(budget) => budget.getConsumptions().map(c => Some(c.jsonWithRemaining(budget)))
     }.recover { case _ => None }
 
-  private def budgetJson(budget: JsObject, consumption: Option[JsValue]): JsObject = {
+  // how many consumers a budget counting its consumers apart counted in the current cycle
+  private def consumersCountOf(budgetId: String): Future[Option[Int]] =
+    ext.datastores.budgetsDataStore.findById(budgetId).flatMap {
+      case Some(budget) if budget.partitioned => budget.partitionConsumptions().map(c => Some(c.size))
+      case _ => None.vfuture
+    }.recover { case _ => None }
+
+  // the consumer a call names, the way the counters compare them
+  private def consumerOf(using call: AiStudioApiRequest): Option[String] =
+    call.req.getQueryString("consumer").map(BudgetPartition.normalize).filter(_.nonEmpty)
+
+  // what is shown of a budget in a list: its consumption, or how many consumers it counted when it counts them apart
+  private def budgetListed(b: JsObject)(using call: AiStudioApiRequest): Future[JsObject] = {
+    if (!call.flag("consumption")) budgetJson(b, None).vfuture
+    else if (partitionOf(b).isDefined && consumerOf.isEmpty) consumersCountOf(Budgets.idOf(b)).map(count => budgetJson(b, None, count))
+    else consumptionOf(Budgets.idOf(b), consumerOf).map(c => budgetJson(b, c))
+  }
+
+  // who takes or cancels an extension: the backoffice user, the api key calling, and the person AI Studio names
+  private def extensionActor(using call: AiStudioApiRequest): JsObject = {
+    val who = call.backOfficeUser match {
+      case Right(Some(user)) => Json.obj("kind" -> "backoffice", "email" -> user.email, "name" -> user.name)
+      case _                 => Json.obj("kind" -> "apikey", "client_id" -> call.apikey.clientId, "name" -> call.apikey.clientName)
+    }
+    who ++ call.req.headers.get(UserEmailHeader).map(_.trim).filter(_.nonEmpty).map(e => Json.obj("on_behalf_of" -> e)).getOrElse(Json.obj())
+  }
+
+  // the errors of the budgets, named after the consumers of the studio
+  private def studioError(status: Int, error: JsObject): Result = {
+    val renamed = error.select("error").asOptString.map(_.replace("partition", "consumer")).getOrElse("bad_request")
+    val description = error.select("error_description").asOptString.map(_.replace("'partition'", "'consumer'")).getOrElse("")
+    Results.Status(status)(error ++ Json.obj("error" -> renamed, "error_description" -> description))
+  }
+
+  private def budgetJson(budget: JsObject, consumption: Option[JsValue], consumersCount: Option[Int] = None): JsObject = {
     val scope = budget.select("scope")
     val action = budget.select("action_on_exceed")
+    val extensions = budget.select("extensions").asOpt[JsObject]
+    // what is shown only for a budget using it: the view of any other budget stays the same
+    val partition = partitionOf(budget) match {
+      case None                                => Json.obj()
+      case Some(ByConsumerExpr)                => Json.obj("by_consumer" -> true)
+      case Some(_)                             => Json.obj("by_consumer" -> false, "partition" -> "custom")
+    }
+    val extensionsView = extensions.map { e =>
+      Json.obj(
+        "extensions_enabled" -> e.select("enabled").asOptBoolean.getOrElse(false),
+        "extension_usd" -> e.select("limits").select("total_usd").asOpt[JsValue].getOrElse(JsNull).as[JsValue],
+        "extension_tokens" -> e.select("limits").select("total_tokens").asOpt[JsValue].getOrElse(JsNull).as[JsValue],
+        "max_extensions" -> e.select("max_per_cycle").asOpt[Int].getOrElse(1),
+      )
+    }.getOrElse(Json.obj())
     Json.obj(
       "id" -> Budgets.idOf(budget),
       "name" -> budget.select("name").asOptString.getOrElse(""),
@@ -1214,7 +1307,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       "key_limit" -> optString(metaOf(budget, MetaKeyLimit)),
       "start_at" -> budget.select("start_at").asOpt[JsValue].getOrElse(JsNull).as[JsValue],
       "end_at" -> budget.select("end_at").asOpt[JsValue].getOrElse(JsNull).as[JsValue],
-    ) ++ consumption.map(c => Json.obj("consumption" -> c)).getOrElse(Json.obj())
+    ) ++ partition ++ extensionsView ++
+      consumption.map(c => Json.obj("consumption" -> c)).getOrElse(Json.obj()) ++
+      consumersCount.map(c => Json.obj("consumers_count" -> c)).getOrElse(Json.obj())
   }
 
   private def rulesFromForm(form: JsObject): Option[Seq[JsObject]] = form.value.get("rules").map {
@@ -1254,6 +1349,20 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     if (period != "custom" && !periods.exists(_.value == period)) throw badRequest(s"unknown period '$period', expected ${periods.map(_.value).mkString(", ")}")
     val budgetMode = string(form, "mode").getOrElse(action.select("mode").asOptString.getOrElse("block"))
     if (budgetMode != "block" && budgetMode != "soft") throw badRequest("'mode' must be block or soft")
+    val byConsumerForm = boolean(form, "by_consumer")
+    if (byConsumerForm.getOrElse(byConsumer(prev)) && mode == "apikey") throw badRequest("a budget scoped to an api key is already the one of a single consumer: it cannot be by consumer")
+    val extensionKeys = Seq("extensions_enabled", "extension_usd", "extension_tokens", "max_extensions")
+    val extensionsForm = if (!extensionKeys.exists(has(form, _))) None else {
+      def amount(key: String): Option[Option[BigDecimal]] = if (!has(form, key)) None else Some(number(form, key).filter(_ != 0)).map { a =>
+        if (a.exists(_ < 0)) throw badRequest(s"'$key' must be a positive amount")
+        a
+      }
+      val max = number(form, "max_extensions").map { m =>
+        if (m < 1 || !m.isWhole) throw badRequest("'max_extensions' must be a whole number of at least 1")
+        m.toInt
+      }
+      Some(ExtensionsForm(boolean(form, "extensions_enabled"), amount("extension_usd"), amount("extension_tokens"), max))
+    }
     val result = BudgetForm(
       name = string(form, "name").getOrElse(prev.select("name").asOptString.getOrElse("")).trim,
       description = if (has(form, "description")) string(form, "description").getOrElse("") else prev.select("description").asOptString.getOrElse(""),
@@ -1267,9 +1376,17 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       users = Some(scopedUsers),
       models = strings(form, "models").getOrElse(stringsOf(scope.select("models"))),
       rules = Some(scopedRules),
+      byConsumer = byConsumerForm,
+      extensions = extensionsForm,
     )
     if (result.name.isEmpty) throw badRequest("'name' is required")
     if (result.usd.isEmpty && result.tokens.isEmpty) throw badRequest("a budget needs a 'usd' or a 'tokens' limit")
+    // an extension adds to a limit the budget has
+    val extensionLimits = objOf(prev.select("extensions").select("limits"))
+    val extensionUsd = extensionsForm.flatMap(_.usd).getOrElse(extensionLimits.select("total_usd").asOpt[BigDecimal])
+    val extensionTokens = extensionsForm.flatMap(_.tokens).getOrElse(extensionLimits.select("total_tokens").asOpt[BigDecimal])
+    if (extensionUsd.isDefined && result.usd.isEmpty) throw badRequest("a budget without a dollar limit cannot be extended in dollars")
+    if (extensionTokens.isDefined && result.tokens.isEmpty) throw badRequest("a budget without a token limit cannot be extended in tokens")
     result
   }
 
@@ -2292,6 +2409,8 @@ class AiStudioApi(env: Env, ext: AiExtension) {
   // checks the ones it needs before starting
   private val features = Seq(
     "caller-rights",
+    "budget-consumers",
+    "budget-extensions",
     "proxy-on-behalf-of",
     "providers-draft-models",
     "provider-options",
@@ -2488,9 +2607,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     route("GET", "/workspaces/:id/budgets") {
       withWorkspace { ws =>
         Budgets.list(ws.id).flatMap { budgets =>
-          Future.sequence(budgets.sortBy(_.select("name").asOptString.getOrElse("")).map { b =>
-            (if (call.flag("consumption")) consumptionOf(Budgets.idOf(b)) else None.vfuture).map(c => budgetJson(b, c))
-          })
+          Future.sequence(budgets.sortBy(_.select("name").asOptString.getOrElse("")).map(budgetListed))
         }.map(list => ok(JsArray(list)))
       }
     },
@@ -2502,7 +2619,7 @@ class AiStudioApi(env: Env, ext: AiExtension) {
       }
     },
     route("GET", "/workspaces/:id/budgets/:bid") {
-      withWorkspace(ws => workspaceBudget(ws, call.param("bid")).flatMap(b => consumptionOf(Budgets.idOf(b)).map(c => ok(budgetJson(b, c)))))
+      withWorkspace(ws => workspaceBudget(ws, call.param("bid")).flatMap(b => consumptionOf(Budgets.idOf(b), consumerOf).map(c => ok(budgetJson(b, c)))))
     },
     route("PUT", "/workspaces/:id/budgets/:bid", wantsBody = true) {
       withWorkspace { ws =>
@@ -2518,9 +2635,34 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     },
     route("GET", "/workspaces/:id/budgets/:bid/consumption") {
       withWorkspace { ws =>
-        workspaceBudget(ws, call.param("bid")).flatMap(b => consumptionOf(Budgets.idOf(b))).map {
-          case None => Results.NotFound(Json.obj("error" -> "not_found", "error_description" -> "no consumption for this budget yet"))
-          case Some(c) => ok(c)
+        workspaceBudget(ws, call.param("bid")).flatMap { b =>
+          if (partitionOf(b).isDefined && consumerOf.isEmpty) {
+            Results.BadRequest(Json.obj("error" -> "consumer_required", "error_description" -> "this budget counts its consumers apart: name one with the 'consumer' query param")).vfuture
+          } else consumptionOf(Budgets.idOf(b), consumerOf).map {
+            case None => Results.NotFound(Json.obj("error" -> "not_found", "error_description" -> "no consumption for this budget yet"))
+            case Some(c) => ok(c)
+          }
+        }
+      }
+    },
+    // the consumers a budget counting its consumers apart counted in the current cycle, the ones that consumed most first
+    route("GET", "/workspaces/:id/budgets/:bid/consumers") {
+      withWorkspace { ws =>
+        workspaceBudget(ws, call.param("bid")).flatMap { b =>
+          ext.datastores.budgetsDataStore.findById(Budgets.idOf(b)).flatMap {
+            case Some(budget) if budget.partitioned =>
+              val limit = call.req.getQueryString("limit").flatMap(_.toIntOption).getOrElse(50).max(1).min(1000)
+              val offset = call.req.getQueryString("offset").flatMap(_.toIntOption).getOrElse(0).max(0)
+              val q = call.req.getQueryString("q").map(_.trim.toLowerCase).filter(_.nonEmpty)
+              budget.partitionConsumptions().map { all =>
+                val matching = all.filter(c => q.forall(f => c.partition.exists(_.contains(f))))
+                ok(Json.obj(
+                  "total" -> matching.size,
+                  "items" -> JsArray(matching.slice(offset, offset + limit).map(c => Json.obj("consumer" -> c.partition, "consumption" -> c.jsonWithRemaining(budget)))),
+                ))
+              }
+            case _ => Results.BadRequest(Json.obj("error" -> "not_by_consumer", "error_description" -> "this budget does not count its consumers apart")).vfuture
+          }
         }
       }
     },
@@ -2529,8 +2671,47 @@ class AiStudioApi(env: Env, ext: AiExtension) {
         workspaceBudget(ws, call.param("bid")).flatMap { b =>
           ext.datastores.budgetsDataStore.findById(Budgets.idOf(b)).flatMap {
             case None => Results.NotFound(Json.obj("error" -> "not_found", "error_description" -> "budget not found")).vfuture
+            case Some(budget) if consumerOf.isDefined && !budget.partitioned =>
+              Results.BadRequest(Json.obj("error" -> "consumer_not_allowed", "error_description" -> "this budget does not count its consumers apart")).vfuture
+            case Some(budget) if consumerOf.isDefined => budget.resetPartition(consumerOf.get).map(_ => ok(Json.obj("done" -> true)))
             case Some(budget) if call.flag("all") => budget.resetAll().map(_ => ok(Json.obj("done" -> true)))
             case Some(budget) => budget.resetCurrentCycle().map(_ => ok(Json.obj("done" -> true)))
+          }
+        }
+      }
+    },
+    // takes one of the extensions a budget allows, for a consumer when it counts its consumers apart: AI Studio
+    // Enterprise and the console relay here the one a person takes for themselves, the consumer forced on them
+    route("POST", "/workspaces/:id/budgets/:bid/consumption/_extend") {
+      withWorkspace { ws =>
+        workspaceBudget(ws, call.param("bid")).flatMap { b =>
+          if (!Budgets.canWrite(b)) throw forbidden("you cannot extend this budget")
+          ext.datastores.budgetsDataStore.findById(Budgets.idOf(b)).flatMap {
+            case None => Results.NotFound(Json.obj("error" -> "not_found", "error_description" -> "budget not found")).vfuture
+            case Some(budget) => budget.extend(consumerOf).map {
+              case Left((status, error)) => studioError(status, error)
+              case Right(consumption) =>
+                AiBudget.auditExtension("AiBudgetExtended", budget, consumption.partition, Some(consumption), extensionActor)
+                ok(consumption.jsonWithRemaining(budget))
+            }
+          }
+        }
+      }
+    },
+    route("DELETE", "/workspaces/:id/budgets/:bid/consumption/_extend") {
+      withWorkspace { ws =>
+        workspaceBudget(ws, call.param("bid")).flatMap { b =>
+          if (!Budgets.canWrite(b)) throw forbidden("you cannot change the extensions of this budget")
+          ext.datastores.budgetsDataStore.findById(Budgets.idOf(b)).flatMap {
+            case None => Results.NotFound(Json.obj("error" -> "not_found", "error_description" -> "budget not found")).vfuture
+            case Some(budget) if budget.partitioned && consumerOf.isEmpty =>
+              Results.BadRequest(Json.obj("error" -> "consumer_required", "error_description" -> "this budget counts its consumers apart: name one with the 'consumer' query param")).vfuture
+            case Some(budget) if !budget.partitioned && consumerOf.isDefined =>
+              Results.BadRequest(Json.obj("error" -> "consumer_not_allowed", "error_description" -> "this budget does not count its consumers apart")).vfuture
+            case Some(budget) => budget.cancelExtensions(consumerOf).flatMap(_ => budget.getConsumptions(consumerOf)).map { consumption =>
+              AiBudget.auditExtension("AiBudgetExtensionCancelled", budget, consumerOf, Some(consumption), extensionActor)
+              ok(Json.obj("done" -> true))
+            }
           }
         }
       }

@@ -706,4 +706,73 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
     expect(studio("DELETE", s"/workspaces/$wsId"), 204)
   }
+
+  test("a budget by consumer gives each person the whole limit, and the extensions they can take") {
+    val features = expect(studio("GET", "/_info"), 200).select("features").as[Seq[String]]
+    assert(features.contains("budget-consumers") && features.contains("budget-extensions"), features.mkString(", "))
+    val wsId = expect(studio("POST", "/workspaces", Json.obj("name" -> "Budgets By Consumer")), 201).select("id").asString
+    expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj("kind" -> "openai", "name" -> "openai", "token" -> "sk-test",
+      "base_url" -> s"http://localhost:$openaiPort/v1", "modalities" -> Json.obj("text" -> Json.obj("model" -> "gpt-4o-mini")))), 201)
+
+    // the studio sets its own expression from a flag, never one it is sent
+    val perPerson = expect(studio("POST", s"/workspaces/$wsId/budgets", Json.obj("name" -> "per person", "tokens" -> 1000, "by_consumer" -> true,
+      "extensions_enabled" -> true, "extension_tokens" -> 100, "max_extensions" -> 1, "partition_by" -> "${req.headers.x-anything}")), 201)
+    val bid = perPerson.select("id").asString
+    assertEquals((perPerson.select("by_consumer").asOpt[Boolean], perPerson.select("extensions_enabled").asOpt[Boolean], perPerson.select("extension_tokens").asOpt[Int],
+      perPerson.select("extension_usd").asOpt[JsValue], perPerson.select("max_extensions").asOpt[Int]), (Some(true), Some(true), Some(100), Some(JsNull), Some(1)))
+    val entity = aiEntity("ai-budgets", bid).get
+    assertEquals(entity.select("scope").select("partition_by").asOpt[String], Some("${user.email || apikey.metadata.ai_studio_owner}"))
+    assertEquals(entity.select("extensions").as[JsObject], Json.obj("enabled" -> true, "max_per_cycle" -> 1, "limits" -> Json.obj("total_tokens" -> 100)))
+    val ignored = expect(studio("POST", s"/workspaces/$wsId/budgets", Json.obj("name" -> "not by consumer", "usd" -> 10, "partition_by" -> "${req.headers.x-anything}")), 201)
+    assertEquals(aiEntity("ai-budgets", ignored.select("id").asString).get.select("scope").select("partition_by").asOpt[String], None)
+    assert(!ignored.as[JsObject].keys.exists(k => k == "by_consumer" || k.startsWith("extension")), "nothing new on a budget that uses none of it")
+    expect(studio("POST", s"/workspaces/$wsId/budgets", Json.obj("name" -> "one key", "usd" -> 10, "scope" -> "apikey", "apikeys" -> Json.arr("k"), "by_consumer" -> true)), 400)
+    expect(studio("POST", s"/workspaces/$wsId/budgets", Json.obj("name" -> "dollars", "tokens" -> 10, "extensions_enabled" -> true, "extension_usd" -> 5)), 400)
+    expect(studio("POST", s"/workspaces/$wsId/budgets", Json.obj("name" -> "never", "tokens" -> 10, "extensions_enabled" -> true, "extension_tokens" -> 5, "max_extensions" -> 0)), 400)
+
+    // an expression set outside of the studio is shown as such, and kept
+    val custom = expect(studio("POST", s"/workspaces/$wsId/budgets", Json.obj("name" -> "by team", "usd" -> 10)), 201).select("id").asString
+    val customEntity = aiEntity("ai-budgets", custom).get
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "ai-budgets").call("PUT", Some(custom), Some(customEntity ++ Json.obj("scope" -> (customEntity.select("scope").as[JsObject] ++ Json.obj("partition_by" -> "${apikey.metadata.team}"))))).awaitf(10.seconds)
+    val renamed = expect(studio("PUT", s"/workspaces/$wsId/budgets/$custom", Json.obj("name" -> "by team, renamed", "by_consumer" -> false)), 200)
+    assertEquals((renamed.select("by_consumer").asOpt[Boolean], renamed.select("partition").asOpt[String]), (Some(false), Some("custom")))
+    assertEquals(aiEntity("ai-budgets", custom).get.select("scope").select("partition_by").asOpt[String], Some("${apikey.metadata.team}"))
+    val listed = expect(studio("GET", s"/workspaces/$wsId/budgets?consumption=true"), 200)
+    assert(!listed.stringify.contains("${"), "no view holds an expression")
+    val listedPerPerson = listed.as[Seq[JsObject]].find(_.select("id").asString == bid).get
+    assertEquals((listedPerPerson.select("consumers_count").asOpt[Int], listedPerPerson.select("consumption").asOpt[JsValue]), (Some(0), None))
+    assert(listed.as[Seq[JsObject]].find(_.select("id").asString == ignored.select("id").asString).get.select("consumption").isDefined, "the others keep their consumption")
+
+    // a chat of alice counts for her, once the gateway knows the provider
+    await(3.seconds)
+    val alice = "alice@studio.test"
+    val chat = Json.obj("model" -> "gpt-4o-mini", "messages" -> Json.arr(Json.obj("role" -> "user", "content" -> "hello")))
+    expect(studioAs(basic, "POST", s"/workspaces/$wsId/proxy/chat/completions", chat, Map("AI-Studio-User-Email" -> alice)), 200)
+    await(2.seconds)
+    assertEquals(expect(studio("GET", s"/workspaces/$wsId/budgets/$bid/consumption?consumer=Alice@Studio.test"), 200).select("consumed_total_tokens").asOpt[Int], Some(15))
+    assertEquals(expect(studio("GET", s"/workspaces/$wsId/budgets/$bid/consumption"), 400).select("error").asOpt[String], Some("consumer_required"))
+    val ofAlice = expect(studio("GET", s"/workspaces/$wsId/budgets?consumption=true&consumer=$alice"), 200).as[Seq[JsObject]]
+    assertEquals(ofAlice.find(_.select("id").asString == bid).get.select("consumption").select("consumed_total_tokens").asOpt[Int], Some(15))
+    assert(ofAlice.find(_.select("id").asString == ignored.select("id").asString).get.select("consumption").isDefined, "naming a consumer never fails a budget that does not count them")
+    val consumers = expect(studio("GET", s"/workspaces/$wsId/budgets/$bid/consumers"), 200)
+    assertEquals(consumers.select("items").as[Seq[JsObject]].map(i => (i.select("consumer").asString, i.select("consumption").select("consumed_total_tokens").as[Int])), Seq((alice, 15)))
+    expect(studio("GET", s"/workspaces/$wsId/budgets/${ignored.select("id").asString}/consumers"), 400)
+
+    // her extension, once
+    val reader = adminApikey("studio-budget-reader", Json.arr(Json.obj("tenant" -> "default:r", "teams" -> Json.arr("*:r"))))
+    await(3.seconds)
+    expect(studioAs(reader, "POST", s"/workspaces/$wsId/budgets/$bid/consumption/_extend?consumer=$alice"), 403)
+    val extended = expect(studio("POST", s"/workspaces/$wsId/budgets/$bid/consumption/_extend?consumer=$alice"), 200)
+    assertEquals((extended.select("allowed_total_tokens").asOpt[Int], extended.select("extra_total_tokens").asOpt[Int], extended.select("extensions_taken").asOpt[Int]), (Some(1100), Some(100), Some(1)))
+    assertEquals(expect(studio("POST", s"/workspaces/$wsId/budgets/$bid/consumption/_extend?consumer=$alice"), 409).select("error").asOpt[String], Some("extensions_exhausted"))
+    assertEquals(expect(studio("POST", s"/workspaces/$wsId/budgets/$bid/consumption/_extend?consumer=bob@studio.test"), 409).select("error").asOpt[String], Some("no_consumption"))
+    assertEquals(expect(studio("POST", s"/workspaces/$wsId/budgets/$bid/consumption/_extend"), 400).select("error").asOpt[String], Some("consumer_required"))
+    expect(studio("DELETE", s"/workspaces/$wsId/budgets/$bid/consumption/_extend?consumer=$alice"), 200)
+    assertEquals(expect(studio("GET", s"/workspaces/$wsId/budgets/$bid/consumption?consumer=$alice"), 200).select("allowed_total_tokens").asOpt[Int], Some(1000))
+    expect(studio("POST", s"/workspaces/$wsId/budgets/$bid/consumption/_reset?consumer=$alice"), 200)
+    assertEquals(expect(studio("GET", s"/workspaces/$wsId/budgets/$bid/consumption?consumer=$alice"), 200).select("consumed_total_tokens").asOpt[Int], Some(0))
+    assertEquals(expect(studio("POST", s"/workspaces/$wsId/budgets/${ignored.select("id").asString}/consumption/_reset?consumer=$alice"), 400).select("error").asOpt[String], Some("consumer_not_allowed"))
+
+    expect(studio("DELETE", s"/workspaces/$wsId"), 204)
+  }
 }

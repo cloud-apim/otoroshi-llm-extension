@@ -68,9 +68,17 @@ test('the secret of an api key is shown on creation, on reset and on reveal only
 
 test('what belongs to the person calling is read on the routes of the whole workspace', () => {
   const own = Object.entries(ops).filter(([, op]) => op.own);
-  assert.deepEqual(own.map(([name]) => name).sort(), ['mybudgets.list', 'mykeys.create', 'mykeys.delete', 'mykeys.list', 'mykeys.resetSecret', 'mykeys.reveal', 'mykeys.update']);
+  assert.deepEqual(own.map(([name]) => name).sort(), ['mybudgets.extend', 'mybudgets.list', 'mykeys.create', 'mykeys.delete', 'mykeys.list', 'mykeys.resetSecret', 'mykeys.reveal', 'mykeys.update']);
   // never the access of who reads or writes the configuration
   own.forEach(([name, op]) => assert.ok(['keys:own', 'usage:own'].includes(op.access), name));
+});
+
+test('the consumption of a budget keeps its extensions: numbers, and an object of numbers', () => {
+  const consumption = { consumed_total_tokens: 210, extra_total_tokens: 10, extensions_taken: 1, extensions_max: 1, extension: { total_tokens: 10, total_usd: 2 } };
+  assert.deepEqual(maskSecrets('budgets.consumption', consumption), consumption);
+  assert.deepEqual(maskSecrets('budgets.consumers', { total: 1, items: [{ consumer: 'michel@acme.io', consumption }] }), { total: 1, items: [{ consumer: 'michel@acme.io', consumption }] });
+  const view = { id: 'b', by_consumer: true, tokens: 200, extension_tokens: 10, max_extensions: 1, consumers_count: 3 };
+  assert.deepEqual(maskSecrets('budgets.list', [view]), [view]);
 });
 
 test('what reads the configuration has every field named like a secret masked, numbers aside', () => {
