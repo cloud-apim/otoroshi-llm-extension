@@ -5,6 +5,7 @@ import otoroshi.env.Env
 import otoroshi.next.analytics.queries.*
 import otoroshi.next.analytics.exporter.UserAnalyticsExporterSettings
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
+import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions}
 import play.api.libs.json.*
 
 import scala.concurrent.{ExecutionContext, Future}
@@ -813,13 +814,23 @@ object AiGatewayQueries {
         .getOrElse(Seq.empty)
         .filter(_.enabled)
         .filter(b => ctx.filters.tenant.forall(_.toLowerCase == b.location.tenant.value))
-      Future.sequence(budgets.map { b =>
-        b.getConsumptions().map { c =>
-          val usdPct    = b.limits.total_usd.filter(_ > 0).map(l => (c.totalUsd / l).toDouble)
-          val tokensPct = b.limits.total_tokens.filter(_ > 0).map(l => c.totalTokens.toDouble / l.toDouble)
-          (b.id, b.name, usdPct, tokensPct, c.totalUsd, b.limits.total_usd, c.totalTokens, b.limits.total_tokens)
-        }
-      })
+      // the limits with the extensions taken in the cycle
+      def row(key: String, label: String, b: AiBudget, c: AiBudgetConsumptions) = {
+        val usdLimit    = c.allowedUsd("total_usd", b.limits.total_usd)
+        val tokensLimit = c.allowedUnits("total_tokens", b.limits.total_tokens)
+        val usdPct      = usdLimit.filter(_ > 0).map(l => (c.totalUsd / l).toDouble)
+        val tokensPct   = tokensLimit.filter(_ > 0).map(l => c.totalTokens.toDouble / l.toDouble)
+        (key, label, usdPct, tokensPct, c.totalUsd, usdLimit, c.totalTokens, tokensLimit)
+      }
+      // a budget counting its consumers apart has no consumption of its own: one line by consumer
+      Future.sequence(budgets.map {
+        case b if b.partitioned =>
+          b.partitionConsumptions().map(_.map { c =>
+            val partition = c.partition.getOrElse("")
+            row(s"${b.id}:$partition", s"${b.name} · $partition", b, c)
+          })
+        case b => b.getConsumptions().map(c => Seq(row(b.id, b.name, b, c)))
+      }).map(_.flatten)
     }
 
     val UsagePercent = q("cloudapim_llm_budgets_usage", "Budget usage", "How much of each budget's current cycle is consumed, in dollars or tokens, whichever is closer to its limit. Ignores the period filter.", AnalyticsShape.TopN, "bar", params = Seq(TopNParam)) { ctx =>

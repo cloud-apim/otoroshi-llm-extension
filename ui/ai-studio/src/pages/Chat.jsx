@@ -8,7 +8,8 @@ import { generateImage } from '../lib/images';
 import { randomId } from '../lib/ids';
 import { backend } from '../lib/backend';
 import { listAttachedTools, TOOL_LABELS } from '../lib/tools';
-import { fmtCost, fmtInt, fmtMs } from '../lib/format';
+import { fmtCost, fmtInt, fmtMs, fmtNumber } from '../lib/format';
+import { budgetsListOp, budgetsOfConsumer, extendOwnOp, extensionLabel, extensionsLeft, isByConsumer, usedUp } from '../lib/budgets';
 import { deleteConversation, getConversation, listConversations, listWorkspaceModels, saveConversation } from '../lib/models';
 import { bootstrap } from '../lib/bootstrap';
 import { useRouter } from '../lib/router';
@@ -192,6 +193,38 @@ function Versions({ answer, onPick }) {
 }
 
 // an answer of the assistant: its text, what it cost, and what can be done with it
+// A call a budget blocked: when a budget by consumer the person used up still allows them an extension, they take
+// it from here, then send their message again
+function BudgetExtensionOffer() {
+  const { workspace } = useWorkspace();
+  const toast = useToast();
+  const [taken, setTaken] = useState(false);
+  const email = bootstrap.user.email;
+  const data = useAsync(async () => {
+    const budgets = await backend.run(budgetsListOp(workspace), workspace.id, { query: { consumption: true, consumer: email } });
+    return budgetsOfConsumer(budgets, email).filter((b) => isByConsumer(b) && usedUp(b.consumption) && extensionsLeft(b.consumption) > 0);
+  }, [workspace.id]);
+  const budget = (data.data || [])[0];
+  if (taken) return <p className="small muted" style={{ marginTop: 8 }}>Extension taken: send your message again.</p>;
+  if (!budget) return null;
+  const take = () =>
+    backend
+      .run(extendOwnOp(workspace), workspace.id, { bid: budget.id, query: { consumer: email } })
+      .then(() => {
+        setTaken(true);
+        toast.success('Extension taken: your limit is extended for this window');
+      })
+      .catch(toast.error);
+  return (
+    <div className="row wrap small" style={{ marginTop: 8, gap: 8 }}>
+      <span className="muted">You used up {budget.name} for this window.</span>
+      <button className="btn sm" onClick={take}>
+        Use my extension ({extensionLabel(budget.consumption.extension, fmtCost, fmtNumber)})
+      </button>
+    </div>
+  );
+}
+
 function Answer({ answer, busy, compact, onRegenerate, onRegenerateWith, onVersion, onContinue, onOpenImage }) {
   return (
     <>
@@ -205,6 +238,7 @@ function Answer({ answer, busy, compact, onRegenerate, onRegenerateWith, onVersi
           </details>
         )}
         {answer.error ? answer.content : <Markdown text={answer.content || (answer.pending && !answer.reasoning ? '…' : '')} />}
+        {answer.error && answer.budgetExceeded && <BudgetExtensionOffer />}
         {(answer.images || []).length > 0 && (
           <div className="answer-images">
             {answer.images.map((src, i) => (
@@ -628,7 +662,7 @@ export function ChatPage() {
           ttft: res.ttft,
         };
       } catch (e) {
-        complete = e.name === 'AbortError' ? { ...partial, stopped: true } : { content: e.message, error: true, model: requested, requested, at: Date.now() };
+        complete = e.name === 'AbortError' ? { ...partial, stopped: true } : { content: e.message, error: true, budgetExceeded: !!e.budgetExceeded, model: requested, requested, at: Date.now() };
       }
       place(index, column, answerSlot(previous, complete));
     };

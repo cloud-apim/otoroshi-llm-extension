@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { Sparkline, StackedBars, seriesColor } from './charts';
-import { Empty, Loading, Pager, Progress, Segmented, useAsync, usePaged } from './ui';
+import { Empty, Loading, Pager, Progress, Segmented, useAsync, useConfirm, usePaged, useToast } from './ui';
 import { NoExporterError, runQuery, scalarOf, seriesOf } from '../lib/analytics';
 import { Link } from '../lib/router';
 import { backend } from '../lib/backend';
-import { budgetsListOp, periodLabel } from '../lib/budgets';
+import { bootstrap } from '../lib/bootstrap';
+import { budgetsListOp, extendOwnOp, extensionLabel, extensionsLeft, isByConsumer, periodLabel } from '../lib/budgets';
 import { fmtCost, fmtInt, fmtNumber } from '../lib/format';
 
 // Building blocks of the usage pages (activity, users): KPIs, consumer tables, usage over time, budgets.
@@ -97,13 +98,34 @@ export function ConsumersCard({ title, description, items, active, onPick, empty
   );
 }
 
-// Live consumption of the budgets of a workspace, optionally only some of them
-export function BudgetsCard({ workspace, title = 'Budgets', description = 'Live consumption of the current window of each budget.', filter = () => true, empty = 'No budget in this workspace.' }) {
+// Live consumption of the budgets of a workspace, optionally only some of them. With a `consumer`, the budgets by
+// consumer show what that person consumed of their own limit, and the person themselves can take an extension
+export function BudgetsCard({ workspace, title = 'Budgets', description = 'Live consumption of the current window of each budget.', filter = () => true, empty = 'No budget in this workspace.', consumer }) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const data = useAsync(async () => {
-    const budgets = (await backend.run(budgetsListOp(workspace), workspace.id, { query: { consumption: true } })).filter(filter);
+    const budgets = (await backend.run(budgetsListOp(workspace), workspace.id, { query: { consumption: true, ...(consumer ? { consumer } : {}) } })).filter(filter);
     return budgets.map((b) => ({ budget: b, consumption: b.consumption || null }));
-  }, [workspace.id]);
+  }, [workspace.id, consumer]);
   const list = data.data || [];
+  const own = !!consumer && consumer === bootstrap.user.email;
+  const extend = (budget, consumption) => {
+    const left = extensionsLeft(consumption) - 1;
+    confirm({
+      title: `Use an extension of ${budget.name}?`,
+      message: `${extensionLabel(consumption.extension, fmtCost, fmtNumber)} to your limit for the current window. You will have ${left === 0 ? 'no extension' : `${left} extension${left > 1 ? 's' : ''}`} left.`,
+      confirmLabel: 'Use it',
+    }).then((ok) => {
+      if (!ok) return;
+      backend
+        .run(extendOwnOp(workspace), workspace.id, { bid: budget.id, query: { consumer } })
+        .then(() => {
+          toast.success('Extension taken: your limit is extended for this window');
+          data.reload();
+        })
+        .catch(toast.error);
+    });
+  };
   if (data.loading && !data.data) return null;
   return (
     <div className="card">
@@ -116,13 +138,15 @@ export function BudgetsCard({ workspace, title = 'Budgets', description = 'Live 
         {list.map(({ budget, consumption }) => {
           const usd = consumption ? Number(consumption.consumed_total_usd) || 0 : 0;
           const tokens = consumption ? Number(consumption.consumed_total_tokens) || 0 : 0;
-          const limitUsd = budget.usd;
-          const limitTokens = budget.tokens;
+          // the limits with the extensions taken in the window
+          const limitUsd = consumption && consumption.allowed_total_usd !== undefined ? consumption.allowed_total_usd : budget.usd;
+          const limitTokens = consumption && consumption.allowed_total_tokens !== undefined ? consumption.allowed_total_tokens : budget.tokens;
+          const left = extensionsLeft(consumption);
           return (
             <div key={budget.id} className="stack tight">
               <div className="row between">
                 <span>
-                  {budget.name} <span className="faint small">· {periodLabel(budget)}</span>
+                  {budget.name} <span className="faint small">· {periodLabel(budget)}{isByConsumer(budget) ? ' · your own limit' : ''}</span>
                 </span>
                 <span className="small">
                   {limitUsd !== undefined && limitUsd !== null ? `${fmtCost(usd)} / ${fmtCost(limitUsd)}` : fmtCost(usd)}
@@ -131,6 +155,21 @@ export function BudgetsCard({ workspace, title = 'Budgets', description = 'Live 
                 </span>
               </div>
               {(limitUsd || limitTokens) && <Progress value={limitUsd ? usd : tokens} max={limitUsd || limitTokens} />}
+              {consumption && consumption.extensions_max !== undefined && (
+                <div className="row between small">
+                  <span className="muted">
+                    {consumption.extra_total_usd || consumption.extra_total_tokens
+                      ? `Extended by ${extensionLabel({ total_usd: consumption.extra_total_usd, total_tokens: consumption.extra_total_tokens }, fmtCost, fmtNumber)}. `
+                      : ''}
+                    {left === 0 ? 'No extension left this window.' : `${left} extension${left > 1 ? 's' : ''} of ${extensionLabel(consumption.extension, fmtCost, fmtNumber)} left this window.`}
+                  </span>
+                  {own && isByConsumer(budget) && left > 0 && (
+                    <button className="btn sm" onClick={() => extend(budget, consumption)}>
+                      Use an extension
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}

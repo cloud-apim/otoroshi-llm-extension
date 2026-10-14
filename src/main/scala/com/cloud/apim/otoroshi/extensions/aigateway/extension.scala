@@ -281,6 +281,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     given ec: ExecutionContext = env.otoroshiExecutionContext
     WorkflowFunctionsInitializer.initDefaults()
     AiBudgetClusterAgent.start(env, this)
+    AiBudgetCountersCleaner.start(env, this)
     costsTracking.startOpenRouterCatalogSync()
     costsTracking.startModelsCatalog()
     ProviderHealthchecks.start(env, this)
@@ -301,6 +302,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     ProviderHealthchecks.stop()
     costsTracking.stopOpenRouterCatalogSync()
     AiBudgetClusterAgent.stop()
+    AiBudgetCountersCleaner.stop()
     LettuceRedisClientManager.shutdownAll()
   }
 
@@ -679,11 +681,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       case Some(budgetId) => {
         states.budget(budgetId) match {
           case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
-          case Some(budget) => {
-            budget.getConsumptions().map { consumptions =>
-              Results.Ok(consumptions.jsonWithRemaining(budget))
-            }
-          }
+          case Some(budget) => budgetConsumption(budget, req)
         }
       }
     }
@@ -698,9 +696,125 @@ class AiExtension(val env: Env) extends AdminExtension {
       case Some(budgetId) => {
         states.budget(budgetId) match {
           case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
-          case Some(budget) if all => budget.resetAll().map(_ => Results.Ok(Json.obj("done" -> true)))
-          case Some(budget) => budget.resetCurrentCycle().map(_ => Results.Ok(Json.obj("done" -> true)))
+          case Some(budget) => budgetReset(budget, req, all)
         }
+      }
+    }
+  }
+
+  def handleBudgetPartitionsBackoffice(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    req.getQueryString("budget").flatMap(states.budget) match {
+      case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
+      case Some(budget) => budgetPartitions(budget, req)
+    }
+  }
+
+  // The partition a call names (`?partition=`): a budget counting its consumers apart has no consumption of its own, so
+  // reading it needs a partition, and a budget that does not has no partition
+  private def partitionOf(budget: AiBudget, req: RequestHeader, required: Boolean): Either[Result, Option[String]] = {
+    val partition = req.getQueryString("partition").map(BudgetPartition.normalize).filter(_.nonEmpty)
+    (budget.partitioned, partition) match {
+      case (true, None) if required => Left(Results.BadRequest(Json.obj("error" -> "partition_required", "error_description" -> "this budget counts its consumers apart: name one with the 'partition' query param")))
+      case (false, Some(_)) => Left(Results.BadRequest(Json.obj("error" -> "partition_not_allowed", "error_description" -> "this budget does not count its consumers apart")))
+      case (_, p) => Right(p)
+    }
+  }
+
+  private def budgetConsumption(budget: AiBudget, req: RequestHeader): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    partitionOf(budget, req, required = true) match {
+      case Left(error) => error.vfuture
+      case Right(partition) => budget.getConsumptions(partition).map(consumptions => Results.Ok(consumptions.jsonWithRemaining(budget)))
+    }
+  }
+
+  private def budgetReset(budget: AiBudget, req: RequestHeader, all: Boolean): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    partitionOf(budget, req, required = false) match {
+      case Left(error) => error.vfuture
+      case Right(Some(partition)) => budget.resetPartition(partition).map(_ => Results.Ok(Json.obj("done" -> true)))
+      case Right(None) if all => budget.resetAll().map(_ => Results.Ok(Json.obj("done" -> true)))
+      case Right(None) => budget.resetCurrentCycle().map(_ => Results.Ok(Json.obj("done" -> true)))
+    }
+  }
+
+  // takes one extension of a budget (`?partition=` for a budget counting its consumers apart)
+  def budgetExtend(budget: AiBudget, req: RequestHeader, by: JsObject): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    budget.extend(req.getQueryString("partition").map(BudgetPartition.normalize).filter(_.nonEmpty)).map {
+      case Left((status, error)) => Results.Status(status)(error)
+      case Right(consumption) =>
+        AiBudget.auditExtension("AiBudgetExtended", budget, consumption.partition, Some(consumption), by)
+        Results.Ok(Json.obj("consumption" -> consumption.jsonWithRemaining(budget)))
+    }
+  }
+
+  // cancels the extensions of the current cycle, for a partition when the budget counts its consumers apart
+  def budgetCancelExtensions(budget: AiBudget, req: RequestHeader, by: JsObject): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    partitionOf(budget, req, required = true) match {
+      case Left(error) => error.vfuture
+      case Right(partition) =>
+        budget.cancelExtensions(partition).flatMap(_ => budget.getConsumptions(partition)).map { consumption =>
+          AiBudget.auditExtension("AiBudgetExtensionCancelled", budget, partition, Some(consumption), by)
+          Results.Ok(Json.obj("done" -> true))
+        }
+    }
+  }
+
+  private def adminApikeyActor(apikey: ApiKey): JsObject = Json.obj("kind" -> "apikey", "client_id" -> apikey.clientId, "name" -> apikey.clientName)
+
+  private def backofficeActor(user: Option[BackOfficeUser]): JsObject =
+    user.map(u => Json.obj("kind" -> "backoffice", "email" -> u.email, "name" -> u.name)).getOrElse(Json.obj("kind" -> "backoffice"))
+
+  def handleBudgetExtend(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] =
+    withAdminBudget(ctx)(budget => budgetExtend(budget, req, adminApikeyActor(apikey)))
+
+  def handleBudgetExtensionsCancel(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] =
+    withAdminBudget(ctx)(budget => budgetCancelExtensions(budget, req, adminApikeyActor(apikey)))
+
+  def handleBudgetExtendBackoffice(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] =
+    req.getQueryString("budget").flatMap(states.budget) match {
+      case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
+      case Some(budget) if req.method == "DELETE" => budgetCancelExtensions(budget, req, backofficeActor(user))
+      case Some(budget) => budgetExtend(budget, req, backofficeActor(user))
+    }
+
+  private def withAdminBudget(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute])(f: AiBudget => Future[Result]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    ctx.named("id") match {
+      case None => Results.BadRequest(Json.obj("error" -> "no budget id found")).vfuture
+      case Some(budgetId) => datastores.budgetsDataStore.findById(budgetId).flatMap {
+        case None => Results.NotFound(Json.obj("error" -> "budget not found")).vfuture
+        case Some(budget) => f(budget)
+      }
+    }
+  }
+
+  // the partitions of a budget counting its consumers apart, in the current cycle, the ones that consumed most first
+  private def budgetPartitions(budget: AiBudget, req: RequestHeader): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    if (!budget.partitioned) {
+      Results.BadRequest(Json.obj("error" -> "not_partitioned", "error_description" -> "this budget does not count its consumers apart")).vfuture
+    } else {
+      val limit = req.getQueryString("limit").flatMap(_.toIntOption).getOrElse(50).max(1).min(1000)
+      val offset = req.getQueryString("offset").flatMap(_.toIntOption).getOrElse(0).max(0)
+      val q = req.getQueryString("q").map(_.trim.toLowerCase).filter(_.nonEmpty)
+      budget.partitionConsumptions().map { all =>
+        val matching = all.filter(c => q.forall(f => c.partition.exists(_.contains(f))))
+        Results.Ok(Json.obj(
+          "total" -> matching.size,
+          "items" -> JsArray(matching.slice(offset, offset + limit).map(c => Json.obj(
+            "partition" -> c.partition,
+            "consumption" -> c.jsonWithRemaining(budget),
+          ))),
+        ))
       }
     }
   }
@@ -724,7 +838,21 @@ class AiExtension(val env: Env) extends AdminExtension {
             }
           }
         }
-        Results.Ok(Json.obj("done" -> true)).vfuture
+        // What the budgets counting their consumers apart consumed, by budget, cycle and partition. A leader that reads
+        // it says so: the worker keeps it until one does
+        val partitioned = bodyJson.select("partitioned").asOpt[Seq[JsObject]]
+        partitioned.getOrElse(Seq.empty).foreach { entry =>
+          val partition = entry.select("partition").asOpt[String].map(BudgetPartition.normalize).filter(_.nonEmpty)
+          val cycle = entry.select("cycle").asOpt[String].filter(_.nonEmpty)
+          entry.select("budget").asOpt[String].flatMap(states.budget).foreach { budget =>
+            entry.select("counters").asOpt[JsObject].map(_.value).getOrElse(Map.empty[String, JsValue]).foreach { case (counter, value) =>
+              if (partition.isDefined && AiBudgetClusterAgent.counters.contains(counter)) {
+                value.asOpt[BigDecimal].foreach(v => budget.countFromWorker(counter, cycle.getOrElse(budget.cycleId), v, partition))
+              }
+            }
+          }
+        }
+        Results.Ok(Json.obj("done" -> true) ++ (if (partitioned.isDefined) Json.obj("partitioned" -> true) else Json.obj())).vfuture
       }
     }).recover {
       case e: Throwable => {
@@ -742,12 +870,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       case Some(budgetId) => {
         datastores.budgetsDataStore.findById(budgetId).flatMap {
           case None => Results.NotFound(Json.obj("error" -> "budget not found")).vfuture
-          case Some(budget) if all => {
-            budget.resetAll().map(_ => Results.Ok(Json.obj("done" -> true)))
-          }
-          case Some(budget) => {
-            budget.resetCurrentCycle().map(_ => Results.Ok(Json.obj("done" -> true)))
-          }
+          case Some(budget) => budgetReset(budget, req, all)
         }
       }
     }
@@ -761,12 +884,20 @@ class AiExtension(val env: Env) extends AdminExtension {
       case Some(budgetId) => {
         datastores.budgetsDataStore.findById(budgetId).flatMap {
           case None => Results.NotFound(Json.obj("error" -> "budget not found")).vfuture
-          case Some(budget) => {
-            budget.getConsumptions().map { consumptions =>
-              Results.Ok(consumptions.jsonWithRemaining(budget))
-            }
-          }
+          case Some(budget) => budgetConsumption(budget, req)
         }
+      }
+    }
+  }
+
+  def handleBudgetPartitions(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    ctx.named("id") match {
+      case None => Results.BadRequest(Json.obj("error" -> "no budget id found")).vfuture
+      case Some(budgetId) => datastores.budgetsDataStore.findById(budgetId).flatMap {
+        case None => Results.NotFound(Json.obj("error" -> "budget not found")).vfuture
+        case Some(budget) => budgetPartitions(budget, req)
       }
     }
   }
@@ -820,6 +951,24 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_reset",
       wantsBody = false,
       handle = handleBugdetReset,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "GET",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/partitions",
+      wantsBody = false,
+      handle = handleBudgetPartitions,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "POST",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_extend",
+      wantsBody = false,
+      handle = handleBudgetExtend,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "DELETE",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_extend",
+      wantsBody = false,
+      handle = handleBudgetExtensionsCancel,
     ),
     AdminExtensionAdminApiRoute(
       method = "POST",
@@ -925,6 +1074,24 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_reset",
       wantsBody = false,
       handle = handleRemainingBudgetReset
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "GET",
+      path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_partitions",
+      wantsBody = false,
+      handle = handleBudgetPartitionsBackoffice
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_extend",
+      wantsBody = false,
+      handle = handleBudgetExtendBackoffice
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "DELETE",
+      path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_extend",
+      wantsBody = false,
+      handle = handleBudgetExtendBackoffice
     )
   ) ++ studio.backofficeRoutes
 

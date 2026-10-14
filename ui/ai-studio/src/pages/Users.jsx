@@ -8,7 +8,7 @@ import { compareOf, itemsOf, NoExporterError, PERIODS, runQuery, scalarOf, serie
 import { keyOp, ownerOf } from '../lib/apikeys';
 import { backend } from '../lib/backend';
 import { bootstrap } from '../lib/bootstrap';
-import { budgetNamesUser, budgetsListOp, isWorkspaceWide, keyBudgetOf, periodLabel } from '../lib/budgets';
+import { budgetsListOp, budgetsOfConsumer, keyBudgetOf, periodLabel } from '../lib/budgets';
 import { fmtCost, fmtInt, fmtNumber, initials } from '../lib/format';
 import { PeriodPicker, RefreshControl, useTimeView } from '../components/timeview';
 import { Link, useQueryState, useRouter } from '../lib/router';
@@ -404,8 +404,9 @@ function UserProfile({ email }) {
         <OwnedKeys workspace={workspace} email={email} refresh={refresh} />
         <BudgetsCard
           workspace={workspace}
-          description={`The budgets counting the usage of ${email}: the ones naming them and the ones of the whole workspace.`}
-          filter={(b) => b.enabled && (budgetNamesUser(b, email) || isWorkspaceWide(b))}
+          description={`The budgets counting the usage of ${email}: the ones naming them, the ones of the whole workspace, and the ones giving each person their own limit.`}
+          filter={(b) => budgetsOfConsumer([b], email).length > 0}
+          consumer={email}
           empty="No budget applies to this user."
         />
       </div>

@@ -135,8 +135,14 @@ export const ops = defineOps({
   'budgets.update': { access: 'config:write', method: 'PUT', path: '/budgets/:bid', audit: true },
   'budgets.delete': { access: 'config:write', method: 'DELETE', path: '/budgets/:bid', audit: true },
   'budgets.reset': { access: 'config:write', method: 'POST', path: '/budgets/:bid/consumption/_reset', audit: true },
+  // the consumers a budget "by consumer" counted in the current window, and the extensions taken for one of them
+  'budgets.consumers': { access: 'config:read', method: 'GET', path: '/budgets/:bid/consumers' },
+  'budgets.extend': { access: 'config:write', method: 'POST', path: '/budgets/:bid/consumption/_extend', audit: true },
+  'budgets.unextend': { access: 'config:write', method: 'DELETE', path: '/budgets/:bid/consumption/_extend', audit: true },
   // the budgets counting the usage of the person calling, naming nobody else
   'mybudgets.list': { access: 'usage:own', method: 'GET', path: '/budgets', own: 'budgets' },
+  // one of their own extensions, which the person a budget "by consumer" counts takes themselves
+  'mybudgets.extend': { access: 'usage:own', method: 'POST', path: '/budgets/:bid/consumption/_extend', audit: true, own: 'budgets' },
 
   // usage, always narrowed to the workspace by the api
   'analytics.query': { access: 'usage:own', method: 'POST', path: '/analytics/_query' },

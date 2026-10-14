@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { backend } from '../lib/backend';
-import { extraRulesOf, PERIODS, periodOf, scopeModeOf } from '../lib/budgets';
+import { extraRulesOf, isCustomPartition, PERIODS, periodOf, scopeModeOf } from '../lib/budgets';
 import { Badge, Checks, Field, LinesInput, Modal, NumberInput, Segmented, Select, TextInput, Toggle, useToast } from './ui';
 import { Icon } from './icons';
 
@@ -23,19 +23,42 @@ export function BudgetModal({ workspace, budget, keys, apikey, onClose, onSaved 
     apikeys: budget ? budget.apikeys || [] : apikey ? [apikey] : [],
     users: budget ? budget.users || [] : [],
     rules: budget ? extraRulesOf(budget) : [],
+    by_consumer: budget ? !!budget.by_consumer : false,
+    extensions_enabled: budget ? !!budget.extensions_enabled : false,
+    extension_usd: budget ? budget.extension_usd ?? null : null,
+    extension_tokens: budget ? budget.extension_tokens ?? null : null,
+    max_extensions: budget ? budget.max_extensions ?? 1 : 1,
   }));
+  // a budget counted apart by an expression set outside of the studio keeps it: the studio only shows it
+  const custom = isCustomPartition(budget);
+  // the extensions are only sent once used, so that a budget without any stays without any
+  const extensionsUsed = form.extensions_enabled || (budget && budget.extensions_enabled !== undefined);
+  const hasUsd = form.usd !== null && form.usd !== '';
+  const hasTokens = form.tokens !== null && form.tokens !== '';
+  const extensionsValid =
+    !form.extensions_enabled || ((form.extension_usd || form.extension_tokens) && (!form.extension_usd || hasUsd) && (!form.extension_tokens || hasTokens) && form.max_extensions >= 1);
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
-  const valid = form.name.trim() && (form.usd !== null || form.tokens !== null) && (form.scope !== 'apikey' || form.apikeys.length === 1);
+  const valid = form.name.trim() && (form.usd !== null || form.tokens !== null) && (form.scope !== 'apikey' || form.apikeys.length === 1) && extensionsValid;
 
   // the scope decides which consumers the api keeps: none for the workspace, the key for one api key
   const save = () => {
     setSaving(true);
+    const { by_consumer, extensions_enabled, extension_usd, extension_tokens, max_extensions, ...rest } = form;
     const body = {
-      ...form,
+      ...rest,
       usd: form.usd === '' ? null : form.usd,
       tokens: form.tokens === '' ? null : form.tokens,
       rules: form.rules.filter((r) => r.path && r.path.trim()),
+      ...(custom ? {} : { by_consumer: form.scope !== 'apikey' && by_consumer }),
+      ...(extensionsUsed
+        ? {
+            extensions_enabled,
+            extension_usd: extension_usd === '' || !hasUsd ? null : extension_usd,
+            extension_tokens: extension_tokens === '' || !hasTokens ? null : extension_tokens,
+            max_extensions: max_extensions || 1,
+          }
+        : {}),
     };
     (budget ? backend.run('budgets.update', workspace.id, { bid: budget.id, body }) : backend.run('budgets.create', workspace.id, { body }))
       .then(() => {
@@ -119,7 +142,14 @@ export function BudgetModal({ workspace, budget, keys, apikey, onClose, onSaved 
           />
         </div>
 
-        {form.scope === 'workspace' && <p className="muted">Every call of the workspace counts against this budget, whatever the key or the user.</p>}
+        {form.scope === 'workspace' && !form.by_consumer && <p className="muted">Every call of the workspace counts against this budget, whatever the key or the user.</p>}
+
+        {form.scope !== 'apikey' && !custom && (
+          <Field label="By consumer" hint="Each person gets this limit for themselves: their chats in AI Studio and the calls of the API keys they own share it. Keys without an owner are not limited by this budget.">
+            <Toggle value={form.by_consumer} onChange={(v) => set({ by_consumer: v })} />
+          </Field>
+        )}
+        {custom && <p className="muted small">This budget counts its consumers apart by an expression set in the Otoroshi admin console. It is kept as it is.</p>}
 
         {form.scope === 'apikey' && (
           <Field label="API key">
@@ -161,6 +191,38 @@ export function BudgetModal({ workspace, budget, keys, apikey, onClose, onSaved 
               </div>
             </Field>
           </>
+        )}
+      </div>
+
+      <div className="divider" />
+      <div className="stack">
+        <div className="row between wrap">
+          <div>
+            <h3>Extensions</h3>
+            <p className="muted small" style={{ marginTop: 4 }}>
+              {form.by_consumer || custom
+                ? 'A person who used their limit up can extend it themselves, by the amount you set, for the current window.'
+                : 'An administrator can extend the limit of this budget, by the amount you set, for the current window.'}
+            </p>
+          </div>
+          <Toggle value={form.extensions_enabled} onChange={(v) => set({ extensions_enabled: v })} />
+        </div>
+        {form.extensions_enabled && (
+          <div className="form-grid">
+            {hasUsd && (
+              <Field label="One extension adds (USD)">
+                <NumberInput value={form.extension_usd} onChange={(v) => set({ extension_usd: v })} step="0.01" min="0" placeholder="10" />
+              </Field>
+            )}
+            {hasTokens && (
+              <Field label="One extension adds (tokens)">
+                <NumberInput value={form.extension_tokens} onChange={(v) => set({ extension_tokens: v })} min="0" placeholder="100000" />
+              </Field>
+            )}
+            <Field label="Extensions per window" hint={form.by_consumer ? 'For each person.' : null}>
+              <NumberInput value={form.max_extensions} onChange={(v) => set({ max_extensions: v })} min="1" />
+            </Field>
+          </div>
         )}
       </div>
     </Modal>

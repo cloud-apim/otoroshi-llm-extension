@@ -349,6 +349,10 @@ const SHOTS = [
   { name: 'mcp-playground', url: ws('/mcp-server'), element: '.card:has(h2:text-is("Playground"))', before: callMcpTool },
   { name: 'credits', url: ws('/credits') },
   { name: 'budget-edit', url: ws('/credits'), viewport: true, before: clickFirst('button:has-text("Edit")') },
+  // a budget by consumer (the workspace needs one, with consumers in the current window): who consumed what of
+  // their own limit and the extensions they took, then its form
+  { name: 'budget-consumers', url: ws('/credits'), element: '.card:has(.badge:text-is("By consumer"))', before: clickFirst('.card:has(.badge:text-is("By consumer")) button:has-text("View consumers")') },
+  { name: 'budget-by-consumer', url: ws('/credits'), height: 1400, element: 'dialog.modal', before: clickFirst('.card:has(.badge:text-is("By consumer")) button:has-text("Edit")') },
   { name: 'activity', url: ws('/activity?period=24h') },
   { name: 'activity-impact', url: ws('/activity?period=24h'), element: 'div.stack:has(> div > h2:has-text("Environmental impact"))' },
   { name: 'activity-trends', url: ws('/activity?tab=trends&period=24h'), before: clickAll(showTokens) },

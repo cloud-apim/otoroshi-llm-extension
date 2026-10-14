@@ -73,15 +73,20 @@ function detailMessage(detail) {
 
 export function gatewayError(text, status, statusText) {
   let message = text;
+  // a call a budget blocks says so, whatever the message of the budget
+  let budgetExceeded = false;
   try {
     const json = JSON.parse(text);
+    budgetExceeded = json.budget_exceeded === true;
     const detail = json.error_details || json.error_description || json.message || detailMessage(json.detail);
     const error = json.error && (json.error.message || json.error);
     const both = typeof error === 'string' && typeof detail === 'string' && detail ? `${error}: ${detail}` : null;
     message = both || detail || error || text;
     if (typeof message !== 'string') message = JSON.stringify(message);
   } catch (e) {}
-  return new Error(`${status} - ${message || statusText}`);
+  const error = new Error(`${status} - ${message || statusText}`);
+  error.budgetExceeded = budgetExceeded;
+  return error;
 }
 
 export const STUDIO_API = '/extensions/cloud-apim/extensions/ai-extension/studio';

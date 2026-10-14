@@ -31,8 +31,13 @@ class BudgetClusterDeltasSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     "action_on_exceed" -> Json.obj("mode" -> "soft", "alert_on_exceed" -> false, "alert_on_almost_exceed" -> false),
   )
 
+  // a budget counting its consumers apart
+  val partitionedId = s"budget_${UUID.randomUUID()}"
+  val partitionedBudget = budget ++ Json.obj("id" -> partitionedId, "name" -> "budget of a cluster by consumer", "scope" -> Json.obj("partition_by" -> "${user.email}"))
+
   lazy val setup: Unit = {
     client.forLlmEntity("ai-budgets").createRaw(budget).awaitf(10.seconds)
+    client.forLlmEntity("ai-budgets").createRaw(partitionedBudget).awaitf(10.seconds)
     await(5.seconds)
   }
 
@@ -113,5 +118,22 @@ class BudgetClusterDeltasSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(after.totalUsd - before.totalUsd, BigDecimal(0), "nor these dollars")
     assertEquals((counted("total-tokens"), counted("inference-tokens")), (1500L, 1500L), "the cycle they were consumed in did")
     assertEquals(counted("total-usd"), 500000000L, "dollars are counted in billionths")
+  }
+
+  test("what a worker pushes for a budget counting its consumers apart is counted in each partition") {
+    setup
+    given env: Env = otoroshi.env
+    val partitioned = ext.states.budget(partitionedId).get
+    val cycle = partitioned.cycleId
+    val (status, body) = push(Json.obj("partitioned" -> Json.arr(
+      Json.obj("budget" -> partitionedId, "cycle" -> cycle, "partition" -> "Alice@Acme.io", "counters" -> Json.obj("total_tokens" -> 100, "total_usd" -> 0.5, "a_counter_of_a_next_version" -> 3)),
+      Json.obj("budget" -> partitionedId, "cycle" -> cycle, "partition" -> "bob@acme.io", "counters" -> Json.obj("total_tokens" -> 10)),
+    )))
+    assertEquals((status, body), (200, Json.obj("done" -> true, "partitioned" -> true)), "the leader says it read the section")
+    await(2.seconds)
+    def of(partition: String): AiBudgetConsumptions = partitioned.getConsumptions(Some(partition)).awaitf(10.seconds)
+    assertEquals((of("alice@acme.io").totalTokens, of("alice@acme.io").totalUsd, of("bob@acme.io").totalTokens), (100L, BigDecimal("0.5"), 10L))
+    assertEquals(partitioned.getConsumptions().awaitf(10.seconds).totalTokens, 0L, "nothing for the budget as a whole")
+    assertEquals(env.datastores.rawDataStore.smembers(partitioned.partitionsKey(cycle)).awaitf(10.seconds).map(_.utf8String).toSet, Set("alice@acme.io", "bob@acme.io"))
   }
 }
