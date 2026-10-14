@@ -28,6 +28,8 @@ import scala.concurrent.*
 import scala.concurrent.duration.*
 import scala.util.{Failure, Success, Try}
 import org.apache.pekko.actor.Scheduler
+import org.apache.pekko.util.ByteString
+import play.api.libs.typedmap.{TypedEntry, TypedKey}
 
 object AiBudgetClusterAgent {
   val totalUsdCounters = new TrieMap[String, DoubleAdder]()
@@ -176,101 +178,101 @@ object AiBudgetClusterAgent {
 }
 
 sealed trait AiBudgetUsageKind {
-  def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit
+  def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit
 }
 object AiBudgetUsageKind {
   case object Inference extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
-        budget.incrTotalUsd(c)
-        budget.incrInferenceUsd(c)
+        budget.incrTotalUsd(c, partition)
+        budget.incrInferenceUsd(c, partition)
       }
       tokens.foreach { c => 
-        budget.incrTotalTokens(c)
-        budget.incrInferenceTokens(c)
+        budget.incrTotalTokens(c, partition)
+        budget.incrInferenceTokens(c, partition)
       }
     }
   }
   case object Image extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
-        budget.incrTotalUsd(c)
-        budget.incrImageUsd(c)
+        budget.incrTotalUsd(c, partition)
+        budget.incrImageUsd(c, partition)
       }
       tokens.foreach { c => 
-        budget.incrTotalTokens(c)
-        budget.incrImageTokens(c)
+        budget.incrTotalTokens(c, partition)
+        budget.incrImageTokens(c, partition)
       }
     }
   }
   case object Audio extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
-        budget.incrTotalUsd(c)
-        budget.incrAudioUsd(c)
+        budget.incrTotalUsd(c, partition)
+        budget.incrAudioUsd(c, partition)
       }
       tokens.foreach { c => 
-        budget.incrTotalTokens(c)
-        budget.incrAudioTokens(c)
+        budget.incrTotalTokens(c, partition)
+        budget.incrAudioTokens(c, partition)
       }
     }
   }
   case object Video extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
-        budget.incrTotalUsd(c)
-        budget.incrVideoUsd(c)
+        budget.incrTotalUsd(c, partition)
+        budget.incrVideoUsd(c, partition)
       }
       tokens.foreach { c => 
-        budget.incrTotalTokens(c)
-        budget.incrVideoTokens(c)
+        budget.incrTotalTokens(c, partition)
+        budget.incrVideoTokens(c, partition)
       }
     }
   }
   case object Embedding extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
-        budget.incrTotalUsd(c)
-        budget.incrEmbeddingUsd(c)
+        budget.incrTotalUsd(c, partition)
+        budget.incrEmbeddingUsd(c, partition)
       }
       tokens.foreach { c => 
-        budget.incrTotalTokens(c)
-        budget.incrEmbeddingTokens(c)
+        budget.incrTotalTokens(c, partition)
+        budget.incrEmbeddingTokens(c, partition)
       }
     }
   }
   case object Moderation extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c => 
-        budget.incrTotalUsd(c)
-        budget.incrModerationUsd(c)
+        budget.incrTotalUsd(c, partition)
+        budget.incrModerationUsd(c, partition)
       }
       tokens.foreach { c => 
-        budget.incrTotalTokens(c)
-        budget.incrModerationTokens(c)
+        budget.incrTotalTokens(c, partition)
+        budget.incrModerationTokens(c, partition)
       }
     }
   }
   case object Ocr extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c =>
-        budget.incrTotalUsd(c)
-        budget.incrOcrUsd(c)
+        budget.incrTotalUsd(c, partition)
+        budget.incrOcrUsd(c, partition)
       }
       tokens.foreach { c =>
-        budget.incrOcrPages(c)
+        budget.incrOcrPages(c, partition)
       }
     }
   }
   case object Decision extends AiBudgetUsageKind {
-    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap)(using ec: ExecutionContext, env: Env): Unit = {
+    def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
       cost.foreach { c =>
-        budget.incrTotalUsd(c)
-        budget.incrDecisionUsd(c)
+        budget.incrTotalUsd(c, partition)
+        budget.incrDecisionUsd(c, partition)
       }
       tokens.foreach { c =>
-        budget.incrTotalTokens(c)
-        budget.incrDecisionTokens(c)
+        budget.incrTotalTokens(c, partition)
+        budget.incrDecisionTokens(c, partition)
       }
     }
   }
@@ -463,6 +465,8 @@ case class AiBudgetScope(
   alwaysApplyRules: Boolean,
   rules: Seq[JsonPathValidator],
   rulesMatchMode: AiBudgetScopeMode,
+  // an expression of the otoroshi expression language: the budget counts apart each value it takes (see BudgetPartition)
+  partitionBy: Option[String] = None,
 ) {
   def json: JsValue = AiBudgetScope.format.writes(this)
 }
@@ -483,7 +487,7 @@ object AiBudgetScope {
       "always_apply_rules" -> o.alwaysApplyRules,
       "rules" -> o.rules.map(JsonPathValidator.format.writes),
       "rules_match_mode" -> o.rulesMatchMode.json
-    )
+    ) ++ o.partitionBy.map(p => Json.obj("partition_by" -> p)).getOrElse(Json.obj())
     override def reads(json: JsValue): JsResult[AiBudgetScope] = Try {
       AiBudgetScope(
         extractFromApikeyMeta = (json \ "extract_from_apikey_meta").asOpt[Boolean].getOrElse(false),
@@ -499,6 +503,7 @@ object AiBudgetScope {
         alwaysApplyRules = (json \ "always_apply_rules").asOpt[Boolean].getOrElse(false),
         rules = (json \ "rules").asOpt[Seq[JsObject]].getOrElse(Seq.empty[JsObject]).flatMap(obj => JsonPathValidator.format.reads(obj).asOpt),
         rulesMatchMode = json.select("rules_match_mode").asOptString.map(s => AiBudgetScopeMode.fromString(s)).getOrElse(AiBudgetScopeMode.All),
+        partitionBy = (json \ "partition_by").asOpt[String].map(_.trim).filter(_.nonEmpty),
       )
     } match {
       case Failure(ex) => JsError(ex.getMessage)
@@ -583,6 +588,8 @@ case class AiBudgetConsumptions(
   ocrPages: Long,
   decisionUsd: BigDecimal = BigDecimal(0),
   decisionTokens: Long = 0L,
+  // the partition this consumption is the one of, when the budget counts consumers apart
+  partition: Option[String] = None,
 ) {
   def json: JsValue = Json.obj(
     "consumed_total_usd" -> totalUsd,
@@ -603,7 +610,7 @@ case class AiBudgetConsumptions(
     "consumed_ocr_pages" -> ocrPages,
     "consumed_decision_usd" -> decisionUsd,
     "consumed_decision_tokens" -> decisionTokens,
-  )
+  ) ++ partition.map(p => Json.obj("partition" -> p)).getOrElse(Json.obj())
   def jsonWithRemaining(budget: AiBudget): JsValue = json.asObject ++ Json.obj(
     "remaining_total_usd" -> JsNumber(budget.limits.total_usd.map(v => v - totalUsd).getOrElse(BigDecimal(0))),
     "remaining_total_tokens" -> JsNumber(BigDecimal(budget.limits.total_tokens.map(_ - totalTokens).getOrElse(0L))),
@@ -719,327 +726,158 @@ case class AiBudget(
 
   def cycleId: String = cycle.map(_.toString).getOrElse("single")
 
-  // a counter of this budget, in one of its cycles
-  def counterKey(cycle: String, counter: String)(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycle:$counter"
+  // whether the budget counts each of its consumers apart (see BudgetPartition)
+  def partitioned: Boolean = scope.partitionBy.isDefined
+
+  // a counter of this budget, in one of its cycles, and in one of its partitions when it counts consumers apart
+  def counterKey(cycle: String, counter: String, partition: Option[String] = None)(using env: Env): String = partition match {
+    case None    => s"${AiBudget.countersPrefix}:$id:$cycle:$counter"
+    case Some(p) => s"${AiBudget.countersPrefix}:$id:$cycle:p:${BudgetPartition.segment(p)}:$counter"
+  }
+
+  // the partitions that consumed in a cycle
+  def partitionsKey(cycle: String)(using env: Env): String = s"${AiBudget.countersPrefix}:$id:$cycle:partitions"
+
+  // when a cycle of the budget ends, as the cycles are computed (see `cycle`)
+  def cycleEnd(cycle: String): Option[Long] = cycle.toLongOption.filter(_ >= 0L).map { c =>
+    startAt.getMillis + (c + 1L) * duration.toDuration.toHours * 3600000L
+  }
+
+  // The counters of a cycle expire some days after it ends: nothing reads a cycle that is over, the days left are the
+  // ones a worker may take to push what it counted in it
+  def expireCounter(key: String, cycle: String)(using ec: ExecutionContext, env: Env): Unit = cycleEnd(cycle).foreach { end =>
+    env.datastores.rawDataStore.pexpire(key, math.max(end + AiBudget.countersRetentionMillis - System.currentTimeMillis(), 1000L))
+  }
 
   // What a worker pushed for one of its counters (`total_usd`, `ocr_pages`...), counted in the cycle it was consumed
   // in: a push that comes in once that cycle is over is not what the next one consumed
-  def countFromWorker(counter: String, cycle: String, by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
+  def countFromWorker(counter: String, cycle: String, by: BigDecimal, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = {
     val amount = if (counter.endsWith("_usd")) by.*(BigDecimal(1000000000)).toLong else by.toLong
-    env.datastores.rawDataStore.incrby(counterKey(cycle, counter.replace('_', '-')), amount)
+    count(cycle, counter.replace('_', '-'), amount, partition)
   }
 
-  def totalUsdKey(using env: Env): String = counterKey(cycleId, "total-usd")
-  def totalTokensKey(using env: Env): String = counterKey(cycleId, "total-tokens")
-
-  def inferenceUsdKey(using env: Env): String = counterKey(cycleId, "inference-usd")
-  def inferenceTokensKey(using env: Env): String = counterKey(cycleId, "inference-tokens")
-
-  def imageUsdKey(using env: Env): String = counterKey(cycleId, "image-usd")
-  def imageTokensKey(using env: Env): String = counterKey(cycleId, "image-tokens")
-
-  def audioUsdKey(using env: Env): String = counterKey(cycleId, "audio-usd")
-  def audioTokensKey(using env: Env): String = counterKey(cycleId, "audio-tokens")
-
-  def videoUsdKey(using env: Env): String = counterKey(cycleId, "video-usd")
-  def videoTokensKey(using env: Env): String = counterKey(cycleId, "video-tokens")
-
-  def embeddingUsdKey(using env: Env): String = counterKey(cycleId, "embedding-usd")
-  def embeddingTokensKey(using env: Env): String = counterKey(cycleId, "embedding-tokens")
-
-  def moderationUsdKey(using env: Env): String = counterKey(cycleId, "moderation-usd")
-  def moderationTokensKey(using env: Env): String = counterKey(cycleId, "moderation-tokens")
-
-  def ocrUsdKey(using env: Env): String = counterKey(cycleId, "ocr-usd")
-  def ocrPagesKey(using env: Env): String = counterKey(cycleId, "ocr-pages")
-
-  def decisionUsdKey(using env: Env): String = counterKey(cycleId, "decision-usd")
-  def decisionTokensKey(using env: Env): String = counterKey(cycleId, "decision-tokens")
-
-  def incrTotalUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.totalUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
+  // adds to a counter, which expires with its cycle, the partition being kept among the ones of the cycle
+  private def count(cycle: String, counter: String, amount: Long, partition: Option[String])(using ec: ExecutionContext, env: Env): Future[Long] = {
+    val key = counterKey(cycle, counter, partition)
+    partition.foreach(p => indexPartition(cycle, p))
+    env.datastores.rawDataStore.incrby(key, amount).andThen {
+      case Success(value) if value == amount => expireCounter(key, cycle)
     }
-    env.datastores.rawDataStore.incrby(totalUsdKey, by.*(BigDecimal(1000000000)).toLong)
   }
 
-  def incrTotalTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.totalTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
+  // once by partition and cycle on a node: the set does not change when the partition is added again
+  def indexPartition(cycle: String, partition: String)(using ec: ExecutionContext, env: Env): Unit = {
+    if (AiBudget.indexedPartitions.putIfAbsent(s"$id:$cycle:$partition", ()).isEmpty) {
+      val key = partitionsKey(cycle)
+      env.datastores.rawDataStore.sadd(key, Seq(ByteString(partition))).andThen {
+        case Success(_) => expireCounter(key, cycle)
+      }
     }
-    env.datastores.rawDataStore.incrby(totalTokensKey, by)
   }
 
-  def incrInferenceUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
+  private def incrUsd(counter: String, counters: TrieMap[String, DoubleAdder], by: BigDecimal, partition: Option[String])(using ec: ExecutionContext, env: Env): Future[Long] = {
+    val cycle = cycleId
     if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.inferenceUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
+      partition match {
+        case None    => counters.getOrElseUpdate(s"$id:$cycle", new DoubleAdder()).add(by.toDouble)
+        case Some(_) => ()
+      }
     }
-    env.datastores.rawDataStore.incrby(inferenceUsdKey, by.*(BigDecimal(1000000000)).toLong)
+    count(cycle, counter, by.*(BigDecimal(1000000000)).toLong, partition)
   }
 
-  def incrInferenceTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
+  private def incrUnits(counter: String, counters: TrieMap[String, AtomicLong], by: Long, partition: Option[String])(using ec: ExecutionContext, env: Env): Future[Long] = {
+    val cycle = cycleId
     if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.inferenceTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
+      partition match {
+        case None    => counters.getOrElseUpdate(s"$id:$cycle", new AtomicLong()).addAndGet(by)
+        case Some(_) => ()
+      }
     }
-    env.datastores.rawDataStore.incrby(inferenceTokensKey, by)
+    count(cycle, counter, by, partition)
   }
 
-  def incrImageUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.imageUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
-    }
-    env.datastores.rawDataStore.incrby(imageUsdKey, by.*(BigDecimal(1000000000)).toLong)
-  }
-
-  def incrImageTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.imageTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
-    }
-    env.datastores.rawDataStore.incrby(imageTokensKey, by)
-  }
-
-  def incrAudioUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.audioUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
-    }
-    env.datastores.rawDataStore.incrby(audioUsdKey, by.*(BigDecimal(1000000000)).toLong)
-  }
-
-  def incrAudioTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.audioTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
-    }
-    env.datastores.rawDataStore.incrby(audioTokensKey, by)
-  }
-
-  def incrVideoUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.videoUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
-    }
-    env.datastores.rawDataStore.incrby(videoUsdKey, by.*(BigDecimal(1000000000)).toLong)
-  }
-
-  def incrVideoTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.videoTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
-    }
-    env.datastores.rawDataStore.incrby(videoTokensKey, by)
-  }
-
-  def incrEmbeddingUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.embeddingUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
-    }
-    env.datastores.rawDataStore.incrby(embeddingUsdKey, by.*(BigDecimal(1000000000)).toLong)
-  }
-
-  def incrEmbeddingTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.embeddingTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
-    }
-    env.datastores.rawDataStore.incrby(embeddingTokensKey, by)
-  }
-
-  def incrModerationUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.moderationUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
-    }
-    env.datastores.rawDataStore.incrby(moderationUsdKey, by.*(BigDecimal(1000000000)).toLong)
-  }
-
-  def incrModerationTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.moderationTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
-    }
-    env.datastores.rawDataStore.incrby(moderationTokensKey, by)
-  }
-
-  def incrOcrUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.ocrUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
-    }
-    env.datastores.rawDataStore.incrby(ocrUsdKey, by.*(BigDecimal(1000000000)).toLong)
-  }
-
-  def incrOcrPages(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.ocrPagesCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
-    }
-    env.datastores.rawDataStore.incrby(ocrPagesKey, by)
-  }
-
-  def incrDecisionUsd(by: BigDecimal)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.decisionUsdCounters.getOrElseUpdate(s"$id:$cycleId", new DoubleAdder()).add(by.toDouble)
-    }
-    env.datastores.rawDataStore.incrby(decisionUsdKey, by.*(BigDecimal(1000000000)).toLong)
-  }
-
-  def incrDecisionTokens(by: Long)(using ec: ExecutionContext, env: Env): Future[Long] = {
-    if (env.clusterConfig.mode.isWorker) {
-      AiBudgetClusterAgent.decisionTokensCounters.getOrElseUpdate(s"$id:$cycleId", new AtomicLong()).addAndGet(by)
-    }
-    env.datastores.rawDataStore.incrby(decisionTokensKey, by)
-  }
-
-  def getTotalUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
-    env.datastores.rawDataStore.get(totalUsdKey).map(_.map { strValue =>
-      val lngValue = strValue.utf8String.toLong
-      BigDecimal(lngValue)./(BigDecimal(1000000000))
-    }.getOrElse(0L))
-  }
-
-  def getTotalTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
-    env.datastores.rawDataStore.get(totalTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
-  }
-
-  def getTotalInferenceUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
-    env.datastores.rawDataStore.get(inferenceUsdKey).map(_.map { strValue =>
-      val lngValue = strValue.utf8String.toLong
-      BigDecimal(lngValue)./(BigDecimal(1000000000))
-    }.getOrElse(0L))
-  }
-
-  def getTotalInferenceTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
-    env.datastores.rawDataStore.get(inferenceTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
-  }
-
-  def getTotalImageUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
-    env.datastores.rawDataStore.get(imageUsdKey).map(_.map { strValue =>
-      val lngValue = strValue.utf8String.toLong
-      BigDecimal(lngValue)./(BigDecimal(1000000000))
-    }.getOrElse(0L))
-  }
-
-  def getTotalImageTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
-    env.datastores.rawDataStore.get(imageTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
-  }
-
-  def getTotalAudioUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
-    env.datastores.rawDataStore.get(audioUsdKey).map(_.map { strValue =>
-      val lngValue = strValue.utf8String.toLong
-      BigDecimal(lngValue)./(BigDecimal(1000000000))
-    }.getOrElse(0L))
-  }
-
-  def getTotalAudioTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
-    env.datastores.rawDataStore.get(audioTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
-  }
-
-  def getTotalVideoUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
-    env.datastores.rawDataStore.get(videoUsdKey).map(_.map { strValue =>
-      val lngValue = strValue.utf8String.toLong
-      BigDecimal(lngValue)./(BigDecimal(1000000000))
-    }.getOrElse(0L))
-  }
-
-  def getTotalVideoTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
-    env.datastores.rawDataStore.get(videoTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
-  }
-
-  def getTotalEmbeddingUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
-    env.datastores.rawDataStore.get(embeddingUsdKey).map(_.map { strValue =>
-      val lngValue = strValue.utf8String.toLong
-      BigDecimal(lngValue)./(BigDecimal(1000000000))
-    }.getOrElse(0L))
-  }
-
-  def getTotalEmbeddingTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
-    env.datastores.rawDataStore.get(embeddingTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
-  }
-
-  def getTotalModerationUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
-    env.datastores.rawDataStore.get(moderationUsdKey).map(_.map { strValue =>
-      val lngValue = strValue.utf8String.toLong
-      BigDecimal(lngValue)./(BigDecimal(1000000000))
-    }.getOrElse(0L))
-  }
-
-  def getTotalModerationTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
-    env.datastores.rawDataStore.get(moderationTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
-  }
-
-  def getTotalOcrUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
-    env.datastores.rawDataStore.get(ocrUsdKey).map(_.map { strValue =>
-      val lngValue = strValue.utf8String.toLong
-      BigDecimal(lngValue)./(BigDecimal(1000000000))
-    }.getOrElse(0L))
-  }
-
-  def getTotalOcrPages()(using ec: ExecutionContext, env: Env): Future[Long] = {
-    env.datastores.rawDataStore.get(ocrPagesKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
-  }
-
-  def getTotalDecisionUsd()(using ec: ExecutionContext, env: Env): Future[BigDecimal] = {
-    env.datastores.rawDataStore.get(decisionUsdKey).map(_.map { strValue =>
-      val lngValue = strValue.utf8String.toLong
-      BigDecimal(lngValue)./(BigDecimal(1000000000))
-    }.getOrElse(0L))
-  }
-
-  def getTotalDecisionTokens()(using ec: ExecutionContext, env: Env): Future[Long] = {
-    env.datastores.rawDataStore.get(decisionTokensKey).map(_.map(_.utf8String.toLong).getOrElse(0L))
-  }
+  def incrTotalUsd(by: BigDecimal, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUsd("total-usd", AiBudgetClusterAgent.totalUsdCounters, by, partition)
+  def incrTotalTokens(by: Long, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUnits("total-tokens", AiBudgetClusterAgent.totalTokensCounters, by, partition)
+  def incrInferenceUsd(by: BigDecimal, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUsd("inference-usd", AiBudgetClusterAgent.inferenceUsdCounters, by, partition)
+  def incrInferenceTokens(by: Long, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUnits("inference-tokens", AiBudgetClusterAgent.inferenceTokensCounters, by, partition)
+  def incrImageUsd(by: BigDecimal, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUsd("image-usd", AiBudgetClusterAgent.imageUsdCounters, by, partition)
+  def incrImageTokens(by: Long, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUnits("image-tokens", AiBudgetClusterAgent.imageTokensCounters, by, partition)
+  def incrAudioUsd(by: BigDecimal, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUsd("audio-usd", AiBudgetClusterAgent.audioUsdCounters, by, partition)
+  def incrAudioTokens(by: Long, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUnits("audio-tokens", AiBudgetClusterAgent.audioTokensCounters, by, partition)
+  def incrVideoUsd(by: BigDecimal, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUsd("video-usd", AiBudgetClusterAgent.videoUsdCounters, by, partition)
+  def incrVideoTokens(by: Long, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUnits("video-tokens", AiBudgetClusterAgent.videoTokensCounters, by, partition)
+  def incrEmbeddingUsd(by: BigDecimal, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUsd("embedding-usd", AiBudgetClusterAgent.embeddingUsdCounters, by, partition)
+  def incrEmbeddingTokens(by: Long, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUnits("embedding-tokens", AiBudgetClusterAgent.embeddingTokensCounters, by, partition)
+  def incrModerationUsd(by: BigDecimal, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUsd("moderation-usd", AiBudgetClusterAgent.moderationUsdCounters, by, partition)
+  def incrModerationTokens(by: Long, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUnits("moderation-tokens", AiBudgetClusterAgent.moderationTokensCounters, by, partition)
+  def incrOcrUsd(by: BigDecimal, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUsd("ocr-usd", AiBudgetClusterAgent.ocrUsdCounters, by, partition)
+  def incrOcrPages(by: Long, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUnits("ocr-pages", AiBudgetClusterAgent.ocrPagesCounters, by, partition)
+  def incrDecisionUsd(by: BigDecimal, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUsd("decision-usd", AiBudgetClusterAgent.decisionUsdCounters, by, partition)
+  def incrDecisionTokens(by: Long, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUnits("decision-tokens", AiBudgetClusterAgent.decisionTokensCounters, by, partition)
 
   def resetCurrentCycle()(using ec: ExecutionContext, env: Env): Future[Unit] = {
-    env.datastores.rawDataStore.keys(s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:$cycleId:*").flatMap { keys =>
+    env.datastores.rawDataStore.keys(s"${AiBudget.countersPrefix}:$id:$cycleId:*").flatMap { keys =>
       env.datastores.rawDataStore.del(keys).map { _ =>
         ()
       }
+    }
+  }
+
+  // the counters of one partition in the current cycle; the partition stays in the index, without counters
+  def resetPartition(partition: String)(using ec: ExecutionContext, env: Env): Future[Unit] = {
+    env.datastores.rawDataStore.keys(s"${AiBudget.countersPrefix}:$id:$cycleId:p:${BudgetPartition.segment(partition)}:*").flatMap {
+      case keys if keys.isEmpty => ().vfuture
+      case keys                 => env.datastores.rawDataStore.del(keys).map(_ => ())
     }
   }
 
   def resetAll()(using ec: ExecutionContext, env: Env): Future[Unit] = {
-    env.datastores.rawDataStore.keys(s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$id:*").flatMap { keys =>
+    env.datastores.rawDataStore.keys(s"${AiBudget.countersPrefix}:$id:*").flatMap { keys =>
       env.datastores.rawDataStore.del(keys).map { _ =>
         ()
       }
     }
   }
 
-  def getConsumptions()(using ec: ExecutionContext, env: Env): Future[AiBudgetConsumptions] = {
-    env.datastores.rawDataStore.mget(Seq(
-      totalUsdKey,
-      totalTokensKey,
-      inferenceUsdKey,
-      inferenceTokensKey,
-      imageUsdKey,
-      imageTokensKey,
-      audioUsdKey,
-      audioTokensKey,
-      videoUsdKey,
-      videoTokensKey,
-      embeddingUsdKey,
-      embeddingTokensKey,
-      moderationUsdKey,
-      moderationTokensKey,
-      ocrUsdKey,
-      ocrPagesKey,
-      // new counters go last: the values are read back by position
-      decisionUsdKey,
-      decisionTokensKey
-    )).map {
-      case list =>
-        AiBudgetConsumptions(
-          totalUsd = list(0).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
-          totalTokens = list(1).map(_.utf8String.toLong).getOrElse(0L),
-          inferenceUsd = list(2).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
-          inferenceTokens = list(3).map(_.utf8String.toLong).getOrElse(0L),
-          imageUsd = list(4).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
-          imageTokens = list(5).map(_.utf8String.toLong).getOrElse(0L),
-          audioUsd = list(6).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
-          audioTokens = list(7).map(_.utf8String.toLong).getOrElse(0L),
-          videoUsd = list(8).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
-          videoTokens = list(9).map(_.utf8String.toLong).getOrElse(0L),
-          embeddingUsd = list(10).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
-          embeddingTokens = list(11).map(_.utf8String.toLong).getOrElse(0L),
-          moderationUsd = list(12).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
-          moderationTokens = list(13).map(_.utf8String.toLong).getOrElse(0L),
-          ocrUsd = list(14).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
-          ocrPages = list(15).map(_.utf8String.toLong).getOrElse(0L),
-          decisionUsd = list(16).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
-          decisionTokens = list(17).map(_.utf8String.toLong).getOrElse(0L)
-        )
+  def getConsumptions(partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[AiBudgetConsumptions] =
+    readConsumptions(partition).map(_._2)
+
+  // the consumption of the current cycle, and whether anything was counted in it at all
+  private def readConsumptions(partition: Option[String])(using ec: ExecutionContext, env: Env): Future[(Boolean, AiBudgetConsumptions)] = {
+    val cycle = cycleId
+    // new counters go last: the values are read back by position
+    env.datastores.rawDataStore.mget(AiBudget.consumptionCounters.map(c => counterKey(cycle, c, partition))).map { list =>
+      (list.exists(_.isDefined), AiBudgetConsumptions(
+        totalUsd = list(0).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
+        totalTokens = list(1).map(_.utf8String.toLong).getOrElse(0L),
+        inferenceUsd = list(2).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
+        inferenceTokens = list(3).map(_.utf8String.toLong).getOrElse(0L),
+        imageUsd = list(4).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
+        imageTokens = list(5).map(_.utf8String.toLong).getOrElse(0L),
+        audioUsd = list(6).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
+        audioTokens = list(7).map(_.utf8String.toLong).getOrElse(0L),
+        videoUsd = list(8).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
+        videoTokens = list(9).map(_.utf8String.toLong).getOrElse(0L),
+        embeddingUsd = list(10).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
+        embeddingTokens = list(11).map(_.utf8String.toLong).getOrElse(0L),
+        moderationUsd = list(12).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
+        moderationTokens = list(13).map(_.utf8String.toLong).getOrElse(0L),
+        ocrUsd = list(14).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
+        ocrPages = list(15).map(_.utf8String.toLong).getOrElse(0L),
+        decisionUsd = list(16).map(_.utf8String.toLong).getOrElse(0L)./(BigDecimal(1000000000)),
+        decisionTokens = list(17).map(_.utf8String.toLong).getOrElse(0L),
+        partition = partition,
+      ))
+    }
+  }
+
+  // the partitions that consumed in the current cycle, the ones that consumed most first
+  def partitionConsumptions()(using ec: ExecutionContext, env: Env): Future[Seq[AiBudgetConsumptions]] = {
+    env.datastores.rawDataStore.smembers(partitionsKey(cycleId)).flatMap { members =>
+      Future.sequence(members.map(_.utf8String).distinct.map(p => readConsumptions(Some(p))))
+    }.map { all =>
+      all.collect { case (true, consumptions) => consumptions }.sortBy(c => (-c.totalUsd, -c.totalTokens, c.partition.getOrElse("")))
     }
   }
 
@@ -1093,20 +931,21 @@ case class AiBudget(
     }
   }
 
-  def isNotWithinBudget(attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Boolean] = isNotWithinBudgetWithConsumption(attrs).map(r => r._1)
+  // `partition`: the partition of the call, for a budget that counts its consumers apart
+  def isNotWithinBudget(attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Boolean] = isNotWithinBudgetWithConsumption(attrs, partition).map(r => r._1)
 
-  def isWithinBudget(attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Boolean] = isWithinBudgetWithConsumption(attrs).map(r => r._1)
+  def isWithinBudget(attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Boolean] = isWithinBudgetWithConsumption(attrs, partition).map(r => r._1)
 
-  def isNotWithinBudgetWithConsumption(attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[(Boolean, Option[AiBudgetConsumptions])] = isWithinBudgetWithConsumption(attrs).map(r => (!r._1, r._2))
+  def isNotWithinBudgetWithConsumption(attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[(Boolean, Option[AiBudgetConsumptions])] = isWithinBudgetWithConsumption(attrs, partition).map(r => (!r._1, r._2))
 
-  def isWithinBudgetWithConsumption(attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[(Boolean, Option[AiBudgetConsumptions])] = {
+  def isWithinBudgetWithConsumption(attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[(Boolean, Option[AiBudgetConsumptions])] = {
     val cycleValue = cycle.getOrElse(-1)
     if (cycleValue >= (renewals + 1)) {
       (false, None).vfuture
     } else if (limits.isEmpty) {
       (true, None).vfuture
     } else {
-      getConsumptions().map { consumptions =>
+      getConsumptions(partition).map { consumptions =>
         attrs.put(ChatClientWithAuding.BudgetConsumptionKey -> (consumptions, this))
         if (limits.total_usd.isDefined && consumptions.totalUsd >= limits.total_usd.get) {
           (false, consumptions.some)
@@ -1188,7 +1027,7 @@ case class AiBudget(
                 "decision_usd" -> percentageConsumedDecisionUsd,
                 "decision_tokens" -> percentageConsumedDecisionTokens
               )
-            )).toAnalytics()
+            ) ++ partition.map(p => Json.obj("partition" -> p)).getOrElse(Json.obj())).toAnalytics()
           }
           (true, consumptions.some)
         }
@@ -1198,6 +1037,22 @@ case class AiBudget(
 }
 
 object AiBudget {
+
+  def countersPrefix(using env: Env): String = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter"
+
+  // how long the counters of a cycle are kept once it is over
+  val countersRetentionMillis: Long = 7L * 24L * 3600L * 1000L
+
+  // the counters of a consumption, in the order they are read back
+  val consumptionCounters: Seq[String] = Seq(
+    "total-usd", "total-tokens", "inference-usd", "inference-tokens", "image-usd", "image-tokens", "audio-usd",
+    "audio-tokens", "video-usd", "video-tokens", "embedding-usd", "embedding-tokens", "moderation-usd",
+    "moderation-tokens", "ocr-usd", "ocr-pages", "decision-usd", "decision-tokens",
+  )
+
+  // the partitions this node already added to the index of their cycle
+  val indexedPartitions = new TrieMap[String, Unit]()
+
   val format = new Format[AiBudget] {
     override def writes(o: AiBudget): JsValue = o.location.jsonWithKey ++ Json.obj(
       "id" -> o.id,
@@ -1325,8 +1180,121 @@ object AiBudget {
   }
 }
 
+/**
+ * Keeps the counters of the budgets from piling up, on the leaders only (a worker gets them with the state). The
+ * counters of a cycle over for more than `AiBudget.countersRetentionMillis` are removed, the ones without an expiration
+ * get one (counters created before they expired), and the ones of a budget that is gone are removed once it was found
+ * gone on two runs in a row, a budget being created when a run starts not being gone.
+ */
+object AiBudgetCountersCleaner {
+
+  private val schedulerRef = new AtomicReference[Cancellable]()
+  // the budgets found gone on the last run
+  private val gone = new AtomicReference[Set[String]](Set.empty)
+
+  def start(env: Env, ext: AiExtension): Unit = {
+    if (!env.clusterConfig.mode.isWorker) {
+      given ec: ExecutionContext = env.otoroshiExecutionContext
+      given ev: Env = env
+      schedulerRef.set(env.otoroshiScheduler.scheduleAtFixedRate(1.minute, 24.hours) { () =>
+        run(ext)
+      })
+    }
+  }
+
+  def stop(): Unit = {
+    Option(schedulerRef.get()).foreach(_.cancel())
+  }
+
+  def run(ext: AiExtension)(using ec: ExecutionContext, env: Env): Future[Unit] = {
+    AiBudget.indexedPartitions.clear()
+    val prefix = s"${AiBudget.countersPrefix}:"
+    val budgets = ext.states.allBudgets().map(b => b.id -> b).toMap
+    val now = System.currentTimeMillis()
+    // a counter is `<budget>:<cycle>:...`, and a budget id may hold a colon
+    def parse(key: String): Option[(String, String)] = {
+      val rest = key.drop(prefix.length)
+      val id = budgets.keys.find(id => rest.startsWith(s"$id:")).getOrElse(rest.takeWhile(_ != ':'))
+      rest.drop(id.length + 1).split(":").headOption.filter(_.nonEmpty).map(cycle => (id, cycle))
+    }
+    env.datastores.rawDataStore.keys(s"$prefix*").flatMap { keys =>
+      val counters = keys.flatMap(key => parse(key).map { case (id, cycle) => (key, id, cycle) })
+      val goneNow = counters.map(_._2).filterNot(budgets.contains).toSet
+      val goneTwice = goneNow.intersect(gone.getAndSet(goneNow))
+      val removed = counters.collect {
+        case (key, id, _) if goneTwice.contains(id) => key
+        case (key, id, cycle) if budgets.get(id).flatMap(_.cycleEnd(cycle)).exists(_ + AiBudget.countersRetentionMillis < now) => key
+      }
+      val kept = counters.collect { case (key, id, cycle) if !removed.contains(key) && budgets.get(id).flatMap(_.cycleEnd(cycle)).isDefined => (key, budgets(id), cycle) }
+      for {
+        _ <- if (removed.isEmpty) ().vfuture else env.datastores.rawDataStore.del(removed).map(_ => ())
+        _ <- Future.sequence(kept.map { case (key, budget, cycle) =>
+          env.datastores.rawDataStore.pttl(key).map(ttl => if (ttl == -1L) budget.expireCounter(key, cycle))
+        })
+      } yield ()
+    }.recover { case e =>
+      ext.logger.error("error while cleaning the counters of the budgets", e)
+      ()
+    }
+  }
+}
+
+/**
+ * The partition of a call, for a budget that counts its consumers apart: `scope.partition_by` is an expression of the
+ * otoroshi expression language, `${user.email || apikey.metadata.ai_studio_owner}` for the budgets "by consumer" of
+ * AI Studio, `${consumer.id}` for one partition by user and one by api key. The provider and the model the call counts
+ * for are read with `${ctx.ai.provider.id}`, `${ctx.ai.provider.name}` and `${ctx.ai.model}`.
+ *
+ * The expression language answers `bad-expr`, or a value starting with `no-`, for what it does not find, which is what
+ * its chains skip: a placeholder that finds nothing leaves the call without a partition, and the budget does not apply
+ * to it. A default value (`${apikey.metadata.team:none}`, `${a || b :: none}`) makes such calls count together.
+ */
+object BudgetPartition {
+
+  private val placeholder = "\\$\\{([^}]*)\\}".r
+
+  // the text around the placeholders (Left) and the expressions of the placeholders (Right)
+  private val parsed = new TrieMap[String, Seq[Either[String, String]]]()
+
+  private def parts(template: String): Seq[Either[String, String]] = parsed.getOrElseUpdate(template, {
+    val matches = placeholder.findAllMatchIn(template).toSeq
+    val starts = 0 +: matches.map(_.end)
+    val ends = matches.map(_.start) :+ template.length
+    val texts = starts.zip(ends).map { case (from, to) => template.substring(from, to) }
+    texts.zipAll(matches.map(m => Some(m.group(1))), "", None).flatMap { case (text, expr) =>
+      Seq(Left(text)).filter(_.value.nonEmpty) ++ expr.map(Right(_)).toSeq
+    }
+  })
+
+  // what the expression language answers when it finds nothing, or when it fails on an expression
+  def found(value: String): Boolean = value != "bad-expr" && !value.startsWith("no-") && !value.contains("${")
+
+  // partitions are compared without their case: an email does not tell its case apart
+  def normalize(value: String): String = value.trim.toLowerCase
+
+  // the partition in the keys of the counters: a fixed length, without anything a key pattern would read
+  def segment(partition: String): String = partition.sha256.take(32)
+
+  def resolve(template: String, attrs: TypedMap, provider: Option[Entity], model: Option[String])(using env: Env): Option[String] = {
+    // the attributes of the call are never changed: the expression reads a copy, with the provider and the model in its context
+    val copy = TypedMap.empty
+    attrs.toMap.foreach { case (key, value) => copy.put(TypedEntry(key.asInstanceOf[TypedKey[Any]], value)) }
+    val ai = provider.map(p => Map("ai.provider.id" -> p.theId, "ai.provider.name" -> p.theName)).getOrElse(Map.empty[String, String]) ++
+      model.map(m => Map("ai.model" -> m)).getOrElse(Map.empty[String, String])
+    copy.put(otoroshi.plugins.Keys.ElCtxKey -> (attrs.get(otoroshi.plugins.Keys.ElCtxKey).getOrElse(Map.empty[String, String]) ++ ai))
+    val values = parts(template).map {
+      case Left(text)  => Some(text)
+      case Right(expr) => Some(s"$${$expr}".evaluateEl(copy)).filter(found)
+    }
+    if (values.exists(_.isEmpty)) None else Some(normalize(values.flatten.mkString)).filter(_.nonEmpty)
+  }
+}
+
 trait AiBudgetsDataStore extends BasicStore[AiBudget] {
   def findMatchingBudgets(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String]): Future[Seq[AiBudget]]
+  // the matching budgets with the partition of the call for those that count their consumers apart, the ones the call
+  // has no partition for left aside
+  def findMatchingBudgetsWithPartitions(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String], attrs: TypedMap): Future[Seq[(AiBudget, Option[String])]]
   // `scope` is the provider and the model the usage counts for, the ones of the attributes otherwise. `claims` is
   // the budgets the usage was already counted against: a budget in it is left alone, the others are added to it
   def updateUsage(totalCost: Option[BigDecimal], totalTokens: Option[Long], usageKind: AiBudgetUsageKind, attrs: TypedMap, scope: Option[(Entity, String)] = None, claims: Option[java.util.Set[String]] = None): Future[WithingBudgetConsumptions]
@@ -1356,13 +1324,15 @@ object AiBudgetsDataStore {
         "model" -> model.map(_.json).getOrElse(JsNull).as[JsValue],
         //"attrs" -> attrs.json
       )
-      ext.datastores.budgetsDataStore.findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { budgets =>
-        budgets.filterAsync(_.isNotWithinBudget(attrs)).flatMap { budgets =>
+      ext.datastores.budgetsDataStore.findMatchingBudgetsWithPartitions(ctx, apikey, user, provider, model, attrs).flatMap { matching =>
+        matching.filterAsync { case (budget, partition) => budget.isNotWithinBudget(attrs, partition) }.flatMap { exceeded =>
+          val budgets = exceeded.map(_._1)
           if (budgets.isEmpty) {
             inBudget
           } else {
             val soft = budgets.forall(_.actionOnExceed.mode == AiBudgetActionOnExceedMode.Soft)
             val budgetIds = budgets.map(_.id)
+            val partitions = exceeded.collect { case (budget, Some(partition)) => budget.id -> JsString(partition) }
             if (budgets.exists(_.actionOnExceed.alertOnExceed)) {
               AlertEvent.generic("AiBudgetExceeded", "otoroshi")(Json.obj(
                 "budgets" -> budgetIds,
@@ -1372,7 +1342,7 @@ object AiBudgetsDataStore {
                 // id and name only: the provider entity carries its connection credentials
                 "provider" -> provider.map(p => Json.obj("id" -> p.internalId, "name" -> p.theName)).getOrElse(JsNull).as[JsValue],
                 "route" -> route.map(_.json).getOrElse(JsNull).as[JsValue],
-              )).toAnalytics()
+              ) ++ (if (partitions.isEmpty) Json.obj() else Json.obj("partitions" -> JsObject(partitions)))).toAnalytics()
             }
             if (soft) {
               inBudget
@@ -1443,14 +1413,14 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
           "model" -> model.map(_.json).getOrElse(JsNull).as[JsValue],
           //"attrs" -> attrs.json
         )
-        findMatchingBudgets(ctx, apikey, user, provider, model).flatMap { matching =>
+        findMatchingBudgetsWithPartitions(ctx, apikey, user, provider, model, attrs).flatMap { matching =>
           // claimed here, as soon as the budgets are known: whoever else counts the same usage finds them taken
-          val budgets = matching.filter(budget => claims.forall(_.add(budget.id)))
-          budgets.mapAsync { budget =>
-            budget.isWithinBudgetWithConsumption(attrs).map {
+          val budgets = matching.filter { case (budget, _) => claims.forall(_.add(budget.id)) }
+          budgets.mapAsync { case (budget, partition) =>
+            budget.isWithinBudgetWithConsumption(attrs, partition).map {
               case (withinBudget, consumption) =>
                 if (withinBudget) {
-                  usageKind.updateUsage(budget, cost, tokens, attrs)
+                  usageKind.updateUsage(budget, cost, tokens, attrs, partition)
                 }
                 WithingBudgetConsumption(budget, consumption)
             }
@@ -1461,6 +1431,19 @@ class KvAiBudgetsDataStore(extensionId: AdminExtensionId, redisCli: RedisLike, _
       }
     } else {
       WithingBudgetConsumptions().vfuture
+    }
+  }
+
+  def findMatchingBudgetsWithPartitions(ctx: JsValue, apikey: Option[ApiKey], user: Option[PrivateAppsUser], provider: Option[Entity], model: Option[String], attrs: TypedMap): Future[Seq[(AiBudget, Option[String])]] = {
+    given env: Env = _env
+    given ec: ExecutionContext = _env.otoroshiExecutionContext
+    findMatchingBudgets(ctx, apikey, user, provider, model).map { budgets =>
+      budgets.flatMap { budget =>
+        budget.scope.partitionBy match {
+          case None             => Seq((budget, None))
+          case Some(expression) => BudgetPartition.resolve(expression, attrs, provider, model).map(p => (budget, Some(p))).toSeq
+        }
+      }
     }
   }
 

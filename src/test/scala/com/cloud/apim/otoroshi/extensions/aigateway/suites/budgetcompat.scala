@@ -21,7 +21,8 @@ import scala.concurrent.duration.DurationInt
 
 // What a budget looks like from the outside, frozen: the json of the entity, the keys of its counters in the
 // datastore, its consumption, the deltas a worker pushes, its alerts, the audit of a call it counts and its views in
-// AI Studio. A budget that uses none of the features added after it must keep behaving exactly like this.
+// AI Studio. A budget that uses none of the features added after it must keep behaving exactly like this. The one
+// change made on purpose since: its counters expire some days after the end of their cycle, which nothing reads.
 class BudgetCompatSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
   val (openaiPort, _) = createTestServerWithRoutes("budget-compat-openai", routes => routes
@@ -193,14 +194,18 @@ class BudgetCompatSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(AiBudget.format.reads(read.json).get, read, "a budget reads back from its own json")
   }
 
-  test("a budget counts in the same keys, without expiration, and reads the same consumption") {
+  test("a budget counts in the same keys, expiring once their cycle is over, and reads the same consumption") {
     given env: Env = otoroshi.env
     count("compat-model-counters", Some(BigDecimal("0.25")), Some(150L))
     val budget = ext.states.budget(countersId).get
     val prefix = s"${env.storageRoot}:extensions:${AiExtension.id.cleanup}:aibudgets-counter:$countersId:"
     val keys = env.datastores.rawDataStore.keys(s"$prefix*").awaitf(10.seconds).sorted
     assertEquals(keys, Seq("inference-tokens", "inference-usd", "total-tokens", "total-usd").map(c => s"$prefix${budget.cycleId}:$c"))
-    keys.foreach(k => assertEquals(env.datastores.rawDataStore.pttl(k).awaitf(10.seconds), -1L, s"$k should not expire"))
+    val expiration = budget.cycleEnd(budget.cycleId).get + 7L * 24L * 3600L * 1000L - System.currentTimeMillis()
+    keys.foreach { k =>
+      val ttl = env.datastores.rawDataStore.pttl(k).awaitf(10.seconds)
+      assert(ttl > expiration - 60000L && ttl <= expiration, s"$k should expire 7 days after the end of its cycle, in $expiration ms, not $ttl")
+    }
     def raw(counter: String): Option[String] = env.datastores.rawDataStore.get(s"$prefix${budget.cycleId}:$counter").awaitf(10.seconds).map(_.utf8String)
     assertEquals((raw("total-usd"), raw("inference-usd"), raw("total-tokens"), raw("inference-tokens")), (Some("250000000"), Some("250000000"), Some("150"), Some("150")), "dollars are counted in billionths")
 

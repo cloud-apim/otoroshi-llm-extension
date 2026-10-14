@@ -281,6 +281,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     given ec: ExecutionContext = env.otoroshiExecutionContext
     WorkflowFunctionsInitializer.initDefaults()
     AiBudgetClusterAgent.start(env, this)
+    AiBudgetCountersCleaner.start(env, this)
     costsTracking.startOpenRouterCatalogSync()
     costsTracking.startModelsCatalog()
     ProviderHealthchecks.start(env, this)
@@ -301,6 +302,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     ProviderHealthchecks.stop()
     costsTracking.stopOpenRouterCatalogSync()
     AiBudgetClusterAgent.stop()
+    AiBudgetCountersCleaner.stop()
     LettuceRedisClientManager.shutdownAll()
   }
 
@@ -679,11 +681,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       case Some(budgetId) => {
         states.budget(budgetId) match {
           case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
-          case Some(budget) => {
-            budget.getConsumptions().map { consumptions =>
-              Results.Ok(consumptions.jsonWithRemaining(budget))
-            }
-          }
+          case Some(budget) => budgetConsumption(budget, req)
         }
       }
     }
@@ -698,9 +696,69 @@ class AiExtension(val env: Env) extends AdminExtension {
       case Some(budgetId) => {
         states.budget(budgetId) match {
           case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
-          case Some(budget) if all => budget.resetAll().map(_ => Results.Ok(Json.obj("done" -> true)))
-          case Some(budget) => budget.resetCurrentCycle().map(_ => Results.Ok(Json.obj("done" -> true)))
+          case Some(budget) => budgetReset(budget, req, all)
         }
+      }
+    }
+  }
+
+  def handleBudgetPartitionsBackoffice(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] = {
+    req.getQueryString("budget").flatMap(states.budget) match {
+      case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
+      case Some(budget) => budgetPartitions(budget, req)
+    }
+  }
+
+  // The partition a call names (`?partition=`): a budget counting its consumers apart has no consumption of its own, so
+  // reading it needs a partition, and a budget that does not has no partition
+  private def partitionOf(budget: AiBudget, req: RequestHeader, required: Boolean): Either[Result, Option[String]] = {
+    val partition = req.getQueryString("partition").map(BudgetPartition.normalize).filter(_.nonEmpty)
+    (budget.partitioned, partition) match {
+      case (true, None) if required => Left(Results.BadRequest(Json.obj("error" -> "partition_required", "error_description" -> "this budget counts its consumers apart: name one with the 'partition' query param")))
+      case (false, Some(_)) => Left(Results.BadRequest(Json.obj("error" -> "partition_not_allowed", "error_description" -> "this budget does not count its consumers apart")))
+      case (_, p) => Right(p)
+    }
+  }
+
+  private def budgetConsumption(budget: AiBudget, req: RequestHeader): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    partitionOf(budget, req, required = true) match {
+      case Left(error) => error.vfuture
+      case Right(partition) => budget.getConsumptions(partition).map(consumptions => Results.Ok(consumptions.jsonWithRemaining(budget)))
+    }
+  }
+
+  private def budgetReset(budget: AiBudget, req: RequestHeader, all: Boolean): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    partitionOf(budget, req, required = false) match {
+      case Left(error) => error.vfuture
+      case Right(Some(partition)) => budget.resetPartition(partition).map(_ => Results.Ok(Json.obj("done" -> true)))
+      case Right(None) if all => budget.resetAll().map(_ => Results.Ok(Json.obj("done" -> true)))
+      case Right(None) => budget.resetCurrentCycle().map(_ => Results.Ok(Json.obj("done" -> true)))
+    }
+  }
+
+  // the partitions of a budget counting its consumers apart, in the current cycle, the ones that consumed most first
+  private def budgetPartitions(budget: AiBudget, req: RequestHeader): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    if (!budget.partitioned) {
+      Results.BadRequest(Json.obj("error" -> "not_partitioned", "error_description" -> "this budget does not count its consumers apart")).vfuture
+    } else {
+      val limit = req.getQueryString("limit").flatMap(_.toIntOption).getOrElse(50).max(1).min(1000)
+      val offset = req.getQueryString("offset").flatMap(_.toIntOption).getOrElse(0).max(0)
+      val q = req.getQueryString("q").map(_.trim.toLowerCase).filter(_.nonEmpty)
+      budget.partitionConsumptions().map { all =>
+        val matching = all.filter(c => q.forall(f => c.partition.exists(_.contains(f))))
+        Results.Ok(Json.obj(
+          "total" -> matching.size,
+          "items" -> JsArray(matching.slice(offset, offset + limit).map(c => Json.obj(
+            "partition" -> c.partition,
+            "consumption" -> c.jsonWithRemaining(budget),
+          ))),
+        ))
       }
     }
   }
@@ -742,12 +800,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       case Some(budgetId) => {
         datastores.budgetsDataStore.findById(budgetId).flatMap {
           case None => Results.NotFound(Json.obj("error" -> "budget not found")).vfuture
-          case Some(budget) if all => {
-            budget.resetAll().map(_ => Results.Ok(Json.obj("done" -> true)))
-          }
-          case Some(budget) => {
-            budget.resetCurrentCycle().map(_ => Results.Ok(Json.obj("done" -> true)))
-          }
+          case Some(budget) => budgetReset(budget, req, all)
         }
       }
     }
@@ -761,12 +814,20 @@ class AiExtension(val env: Env) extends AdminExtension {
       case Some(budgetId) => {
         datastores.budgetsDataStore.findById(budgetId).flatMap {
           case None => Results.NotFound(Json.obj("error" -> "budget not found")).vfuture
-          case Some(budget) => {
-            budget.getConsumptions().map { consumptions =>
-              Results.Ok(consumptions.jsonWithRemaining(budget))
-            }
-          }
+          case Some(budget) => budgetConsumption(budget, req)
         }
+      }
+    }
+  }
+
+  def handleBudgetPartitions(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    ctx.named("id") match {
+      case None => Results.BadRequest(Json.obj("error" -> "no budget id found")).vfuture
+      case Some(budgetId) => datastores.budgetsDataStore.findById(budgetId).flatMap {
+        case None => Results.NotFound(Json.obj("error" -> "budget not found")).vfuture
+        case Some(budget) => budgetPartitions(budget, req)
       }
     }
   }
@@ -820,6 +881,12 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_reset",
       wantsBody = false,
       handle = handleBugdetReset,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "GET",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/partitions",
+      wantsBody = false,
+      handle = handleBudgetPartitions,
     ),
     AdminExtensionAdminApiRoute(
       method = "POST",
@@ -925,6 +992,12 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_reset",
       wantsBody = false,
       handle = handleRemainingBudgetReset
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "GET",
+      path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_partitions",
+      wantsBody = false,
+      handle = handleBudgetPartitionsBackoffice
     )
   ) ++ studio.backofficeRoutes
 
