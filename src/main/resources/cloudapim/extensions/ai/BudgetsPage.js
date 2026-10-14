@@ -134,7 +134,8 @@ function RemainingBudget(props) {
   return React.createElement('div', null,
     budgetRow('Consumers', React.createElement('div', null,
       React.createElement('input', { type: 'text', className: 'form-control', placeholder: 'Search a consumer', value: query, onChange: (e) => setQuery(e.target.value) }),
-      React.createElement('table', { className: 'table table-sm table-striped', style: { marginTop: 10 } },
+      // the colors of the page, the bootstrap table ones are the light theme ones
+      React.createElement('table', { className: 'table table-sm', style: { marginTop: 10, color: 'inherit', '--bs-table-bg': 'transparent', '--bs-table-color': 'inherit' } },
         React.createElement('thead', null, React.createElement('tr', null,
           React.createElement('th', null, `Consumer (${partitions.total} this cycle)`),
           React.createElement('th', null, 'Consumed USD'),
