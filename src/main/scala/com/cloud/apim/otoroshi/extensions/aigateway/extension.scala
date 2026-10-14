@@ -740,6 +740,62 @@ class AiExtension(val env: Env) extends AdminExtension {
     }
   }
 
+  // takes one extension of a budget (`?partition=` for a budget counting its consumers apart)
+  def budgetExtend(budget: AiBudget, req: RequestHeader, by: JsObject): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    budget.extend(req.getQueryString("partition").map(BudgetPartition.normalize).filter(_.nonEmpty)).map {
+      case Left((status, error)) => Results.Status(status)(error)
+      case Right(consumption) =>
+        AiBudget.auditExtension("AiBudgetExtended", budget, consumption.partition, Some(consumption), by)
+        Results.Ok(Json.obj("consumption" -> consumption.jsonWithRemaining(budget)))
+    }
+  }
+
+  // cancels the extensions of the current cycle, for a partition when the budget counts its consumers apart
+  def budgetCancelExtensions(budget: AiBudget, req: RequestHeader, by: JsObject): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    partitionOf(budget, req, required = true) match {
+      case Left(error) => error.vfuture
+      case Right(partition) =>
+        budget.cancelExtensions(partition).flatMap(_ => budget.getConsumptions(partition)).map { consumption =>
+          AiBudget.auditExtension("AiBudgetExtensionCancelled", budget, partition, Some(consumption), by)
+          Results.Ok(Json.obj("done" -> true))
+        }
+    }
+  }
+
+  private def adminApikeyActor(apikey: ApiKey): JsObject = Json.obj("kind" -> "apikey", "client_id" -> apikey.clientId, "name" -> apikey.clientName)
+
+  private def backofficeActor(user: Option[BackOfficeUser]): JsObject =
+    user.map(u => Json.obj("kind" -> "backoffice", "email" -> u.email, "name" -> u.name)).getOrElse(Json.obj("kind" -> "backoffice"))
+
+  def handleBudgetExtend(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] =
+    withAdminBudget(ctx)(budget => budgetExtend(budget, req, adminApikeyActor(apikey)))
+
+  def handleBudgetExtensionsCancel(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute], req: RequestHeader, apikey: ApiKey, body: Option[Source[ByteString, ?]]): Future[Result] =
+    withAdminBudget(ctx)(budget => budgetCancelExtensions(budget, req, adminApikeyActor(apikey)))
+
+  def handleBudgetExtendBackoffice(ctx: AdminExtensionRouterContext[AdminExtensionBackofficeAuthRoute], req: RequestHeader, user: Option[BackOfficeUser], body: Option[Source[ByteString, ?]]): Future[Result] =
+    req.getQueryString("budget").flatMap(states.budget) match {
+      case None => Results.NotFound(Json.obj("error" -> "no budget found")).vfuture
+      case Some(budget) if req.method == "DELETE" => budgetCancelExtensions(budget, req, backofficeActor(user))
+      case Some(budget) => budgetExtend(budget, req, backofficeActor(user))
+    }
+
+  private def withAdminBudget(ctx: AdminExtensionRouterContext[AdminExtensionAdminApiRoute])(f: AiBudget => Future[Result]): Future[Result] = {
+    given ec: ExecutionContext = env.otoroshiExecutionContext
+    given ev: Env = env
+    ctx.named("id") match {
+      case None => Results.BadRequest(Json.obj("error" -> "no budget id found")).vfuture
+      case Some(budgetId) => datastores.budgetsDataStore.findById(budgetId).flatMap {
+        case None => Results.NotFound(Json.obj("error" -> "budget not found")).vfuture
+        case Some(budget) => f(budget)
+      }
+    }
+  }
+
   // the partitions of a budget counting its consumers apart, in the current cycle, the ones that consumed most first
   private def budgetPartitions(budget: AiBudget, req: RequestHeader): Future[Result] = {
     given ec: ExecutionContext = env.otoroshiExecutionContext
@@ -904,6 +960,18 @@ class AiExtension(val env: Env) extends AdminExtension {
     ),
     AdminExtensionAdminApiRoute(
       method = "POST",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_extend",
+      wantsBody = false,
+      handle = handleBudgetExtend,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "DELETE",
+      path = "/api/extensions/cloud-apim/extensions/ai-extension/budgets/:id/consumption/_extend",
+      wantsBody = false,
+      handle = handleBudgetExtensionsCancel,
+    ),
+    AdminExtensionAdminApiRoute(
+      method = "POST",
       path = "/api/extensions/cloud-apim/extensions/ai-extension/pow-challenges/:key",
       wantsBody = true,
       handle = handlePowChallengeCreate,
@@ -1012,6 +1080,18 @@ class AiExtension(val env: Env) extends AdminExtension {
       path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_partitions",
       wantsBody = false,
       handle = handleBudgetPartitionsBackoffice
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "POST",
+      path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_extend",
+      wantsBody = false,
+      handle = handleBudgetExtendBackoffice
+    ),
+    AdminExtensionBackofficeAuthRoute(
+      method = "DELETE",
+      path = "/extensions/cloud-apim/extensions/ai-extension/ai-budgets/_extend",
+      wantsBody = false,
+      handle = handleBudgetExtendBackoffice
     )
   ) ++ studio.backofficeRoutes
 
