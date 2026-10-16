@@ -5,7 +5,7 @@ import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, ToolsSelection}
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage, OpenAiResponsesBodyConverter, ResponsesStreamAccumulator}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt, InputChatMessage, OpenAiResponsesBodyConverter, ResponsesStreamWriter}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
@@ -276,10 +276,7 @@ object OpenAiResponsesProxy {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(source) => {
                 val responseId = s"resp_${IdGenerator.token(32)}"
-                val messageId = s"msg_${IdGenerator.token(32)}"
                 val modelStr = client.computeModel(jsonBody).getOrElse("none")
-                // text, tool calls and usage are only complete once the stream ends
-                val acc = new ResponsesStreamAccumulator()
                 val createdAt = System.currentTimeMillis() / 1000
 
                 def sseEvent(eventType: String, data: JsValue): ByteString = {
@@ -296,94 +293,29 @@ object OpenAiResponsesProxy {
                   "usage" -> JsNull
                 )
 
-                val messageItem = Json.obj(
-                  "type" -> "message",
-                  "id" -> messageId,
-                  "status" -> "in_progress",
-                  "role" -> "assistant",
-                  "content" -> JsArray()
-                )
-
-                val contentPart = Json.obj(
-                  "type" -> "output_text",
-                  "text" -> "",
-                  "annotations" -> JsArray()
-                )
-
                 val headerEvents = Source(List(
                   sseEvent("response.created", Json.obj("type" -> "response.created", "response" -> incompleteResponse)),
                   sseEvent("response.in_progress", Json.obj("type" -> "response.in_progress", "response" -> incompleteResponse)),
-                  sseEvent("response.output_item.added", Json.obj("type" -> "response.output_item.added", "output_index" -> 0, "item" -> messageItem)),
-                  sseEvent("response.content_part.added", Json.obj("type" -> "response.content_part.added", "item_id" -> messageId, "output_index" -> 0, "content_index" -> 0, "part" -> contentPart)),
                 ))
 
-                val contentEvents = source.mapConcat { chunk =>
-                  acc.accumulate(chunk)
-                  chunk.choices.headOption.flatMap(_.delta.content).filter(_.nonEmpty).map { text =>
-                    sseEvent("response.output_text.delta", Json.obj(
-                      "type" -> "response.output_text.delta",
-                      "item_id" -> messageId,
-                      "output_index" -> 0,
-                      "content_index" -> 0,
-                      "delta" -> text
-                    ))
-                  }.toList
-                }
+                // the reasoning, the text and the tool calls as output items, in the order the model produced them
+                val writer = new ResponsesStreamWriter(sequenced = false, logprobs = false, () => 0, prefix => s"${prefix}_${IdGenerator.token(32)}")
+                val contentEvents = source.mapConcat(chunk => writer.events(chunk).toList)
 
                 // materialized by `concatLazy` only once the content events are done, which is what
                 // makes the accumulated text, tool calls and usage available here
                 val footerEvents = Source.lazySource(() => {
-                  val text = acc.wholeText
-                  val completedContentPart = Json.obj(
-                    "type" -> "output_text",
-                    "text" -> text,
-                    "annotations" -> JsArray()
-                  )
-                  val completedMessage = Json.obj(
-                    "type" -> "message",
-                    "id" -> messageId,
-                    "status" -> "completed",
-                    "role" -> "assistant",
-                    "content" -> JsArray(Seq(completedContentPart))
-                  )
-                  // tool calls streamed as deltas are reported as `function_call` output items
-                  val functionCallItems = acc.functionCallItems(_ => s"fc_${IdGenerator.token(24)}")
+                  val closing = writer.end()
                   val completedResponse = Json.obj(
                     "id" -> responseId,
                     "object" -> "response",
                     "created_at" -> createdAt,
                     "model" -> modelStr,
                     "status" -> "completed",
-                    "output" -> JsArray(Seq(completedMessage) ++ functionCallItems),
-                    "usage" -> acc.usageJson,
+                    "output" -> JsArray(writer.output),
+                    "usage" -> writer.acc.usageJson,
                   )
-                  Source(List(
-                    sseEvent("response.output_text.done", Json.obj(
-                      "type" -> "response.output_text.done",
-                      "item_id" -> messageId,
-                      "output_index" -> 0,
-                      "content_index" -> 0,
-                      "text" -> text
-                    )),
-                    sseEvent("response.content_part.done", Json.obj(
-                      "type" -> "response.content_part.done",
-                      "item_id" -> messageId,
-                      "output_index" -> 0,
-                      "content_index" -> 0,
-                      "part" -> completedContentPart
-                    )),
-                    sseEvent("response.output_item.done", Json.obj(
-                      "type" -> "response.output_item.done",
-                      "output_index" -> 0,
-                      "item" -> completedMessage
-                    )),
-                  ) ++ functionCallItems.zipWithIndex.map { case (item, idx) =>
-                    sseEvent("response.output_item.done", Json.obj(
-                      "type" -> "response.output_item.done",
-                      "output_index" -> (idx + 1),
-                      "item" -> item
-                    ))
-                  } ++ List(
+                  Source(closing.toList ++ List(
                     sseEvent("response.completed", Json.obj(
                       "type" -> "response.completed",
                       "response" -> completedResponse

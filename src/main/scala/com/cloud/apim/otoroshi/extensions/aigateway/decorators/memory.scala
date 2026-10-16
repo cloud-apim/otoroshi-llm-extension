@@ -64,7 +64,9 @@ class ChatClientWithPersistentMemory(originalProvider: AiProvider, val chatClien
               error.leftf
             }
             case Right(response) => {
-              val responseMessages = response.generations.map(m => PersistedChatMessage.from(m.message.raw))
+              // the answer as the gateway reads it back: its text, its tool calls and its reasoning, whatever the
+              // shape the provider answered in
+              val responseMessages = response.generations.map(m => PersistedChatMessage.from(m.message.json.asObject))
               memClient.addMessages(sessionId, addedMessagesForMemory ++ responseMessages)
               response.rightf
             }
@@ -87,18 +89,16 @@ class ChatClientWithPersistentMemory(originalProvider: AiProvider, val chatClien
               error.left
             }
             case Right(source) => {
-              // the answer is only known once the stream completes: aggregate the deltas and
-              // persist the resulting assistant message
-              val content = new StringBuilder()
+              // the answer is only known once the stream completes: aggregate the deltas (text, tool calls,
+              // reasoning) and persist the resulting assistant message
+              val answer = new ResponsesStreamAccumulator()
               source
                 .map { chunk =>
-                  chunk.choices.flatMap(_.delta.content).foreach(content.append)
+                  answer.accumulate(chunk)
                   chunk
                 }
                 .alsoTo(Sink.onComplete { _ =>
-                  val text = content.toString()
-                  val raw = Json.obj("role" -> "assistant", "content" -> text)
-                  memClient.addMessages(sessionId, addedMessagesForMemory :+ PersistedChatMessage.from(raw))
+                  memClient.addMessages(sessionId, addedMessagesForMemory :+ PersistedChatMessage.from(answer.chatMessage))
                 }).right
             }
           }

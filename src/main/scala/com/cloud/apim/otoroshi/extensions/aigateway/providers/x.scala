@@ -400,13 +400,7 @@ class XAiChatClient(val api: XAiApi, val options: XAiChatClientOptions, id: Stri
               choices = chunk.choices.map { choice =>
                 ChatResponseChunkChoice(
                   index = choice.index.map(_.toLong).getOrElse(0L),
-                  delta = ChatResponseChunkChoiceDelta(
-                    content = choice.delta.flatMap(_.content),
-                    reasoning = choice.delta.flatMap(_.reasoning),
-                    role = choice.delta.map(_.role).getOrElse("assistant"),
-                    refusal = choice.delta.flatMap(_.refusal),
-                    tool_calls = choice.delta.map(_.tool_calls.map(tc => tc.asChatResponseChunkChoiceDeltaToolCall)).getOrElse(Seq.empty),
-                  ),
+                  delta = choice.delta.map(_.asChatResponseChunkChoiceDelta).getOrElse(ChatResponseChunkChoiceDelta(None)),
                   finishReason = choice.finish_reason
                 )
               }

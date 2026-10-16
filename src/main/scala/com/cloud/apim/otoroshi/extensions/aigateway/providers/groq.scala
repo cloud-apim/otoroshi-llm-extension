@@ -115,10 +115,12 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) // .map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
+              // the reasoning that led to the calls goes back with them, in `reasoning`
+              val reasoning = Reasoning.write(Json.obj(), resp.choices.find(_.message.toolCalls.nonEmpty).map(c => Reasoning.of(c.message.raw)).getOrElse(Seq.empty), ReasoningInput.Field)
               LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, "groq", attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
-                  val newMessages: Seq[JsValue] = messages ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ ReasoningToolLoop.openAi(callResps, reasoning)
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
@@ -182,7 +184,10 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
           var isToolCallEnded = false
           var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
           var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
+          // the reasoning streamed before the calls, which goes back with them
+          val streamedReasoning = new ReasoningAccumulator()
           val newSource = res._1.flatMapConcat { chunk =>
+            if (!isToolCall) chunk.choices.headOption.flatMap(_.delta).flatMap(_.reasoning).foreach(streamedReasoning.addText)
             if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
               isToolCall = true
               toolCalls = chunk.choices.head.delta.head.tool_calls
@@ -212,7 +217,7 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
               val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, "groq", attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
-                  val newMessages: Seq[JsValue] = messages ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ ReasoningToolLoop.openAi(callResps, Reasoning.write(Json.obj(), streamedReasoning.result, ReasoningInput.Field))
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
@@ -356,9 +361,9 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
       attrs.put(com.cloud.apim.otoroshi.extensions.aigateway.entities.A2ASupport.A2AConnectorsKey -> options.a2aConnectors)
       val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.callWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
+      api.callWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, ReasoningInput.Field))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.call("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), acc)
+      api.call("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, ReasoningInput.Field))), acc)
     }
     callF.map {
       case Left(err) => err.left
@@ -413,9 +418,9 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
       attrs.put(com.cloud.apim.otoroshi.extensions.aigateway.entities.A2ASupport.A2AConnectorsKey -> options.a2aConnectors)
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.streamWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
+      api.streamWithToolSupport("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, ReasoningInput.Field))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.stream("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), acc)
+      api.stream("POST", "/openai/v1/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, ReasoningInput.Field))), acc)
     }
     callF.map {
       case Left(err) => err.left
@@ -467,13 +472,7 @@ class GroqChatClient(api: GroqApi, options: GroqChatClientOptions, id: String) e
               choices = chunk.choices.map { choice =>
                 ChatResponseChunkChoice(
                   index = choice.index.map(_.toLong).getOrElse(0L),
-                  delta = ChatResponseChunkChoiceDelta(
-                    content = choice.delta.flatMap(_.content),
-                    reasoning = choice.delta.flatMap(_.reasoning),
-                    role = choice.delta.map(_.role).getOrElse("assistant"),
-                    refusal = choice.delta.flatMap(_.refusal),
-                    tool_calls = choice.delta.map(_.tool_calls.map(tc => tc.asChatResponseChunkChoiceDeltaToolCall)).getOrElse(Seq.empty),
-                  ),
+                  delta = choice.delta.map(_.asChatResponseChunkChoiceDelta).getOrElse(ChatResponseChunkChoiceDelta(None)),
                   finishReason = choice.finish_reason
                 )
               }

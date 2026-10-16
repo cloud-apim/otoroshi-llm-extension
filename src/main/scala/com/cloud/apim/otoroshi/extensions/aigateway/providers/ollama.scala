@@ -64,7 +64,8 @@ case class OllamaAiApiResponse(status: Int, headers: Map[String, String], body: 
 case class OllamaAiChatResponseChunkMessage(raw: JsValue) {
   lazy val role: String = raw.select("role").asOpt[String].getOrElse("assistant")
   lazy val content: String = raw.select("content").asOpt[String].getOrElse("")
-  lazy val reasoning: Option[String] = raw.select("reasoning").asOptString
+  // the native api streams the thinking of the model in `thinking`
+  lazy val reasoning: Option[String] = raw.select("thinking").asOptString.orElse(raw.select("reasoning").asOptString)
   lazy val toolCalls: Seq[OllamaAiApiResponseChoiceMessageToolCall] = raw.select("tool_calls").asOpt[Seq[JsObject]].map(_.map(v => OllamaAiApiResponseChoiceMessageToolCall(v))).getOrElse(Seq.empty)
   lazy val hasToolCalls: Boolean = toolCalls.nonEmpty
 }
@@ -203,10 +204,12 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty)//.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
+              // the thinking that led to the calls goes back with them
+              val reasoning = Reasoning.write(Json.obj(), resp.body.select("message").asOpt[JsObject].map(Reasoning.of).getOrElse(Seq.empty), ReasoningInput.Thinking)
               LlmFunctions.callToolsOllama(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
-                  val newMessages: Seq[JsValue] = messages ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ ReasoningToolLoop.openAi(callResps, reasoning)
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
@@ -386,14 +389,14 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
       api.callWithToolSupport("POST", "/api/chat", Some(Json.obj(
         "model" -> finalModel,
         "stream" -> false,
-        "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
+        "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama, ReasoningInput.Thinking),
         "options" -> mergedOptionsWithoutModel,
       ) ++ tools), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
       api.call("POST", "/api/chat", Some(Json.obj(
         "model" -> finalModel,
         "stream" -> false,
-        "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
+        "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama, ReasoningInput.Thinking),
         "options" -> mergedOptionsWithoutModel
       )), acc)
     }
@@ -455,7 +458,7 @@ class OllamaAiChatClient(api: OllamaAiApi, options: OllamaAiChatClientOptions, i
       api.stream("POST", "/api/chat", Some(Json.obj(
         "model" -> finalModel,
         "stream" -> true,
-        "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama),
+        "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.Ollama, ReasoningInput.Thinking),
         "options" -> mergedOptionsWithoutModel
       )), acc).map {
         case Left(err) => err.left

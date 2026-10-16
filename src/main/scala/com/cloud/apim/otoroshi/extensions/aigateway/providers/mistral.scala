@@ -113,10 +113,12 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
+              // the reasoning that led to the calls goes back with them, as the `thinking` chunks Mistral wrote
+              val reasoning = resp.choices.find(_.message.toolCalls.nonEmpty).map(c => Reasoning.of(MistralAiChatClient.normalizeMessage(c.message.raw))).getOrElse(Seq.empty)
               LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, "mistral", attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
-                  val newMessages: Seq[JsValue] = messages ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ ReasoningToolLoop.openAi(callResps, MistralAiChatClient.reasoningContent(reasoning))
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
@@ -182,7 +184,10 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
           var isToolCallEnded = false
           var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
           var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
+          // the reasoning streamed before the calls, which goes back with them
+          val streamedReasoning = new ReasoningAccumulator()
           val newSource = res._1.flatMapConcat { chunk =>
+            if (!isToolCall) chunk.choices.headOption.flatMap(_.delta).foreach(delta => streamedReasoning.add(delta.reasoning_details))
             if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
               isToolCall = true
               toolCalls = chunk.choices.head.delta.head.tool_calls
@@ -212,7 +217,7 @@ class MistralAiApi(_baseUrl: String = MistralAiApi.baseUrl, token: String, timeo
               val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, "mistral", attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
-                  val newMessages: Seq[JsValue] = messages ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ ReasoningToolLoop.openAi(callResps, MistralAiChatClient.reasoningContent(streamedReasoning.result))
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
@@ -315,22 +320,32 @@ object MistralAiChatClient {
   // image_url -> images. Chunk types we have no model home for (document_url / file / reference /
   // input_audio) are preserved verbatim under `content_parts` so nothing is silently dropped; the
   // untouched original always remains in the raw response body regardless.
+  /** the reasoning of an assistant message, as the `thinking` chunks of its content */
+  def reasoningContent(reasoning: Seq[JsObject]): JsObject = {
+    val chunks = Reasoning.toMistralChunks(reasoning)
+    if (chunks.isEmpty) Json.obj() else Json.obj("content" -> JsArray(chunks))
+  }
+
   def normalizeMessage(message: JsObject): JsObject = {
     message.select("content").asOpt[JsValue] match {
       case Some(JsString(_)) => message // already a plain string, nothing to normalize
       case Some(JsArray(chunks)) =>
         val content = new StringBuilder
         val reasoning = new StringBuilder
+        // Mistral signs a reasoning it takes back across turns
+        var signature: Option[String] = None
         val images = scala.collection.mutable.ArrayBuffer.empty[JsValue]
         val others = scala.collection.mutable.ArrayBuffer.empty[JsValue]
         chunks.foreach {
           case JsString(text) => content.append(text) // defensive: a bare string element
           case chunk => chunk.select("type").asOpt[String] match {
             case Some("text") => chunk.select("text").asOpt[String].foreach(content.append)
-            case Some("thinking") => chunk.select("thinking").asOpt[Seq[JsValue]].getOrElse(Seq.empty).foreach {
-              case JsString(text) => reasoning.append(text)
-              case part => part.select("text").asOpt[String].foreach(reasoning.append) // skip nested references
-            }
+            case Some("thinking") =>
+              chunk.select("thinking").asOpt[Seq[JsValue]].getOrElse(Seq.empty).foreach {
+                case JsString(text) => reasoning.append(text)
+                case part => part.select("text").asOpt[String].foreach(reasoning.append) // skip nested references
+              }
+              chunk.select("signature").asOptString.filter(_.nonEmpty).foreach(s => signature = s.some)
             case Some("image_url") => images.append(chunk)
             case _ => others.append(chunk) // document_url / file / reference / input_audio
           }
@@ -341,6 +356,9 @@ object MistralAiChatClient {
         (message - "content")
           .applyOnIf(content.nonEmpty) { _ ++ Json.obj("content" -> content.toString()) }
           .applyOnIf(reasoning.nonEmpty) { _ ++ Json.obj("reasoning_content" -> reasoning.toString()) }
+          .applyOnIf(reasoning.nonEmpty || signature.isDefined) {
+            _ ++ Json.obj("reasoning_details" -> Json.arr(Reasoning.textDetail(reasoning.toString(), Reasoning.Formats.Unknown, signature) ++ Json.obj("index" -> 0)))
+          }
           .applyOnIf(images.nonEmpty) { _ ++ Json.obj("images" -> JsArray(existingImages ++ images)) }
           .applyOnIf(others.nonEmpty) { _ ++ Json.obj("content_parts" -> JsArray(others)) }
       case _ => message ++ Json.obj("content" -> "") // null or absent (e.g. tool-call only messages)
@@ -411,14 +429,14 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
       attrs.put(com.cloud.apim.otoroshi.extensions.aigateway.entities.A2ASupport.A2AConnectorsKey -> options.a2aConnectors)
       val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
+      api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, ReasoningInput.MistralChunks))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), acc)
+      api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, ReasoningInput.MistralChunks))), acc)
     }
     callF.map {
       case Left(err) => err.left
       case Right(resp) =>
-        //api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi)))).map { resp =>
+        //api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, ReasoningInput.MistralChunks)))).map { resp =>
       val usage = ChatResponseMetadata(
         ChatResponseMetadataRateLimit(
           requestsLimit = resp.headers.getIgnoreCase("x-ratelimit-limit-requests").map(_.toLong).getOrElse(-1L),
@@ -472,12 +490,12 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
       attrs.put(com.cloud.apim.otoroshi.extensions.aigateway.entities.A2ASupport.A2AConnectorsKey -> options.a2aConnectors)
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
+      api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, ReasoningInput.MistralChunks))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
     } else {
-      api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), acc)
+      api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, ReasoningInput.MistralChunks))), acc)
     }
     callF.map {
-    // api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi)))).map {
+    // api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, ReasoningInput.MistralChunks)))).map {
       case Left(err) => err.left
       case Right((source, resp)) =>
         source
@@ -527,13 +545,7 @@ class MistralAiChatClient(api: MistralAiApi, options: MistralAiChatClientOptions
               choices = chunk.choices.map { choice =>
                 ChatResponseChunkChoice(
                   index = choice.index.map(_.toLong).getOrElse(0L),
-                  delta = ChatResponseChunkChoiceDelta(
-                    content = choice.delta.flatMap(_.content),
-                    reasoning = choice.delta.flatMap(_.reasoning),
-                    role = choice.delta.map(_.role).getOrElse("assistant"),
-                    refusal = choice.delta.flatMap(_.refusal),
-                    tool_calls = choice.delta.map(_.tool_calls.map(tc => tc.asChatResponseChunkChoiceDeltaToolCall)).getOrElse(Seq.empty),
-                  ),
+                  delta = choice.delta.map(_.asChatResponseChunkChoiceDelta).getOrElse(ChatResponseChunkChoiceDelta(None)),
                   finishReason = choice.finish_reason
                 )
               }

@@ -5,7 +5,7 @@ import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessageContent, ChatPrompt, ChatResponse, InputChatMessage, OpenAiResponsesBodyConverter, ResponsesStreamAccumulator}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessageContent, ChatPrompt, ChatResponse, InputChatMessage, OpenAiResponsesBodyConverter, Reasoning, ResponsesStreamWriter}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
@@ -120,8 +120,13 @@ class OpenResponseCompatProxy extends NgBackendCall {
       }.toSeq.flatten
     }
 
+    // the reasoning first, as reasoning items a caller sends back with the rest of the output
+    val reasoningOutputs: Seq[JsObject] = response.generations.flatMap { gen =>
+      Reasoning.toResponsesItems(gen.message.reasoning, forResponsesApi = false, () => s"rs_${IdGenerator.token(24)}")
+    }
+
     // If we have tool calls, also emit the assistant message (without tool_calls) before the function_call items
-    val output: Seq[JsObject] = if (toolCallOutputs.nonEmpty) {
+    val output: Seq[JsObject] = reasoningOutputs ++ (if (toolCallOutputs.nonEmpty) {
       val message = response.headGeneration
       val assistantMsg = Json.obj(
         "type" -> "message",
@@ -140,7 +145,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
       Seq(assistantMsg) ++ imageOutputs ++ toolCallOutputs
     } else {
       textOutputs ++ imageOutputs
-    }
+    })
 
     val usage = Json.obj(
       "input_tokens" -> response.metadata.usage.promptTokens,
@@ -246,7 +251,6 @@ class OpenResponseCompatProxy extends NgBackendCall {
             InputChatMessage.fromJson(obj)
           }
           if (stream) {
-            val msgId = s"msg_${IdGenerator.token(32)}"
             val model = client.computeModel(openAiBody).getOrElse("none")
             val tools = OpenAiResponsesBodyConverter.normalizeResponsesTools(jsonBody.select("tools").asOpt[Seq[JsObject]].getOrElse(Seq.empty))
 
@@ -258,14 +262,6 @@ class OpenResponseCompatProxy extends NgBackendCall {
               )
             }
 
-            val msgItem = Json.obj(
-              "type" -> "message",
-              "id" -> msgId,
-              "status" -> "in_progress",
-              "role" -> "assistant",
-              "content" -> Json.arr()
-            )
-
             client.tryResponseStream(ChatPrompt(messages), ctx.attrs, openAiBody).map {
               case Left(err) => Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(err)))
               case Right(source) => {
@@ -273,87 +269,24 @@ class OpenResponseCompatProxy extends NgBackendCall {
                 val headerEvents = Source(List(
                   sseEvent("response.created", eventWithResponse("response.created", counter.getAndIncrement())),
                   sseEvent("response.in_progress", eventWithResponse("response.in_progress", counter.getAndIncrement())),
-                  sseEvent("response.output_item.added", Json.obj(
-                    "type" -> "response.output_item.added",
-                    "output_index" -> 0,
-                    "sequence_number" -> counter.getAndIncrement(),
-                    "item" -> msgItem
-                  )),
-                  sseEvent("response.content_part.added", Json.obj(
-                    "type" -> "response.content_part.added",
-                    "item_id" -> msgId,
-                    "output_index" -> 0,
-                    "content_index" -> 0,
-                    "sequence_number" -> counter.getAndIncrement(),
-                    "part" -> Json.obj("type" -> "output_text", "text" -> "", "annotations" -> Json.arr(), "logprobs" -> Json.arr()),
-                  ))
                 ))
 
-                // text, tool calls and usage are only complete once the stream ends
-                val acc = new ResponsesStreamAccumulator()
-
-                val deltaEvents = source.mapConcat { chunk =>
-                  acc.accumulate(chunk)
-                  chunk.choices.headOption.flatMap(_.delta.content).filter(_.nonEmpty).map { text =>
-                    sseEvent("response.output_text.delta", Json.obj(
-                      "type" -> "response.output_text.delta",
-                      "item_id" -> msgId,
-                      "output_index" -> 0,
-                      "content_index" -> 0,
-                      "logprobs" -> Json.arr(),
-                      "sequence_number" -> counter.getAndIncrement(),
-                      "delta" -> text
-                    ))
-                  }.toList
-                }
+                // the reasoning, the text and the tool calls as output items, in the order the model produced them
+                val writer = new ResponsesStreamWriter(sequenced = true, logprobs = true, () => counter.getAndIncrement(), prefix => s"${prefix}_${IdGenerator.token(24)}")
+                val deltaEvents = source.mapConcat(chunk => writer.events(chunk).toList)
 
                 // materialized by `concatLazy` only once the delta events are done, which is what
                 // makes the accumulated text, tool calls and usage available here
                 val footerEvents = Source.lazySource { () =>
-                  val text = acc.wholeText
-                  val contentPart = Json.obj("type" -> "output_text", "text" -> text, "annotations" -> Json.arr(), "logprobs" -> Json.arr())
-                  val messageItem = msgItem.deepMerge(Json.obj("status" -> "completed", "content" -> Json.arr(contentPart)))
-                  // tool calls streamed as deltas are reported as `function_call` output items
-                  val functionCallItems = acc.functionCallItems(_ => s"fc_${IdGenerator.token(24)}")
-                  Source(List(
-                    sseEvent("response.output_text.done", Json.obj(
-                      "type" -> "response.output_text.done",
-                      "item_id" -> msgId,
-                      "output_index" -> 0,
-                      "content_index" -> 0,
-                      "sequence_number" -> counter.getAndIncrement(),
-                      "text" -> text,
-                      "logprobs" -> Json.arr(),
-                    )),
-                    sseEvent("response.content_part.done", Json.obj(
-                      "type" -> "response.content_part.done",
-                      "item_id" -> msgId,
-                      "output_index" -> 0,
-                      "content_index" -> 0,
-                      "sequence_number" -> counter.getAndIncrement(),
-                      "part" -> contentPart,
-                    )),
-                    sseEvent("response.output_item.done", Json.obj(
-                      "type" -> "response.output_item.done",
-                      "output_index" -> 0,
-                      "sequence_number" -> counter.getAndIncrement(),
-                      "item" -> messageItem,
-                    )),
-                  ) ++ functionCallItems.zipWithIndex.map { case (item, idx) =>
-                    sseEvent("response.output_item.done", Json.obj(
-                      "type" -> "response.output_item.done",
-                      "output_index" -> (idx + 1),
-                      "sequence_number" -> counter.getAndIncrement(),
-                      "item" -> item,
-                    ))
-                  }.toList ++ List(
+                  val closing = writer.end()
+                  Source(closing.toList ++ List(
                     sseEvent("response.completed", eventWithResponse("response.completed", counter.getAndIncrement()).deepMerge(
                       Json.obj(
                         "status" -> "completed",
                         "response" -> Json.obj(
-                          "output" -> JsArray(Seq(messageItem) ++ functionCallItems),
+                          "output" -> JsArray(writer.output),
                           // reported by the final chunk of the stream, not by the provider payload
-                          "usage" -> acc.usageJson,
+                          "usage" -> writer.acc.usageJson,
                         ),
                       )
                     )),

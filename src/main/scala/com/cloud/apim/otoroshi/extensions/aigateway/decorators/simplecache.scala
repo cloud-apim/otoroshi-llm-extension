@@ -38,7 +38,18 @@ object CacheKeys {
 
   // the endpoint is part of the key: a /responses answer is not interchangeable with a chat one
   def forPrompt(kind: ChatCallKind, prompt: ChatPrompt): String = {
-    forQuery(kind, prompt.messages.map(m => s"${m.role}:${m.content}").mkString(","))
+    forQuery(kind, prompt.messages.map(forMessage).mkString(","))
+  }
+
+  // the role and the text of a message, and what else makes two conversations different: the parts of a message
+  // that is not a single text (images, files), its tool calls, the result of which it holds, its reasoning. A
+  // message made of a text alone keeps the key it always had
+  private def forMessage(m: InputChatMessage): String = {
+    val content = if (m.isSingleTextContent || !m.hasContent) m.content else JsArray(m.contentParts.map(_.json(ChatMessageContentFlavor.Common))).stringify.sha256
+    s"${m.role}:${content}" +
+      m.tool_calls.map(calls => s"|tool_calls:${JsArray(calls).stringify}").getOrElse("") +
+      m.tool_call_id.map(id => s"|tool_call_id:${id}").getOrElse("") +
+      (if (m.hasReasoning) s"|reasoning:${JsArray(m.reasoning).stringify.sha256}" else "")
   }
 
   def forQuery(kind: ChatCallKind, query: String): String = s"${kind.name}|${query}".sha512
@@ -112,24 +123,7 @@ object SimpleCacheSerialization {
           val delta = ch.select("delta").as[JsObject]
           ChatResponseChunkChoice(
             index = ch.select("index").asOpt[Long].getOrElse(0L),
-            delta = ChatResponseChunkChoiceDelta(
-              content = delta.select("content").asOptString,
-              reasoning = delta.select("reasoning").asOptString,
-              role = delta.select("role").asOptString.getOrElse("assistant"),
-              refusal = delta.select("refusal").asOptString,
-              tool_calls = delta.select("tool_calls").asOpt[Seq[JsObject]].map(_.map { tc =>
-                val fn = tc.select("function").as[JsObject]
-                ChatResponseChunkChoiceDeltaToolCall(
-                  index = tc.select("index").asOpt[Long].getOrElse(0L),
-                  id = tc.select("id").asOptString,
-                  typ = tc.select("type").asOptString,
-                  function = ChatResponseChunkChoiceDeltaToolCallFunction(
-                    nameOpt = fn.select("name").asOptString,
-                    arguments = fn.select("arguments").asOptString.getOrElse("")
-                  )
-                )
-              }).getOrElse(Seq.empty)
-            ),
+            delta = ChatResponseChunkChoiceDelta.fromJson(delta),
             finishReason = ch.select("finish_reason").asOptString
           )
         }

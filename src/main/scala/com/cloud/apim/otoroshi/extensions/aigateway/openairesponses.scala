@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway
 
+import org.apache.pekko.util.ByteString
 import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.*
 
@@ -58,9 +59,38 @@ object OpenAiResponsesBodyConverter {
     }.getOrElse(Seq.empty)
     val inputMessages: Seq[JsObject] = jsonBody.select("input").asOptString match {
       case Some(text) => Seq(Json.obj("role" -> "user", "content" -> text))
-      case None => jsonBody.select("input").asOpt[Seq[JsObject]].getOrElse(Seq.empty).flatMap(inputItemToMessages)
+      case None => withReasoning(jsonBody.select("input").asOpt[Seq[JsObject]].getOrElse(Seq.empty))
     }
     instructionMessages ++ inputMessages
+  }
+
+  // a reasoning item is the reasoning of the assistant message that follows it (its text, or its tool calls): it
+  // becomes the `reasoning_details` of that message, which each provider then reads back its own way. The function
+  // calls of one answer make one assistant message, as on /chat/completions
+  private def withReasoning(items: Seq[JsObject]): Seq[JsObject] = {
+    val result = scala.collection.mutable.ArrayBuffer.empty[JsObject]
+    var pending = Seq.empty[JsObject]
+    def isAssistant(m: JsObject): Boolean = m.select("role").asOptString.contains("assistant")
+    items.foreach { item =>
+      val itemType = item.select("type").asOptString
+      if (itemType.contains("reasoning")) {
+        pending = pending :+ item
+      } else {
+        inputItemToMessages(item).foreach { message =>
+          val calls = message.select("tool_calls").asOpt[Seq[JsValue]].getOrElse(Seq.empty)
+          if (itemType.contains("function_call") && pending.isEmpty && result.lastOption.exists(isAssistant)) {
+            val last = result.last
+            result.update(result.size - 1, last ++ Json.obj("tool_calls" -> JsArray(last.select("tool_calls").asOpt[Seq[JsValue]].getOrElse(Seq.empty) ++ calls)))
+          } else if (pending.nonEmpty && isAssistant(message)) {
+            result += (message ++ Json.obj("reasoning_details" -> JsArray(Reasoning.indexed(Reasoning.fromResponsesItems(pending)))))
+            pending = Seq.empty
+          } else {
+            result += message
+          }
+        }
+      }
+    }
+    result.toSeq
   }
 
   private def inputItemToMessages(item: JsObject): Seq[JsObject] = {
@@ -282,7 +312,11 @@ object OpenAiResponsesBodyConverter {
           "role" -> role,
           "content" -> JsArray(contentParts),
         ))
-        messageItems ++ toolCallItems
+        // the reasoning items this api wrote come back before what they led to, never alone: a reasoning item
+        // without the item it led to is refused
+        val reasoningItems: Seq[JsObject] = if (messageItems.isEmpty && toolCallItems.isEmpty) Seq.empty
+          else Reasoning.toResponsesItems(message.reasoning, forResponsesApi = true, () => "")
+        reasoningItems ++ messageItems ++ toolCallItems
     }
   }
 
@@ -362,18 +396,15 @@ object OpenAiResponsesBodyConverter {
         "function" -> Json.obj("name" -> name, "arguments" -> arguments)
       )
     }
-    val reasoningItems = output.filter(_.select("type").asOptString.contains("reasoning"))
-    val reasoning = reasoningItems.flatMap { item =>
-      item.select("summary").asOpt[Seq[JsObject]].getOrElse(Seq.empty).flatMap(_.select("text").asOptString)
-    }
+    // the reasoning items (summary, encrypted content, id) are what the api needs back to keep on thinking
+    val reasoning = Reasoning.indexed(Reasoning.fromResponsesItems(output))
     val message = Json.obj(
       "role" -> "assistant",
       "content" -> texts.mkString(""),
     ).applyOnIf(toolCalls.nonEmpty) { obj => obj ++ Json.obj("tool_calls" -> JsArray(toolCalls)) }
       .applyOnIf(annotations.nonEmpty) { obj => obj ++ Json.obj("annotations" -> JsArray(annotations)) }
       .applyOnIf(refusals.nonEmpty) { obj => obj ++ Json.obj("refusal" -> refusals.mkString("")) }
-      .applyOnIf(reasoning.nonEmpty) { obj => obj ++ Json.obj("reasoning_content" -> reasoning.mkString("\n")) }
-      .applyOnIf(reasoningItems.nonEmpty) { obj => obj ++ Json.obj("reasoning_items" -> JsArray(reasoningItems)) }
+      .applyOnIf(reasoning.nonEmpty) { obj => obj ++ Json.obj("reasoning_details" -> JsArray(reasoning)) }
     Seq(Json.obj(
       "index" -> 0,
       "finish_reason" -> (if (toolCalls.nonEmpty) "tool_calls" else "stop"),
@@ -414,6 +445,7 @@ class ResponsesStreamAccumulator {
 
   private val text = new StringBuilder()
   private val reasoning = new StringBuilder()
+  private val reasoningDetails = new ReasoningAccumulator()
   // index → (call id, function name, arguments so far)
   private val toolCalls = scala.collection.mutable.LinkedHashMap.empty[Long, (Option[String], Option[String], StringBuilder)]
   private var usageOpt: Option[ChatResponseMetadataUsage] = None
@@ -422,6 +454,7 @@ class ResponsesStreamAccumulator {
     chunk.choices.foreach { choice =>
       choice.delta.content.foreach(text.append)
       choice.delta.reasoning.foreach(reasoning.append)
+      reasoningDetails.add(choice.delta.reasoningDetailsOrText)
       choice.delta.tool_calls.foreach { tc =>
         val (id, name, args) = toolCalls.getOrElseUpdate(tc.index, (None, None, new StringBuilder()))
         args.append(tc.function.arguments)
@@ -434,9 +467,21 @@ class ResponsesStreamAccumulator {
 
   def wholeText: String = text.toString()
   def wholeReasoning: String = reasoning.toString()
+  def reasoning_details: Seq[JsObject] = reasoningDetails.result
   def usage: ChatResponseMetadataUsage = usageOpt.getOrElse(ChatResponseMetadataUsage.empty)
   def usageJson: JsObject = OpenAiResponsesBodyConverter.usageJson(usage)
   def hasToolCalls: Boolean = toolCalls.nonEmpty
+
+  /** the answer as a chat assistant message: its text, its tool calls and its reasoning */
+  def chatMessage: JsObject = {
+    val calls = toolCalls.toSeq.map { case (_, (id, name, args)) =>
+      Json.obj("id" -> id.getOrElse(""), "type" -> "function", "function" -> Json.obj("name" -> name.getOrElse(""), "arguments" -> args.toString()))
+    }
+    val reasoning = reasoning_details
+    Json.obj("role" -> "assistant", "content" -> text.toString())
+      .applyOnIf(calls.nonEmpty)(_ ++ Json.obj("tool_calls" -> JsArray(calls)))
+      .applyOnIf(reasoning.nonEmpty)(_ ++ Json.obj("reasoning_details" -> JsArray(reasoning)))
+  }
 
   /** the accumulated tool calls as `function_call` output items */
   def functionCallItems(idFor: Int => String): Seq[JsObject] = {
@@ -454,4 +499,128 @@ class ResponsesStreamAccumulator {
       )
     }
   }
+}
+
+/**
+ * Writes a streamed answer as the output items of a `/responses` stream, in the order the model produced them: a
+ * `reasoning` item while it thinks, a `message` item while it writes, then its `function_call` items. Each item is
+ * announced (`response.output_item.added`) when it starts and completed (`response.output_item.done`) before the
+ * next one starts, which is how a caller keeps the reasoning with what it led to. Shared by the `/responses`
+ * front-ends; `sequenced` numbers the events (`sequence_number`), `logprobs` adds the empty `logprobs` of the Open
+ * Responses format. The chunks come from one stream only: the state needs no synchronization.
+ */
+class ResponsesStreamWriter(sequenced: Boolean, logprobs: Boolean, nextSequence: () => Int, newId: String => String) {
+
+  val acc = new ResponsesStreamAccumulator()
+
+  private sealed trait Item
+  private case class ReasoningItem(id: String, index: Int, details: ReasoningAccumulator) extends Item
+  private case class MessageItem(id: String, index: Int, text: StringBuilder) extends Item
+
+  private var current: Option[Item] = None
+  private var nextIndex = 0
+  private val done = scala.collection.mutable.ArrayBuffer.empty[JsObject]
+
+  private def sse(eventType: String, data: JsObject): ByteString = {
+    val payload = Json.obj("type" -> eventType) ++ data ++ (if (sequenced) Json.obj("sequence_number" -> nextSequence()) else Json.obj())
+    s"event: ${eventType}\ndata: ${payload.stringify}\n\n".byteString
+  }
+
+  private def withLogprobs(obj: JsObject): JsObject = if (logprobs) obj ++ Json.obj("logprobs" -> Json.arr()) else obj
+
+  private def textPart(text: String): JsObject = withLogprobs(Json.obj("type" -> "output_text", "text" -> text, "annotations" -> Json.arr()))
+
+  private def messageItem(id: String, status: String, text: Option[String]): JsObject = Json.obj(
+    "type" -> "message",
+    "id" -> id,
+    "status" -> status,
+    "role" -> "assistant",
+    "content" -> JsArray(text.map(t => textPart(t)).toSeq),
+  )
+
+  private def close(): Seq[ByteString] = {
+    val events = current.toSeq.flatMap {
+      case ReasoningItem(id, index, details) =>
+        val items = Reasoning.toResponsesItems(details.result, forResponsesApi = false, () => id)
+        // the item announced keeps its id: the id of the provider when it gave one
+        val completed = items.headOption.map(_ ++ Json.obj("id" -> id)).toSeq ++ items.drop(1)
+        done ++= completed
+        completed.map(item => sse("response.output_item.done", Json.obj("output_index" -> index, "item" -> item)))
+      case MessageItem(id, index, text) =>
+        val item = messageItem(id, "completed", text.toString().some)
+        done += item
+        Seq(
+          sse("response.output_text.done", withLogprobs(Json.obj("item_id" -> id, "output_index" -> index, "content_index" -> 0, "text" -> text.toString()))),
+          sse("response.content_part.done", Json.obj("item_id" -> id, "output_index" -> index, "content_index" -> 0, "part" -> textPart(text.toString()))),
+          sse("response.output_item.done", Json.obj("output_index" -> index, "item" -> item)),
+        )
+    }
+    current = None
+    events
+  }
+
+  private def openReasoning(id: Option[String]): Seq[ByteString] = {
+    val item = ReasoningItem(id.getOrElse(newId("rs")), nextIndex, new ReasoningAccumulator())
+    nextIndex = nextIndex + 1
+    current = Some(item)
+    Seq(sse("response.output_item.added", Json.obj("output_index" -> item.index, "item" -> Json.obj("type" -> "reasoning", "id" -> item.id, "summary" -> Json.arr()))))
+  }
+
+  private def openMessage(): Seq[ByteString] = {
+    val item = MessageItem(newId("msg"), nextIndex, new StringBuilder())
+    nextIndex = nextIndex + 1
+    current = Some(item)
+    Seq(
+      sse("response.output_item.added", Json.obj("output_index" -> item.index, "item" -> messageItem(item.id, "in_progress", None))),
+      sse("response.content_part.added", Json.obj("item_id" -> item.id, "output_index" -> item.index, "content_index" -> 0, "part" -> textPart(""))),
+    )
+  }
+
+  def events(chunk: ChatResponseChunk): Seq[ByteString] = {
+    acc.accumulate(chunk)
+    chunk.choices.headOption.toSeq.flatMap { choice =>
+      val reasoning = choice.delta.reasoningDetailsOrText.flatMap { detail =>
+        // a reasoning item of the provider is a new item when its id changes
+        val opening = current match {
+          case Some(ReasoningItem(id, _, _)) if Reasoning.idOf(detail).forall(_ == id) => Seq.empty
+          case Some(r: ReasoningItem) if Reasoning.formatOf(detail) != Reasoning.Formats.OpenAiResponses => Seq.empty
+          case _ => close() ++ openReasoning(Reasoning.idOf(detail).filter(_ => Reasoning.formatOf(detail) == Reasoning.Formats.OpenAiResponses))
+        }
+        val item = current.collect { case r: ReasoningItem => r }.get
+        item.details.add(Seq(detail))
+        val text = Reasoning.readableOf(detail).filter(_.nonEmpty).map { text =>
+          if (Reasoning.isSummary(detail)) sse("response.reasoning_summary_text.delta", Json.obj("item_id" -> item.id, "output_index" -> item.index, "summary_index" -> 0, "delta" -> text))
+          else sse("response.reasoning_text.delta", Json.obj("item_id" -> item.id, "output_index" -> item.index, "content_index" -> 0, "delta" -> text))
+        }.toSeq
+        opening ++ text
+      }
+      val text = choice.delta.content.filter(_.nonEmpty).toSeq.flatMap { text =>
+        val opening = current match {
+          case Some(_: MessageItem) => Seq.empty
+          case _ => close() ++ openMessage()
+        }
+        val item = current.collect { case m: MessageItem => m }.get
+        item.text.append(text)
+        opening :+ sse("response.output_text.delta", withLogprobs(Json.obj("item_id" -> item.id, "output_index" -> item.index, "content_index" -> 0, "delta" -> text)))
+      }
+      reasoning ++ text
+    }
+  }
+
+  /** the events that end the output, once the answer is over: the last item, then the function calls */
+  def end(): Seq[ByteString] = {
+    // an answer says something, or calls a tool
+    val empty = if (nextIndex == 0 && !acc.hasToolCalls) openMessage() else Seq.empty
+    val closing = empty ++ close()
+    val calls = acc.functionCallItems(_ => newId("fc")).map { item =>
+      val index = nextIndex
+      nextIndex = nextIndex + 1
+      done += item
+      sse("response.output_item.done", Json.obj("output_index" -> index, "item" -> item))
+    }
+    closing ++ calls
+  }
+
+  /** every output item, in order, once `end` was called */
+  def output: Seq[JsObject] = done.toSeq
 }

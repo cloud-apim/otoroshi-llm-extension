@@ -946,6 +946,21 @@ class AiProvidersPage extends Component {
       type: 'bool',
       props: { label: 'Native responses API', help: 'Use the native /responses endpoint of the provider instead of translating /responses calls to /chat/completions' },
     },
+    'options.reasoning_input': {
+      type: 'select',
+      props: {
+        label: 'Reasoning sent back',
+        help: 'How the provider takes back the reasoning of the previous assistant messages. Automatic picks it from the kind and the url of the provider: reasoning_details for OpenRouter, nothing for OpenAI, reasoning_content for most of the others',
+        possibleValues: [
+          { label: 'Automatic', value: '' },
+          { label: 'reasoning_content', value: 'reasoning_content' },
+          { label: 'reasoning', value: 'reasoning' },
+          { label: 'reasoning_details (OpenRouter)', value: 'reasoning_details' },
+          { label: 'thinking', value: 'thinking' },
+          { label: 'None', value: 'none' },
+        ],
+      },
+    },
     'regex_validation.deny': {
       type: 'array',
       props: { label: 'Deny', suffix: 'regex' },
@@ -2272,6 +2287,7 @@ class AiProvidersPage extends Component {
       'options.temperature',
       'options.topP',
       'options.responses',
+      'options.reasoning_input',
       '>>>Connection options raw',
       'options',
       '>>>Context settings',
@@ -2331,6 +2347,7 @@ class AiProvidersPage extends Component {
       'options.temperature',
       'options.topP',
       'options.responses',
+      'options.reasoning_input',
       '>>>Connection options raw',
       'options',
       '>>>Context settings',
