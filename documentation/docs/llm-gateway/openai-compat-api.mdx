@@ -453,6 +453,45 @@ Messages can mix text with images, audio and files. Documents are attached with 
 
 PDF and plain text documents are supported. The same document is sent as a `file` part to OpenAI compatible providers and as a `document` block to Anthropic, so a single request works across providers.
 
+#### Reasoning
+
+Reasoning models think before they answer, and the best of them keep thinking across tool calls and turns: they want their previous reasoning back. The gateway answers with the reasoning of the model in the format of OpenRouter, whatever the provider: the readable text in `reasoning` (and `reasoning_content`, which many clients read), and everything the provider needs to pick up its thought again in `reasoning_details`, signatures and encrypted reasoning included.
+
+```js
+{
+  "role": "assistant",
+  "content": "It is 10:42.",
+  "reasoning": "The user wants the time, I called get_time...",
+  "reasoning_details": [
+    {
+      "type": "reasoning.text",
+      "text": "The user wants the time, I called get_time...",
+      "signature": "EqQBCkgIBRAB...",
+      "format": "anthropic-claude-v1",
+      "index": 0
+    }
+  ]
+}
+```
+
+Send the assistant message back as you got it on the next call. Each provider gets the reasoning the way it takes it:
+
+| Provider | What it gets back |
+|---|---|
+| OpenRouter | `reasoning_details`, unchanged, only the ones its model can read (what Anthropic signed for Claude, the thought signatures for Gemini) |
+| Anthropic | the `thinking` and `redacted_thinking` blocks it signed, before the content |
+| DeepSeek | `reasoning_content` on every assistant message, which it requires once tools are involved |
+| Mistral | `thinking` chunks of the content, with their signature |
+| Groq, Ollama (OpenAI api) | `reasoning` |
+| Ollama (native api) | `thinking` |
+| OpenAI, Azure OpenAI, Gemini | nothing on their chat api, which does not take it (the thought signatures of Gemini travel with its tool calls) |
+| a native `/responses` api | its reasoning items, encrypted content included |
+| other OpenAI compatible servers (vLLM, SGLang, Moonshot, Z.ai...) | `reasoning_content` |
+
+The gateway reads the reasoning in `reasoning_details`, `reasoning_content`, `reasoning`, Anthropic `thinking` blocks and `/responses` reasoning items alike, so a client keeps working whatever format it speaks, and a conversation can move from one provider to another: each one only gets what it can read. The `Reasoning sent back` option of a provider (`reasoning_input`: `reasoning_content`, `reasoning`, `reasoning_details`, `thinking` or `none`) sets the field for an OpenAI compatible server the gateway can not recognize from its url.
+
+When the gateway runs the tools of a provider itself (functions, MCP servers, search engines), the reasoning that led to the calls goes back to the model with their results.
+
 #### Model routing
 
 When multiple providers are configured, you can target a specific provider using the `model` field:
@@ -633,6 +672,7 @@ The plugin handles all format translation automatically:
 - `tool_use` / `tool_result` messages are translated bidirectionally
 - Top-level `system` field is converted to a system message
 - `thinking` parameters are mapped to `reasoning_effort`
+- The reasoning of the model comes back as `thinking` blocks, the ones of Claude with their signature, and goes back to the provider on the next call (see [Reasoning](#reasoning))
 - `max_tokens` is sent under the name the provider knows (`max_completion_tokens` for OpenAI and Azure OpenAI)
 - Streaming uses the full Anthropic SSE protocol
 

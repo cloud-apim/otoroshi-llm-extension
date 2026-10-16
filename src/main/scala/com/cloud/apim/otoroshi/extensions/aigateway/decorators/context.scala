@@ -1,13 +1,13 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import org.apache.pekko.stream.scaladsl.Source
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatMessage, ChatMessageContentFlavor, ChatPrompt, ChatResponse, ChatResponseChunk}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatMessage, ChatPrompt, ChatResponse, ChatResponseChunk, InputChatMessage}
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiProvider, PromptContext}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.JsValue
+import play.api.libs.json.{JsObject, JsValue}
 
 import scala.concurrent.{ExecutionContext, Future}
 
@@ -30,6 +30,18 @@ class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatCl
       }
   }
 
+  // the messages of the context around the ones of the prompt, which are kept as they came: their parts (images,
+  // files), their tool calls and their reasoning
+  private def withContext(ctx: PromptContext, prompt: ChatPrompt): Seq[InputChatMessage] = {
+    def contextMessage(obj: JsObject): InputChatMessage = {
+      val role = obj.select("role").asOpt[String].getOrElse("user")
+      val content = obj.select("content").asOpt[String].getOrElse("")
+      val prefix = obj.select("prefix").asOptBoolean
+      ChatMessage.input(role, content, prefix, obj)
+    }
+    ctx.preMessages.map(contextMessage) ++ prompt.messages ++ ctx.postMessages.map(contextMessage)
+  }
+
   private def getNewPrompt(prompt: ChatPrompt, originalBody: JsValue)(using env: Env): ChatPrompt = {
     val ext = env.adminExtensions.extension[AiExtension].get
     val possibleContextList = originalProvider.context.contexts.flatMap(ref => ext.states.context(ref))
@@ -39,23 +51,11 @@ class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatCl
     val maybeContextFromPrompt = originalBody.select("context").asOpt[String]
     maybeContextFromPrompt match {
       case Some(ref) => getContext(ref, possibleContextById, possibleContextByName).map { ctx =>
-        val messages = (ctx.preMessages ++ prompt.messages.map(_.json(ChatMessageContentFlavor.Common)) ++ ctx.postMessages).map { obj =>
-          val role = obj.select("role").asOpt[String].getOrElse("user")
-          val content = obj.select("content").asOpt[String].getOrElse("")
-          val prefix = obj.select("prefix").asOptBoolean
-          ChatMessage.input(role, content, prefix, obj.asObject)
-        }
-        prompt.copy(messages = messages)
+        prompt.copy(messages = withContext(ctx, prompt))
       }.getOrElse(prompt)
       case None => maybeContextFromProvider match {
         case Some(ref) => ext.states.context(ref).map { ctx =>
-          val messages = (ctx.preMessages ++ prompt.messages.map(_.json(ChatMessageContentFlavor.Common)) ++ ctx.postMessages).map { obj =>
-            val role = obj.select("role").asOpt[String].getOrElse("user")
-            val content = obj.select("content").asOpt[String].getOrElse("")
-            val prefix = obj.select("prefix").asOptBoolean
-            ChatMessage.input(role, content, prefix, obj.asObject)
-          }
-          prompt.copy(messages = messages)
+          prompt.copy(messages = withContext(ctx, prompt))
         }.getOrElse(prompt)
         case None => prompt
       }

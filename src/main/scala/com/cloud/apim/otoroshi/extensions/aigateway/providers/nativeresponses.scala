@@ -177,7 +177,11 @@ trait NativeResponsesSupport extends ChatClient {
             val previousInput = body.select("input").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
             // the tool results come back as chat messages, turn them into responses input items
             val resultItems = OpenAiResponsesBodyConverter.chatMessagesToInput(callResps.map(_.asObject)).value.map(_.asObject)
-            val newInput = previousInput ++ functionCalls ++ resultItems.filterNot(_.select("type").asOptString.contains("function_call"))
+            // the reasoning items go back with the calls they led to, in the order of the output: a call without
+            // its reasoning item is refused by OpenAI
+            val replayed = res._1.select("output").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+              .filter(item => item.select("type").asOptString.exists(t => t == "reasoning" || t == "function_call"))
+            val newInput = previousInput ++ replayed ++ resultItems.filterNot(_.select("type").asOptString.exists(t => t == "function_call" || t == "reasoning"))
             callWithToolSupport(body ++ Json.obj("input" -> JsArray(newInput)), attrs, nameToFunction, currentCallCounter + 1, acc)
           }
         }
@@ -250,8 +254,20 @@ trait NativeResponsesSupport extends ChatClient {
         Source.empty
       case "response.output_text.delta" =>
         Source.single(chunk(ChatResponseChunkChoiceDelta(event.select("delta").asOptString)))
+      // the reasoning, as `reasoning_details` pieces of the item it belongs to (its id, its output index)
       case "response.reasoning_summary_text.delta" | "response.reasoning_text.delta" =>
-        Source.single(chunk(ChatResponseChunkChoiceDelta(None, reasoning = event.select("delta").asOptString)))
+        val delta = event.select("delta").asOptString.getOrElse("")
+        val id = event.select("item_id").asOptString
+        val detail = if (typ == "response.reasoning_text.delta") Reasoning.textDetail(delta, Reasoning.Formats.OpenAiResponses, None, id)
+          else Reasoning.summaryDetail(delta, Reasoning.Formats.OpenAiResponses, id)
+        Source.single(chunk(ChatResponseChunkChoiceDelta(None, reasoning = delta.some, reasoning_details = Seq(detail ++ Json.obj("index" -> event.select("output_index").asOptInt.getOrElse(0))))))
+      // a reasoning item is complete: its encrypted content, and its id even when nothing of it was streamed
+      case "response.output_item.done" if event.at("item.type").asOptString.contains("reasoning") =>
+        val id = event.at("item.id").asOptString
+        val index = Json.obj("index" -> event.select("output_index").asOptInt.getOrElse(0))
+        val details = Seq(Reasoning.summaryDetail("", Reasoning.Formats.OpenAiResponses, id) ++ index) ++
+          event.at("item.encrypted_content").asOptString.filter(_.nonEmpty).map(e => Reasoning.encryptedDetail(e, Reasoning.Formats.OpenAiResponses, id) ++ index).toSeq
+        Source.single(chunk(ChatResponseChunkChoiceDelta(None, reasoning_details = details)))
       case "response.refusal.delta" =>
         Source.single(chunk(ChatResponseChunkChoiceDelta(None, refusal = event.select("delta").asOptString)))
       // a tool call is announced as an output item, then its arguments are streamed

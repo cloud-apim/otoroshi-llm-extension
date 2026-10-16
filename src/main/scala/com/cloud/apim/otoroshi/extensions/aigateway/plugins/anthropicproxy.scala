@@ -6,7 +6,7 @@ import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.AzureOpenAiApi
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, InputChatMessage}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponseChunk, InputChatMessage, Reasoning, ReasoningAccumulator}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
@@ -18,15 +18,109 @@ import play.api.mvc.Results
 
 import java.io.File
 import java.nio.file.Files
-import java.util.concurrent.atomic.AtomicBoolean
 import scala.concurrent.{ExecutionContext, Future}
 
-case class AnthropicStreamResponseState(
-  textStarted: AtomicBoolean = new AtomicBoolean(false),
-  textDone: AtomicBoolean = new AtomicBoolean(false),
-  toolCallsStarted: AtomicBoolean = new AtomicBoolean(false),
-  toolCallsDone: AtomicBoolean = new AtomicBoolean(false),
-)
+/**
+ * Writes a streamed answer as the events of the Anthropic messages api: one content block after the other, the
+ * reasoning (`thinking`, `redacted_thinking`), the text, then each tool call (`tool_use`), each closed before the
+ * next one opens. The chunks come from one stream only: the state needs no synchronization.
+ */
+class AnthropicStreamWriter {
+
+  private var current: Option[String] = None
+  private var index: Int = -1
+  // the reasoning of the current `thinking` block, signed at its end when it is not Anthropic's
+  private var thinking = new ReasoningAccumulator()
+  private var thinkingIndex: Option[Int] = None
+  private var thinkingSigned = false
+  private var toolIndex: Long = -1L
+  private var stopReason: String = "end_turn"
+  private var outputTokens: Long = 0L
+
+  private def event(typ: String, data: JsObject): ByteString = s"event: ${typ}\ndata: ${(Json.obj("type" -> typ) ++ data).stringify}\n\n".byteString
+
+  private def start(block: JsObject): Seq[ByteString] = {
+    index = index + 1
+    current = block.select("type").asOptString
+    Seq(event("content_block_start", Json.obj("index" -> index, "content_block" -> block)))
+  }
+
+  private def delta(delta: JsObject): ByteString = event("content_block_delta", Json.obj("index" -> index, "delta" -> delta))
+
+  private def close(): Seq[ByteString] = {
+    val signature: Seq[ByteString] = if (current.contains("thinking") && !thinkingSigned) {
+      thinking.result.headOption.map(d => delta(Json.obj("type" -> "signature_delta", "signature" -> Reasoning.foreignSignature(d)))).toSeq
+    } else Seq.empty
+    val stop = current.map(_ => event("content_block_stop", Json.obj("index" -> index))).toSeq
+    current = None
+    thinking = new ReasoningAccumulator()
+    thinkingIndex = None
+    thinkingSigned = false
+    signature ++ stop
+  }
+
+  private def ensure(blockType: String, block: => JsObject): Seq[ByteString] = {
+    if (current.contains(blockType)) Seq.empty else close() ++ start(block)
+  }
+
+  private def reasoningEvents(detail: JsObject): Seq[ByteString] = {
+    val anthropic = Reasoning.formatOf(detail) == Reasoning.Formats.Anthropic
+    if (Reasoning.isEncrypted(detail)) {
+      val data = if (anthropic) Reasoning.dataOf(detail).getOrElse("") else Reasoning.wrap(Seq(detail))
+      close() ++ start(Json.obj("type" -> "redacted_thinking", "data" -> data)) ++ close()
+    } else {
+      // a detail of another index is another block of reasoning
+      val detailIndex = detail.select("index").asOpt[Int]
+      val opening = if (current.contains("thinking") && thinkingIndex != detailIndex) close() ++ start(Json.obj("type" -> "thinking", "thinking" -> ""))
+        else ensure("thinking", Json.obj("type" -> "thinking", "thinking" -> ""))
+      thinkingIndex = detailIndex
+      thinking.add(Seq(detail))
+      val text = Reasoning.readableOf(detail).filter(_.nonEmpty).map(t => delta(Json.obj("type" -> "thinking_delta", "thinking" -> t))).toSeq
+      val signature = Reasoning.signatureOf(detail).filter(_ => anthropic).map { s =>
+        thinkingSigned = true
+        delta(Json.obj("type" -> "signature_delta", "signature" -> s))
+      }.toSeq
+      opening ++ text ++ signature
+    }
+  }
+
+  def events(chunk: ChatResponseChunk): Seq[ByteString] = {
+    chunk.usage.foreach(u => outputTokens = u.generationTokens)
+    chunk.choices.headOption.toSeq.flatMap { choice =>
+      choice.finishReason.foreach {
+        case "tool_calls" | "tool_use" => stopReason = "tool_use"
+        case "length" | "max_tokens" => stopReason = "max_tokens"
+        case _ =>
+      }
+      val reasoning = choice.delta.reasoningDetailsOrText.flatMap(reasoningEvents)
+      val text = choice.delta.content.filter(_.nonEmpty).toSeq.flatMap { text =>
+        ensure("text", Json.obj("type" -> "text", "text" -> "")) :+ delta(Json.obj("type" -> "text_delta", "text" -> text))
+      }
+      val tools = choice.delta.tool_calls.flatMap { tc =>
+        // the pieces of a tool call share its index, a new index is the next tool call
+        val opening = if (!current.contains("tool_use") || toolIndex != tc.index) {
+          stopReason = "tool_use"
+          val block = close() ++ start(Json.obj("type" -> "tool_use", "id" -> tc.id.getOrElse(s"toolu_${IdGenerator.token(24)}"), "name" -> tc.function.nameOpt.getOrElse(""), "input" -> Json.obj()))
+          toolIndex = tc.index
+          block
+        } else Seq.empty
+        val args = Option(tc.function.arguments).filter(_.nonEmpty).map(a => delta(Json.obj("type" -> "input_json_delta", "partial_json" -> a))).toSeq
+        opening ++ args
+      }
+      reasoning ++ text ++ tools
+    }
+  }
+
+  /** the events ending the message, once the answer is over */
+  def end(): Seq[ByteString] = {
+    // a message has at least one block
+    val empty = if (index < 0) start(Json.obj("type" -> "text", "text" -> "")) else Seq.empty
+    empty ++ close() ++ Seq(
+      event("message_delta", Json.obj("delta" -> Json.obj("stop_reason" -> stopReason, "stop_sequence" -> JsNull), "usage" -> Json.obj("output_tokens" -> outputTokens))),
+      event("message_stop", Json.obj()),
+    )
+  }
+}
 
 object AnthropicCompatProxy {
 
@@ -66,44 +160,9 @@ object AnthropicCompatProxy {
     s"event: message_start\ndata: ${json.stringify}\n\n".byteString
   }
 
-  private def anthropicContentBlockStart(index: Int): ByteString = {
-    val json = Json.obj(
-      "type" -> "content_block_start",
-      "index" -> index,
-      "content_block" -> Json.obj(
-        "type" -> "text",
-        "text" -> ""
-      )
-    )
-    s"event: content_block_start\ndata: ${json.stringify}\n\n".byteString
-  }
 
-  private def anthropicContentBlockStop(index: Int): ByteString = {
-    val json = Json.obj(
-      "type" -> "content_block_stop",
-      "index" -> index
-    )
-    s"event: content_block_stop\ndata: ${json.stringify}\n\n".byteString
-  }
 
-  private def anthropicMessageDelta(stopReason: String, outputTokens: Long): ByteString = {
-    val json = Json.obj(
-      "type" -> "message_delta",
-      "delta" -> Json.obj(
-        "stop_reason" -> stopReason,
-        "stop_sequence" -> JsNull
-      ),
-      "usage" -> Json.obj(
-        "output_tokens" -> outputTokens
-      )
-    )
-    s"event: message_delta\ndata: ${json.stringify}\n\n".byteString
-  }
 
-  private def anthropicMessageStop(): ByteString = {
-    val json = Json.obj("type" -> "message_stop")
-    s"event: message_stop\ndata: ${json.stringify}\n\n".byteString
-  }
 
   // The name the limit of an answer is sent under. `max_tokens` is the one about every api knows, and the clients
   // translate it when theirs wants another: the OpenAI one renames it for OpenAI. Azure OpenAI is sent
@@ -113,14 +172,67 @@ object AnthropicCompatProxy {
     case _ => "max_tokens"
   }
 
-  private def fixBody(_jsonBody: JsObject, client: ChatClient, provider: Option[AiProvider], reqId: Long): JsObject = {
-    if (client.isAnthropic) {
-      _jsonBody - "system"
-    } else if (client.isCohere) {
-      _jsonBody - "system"
+  // what a `tool_result` block says, as the text of a `tool` message: its content is a string or a list of blocks
+  private def toolResultContent(block: JsObject): String = block.select("content").asOpt[JsValue] match {
+    case Some(JsString(text)) => text
+    case Some(JsArray(parts)) => parts.flatMap(_.select("text").asOptString).mkString("\n")
+    case Some(obj: JsObject) => obj.stringify
+    case _ => ""
+  }
+
+  /**
+   * The messages of a request in the Anthropic format, in the OpenAI format the gateway works with, whatever the
+   * provider: `tool_use` blocks become the `tool_calls` of the assistant message, along with its text and its
+   * reasoning (`thinking` blocks), and `tool_result` blocks become `tool` messages. The clients write them back the
+   * way their provider takes them, Anthropic included.
+   */
+  def messagesToOpenAi(messages: Seq[JsObject]): Seq[JsObject] = messages.flatMap { message =>
+    val role = message.select("role").asOptString.getOrElse("user")
+    val blocks = message.select("content").asOpt[Seq[JsObject]]
+    def ofType(typ: String): Seq[JsObject] = blocks.getOrElse(Seq.empty).filter(_.select("type").asOptString.contains(typ))
+    if (role == "user" && ofType("tool_result").nonEmpty) {
+      val results = ofType("tool_result").map { block =>
+        Json.obj("role" -> "tool", "tool_call_id" -> block.select("tool_use_id").asString, "content" -> toolResultContent(block))
+      }
+      // what the user says along with the results comes after them
+      val others = blocks.getOrElse(Seq.empty).filterNot(_.select("type").asOptString.contains("tool_result"))
+      results ++ (if (others.isEmpty) Seq.empty else Seq(Json.obj("role" -> "user", "content" -> JsArray(others))))
+    } else if (role == "assistant" && ofType("tool_use").nonEmpty) {
+      val text = ofType("text").flatMap(_.select("text").asOptString).mkString("")
+      val reasoning = Reasoning.fromContentBlocks(blocks.getOrElse(Seq.empty))
+      Seq(Json.obj(
+        "role" -> "assistant",
+        "tool_calls" -> ofType("tool_use").map { tc =>
+          val input: String = tc.select("input").asOpt[JsObject].map(_.stringify).orElse(tc.select("input").asOptString).getOrElse("{}")
+          Json.obj(
+            "id" -> tc.select("id").asString,
+            "type" -> "function",
+            "function" -> Json.obj(
+              "name" -> tc.select("name").asString,
+              "arguments" -> input
+            )
+          )
+        }
+      ).applyOnIf(text.nonEmpty)(_ ++ Json.obj("content" -> text))
+        .applyOnIf(reasoning.nonEmpty)(_ ++ Json.obj("reasoning_details" -> JsArray(Reasoning.indexed(reasoning)))))
     } else {
-      val withTools = _jsonBody.select("tools").asOpt[Seq[JsObject]] match {
-        case None => _jsonBody
+      // the `thinking` blocks of the other messages are read as their reasoning (see InputChatMessage)
+      Seq(message)
+    }
+  }
+
+  private def fixBody(_jsonBody: JsObject, client: ChatClient, provider: Option[AiProvider], reqId: Long): JsObject = {
+    val withMessages = _jsonBody.select("messages").asOpt[Seq[JsObject]] match {
+      case None => _jsonBody
+      case Some(messages) => _jsonBody ++ Json.obj("messages" -> JsArray(messagesToOpenAi(messages)))
+    }
+    if (client.isAnthropic) {
+      withMessages - "system"
+    } else if (client.isCohere) {
+      withMessages - "system"
+    } else {
+      val withTools = withMessages.select("tools").asOpt[Seq[JsObject]] match {
+        case None => withMessages
         case Some(origTools) => {
           val newTools = origTools.map { origTool =>
             val name = origTool.select("name").asString
@@ -137,7 +249,7 @@ object AnthropicCompatProxy {
               )
             )
           }
-          _jsonBody ++ Json.obj(
+          withMessages ++ Json.obj(
             "tools" -> newTools
           )
         }
@@ -179,57 +291,7 @@ object AnthropicCompatProxy {
           additionalProperties = additionalProperties ++ Json.obj("reasoning_effort" -> effort)
         }
       }
-      _jsonBody.select("messages").asOpt[Seq[JsObject]].foreach { messages =>
-        val newMessages: Seq[JsObject] = messages.flatMap { message =>
-          val role = message.select("role").asOptString
-          val content = message.select("content").asOpt[Seq[JsObject]]
-          val contentArray = content.getOrElse(Seq.empty)
-          if (role.contains("user") && content.isDefined) {
-            val allToolResult = contentArray.exists(o => o.select("type").asOptString.contains("tool_result"))
-            if (allToolResult) {
-              contentArray.map { tc =>
-                val typ = tc.select("type").asOptString
-                if (typ.contains("tool_result")) {
-                  val content: String = tc.select("content").asOpt[JsObject].map(_.stringify).orElse(tc.select("content").asOptString).getOrElse("{}")
-                  Json.obj(
-                    "tool_call_id" -> tc.select("tool_use_id").asString,
-                    "role" -> "tool",
-                    "content" -> content,
-                  )
-                } else {
-                  tc
-                }
-              }
-            } else {
-              Seq(message)
-            }
-          } else if (role.contains("assistant") && content.isDefined) {
-            val allToolUse = contentArray.filter(o => o.select("type").asOptString.contains("tool_use"))
-            if (allToolUse.nonEmpty) {
-              Seq(Json.obj(
-                "role" -> "assistant",
-                "tool_calls" -> allToolUse.map { tc =>
-                  val input: String = tc.select("input").asOpt[JsObject].map(_.stringify).orElse(tc.select("input").asOptString).getOrElse("{}")
-                  Json.obj(
-                    "id" -> tc.select("id").asString,
-                    "type" -> "function",
-                    "function" -> Json.obj(
-                      "name" -> tc.select("name").asString,
-                      "arguments" -> input
-                    )
-                  )
-                }
-              ))
-            } else {
-              Seq(message)
-            }
-          } else {
-            Seq(message)
-          }
-        }
-        additionalProperties = additionalProperties ++ Json.obj("messages" -> newMessages)
-      }
-      withTools - "messages" - "system" - "max_tokens" - "thinking" - "output_config" - "context_management" ++ additionalProperties
+      withTools - "system" - "max_tokens" - "thinking" - "output_config" - "context_management" ++ additionalProperties
     }
   }
 
@@ -306,13 +368,11 @@ object AnthropicCompatProxy {
                   )
                 ))))
               case Right(source) => {
-                val state = AnthropicStreamResponseState()
+                val writer = new AnthropicStreamWriter()
                 val finalSource = Source.single(anthropicMessageStart(model, messageId))
-                  .concat(Source.single(anthropicContentBlockStart(0)))
-                  .concat(source.flatMapConcat(_.anthropicContentBlockDeltaEventSource(env, state)))
-                  .concat(Source.single(anthropicContentBlockStop(0)))
-                  .concat(Source.single(anthropicMessageDelta(if (state.toolCallsStarted.get()) "tool_use" else "end_turn", 0)))
-                  .concat(Source.single(anthropicMessageStop()))
+                  .concat(source.mapConcat(chunk => writer.events(chunk).toList))
+                  // materialized once the answer is over
+                  .concatLazy(Source.lazySource(() => Source(writer.end().toList)))
                 Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
               }
             }

@@ -9,7 +9,6 @@ import otoroshi.security.IdGenerator
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.AnthropicStreamResponseState
 import play.api.libs.json.*
 import play.api.libs.typedmap.TypedKey
 
@@ -407,7 +406,8 @@ object ChatMessage {
 
 case class ChatPrompt(messages: Seq[InputChatMessage], options: Option[ChatOptions] = None) {
   def json: JsValue = JsArray(messages.map(_.json(ChatMessageContentFlavor.Common)))
-  def jsonWithFlavor(flavor: ChatMessageContentFlavor): JsValue = JsArray(messages.map(_.json(flavor)))
+  // `reasoning`: how the api of the provider takes back the reasoning of the assistant messages
+  def jsonWithFlavor(flavor: ChatMessageContentFlavor, reasoning: ReasoningInput = ReasoningInput.Skip): JsValue = JsArray(messages.map(_.json(flavor, reasoning)))
 }
 object InputChatMessage {
   def fromJson(json: JsValue): InputChatMessage = format.reads(json).get
@@ -416,7 +416,8 @@ object InputChatMessage {
     override def reads(json: JsValue): JsResult[InputChatMessage] = Try {
       val content: Seq[ChatMessageContent] = json.select("content").asOptString match {
         case Some(text) => Seq(ChatMessageContent.TextContent(text))
-        case None => json.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).map { obj =>
+        // `thinking` blocks are the reasoning of the message, not its content (see `reasoning`)
+        case None => json.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty).filterNot(Reasoning.isReasoningBlock).map { obj =>
           ChatMessageContent.fromJson(obj)
         }
       }
@@ -447,32 +448,53 @@ case class InputChatMessage(role: String, contentParts: Seq[ChatMessageContent],
   val tool_calls = raw.select("tool_calls").asOpt[Seq[JsObject]]
   val hasContent = contentParts.nonEmpty
 
-  def json(flavor: ChatMessageContentFlavor): JsValue = Json.obj(
-    "role" -> role,
-  ).applyOnIf(hasContent && isSingleTextContent) { obj =>
-    val text: String = singleTextContentUnsafe
-    obj ++ Json.obj("content" -> text)
-  }.applyOnIf(hasContent && !isSingleTextContent) { obj =>
-    val arr: JsArray = JsArray(contentParts.map(_.json(flavor)))
-    obj ++ Json.obj("content" -> arr)
-  }.applyOnWithOpt(prefix) {
-    case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
-  }.applyOnWithOpt(name) {
-    case (obj, name) => obj ++ Json.obj("name" -> name)
-  }.applyOnWithOpt(tool_call_id) {
-    case (obj, tool_call_id) => obj ++ Json.obj("tool_call_id" -> tool_call_id)
-  }.applyOnWithOpt(tool_calls) {
-    case (obj, tool_calls) => obj ++ Json.obj("tool_calls" -> tool_calls)
-  }.applyOnIf(flavor == ChatMessageContentFlavor.Anthropic && isSystem) { _ =>
-     Json.obj("type" -> "text", "text" -> wholeTextContent)
-  }.applyOnIf(flavor == ChatMessageContentFlavor.Ollama && hasImage) { obj =>
-    val aggContent = contentParts.collect {
-      case ChatMessageContent.TextContent(text) => text
+  /** the reasoning of an assistant message, as `reasoning_details`, whatever shape the caller sent it in */
+  lazy val reasoning: Seq[JsObject] = if (isAssistant) Reasoning.of(raw) else Seq.empty
+  lazy val hasReasoning: Boolean = reasoning.nonEmpty
+
+  def json(flavor: ChatMessageContentFlavor): JsValue = json(flavor, ReasoningInput.Skip)
+
+  def json(flavor: ChatMessageContentFlavor, reasoningInput: ReasoningInput): JsValue = {
+    // Anthropic takes the reasoning back as the first blocks of the content, and only the blocks it signed. Mistral
+    // as `thinking` chunks of the content
+    val thinkingBlocks: Seq[JsObject] = reasoningInput match {
+      case ReasoningInput.AnthropicBlocks => Reasoning.toAnthropicBlocks(reasoning, forAnthropicApi = true)
+      case ReasoningInput.MistralChunks => Reasoning.toMistralChunks(reasoning)
+      case _ => Seq.empty
     }
-    if (aggContent.isEmpty) {
-      (obj - "content") ++ Json.obj("images" -> images)
-    } else {
-      (obj - "content") ++ Json.obj("images" -> images, "content" -> aggContent.mkString(". "))
+    Json.obj(
+      "role" -> role,
+    ).applyOnIf(hasContent && isSingleTextContent && thinkingBlocks.isEmpty) { obj =>
+      val text: String = singleTextContentUnsafe
+      obj ++ Json.obj("content" -> text)
+    }.applyOnIf(hasContent && !isSingleTextContent && thinkingBlocks.isEmpty) { obj =>
+      val arr: JsArray = JsArray(contentParts.map(_.json(flavor)))
+      obj ++ Json.obj("content" -> arr)
+    }.applyOnIf(thinkingBlocks.nonEmpty) { obj =>
+      // an empty text block is refused next to them
+      val blocks: Seq[JsValue] = contentParts.map(_.json(flavor)).filterNot(b => b.select("type").asOptString.contains("text") && b.select("text").asOptString.forall(_.isEmpty))
+      obj ++ Json.obj("content" -> JsArray(thinkingBlocks ++ blocks))
+    }.applyOn { obj =>
+      if (isAssistant) Reasoning.write(obj, reasoning, reasoningInput) else obj
+    }.applyOnWithOpt(prefix) {
+      case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
+    }.applyOnWithOpt(name) {
+      case (obj, name) => obj ++ Json.obj("name" -> name)
+    }.applyOnWithOpt(tool_call_id) {
+      case (obj, tool_call_id) => obj ++ Json.obj("tool_call_id" -> tool_call_id)
+    }.applyOnWithOpt(tool_calls) {
+      case (obj, tool_calls) => obj ++ Json.obj("tool_calls" -> tool_calls)
+    }.applyOnIf(flavor == ChatMessageContentFlavor.Anthropic && isSystem) { _ =>
+       Json.obj("type" -> "text", "text" -> wholeTextContent)
+    }.applyOnIf(flavor == ChatMessageContentFlavor.Ollama && hasImage) { obj =>
+      val aggContent = contentParts.collect {
+        case ChatMessageContent.TextContent(text) => text
+      }
+      if (aggContent.isEmpty) {
+        (obj - "content") ++ Json.obj("images" -> images)
+      } else {
+        (obj - "content") ++ Json.obj("images" -> images, "content" -> aggContent.mkString(". "))
+      }
     }
   }
 
@@ -489,8 +511,25 @@ case class InputChatMessage(role: String, contentParts: Seq[ChatMessageContent],
     }.mkString(". ")
   }
 
+  // a guardrail that rewrites the messages (PII redaction) rewrites their readable reasoning too. A signed reasoning
+  // can not change without being refused by the provider: it is left out when its text would change
   def transformContent(f: String => String): InputChatMessage = {
-    copy(contentParts = contentParts.map(_.transformContent(f)))
+    val transformed = copy(contentParts = contentParts.map(_.transformContent(f)))
+    if (!hasReasoning) transformed else {
+      val newReasoning = reasoning.flatMap { detail =>
+        Reasoning.typeOf(detail) match {
+          case Reasoning.Types.Encrypted => detail.some
+          case typ =>
+            val field = if (typ == Reasoning.Types.Summary) "summary" else "text"
+            val text = detail.select(field).asOptString.getOrElse("")
+            val newText = f(text)
+            if (newText == text) detail.some
+            else if (Reasoning.signatureOf(detail).isDefined) None
+            else (detail ++ Json.obj(field -> newText)).some
+        }
+      }
+      transformed.copy(raw = Reasoning.replaceIn(raw, newReasoning))
+    }
   }
 
   def isSingleTextContent: Boolean = {
@@ -553,13 +592,13 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
     .orElse(raw.select("content").select("citations").asOpt[Seq[JsObject]])
   lazy val hasCitations = citations.isDefined
 
-  lazy val reasoningDetails = raw.select("reasoning_content").asOpt[String]
-    .orElse(raw.select("reasoning").asOpt[String])
-    .orElse(raw.select("message").select("reasoning_content").asOpt[String])
-    .orElse(raw.select("message").select("reasoning").asOpt[String])
-    .orElse(raw.select("content").select("reasoning_content").asOpt[String])
-    .orElse(raw.select("content").select("reasoning").asOpt[String])
-  lazy val hasReasoningDetails = reasoningDetails.isDefined
+  /** the reasoning of the answer, as `reasoning_details`, read from the message the provider client built */
+  lazy val reasoning: Seq[JsObject] = {
+    val fromMessage = raw.select("message").asOpt[JsObject].map(Reasoning.of).getOrElse(Seq.empty)
+    if (fromMessage.nonEmpty) fromMessage else Reasoning.of(raw)
+  }
+  lazy val hasReasoning: Boolean = reasoning.nonEmpty
+  lazy val reasoningText: Option[String] = Reasoning.text(reasoning)
 
   lazy val annotations = raw.select("message").select("annotations").asOpt[Seq[JsObject]]
   lazy val annotationsOrEmpty = annotations.getOrElse(Seq.empty[JsObject])
@@ -584,8 +623,11 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
       case (obj, prefix) => obj ++ Json.obj("prefix" -> prefix)
     }.applyOnWithOpt(citations) {
       case (obj, citations) => obj ++ Json.obj("citations" -> citations)
-    }.applyOnWithOpt(reasoningDetails) {
-      case (obj, reasoningDetails) => obj ++ Json.obj("reasoning_details" -> reasoningDetails)
+    }.applyOnIf(hasReasoning) { obj =>
+      // the format of OpenRouter: the readable text in `reasoning`, everything needed to send it back in
+      // `reasoning_details`. `reasoning_content` is what the gateway streamed until then, and what many clients read
+      obj ++ Json.obj("reasoning_details" -> JsArray(reasoning))
+        .applyOnWithOpt(reasoningText) { case (o, text) => o ++ Json.obj("reasoning" -> text, "reasoning_content" -> text) }
     }.applyOnWithOpt(annotations) {
       case (obj, annotations) => obj ++ Json.obj("annotations" -> annotations)
     }.applyOnWithOpt(audio) {
@@ -684,11 +726,16 @@ case class ChatResponse(
   def anthropicJson(model: String, env: Env): JsValue = {
     val finalModel = raw.select("model").asOpt[String].getOrElse(model)
     val content = generations.flatMap { gen =>
-      if (gen.message.has_tool_calls) {
-        gen.message.tool_calls.getOrElse(Seq.empty).map(_.asObject).map { o =>
+      // the reasoning comes first, as Anthropic answers it: a caller sends these blocks back untouched
+      val thinking: Seq[JsObject] = Reasoning.toAnthropicBlocks(gen.message.reasoning, forAnthropicApi = false)
+      thinking ++ (if (gen.message.has_tool_calls) {
+        // the text said before the tool calls
+        val text = Option(gen.message.content).filter(_.trim.nonEmpty).map(t => Json.obj("type" -> "text", "text" -> t)).toSeq
+        text ++ gen.message.tool_calls.getOrElse(Seq.empty).map(_.asObject).map { o =>
+          // the arguments of an OpenAI tool call are a string of json, the input of a `tool_use` block is the object
           val input: JsValue = o.select("input")
             .asOpt[JsObject]
-            .orElse(o.select("function").select("arguments").asOptString.map(_.json))
+            .orElse(o.select("function").select("arguments").asOptString.flatMap(args => Try(Json.parse(args)).toOption))
             .getOrElse(Json.obj())
           val name: String = o.select("name").asOptString.orElse(o.select("function").select("name").asOptString).getOrElse("")
           Json.obj(
@@ -700,7 +747,7 @@ case class ChatResponse(
         }
       } else {
         Seq(Json.obj("type" -> "text", "text" -> gen.message.content))
-      }
+      })
     }
     val stopReason = if (generations.exists(_.message.has_tool_calls)) "tool_use" else "end_turn"
     Json.obj(
@@ -738,7 +785,8 @@ case class ChatResponse(
     }
     val finalModel = raw.select("model").asOpt[String].getOrElse(model)
     val outputItems = generations.flatMap { gen =>
-      var items = Seq.empty[JsValue]
+      // the reasoning first, as reasoning items a caller sends back with the rest of the output
+      var items: Seq[JsValue] = Reasoning.toResponsesItems(gen.message.reasoning, forResponsesApi = false, () => s"rs_${IdGenerator.token(32)}")
       val textContent = gen.message.content
       val messageId = s"msg_${IdGenerator.token(32)}"
       if (!gen.message.has_tool_calls || (textContent != null && textContent.nonEmpty && !textContent.trim.isEmpty)) {
@@ -822,10 +870,12 @@ case class ChatResponse(
     val finalModel = raw.select("model").asOpt[String].getOrElse(model)
     Source(generations.toList)
       .flatMapConcat { gen =>
-        gen.message.content.chunks(5)
+        // the reasoning in one piece, before the text
+        val reasoning = if (gen.message.hasReasoning) Source.single(ChatResponseChunkChoiceDelta(None, reasoning = gen.message.reasoningText, reasoning_details = gen.message.reasoning)) else Source.empty
+        reasoning.concat(gen.message.content.chunks(5).map(chunk => ChatResponseChunkChoiceDelta(chunk.some, None)))
       }
-      .map { chunk =>
-        ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(chunk.some, None), None)))
+      .map { delta =>
+        ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, delta, None)))
       }
       .concat(Source.single(
         ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(None, None), Some("stop"))))
@@ -958,14 +1008,18 @@ case class ChatResponseChunkChoiceDeltaToolCall(
   index: Long,
   id: Option[String],
   typ: Option[String],
-  function: ChatResponseChunkChoiceDeltaToolCallFunction
+  function: ChatResponseChunkChoiceDeltaToolCallFunction,
+  // what the provider adds to the call and needs back with it (the thought signature of Gemini)
+  extraContent: Option[JsObject] = None,
 ) {
   def json: JsValue = Json.obj(
     "index" -> index,
     "id" -> id,
     "type" -> typ,
     "function" -> function.json,
-  )
+  ).applyOnWithOpt(extraContent) {
+    case (o, extra) => o ++ Json.obj("extra_content" -> extra)
+  }
 }
 
 case class ChatResponseChunkChoiceDelta(
@@ -974,18 +1028,53 @@ case class ChatResponseChunkChoiceDelta(
      role: String = "assistant",
      refusal: Option[String] = None,
      tool_calls: Seq[ChatResponseChunkChoiceDeltaToolCall] = Seq.empty, // TODO: fill it everywhere
+     // pieces of `reasoning_details` (see `Reasoning`): the ones of the same index make one detail once put together
+     reasoning_details: Seq[JsObject] = Seq.empty,
 ) {
+  def hasReasoning: Boolean = reasoning.exists(_.nonEmpty) || reasoning_details.nonEmpty
+  // the details of the delta, the plain text as one when the provider streamed nothing else
+  def reasoningDetailsOrText: Seq[JsObject] = {
+    if (reasoning_details.nonEmpty) reasoning_details
+    else reasoning.filter(_.nonEmpty).map(text => Seq(Reasoning.textDetail(text) ++ Json.obj("index" -> 0))).getOrElse(Seq.empty)
+  }
   def json: JsValue = Json.obj(
     "role" -> role,
   ).applyOnWithOpt(content) {
     case (o, content) => o ++ Json.obj("content" -> content)
   }.applyOnWithOpt(reasoning.filter(_.nonEmpty)) {
-    case (o, reasoning) => o ++ Json.obj("reasoning_content" -> reasoning)
+    // `reasoning` as OpenRouter streams it, `reasoning_content` as the gateway always streamed it
+    case (o, reasoning) => o ++ Json.obj("reasoning" -> reasoning, "reasoning_content" -> reasoning)
+  }.applyOnIf(hasReasoning) { o =>
+    o ++ Json.obj("reasoning_details" -> JsArray(reasoningDetailsOrText))
   }.applyOnWithOpt(refusal) {
     case (o, _) => o ++ Json.obj("refusal" -> refusal)
   }.applyOnIf(tool_calls.nonEmpty) { o =>
     o ++ Json.obj("tool_calls" -> JsArray(tool_calls.map(_.json)))
   }
+}
+
+object ChatResponseChunkChoiceDelta {
+  // reads back what `json` wrote (cached streams)
+  def fromJson(delta: JsObject): ChatResponseChunkChoiceDelta = ChatResponseChunkChoiceDelta(
+    content = delta.select("content").asOptString,
+    reasoning = delta.select("reasoning").asOptString.orElse(delta.select("reasoning_content").asOptString),
+    role = delta.select("role").asOptString.getOrElse("assistant"),
+    refusal = delta.select("refusal").asOptString,
+    tool_calls = delta.select("tool_calls").asOpt[Seq[JsObject]].map(_.map { tc =>
+      val fn = tc.select("function").asOpt[JsObject].getOrElse(Json.obj())
+      ChatResponseChunkChoiceDeltaToolCall(
+        index = tc.select("index").asOpt[Long].getOrElse(0L),
+        id = tc.select("id").asOptString,
+        typ = tc.select("type").asOptString,
+        function = ChatResponseChunkChoiceDeltaToolCallFunction(
+          nameOpt = fn.select("name").asOptString,
+          arguments = fn.select("arguments").asOptString.getOrElse("")
+        ),
+        extraContent = tc.select("extra_content").asOpt[JsObject],
+      )
+    }).getOrElse(Seq.empty),
+    reasoning_details = delta.select("reasoning_details").asOpt[Seq[JsObject]].getOrElse(Seq.empty),
+  )
 }
 
 case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDelta, finishReason: Option[String]) {
@@ -1007,67 +1096,6 @@ case class ChatResponseChunkChoice(index: Long, delta: ChatResponseChunkChoiceDe
     "finish_reason" -> finishReason.map(_.json).getOrElse(JsNull).asValue
   )
   def hasToolCall: Boolean = delta.tool_calls.nonEmpty
-  def anthropicContentBlockDeltaJson(env: Env, state: AnthropicStreamResponseState): Source[ByteString, ?] = {
-    var list = Seq.empty[ByteString]
-    if (delta.tool_calls.nonEmpty) {
-      if (!state.textDone.get() && !state.toolCallsStarted.get()) {
-        state.textDone.set(true)
-        state.toolCallsStarted.set(true)
-      }
-      val tc = delta.tool_calls.head
-      val hasName = tc.function.hasName
-      val inputJson: JsValue = Try(Json.parse(tc.function.arguments)).getOrElse(tc.function.arguments.json)
-      if (hasName) {
-        val doc = Json.obj(
-          "type" -> "content_block_start",
-          "index" -> index,
-          "content_block" -> Json.obj(
-            "type" -> "tool_use",
-            "id" -> tc.id,
-            "name" -> tc.function.name,
-            "input" -> "", //inputJson,
-          )
-        )
-        list = list :+ ByteString(s"""event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\nevent: content_block_start\ndata: ${doc.stringify}\n\n""")
-        val docDelta = Json.obj(
-          "type" -> "content_block_delta",
-          "index" -> index,
-          "delta" -> Json.obj(
-            "type" -> "input_json_delta",
-            "partial_json" -> inputJson.stringify
-          )
-        )
-        list = list :+ ByteString(s"event: content_block_delta\ndata: ${docDelta.stringify}\n\n")
-      } else {
-        val doc = Json.obj(
-          "type" -> "content_block_delta",
-          "index" -> index,
-          "delta" -> Json.obj(
-            "type" -> "input_json_delta",
-            "partial_json" -> inputJson.stringify
-          )
-        )
-        list = list :+ ByteString(s"event: content_block_delta\ndata: ${doc.stringify}\n\n")
-      }
-    } else {
-      if (!state.textDone.get()) {
-        if (!state.textStarted.get()) {
-          state.textStarted.set(true)
-        }
-        val text: String = delta.content.getOrElse("")
-        val doc = Json.obj(
-          "type" -> "content_block_delta",
-          "index" -> index,
-          "delta" -> Json.obj(
-            "type" -> "text_delta",
-            "text" -> text
-          )
-        )
-        list = list :+ ByteString(s"event: content_block_delta\ndata: ${doc.stringify}\n\n")
-      }
-    }
-    Source(list.toList)
-  }
 }
 
 case class ChatResponseChunk(id: String, created: Long, model: String, choices: Seq[ChatResponseChunkChoice], costs: Option[CostsOutput] = None, impacts: Option[ImpactsOutput] = None, budget: Option[(AiBudgetConsumptions, AiBudget)] = None, usage: Option[ChatResponseMetadataUsage] = None) {
@@ -1118,11 +1146,6 @@ case class ChatResponseChunk(id: String, created: Long, model: String, choices: 
   def eventSource(env: Env): ByteString = s"data: ${json(env).stringify}\n\n".byteString
   def openaiEventSource(env: Env): ByteString = s"data: ${openaiJson(env).stringify}\n\n".byteString
   def openaiCompletionEventSource(env: Env): ByteString = s"data: ${openaiCompletionJson(env).stringify}\n\n".byteString
-  def anthropicContentBlockDeltaEventSource(env: Env, state: AnthropicStreamResponseState): Source[ByteString, ?] = {
-    Source(choices.toList).flatMapConcat { choice =>
-      choice.anthropicContentBlockDeltaJson(env, state)
-    }
-  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

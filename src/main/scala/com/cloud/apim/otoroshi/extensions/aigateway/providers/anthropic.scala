@@ -36,6 +36,19 @@ case class AnthropicChatResponseChunkChoice(raw: JsValue, role: String) {
   lazy val stop_tool_use = finish_reason.contains("tool_use")
 
   lazy val partial_json: String = raw.at("delta.partial_json").asString
+
+  // the reasoning: `thinking_delta` and `signature_delta` pieces of a `thinking` block, a `redacted_thinking` block
+  // whole. The index of the block tells the pieces of a block from the ones of the next
+  lazy val thinking: Option[String] = if (typ.contains("thinking_delta")) raw.at("delta.thinking").asOptString else None
+  lazy val reasoningDetails: Seq[JsObject] = {
+    val idx = index.map(i => Json.obj("index" -> i)).getOrElse(Json.obj())
+    typ match {
+      case Some("thinking_delta") => thinking.map(t => Reasoning.textDetail(t, Reasoning.Formats.Anthropic) ++ idx).toSeq
+      case Some("signature_delta") => raw.at("delta.signature").asOptString.map(s => Reasoning.textDetail("", Reasoning.Formats.Anthropic, s.some) ++ idx).toSeq
+      case Some("redacted_thinking") => raw.at("content_block.data").asOptString.map(d => Reasoning.encryptedDetail(d, Reasoning.Formats.Anthropic) ++ idx).toSeq
+      case _ => Seq.empty
+    }
+  }
 }
 
 case class AnthropicApiResponseChunk(raw: JsValue, messageRef: Option[JsValue]) {
@@ -62,6 +75,44 @@ case class AnthropicApiResponseChunk(raw: JsValue, messageRef: Option[JsValue]) 
 
 case class AnthropicChatResponseChunkChoiceDeltaToolCall(raw: JsValue) {
 
+}
+
+/** puts back together the `thinking`, `redacted_thinking` and `text` blocks of a streamed answer */
+class AnthropicLeadingBlocks {
+
+  private val blocks = scala.collection.mutable.ArrayBuffer.empty[JsObject]
+
+  private def updateLast(field: String, f: String => String): Unit = {
+    if (blocks.nonEmpty) {
+      val last = blocks.last
+      blocks.update(blocks.size - 1, last ++ Json.obj(field -> f(last.select(field).asOptString.getOrElse(""))))
+    }
+  }
+
+  def add(event: JsValue): Unit = event.select("type").asOptString match {
+    case Some("content_block_start") => event.at("content_block.type").asOptString match {
+      case Some("thinking") => blocks += Json.obj("type" -> "thinking", "thinking" -> "", "signature" -> "")
+      case Some("redacted_thinking") => blocks += event.select("content_block").asObject
+      case Some("text") => blocks += Json.obj("type" -> "text", "text" -> event.at("content_block.text").asOptString.getOrElse(""))
+      // another kind of block ends what can be put back together
+      case _ => blocks += Json.obj("type" -> "other")
+    }
+    case Some("content_block_delta") => event.at("delta.type").asOptString match {
+      case Some("thinking_delta") => updateLast("thinking", _ + event.at("delta.thinking").asOptString.getOrElse(""))
+      case Some("signature_delta") => updateLast("signature", _ => event.at("delta.signature").asOptString.getOrElse(""))
+      case Some("text_delta") => updateLast("text", _ + event.at("delta.text").asOptString.getOrElse(""))
+      case _ =>
+    }
+    case _ =>
+  }
+
+  def result: Seq[JsObject] = blocks.toSeq.filter { b =>
+    b.select("type").asOptString match {
+      case Some("text") => b.select("text").asOptString.exists(_.nonEmpty)
+      case Some("thinking") | Some("redacted_thinking") => true
+      case _ => false
+    }
+  }
 }
 
 case class AnthropicApiResponse(status: Int, headers: Map[String, String], body: JsValue) {
@@ -96,6 +147,16 @@ object AnthropicModels {
     regex.findFirstMatchIn(model).map { m =>
       (m.group(1).toInt, Option(m.group(2)).map(_.toInt).getOrElse(0))
     }
+  }
+
+  // a model that thinks only takes a temperature of 1, no top_k and a top_p of 0.95 at least: the sampling a provider
+  // is configured with (a temperature of 0 is common) would make every call that enables thinking fail
+  def cleanupSamplingParamsWhenThinking(body: JsObject): JsObject = {
+    val thinking = body.select("thinking").select("type").asOptString.exists(t => t == "enabled" || t == "adaptive")
+    if (!thinking) body
+    else (body - "top_k")
+      .applyOnIf(body.select("temperature").asOpt[Double].exists(_ != 1.0))(_ - "temperature")
+      .applyOnIf(body.select("top_p").asOpt[Double].exists(_ < 0.95))(_ - "top_p")
   }
 
   def dropsSamplingParams(model: String): Boolean = {
@@ -233,7 +294,9 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
               val toolCalls = resp.body.select("content").as[Seq[JsObject]].filter(o => o.select("type").asOptString.contains("tool_use"))
               LlmFunctions.callToolsAnthropic(toolCalls.map(tc => AnthropicApiResponseChoiceMessageToolCall(tc)), mcpConnectors, providerName, attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
-                  val newMessages: Seq[JsValue] = messages ++ callResps
+                  // the reasoning and the text that came before the calls go back with them
+                  val leading = resp.body.select("content").as[Seq[JsObject]].filter(b => Reasoning.isReasoningBlock(b) || b.select("type").asOptString.contains("text"))
+                  val newMessages: Seq[JsValue] = messages ++ ReasoningToolLoop.anthropic(callResps, leading)
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
@@ -263,8 +326,11 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
           var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
           // var toolCallUsage: AnthropicChatResponseChunkUsage = null
           var index: Int = 0
+          // the reasoning and the text streamed before the calls, which go back with them
+          val leading = new AnthropicLeadingBlocks()
           val newSource = res._1.flatMapConcat { chunk =>
             // println(s"chunk: ${chunk.raw.prettify}")
+            if (!isToolCall) leading.add(chunk.raw)
             if (!isToolCall &&  chunk.choices.exists(_.tool_use)) {
               // println("start tool_user")
               isToolCall = true
@@ -310,7 +376,7 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
               val a: Future[Either[JsValue, (Source[AnthropicApiResponseChunk, ?], WSResponse)]] = LlmFunctions.callToolsAnthropic(calls, mcpConnectors, providerName, attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
-                  val newMessages: Seq[JsValue] = messages ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ ReasoningToolLoop.anthropic(callResps, leading.result)
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
                   streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
                 }
@@ -514,6 +580,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     }
   }
 
+
   // Client-provided history uses the OpenAI shape: assistant messages carry a `tool_calls` array and tool
   // results come as a dedicated `tool` role message. Anthropic instead expects tool calls as `tool_use`
   // content blocks inside the assistant message and tool results as `tool_result` content blocks inside a
@@ -565,10 +632,10 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
 
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody).applyOn(cleanupDeprecatedSamplingParams)
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody).applyOn(cleanupDeprecatedSamplingParams).applyOn(AnthropicModels.cleanupSamplingParamsWhenThinking)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
-    val messages = JsArray(transformOpenAiMessagesToAnthropic(prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic).as[Seq[JsObject]]))
+    val messages = JsArray(transformOpenAiMessagesToAnthropic(prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic, ReasoningInput.AnthropicBlocks).as[Seq[JsObject]]))
     val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
@@ -615,7 +682,11 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
           case None => Json.obj("ai" -> Seq(slug))
         }
         val role = resp.body.select("role").asOpt[String].getOrElse("assistant")
-        val contentBlocks = resp.body.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+        val allBlocks = resp.body.select("content").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+        // the `thinking` / `redacted_thinking` blocks are the reasoning of the answer, kept with their signature
+        val reasoning = Reasoning.indexed(Reasoning.fromContentBlocks(allBlocks))
+        val withReasoning: JsObject => JsObject = obj => if (reasoning.isEmpty) obj else obj ++ Json.obj("reasoning_details" -> JsArray(reasoning))
+        val contentBlocks = allBlocks.filterNot(Reasoning.isReasoningBlock)
         val messages = if (contentBlocks.exists(_.select("type").asOptString.contains("tool_use"))) {
           // Anthropic returns tool calls as `tool_use` content blocks. We fold every block into a single
           // OpenAI-style assistant message (text blocks -> content, tool_use blocks -> tool_calls) so the
@@ -636,16 +707,21 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
                 ),
               )
             }
-          val messageObj = Json.obj(
+          val messageObj = withReasoning(Json.obj(
             "role" -> role,
             "content" -> textContent,
             "tool_calls" -> JsArray(toolCalls),
-          )
+          ))
           Seq(ChatGeneration(ChatMessage.output(role, textContent, None, Json.obj("message" -> messageObj))))
+        } else if (contentBlocks.isEmpty) {
+          // an answer that ended while the model was still thinking
+          Seq(ChatGeneration(ChatMessage.output(role, "", None, Json.obj("message" -> withReasoning(Json.obj("role" -> role, "content" -> ""))))))
         } else {
-          contentBlocks.map { obj =>
+          // the reasoning goes with the first text of the answer
+          val reasoningBlock = math.max(contentBlocks.indexWhere(_.select("type").asOptString.contains("text")), 0)
+          contentBlocks.zipWithIndex.map { case (obj, idx) =>
             val content = obj.select("text").asOpt[String].getOrElse("")
-            ChatGeneration(ChatMessage.output(role, content, None, obj))
+            ChatGeneration(ChatMessage.output(role, content, None, if (idx == reasoningBlock) withReasoning(obj) else obj))
           }
         }
         Right(ChatResponse(messages, usage, resp.body))
@@ -654,10 +730,10 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
 
   override def stream(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val body = originalBody.asObject - "messages" - "provider"
-    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody).applyOn(cleanupDeprecatedSamplingParams)
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody).applyOn(cleanupDeprecatedSamplingParams).applyOn(AnthropicModels.cleanupSamplingParamsWhenThinking)
     val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
     val (system, otherMessages) = prompt.messages.partition(_.isSystem)
-    val messages = JsArray(transformOpenAiMessagesToAnthropic(prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic).as[Seq[JsObject]]))
+    val messages = JsArray(transformOpenAiMessagesToAnthropic(prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic, ReasoningInput.AnthropicBlocks).as[Seq[JsObject]]))
     val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
     val startTime = System.currentTimeMillis()
     val acc = new UsageAccumulator()
@@ -677,6 +753,9 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
         // streams a `content_block_start` (with the tool id/name) followed by `input_json_delta` fragments
         // for the arguments. We translate them and keep track of the current tool-call ordinal.
         val toolCallOrdinal = new java.util.concurrent.atomic.AtomicInteger(-1)
+        // the blocks of the whole stream, counted across the rounds of tool calls the gateway runs itself: the index
+        // of a reasoning block keeps its pieces apart from the ones of another block
+        val blockOrdinal = new java.util.concurrent.atomic.AtomicInteger(-1)
         source.filterNot { chunk =>
           if (chunk.usage.nonEmpty) {
             val usage = ChatResponseMetadata(
@@ -716,6 +795,7 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
           }
         }
         .map { chunk =>
+          if (chunk.content_block_start) blockOrdinal.incrementAndGet()
           ChatResponseChunk(
             id = chunk.id,
             created = if (chunk.created <= 0L) startTime / 1000L else chunk.created,
@@ -749,10 +829,13 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
                 Seq.empty
               }
               ChatResponseChunkChoice(
-                index = choice.index.map(_.toLong).getOrElse(0L),
+                // the index of an Anthropic event is the one of its content block, not of a choice
+                index = 0L,
                 delta = ChatResponseChunkChoiceDelta(
                   content = if (toolCalls.nonEmpty) None else choice.content,
+                  reasoning = choice.thinking,
                   tool_calls = toolCalls,
+                  reasoning_details = choice.reasoningDetails.map(_ ++ Json.obj("index" -> math.max(blockOrdinal.get(), 0))),
                 ),
                 finishReason = choice.finish_reason.map(LlmCallTelemetry.normalizeFinishReason),
               )

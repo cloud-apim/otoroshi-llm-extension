@@ -20,6 +20,8 @@ This plugin allows you to expose **any** LLM provider (OpenAI, Anthropic, Mistra
 
 Whichever path a request takes, it goes through the full gateway pipeline: guardrails, prompt contexts, persistent memory, model restrictions, semantic and simple caches, cost tracking, budgets, auditing and live metrics all apply to `/responses` exactly as they do to `/chat/completions`.
 
+The reasoning of the model comes back as `reasoning` output items, streamed as it is produced, whatever the provider. Replay them in the `input` of the next request, as OpenAI asks, and the model picks up its thought where it left it: each provider gets back the reasoning the way it takes it, encrypted content included (see [Reasoning](/docs/llm-gateway/openai-compat-api#reasoning)).
+
 ### OpenAI Responses vs Open Responses
 
 This plugin implements the **OpenAI Responses API** format. A separate plugin, [Open Responses Proxy](/docs/llm-gateway/open-response-proxy), implements the [Open Responses](https://www.openresponses.org/) specification, which is a community-driven open standard inspired by the OpenAI Responses API but with its own differences.

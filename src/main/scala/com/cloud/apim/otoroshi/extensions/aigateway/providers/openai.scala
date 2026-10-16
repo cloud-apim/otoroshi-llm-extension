@@ -45,21 +45,29 @@ case class OpenAiChatResponseChunkChoiceDeltaToolCall(raw: JsValue) {
   lazy val typOpt: Option[String] = raw.select("type").asOptString
   lazy val function: OpenAiChatResponseChunkChoiceDeltaToolCallFunction = OpenAiChatResponseChunkChoiceDeltaToolCallFunction(raw.select("function").asObject)
 
+  // what a provider adds to a tool call: the thought signature of Gemini (`extra_content.google.thought_signature`),
+  // which it refuses the next call without
+  lazy val extraContent: Option[JsObject] = raw.select("extra_content").asOpt[JsObject]
+
   def asChatResponseChunkChoiceDeltaToolCall: ChatResponseChunkChoiceDeltaToolCall = {
     ChatResponseChunkChoiceDeltaToolCall(
       index = index,
       id = idOpt,
       typ = typOpt.orElse("function".some),
       function = function.asChatResponseChunkChoiceDeltaToolCallFunction,
+      extraContent = extraContent,
     )
   }
 }
 
 case class OpenAiChatResponseChunkChoiceDelta(raw: JsValue) {
   lazy val content: Option[String] = raw.select("content").asOptString
+  // the text OpenRouter streams in `reasoning`, DeepSeek and the servers built on vLLM in `reasoning_content`
   lazy val reasoning: Option[String] = raw.select("reasoning").asOptString
-    .orElse(raw.select("reasoning_details").asOptString.map(_.trim))
-    .orElse(raw.select("reasoning_content").asOptString.map(_.trim))
+    .orElse(raw.select("reasoning_content").asOptString)
+    .orElse(raw.select("reasoning_details").asOptString)
+  // the pieces of `reasoning_details` OpenRouter streams along
+  lazy val reasoning_details: Seq[JsObject] = raw.select("reasoning_details").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
   lazy val role: String = raw.select("role").asOptString.getOrElse("assistant")
   lazy val refusal: Option[String] = raw.select("refusal").asOptString
   lazy val tool_calls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = raw.select("tool_calls").asOpt[Seq[JsObject]].map(_.map(OpenAiChatResponseChunkChoiceDeltaToolCall.apply)).getOrElse(Seq.empty)
@@ -71,6 +79,7 @@ case class OpenAiChatResponseChunkChoiceDelta(raw: JsValue) {
       role = role,
       refusal = refusal,
       tool_calls = tool_calls.map(_.asChatResponseChunkChoiceDeltaToolCall),
+      reasoning_details = reasoning_details,
     )
   }
 }
@@ -250,7 +259,14 @@ class OpenAiApi(
     })
   }
 
+  private def defaultReasoningInput(body: Option[JsValue]): ReasoningInput = ReasoningInput.forOpenAiApi(providerName, baseUrl, body.flatMap(_.select("model").asOptString))
+
   override def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
+    callWithToolSupport(method, path, body, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter, acc, defaultReasoningInput(body))
+  }
+
+  // `reasoning`: how the provider takes back the reasoning that led to the tool calls
+  def callWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator, reasoning: ReasoningInput)(using ec: ExecutionContext): Future[Either[JsValue, OpenAiApiResponse]] = {
     // TODO: accumulate consumptions ???
     if (currentCallCounter >= maxCalls) {
       return call(method, path, body, acc)
@@ -264,12 +280,14 @@ class OpenAiApi(
             case Some(body) => {
               val messages = body.select("messages").asOpt[Seq[JsObject]].getOrElse(Seq.empty) //.map(v => v.flatMap(o => ChatMessage.format.reads(o).asOpt)).getOrElse(Seq.empty)
               val toolCalls = resp.toolCalls
+              // the reasoning that led to the calls goes back with them, the way the provider takes it
+              val reasoningFields = Reasoning.write(Json.obj(), resp.choices.find(_.message.toolCalls.nonEmpty).map(c => Reasoning.of(c.message.raw)).getOrElse(Seq.empty), reasoning)
               LlmFunctions.callToolsOpenai(toolCalls.map(tc => GenericApiResponseChoiceMessageToolCall(tc.raw)), mcpConnectors, providerName, attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
-                  val newMessages: Seq[JsValue] = messages ++ callResps
+                  val newMessages: Seq[JsValue] = messages ++ ReasoningToolLoop.openAi(callResps, reasoningFields)
                   val newBody = body.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
+                  callWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc, reasoning)
                 }
             }
           }
@@ -344,6 +362,11 @@ class OpenAiApi(
   }
 
   override def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {
+    streamWithToolSupport(method, path, body, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter, acc, defaultReasoningInput(body))
+  }
+
+  // `reasoning`: how the provider takes back the reasoning that led to the tool calls
+  def streamWithToolSupport(method: String, path: String, body: Option[JsValue], mcpConnectors: Seq[String], attrs: TypedMap, nameToFunction: Map[String, String], maxCalls: Int, currentCallCounter: Int, acc: UsageAccumulator, reasoning: ReasoningInput)(using ec: ExecutionContext): Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = {
     if (currentCallCounter >= maxCalls) {
       return stream(method, path, body, acc)
     }
@@ -363,7 +386,12 @@ class OpenAiApi(
           var isToolCallEnded = false
           var toolCalls: Seq[OpenAiChatResponseChunkChoiceDeltaToolCall] = Seq.empty
           var toolCallArgs: scala.collection.mutable.ArraySeq[String] = scala.collection.mutable.ArraySeq.empty
+          // the reasoning streamed before the calls, which goes back with them
+          val streamedReasoning = new ReasoningAccumulator()
           val newSource: Source[OpenAiChatResponseChunk, ?]  = res._1.flatMapConcat { chunk =>
+            if (!isToolCall) chunk.choices.headOption.flatMap(_.delta).foreach { delta =>
+              if (delta.reasoning_details.nonEmpty) streamedReasoning.add(delta.reasoning_details) else delta.reasoning.foreach(streamedReasoning.addText)
+            }
             if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
               isToolCall = true
               toolCalls = chunk.choices.head.delta.head.tool_calls
@@ -393,7 +421,7 @@ class OpenAiApi(
               val a: Future[Either[JsValue, (Source[OpenAiChatResponseChunk, ?], WSResponse)]] = LlmFunctions.callToolsOpenai(calls, mcpConnectors, providerName, attrs, nameToFunction)(using ec, env)
                 .flatMap { callResps =>
                   // val newMessages: Seq[JsValue] = messages.map(_.json) ++ callResps
-                  val newMessages: Seq[JsValue] = messages ++ callResps.map { resp =>
+                  val newMessages: Seq[JsValue] = messages ++ ReasoningToolLoop.openAi(callResps.map { resp =>
                     val tcs = resp.select("tool_calls").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
                     if (providerName.toLowerCase() == "ollama" && tcs.nonEmpty) { // TODO: check if it's always the case ?
                       val newTcs = tcs.map { call =>
@@ -423,9 +451,9 @@ class OpenAiApi(
                     } else {
                       resp
                     }
-                  }
+                  }, Reasoning.write(Json.obj(), streamedReasoning.result, reasoning))
                   val newBody = body.get.asObject ++ Json.obj("messages" -> JsArray(newMessages))
-                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc)
+                  streamWithToolSupport(method, path, newBody.some, mcpConnectors, attrs, nameToFunction, maxCalls, currentCallCounter + 1, acc, reasoning)
                 }
               Source.future(a).flatMapConcat {
                 case Left(err) => Source.failed(new Throwable(err.stringify))
@@ -468,6 +496,7 @@ object OpenAiChatClientOptions {
       mcpExcludeFunctions = json.select("mcp_exclude_functions").asOpt[Seq[String]].getOrElse(Seq.empty),
       maxFunctionCalls = json.select("max_function_calls").asOpt[Int].getOrElse(10),
       responses = json.select("responses").asOpt[Boolean].getOrElse(false),
+      reasoningInput = json.select("reasoning_input").asOptString.filter(_.trim.nonEmpty),
     )
   }
 }
@@ -501,6 +530,9 @@ case class OpenAiChatClientOptions(
   // opt-in native OpenAI Responses API (`POST /responses`). Off by default: most OpenAI-compatible
   // providers have no such endpoint, and the default degradation to /chat/completions is right for them.
   responses: Boolean = false,
+  // how the provider takes back the reasoning of the assistant messages (`reasoning_content`, `reasoning`,
+  // `reasoning_details`, `thinking`, `none`): known from its kind and its host when not set (see ReasoningInput)
+  reasoningInput: Option[String] = None,
 ) extends ChatOptions {
 
   lazy val wasmToolsNoInline: Seq[String] = wasmTools.filterNot(_.startsWith("__inline_"))
@@ -536,14 +568,22 @@ case class OpenAiChatClientOptions(
     "allow_config_override" -> allowConfigOverride,
     "max_function_calls" -> maxFunctionCalls,
     "responses" -> responses,
+    "reasoning_input" -> reasoningInput,
   )
 
-  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "a2a_connectors" - "search_engines" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions" - "responses")
+  def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "a2a_connectors" - "search_engines" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions" - "responses" - "reasoning_input")
 }
 
 class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String, modelsPath: String = "/models", completion: Boolean = true, accumulateStreamConsumptions: Boolean = false) extends ChatClient with NativeResponsesSupport {
 
   override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
+
+  /** how this provider takes back the reasoning of the assistant messages, for a call to `model` */
+  def reasoningInput(model: Option[String]): ReasoningInput = {
+    options.reasoningInput.flatMap(name => ReasoningInput.fromName(name, model))
+      .getOrElse(ReasoningInput.forOpenAiApi(providerName, api.baseUrl, model))
+  }
+
   override def supportsTools: Boolean = api.supportsTools
   override def supportsStreaming: Boolean = api.supportsStreaming
   override def supportsCompletion: Boolean = completion //api.supportsCompletion
@@ -564,6 +604,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     val finalModel = _mergedOptions.select("model").asOptString.orElse(computeModel(_mergedOptions)).getOrElse("--")
     val mergedOptions = (if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val hasToolsInRequest = body.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val reasoning = reasoningInput(finalModel.some)
     val acc = new UsageAccumulator()
     // tracks whether this stream already pushed its analytics slug, so that seeing the final state twice
     // updates the entry instead of duplicating it
@@ -572,9 +613,9 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
       attrs.put(com.cloud.apim.otoroshi.extensions.aigateway.entities.A2ASupport.A2AConnectorsKey -> options.a2aConnectors)
       val tools = LlmFunctions.tools(options.wasmTools, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
-      api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
+      api.streamWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, reasoning))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc, reasoning)
     } else {
-      api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), acc)
+      api.stream("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, reasoning))), acc)
     }
     callF.map {
       case Left(err) => err.left
@@ -674,13 +715,7 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
               choices = chunk.choices.map { choice =>
                 ChatResponseChunkChoice(
                   index = choice.index.map(_.toLong).getOrElse(0L),
-                  delta = ChatResponseChunkChoiceDelta(
-                    content = choice.delta.flatMap(_.content),
-                    reasoning = choice.delta.flatMap(_.reasoning),
-                    role = choice.delta.map(_.role).getOrElse("assistant"),
-                    refusal = choice.delta.flatMap(_.refusal),
-                    tool_calls = choice.delta.map(_.tool_calls.map(tc => tc.asChatResponseChunkChoiceDeltaToolCall)).getOrElse(Seq.empty),
-                  ),
+                  delta = choice.delta.map(_.asChatResponseChunkChoiceDelta).getOrElse(ChatResponseChunkChoiceDelta(None)),
                   finishReason = choice.finish_reason
                 )
               }
@@ -695,15 +730,16 @@ class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions,
     val finalModel = _mergedOptions.select("model").asOptString.orElse(computeModel(_mergedOptions)).getOrElse("--")
     val mergedOptions = (if (finalModel.contains("search-preview")) (_mergedOptions - "n" - "top_p" - "temperature" - "stop" - "presence_penalty" - "frequency_penalty" - "logprobs" - "top_logprobs" - "max_completion_tokens" - "logit_bias" - "seed") else _mergedOptions).applyOn(transformOpenAIInputBodyToProviderInputBody)
     val hasToolsInRequest = body.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val reasoning = reasoningInput(finalModel.some)
     val acc = new UsageAccumulator()
     val callF = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty || options.a2aConnectors.nonEmpty || options.searchEngines.nonEmpty)) {
       attrs.put(com.cloud.apim.otoroshi.extensions.aigateway.entities.A2ASupport.A2AConnectorsKey -> options.a2aConnectors)
       val tools = LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
       val nameToFunction = LlmFunctions.nameToFunction(options.wasmToolsNoInline)
       // println(s"tools added: ${tools.prettify}")
-      api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc)
+      api.callWithToolSupport("POST", "/chat/completions", Some(mergedOptions ++ tools ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, reasoning))), options.mcpConnectors, attrs, nameToFunction, options.maxFunctionCalls, 0, acc, reasoning)
     } else {
-      api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi))), acc)
+      api.call("POST", "/chat/completions", Some(mergedOptions ++ Json.obj("messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, reasoning))), acc)
     }
     callF.map {
       case Left(err) => err.left

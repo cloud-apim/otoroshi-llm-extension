@@ -242,9 +242,11 @@ class OpenAiResponsesConverterSuite extends munit.FunSuite {
     assertEquals(choice.at("message.tool_calls.0.id").asOptString, Some("call_1"))
     assertEquals(choice.at("message.tool_calls.0.function.name").asOptString, Some("get_weather"))
     assertEquals(choice.at("message.tool_calls.0.function.arguments").asOptString, Some("""{"a":1}"""))
-    assertEquals(choice.at("message.reasoning_content").asOptString, Some("thinking"))
     assertEquals(choice.at("message.annotations.0.type").asOptString, Some("url_citation"))
-    assertEquals(choice.at("message.reasoning_items.0.id").asOptString, Some("rs_1"))
+    // the reasoning item, as `reasoning_details` with its id: what the api needs back to keep on thinking
+    assertEquals(choice.at("message.reasoning_details.0.summary").asOptString, Some("thinking"))
+    assertEquals(choice.at("message.reasoning_details.0.id").asOptString, Some("rs_1"))
+    assertEquals(choice.at("message.reasoning_details.0.format").asOptString, Some("openai-responses-v1"))
   }
 
   test("outputToChatMessages maps a refusal and reports a plain stop otherwise") {
