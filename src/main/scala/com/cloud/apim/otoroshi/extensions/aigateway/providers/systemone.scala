@@ -23,6 +23,7 @@ case class SystemOneProviderDef(id: String, name: String, baseUrl: String, defau
 object SystemOneProviders {
 
   val Compatible = "systemone-compatible"
+  val TypeSafe = "typesafe"
   val Cloudflare = "cloudflare"
   val LlmEmulation = "llm-emulation"
 
@@ -36,7 +37,7 @@ object SystemOneProviders {
   // The servers speaking the System One api natively. The base url is the one a TypeSafe sdk is given, version
   // included: the client only appends `/systemone` to it.
   val all: Seq[SystemOneProviderDef] = Seq(
-    SystemOneProviderDef("typesafe",   "TypeSafe",          "https://api.typesafe.ai/v1",               "jev-latest"),
+    SystemOneProviderDef(TypeSafe,     "TypeSafe",          "https://api.typesafe.ai/v1",               "jev-latest"),
     SystemOneProviderDef("openrouter", "OpenRouter",        OpenRouterApi.baseUrl,                      "typesafe/jev-1.13"),
     SystemOneProviderDef("liquid",     "Liquid AI",         "https://api.liquid.ai/decisions/v1",       "d1:free"),
     SystemOneProviderDef("telnyx",     "Telnyx",            "https://api.telnyx.com/v2/ai/typesafe/v1", "telnyx/decision-flash"),
@@ -64,11 +65,13 @@ class SystemOneApi(
     hdrs.map { case (k, v) => k -> v.replace("{api_key}", token).replace("{token}", token) }.toSeq
   }
 
-  def call(url: String, body: JsValue)(using ec: ExecutionContext): Future[WSResponse] = {
+  // `extra` are the headers of the call (the danger zone of TypeSafe): they win over the ones of the entity
+  def call(url: String, body: JsValue, extra: Map[String, String] = Map.empty)(using ec: ExecutionContext): Future[WSResponse] = {
     ProviderHelpers.logCall(providerName, "POST", url, body.some)(using env)
+    val headers = resolvedHeaders.filterNot { case (name, _) => extra.keys.exists(_.equalsIgnoreCase(name)) } ++ extra.toSeq
     env.Ws
       .url(url)
-      .withHttpHeaders(resolvedHeaders ++ Seq("Accept" -> "application/json", "Content-Type" -> "application/json")*)
+      .withHttpHeaders(headers ++ Seq("Accept" -> "application/json", "Content-Type" -> "application/json")*)
       .withBody(body)
       .withMethod("POST")
       .withRequestTimeout(timeout)
@@ -110,8 +113,8 @@ object SystemOneResponses {
    * `{result, success, errors}` envelope: the answers are looked for in both places, so the server is read
    * right whichever way it answers.
    */
-  // the pictures of a state: Cloudflare takes them in an `images` array, the System One api has none
-  def hasImages(rawBody: JsObject): Boolean = rawBody.select("images").asOpt[JsArray].exists(_.value.nonEmpty)
+  // the pictures of a state, in the internal format (`DecisionImages`)
+  def hasImages(rawBody: JsObject): Boolean = DecisionImages.has(rawBody)
 
   def noImages(providerName: String): JsValue =
     DecisionErrors.gateway(400, "invalid_request_error", s"the decision models of ${providerName} do not look at images")
@@ -162,21 +165,47 @@ class SystemOneDecisionModelClient(
   options: DecisionModelClientOptions,
   // whether the `provider` object of the request (OpenRouter routing preferences) means something upstream
   forwardsRouting: Boolean,
-  // whether the server is shown the pictures of a state: a self hosted one may well be, the System One api is not
+  // whether the server is shown the pictures of a state as they are (`images`): a self hosted one may well be
   takesImages: Boolean = false,
+  // TypeSafe itself: it takes pictures as assets, and the danger zone headers its api asks for
+  typesafe: Boolean = false,
 ) extends DecisionModelClient {
 
   override def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]] = {
     opts.model.orElse(options.model) match {
       case None => SystemOneResponses.noModel.leftf
       // a decision made without looking at what it is about is worse than none
-      case Some(_) if !takesImages && SystemOneResponses.hasImages(rawBody) => SystemOneResponses.noImages(providerName).leftf
+      case Some(_) if !takesImages && !typesafe && SystemOneResponses.hasImages(rawBody) => SystemOneResponses.noImages(providerName).leftf
       case Some(model) =>
-        // the body goes through as the caller wrote it: the questions and their criteria are the provider's business
-        val body = (if (forwardsRouting) rawBody else rawBody - "provider") ++ Json.obj("model" -> model)
-        api.call(url, body).map(resp => SystemOneResponses.read(providerName, resp, model, env))
+        val written = if (typesafe) SystemOneDecisionModelClient.forTypeSafe(opts, rawBody) else Right(rawBody)
+        written match {
+          case Left(err) => err.leftf
+          case Right(written) =>
+            // the body goes through as the caller wrote it: the questions and their criteria are the provider's business
+            val body = (if (forwardsRouting) written else written - "provider") ++ Json.obj("model" -> model)
+            val headers = if (typesafe) SystemOneDecisionModelClient.typesafeHeaders(opts, body) else Map.empty[String, String]
+            api.call(url, body, headers).map(resp => SystemOneResponses.read(providerName, resp, model, env))
+        }
     }
   }
+}
+
+object SystemOneDecisionModelClient {
+
+  /**
+   * The body of a TypeSafe server: its pictures as assets. The ones the caller wrote as assets are given back as
+   * they were, references in place, the others are made assets of.
+   */
+  def forTypeSafe(opts: DecisionModelClientInputOptions, rawBody: JsObject): Either[JsValue, JsObject] = {
+    val written = opts.systemOne.map { original =>
+      (rawBody - "images") ++ JsObject(Seq("state", "questions", "assets", "images").flatMap(key => original.value.get(key).map(key -> _)))
+    }
+    DecisionImages.toAssets(written.getOrElse(rawBody))
+  }
+
+  // pictures and boxes are behind a header of their own: the gateway that wrote the assets asks for it
+  def typesafeHeaders(opts: DecisionModelClientInputOptions, body: JsObject): Map[String, String] =
+    opts.dangerZone ++ (if (DecisionImages.hasAssets(body) || DecisionImages.hasBox(body)) Map(DecisionImages.ImagesHeader -> "true") else Map.empty)
 }
 
 /**

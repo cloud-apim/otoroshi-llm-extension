@@ -103,7 +103,8 @@ object DecisionModel {
     SystemOneProviders.all.map { provDef =>
       provDef.id -> { (c: ClientContext) =>
         val url = s"${c.baseUrl.getOrElse(provDef.baseUrl).stripSuffix("/")}${c.path}"
-        new SystemOneDecisionModelClient(c.api(provDef.name), url, provDef.name, DecisionModelClientOptions.fromJson(c.options), SystemOneProviders.routingProviders.contains(provDef.id)).some
+        new SystemOneDecisionModelClient(c.api(provDef.name), url, provDef.name, DecisionModelClientOptions.fromJson(c.options),
+          forwardsRouting = SystemOneProviders.routingProviders.contains(provDef.id), typesafe = provDef.id == SystemOneProviders.TypeSafe).some
       }
     }.toMap
 

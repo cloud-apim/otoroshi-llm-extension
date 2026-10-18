@@ -150,6 +150,8 @@ class OpenAiDecisionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   lazy val e429 = decisionModel("e429", "typesafe", Json.obj("base_url" -> s"http://localhost:${errPort}/e429"), jev)
   lazy val cloudflare = decisionModel("workers", "cloudflare", Json.obj("base_url" -> s"http://localhost:${cloudflarePort}/client/v4", "account_id" -> "acc123"), "@cf/cloudflare/clef-flash")
   lazy val openai = decisionModel("luna", "openai", Json.obj("base_url" -> s"http://localhost:${openaiPort}/v1"), "gpt-6-luna")
+  // a relay of Jev, which is not known to take pictures
+  lazy val router = decisionModel("router", "openrouter", Json.obj("base_url" -> s"http://localhost:${okPort}/v1"), "typesafe/jev-1.13")
 
   def route(name: String, domain: String, plugin: Class[?], config: JsObject): NgRoute = NgRoute(
     location = EntityLocation.default,
@@ -168,7 +170,7 @@ class OpenAiDecisionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   )
 
   lazy val setup: Unit = {
-    val all = Seq(typesafe, e429, cloudflare, openai)
+    val all = Seq(typesafe, e429, cloudflare, openai, router)
     all.foreach(m => assert(client.forLlmEntity("decision-models").upsertEntity(m).awaitf(10.seconds).createdOrUpdated, s"${m.name} should be saved"))
     val routes = client.forEntity("proxy.otoroshi.io", "v1", "routes")
     routes.upsertEntity(route("openai decisions plugin", "openai-decisions.oto.tools", classOf[OpenAICompatDecisions], Json.obj("refs" -> Json.arr(typesafe.id)))).awaitf(10.seconds)
@@ -362,12 +364,16 @@ class OpenAiDecisionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(cloudflareBody.get().select("images").as[Seq[String]], Seq(image))
     assertEquals(cloudflareBody.get().select("state").asString, "Is the screen broken?")
     assertEquals(workers.json.select("model").asString, "clef-flash")
-    // Jev does not look at pictures: deciding without them would be deciding about something else
-    val before = okCalls.get()
+    // Jev takes them as assets of its own (suite `DecisionImagesSuite`)
     val jevResp = post(s"http://unified-openai-decisions.oto.tools:${port}/v1/decisions", withImage ++ Json.obj("model" -> s"${typesafe.id}###${jev}"))
-    assertEquals(jevResp.status, 400, s"status should be 400, got ${jevResp.body}")
-    assertEquals(jevResp.json.at("error.type").asString, "invalid_request_error")
-    assert(jevResp.json.at("error.message").asString.contains("images"), jevResp.body)
+    assertEquals(jevResp.status, 200, s"status should be 200, got ${jevResp.body}")
+    assertEquals(okBody.get().select("assets").as[JsObject].values.toSeq, Seq(Json.obj("type" -> "image", "data_base64" -> "aGV5", "format" -> "png")))
+    // a relay of Jev is not known to look at pictures: deciding without them would be deciding about something else
+    val before = okCalls.get()
+    val relayed = post(s"http://unified-openai-decisions.oto.tools:${port}/v1/decisions", withImage ++ Json.obj("model" -> s"${router.id}###typesafe/jev-1.13"))
+    assertEquals(relayed.status, 400, s"status should be 400, got ${relayed.body}")
+    assertEquals(relayed.json.at("error.type").asString, "invalid_request_error")
+    assert(relayed.json.at("error.message").asString.contains("images"), relayed.body)
     assertEquals(okCalls.get(), before, "the provider should not have been called")
   }
 

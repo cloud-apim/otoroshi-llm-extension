@@ -1618,6 +1618,11 @@ case class DecisionModelClientInputOptions(
   // the request in the decisions api of OpenAI, as the caller wrote it, when that is the api it was asked with:
   // an OpenAI server is given it as it is, the others read `state` and `questions`, made of it
   openai: Option[JsObject] = None,
+  // the System One request as the caller wrote it, when its pictures were TypeSafe assets, which the internal
+  // format (`images`) cannot place where the caller put them: a TypeSafe server is given them back as they were
+  systemOne: Option[JsObject] = None,
+  // the `TypeSafe-Danger-Zone-*` headers of the caller (long context, ...), which only a TypeSafe server is given
+  dangerZone: Map[String, String] = Map.empty,
 ) {
   def json: JsValue = DecisionModelClientInputOptions.format.writes(this)
 }
@@ -1649,6 +1654,8 @@ object DecisionRequests {
   val Choice = "choice"
   val Score = "score"
   val knownTypes: Set[String] = Set(Noul, Choice, Score)
+  // where something is in a picture (Jev 1.14): only TypeSafe answers it, the gateway leaves it to the provider
+  val Box = "box"
   // the answer to a question a model would not answer (OpenAI says so): the other questions are answered all the same
   val Refusal = "refusal"
 
@@ -1698,6 +1705,159 @@ object DecisionRequests {
       case _ => Seq.empty
     }
     typed ++ instructed ++ criteria
+  }
+}
+
+/**
+ * The pictures of a decision. Inside the gateway they are the `images` of the request, the way Cloudflare takes
+ * them and shows them to the model before the state: data urls, a `{content_type, base64}` object or a bare base64
+ * being read too. TypeSafe has its own way since Jev 1.14: `assets`, named by references the caller writes where
+ * each picture goes (state, instructions, criteria). A request with assets is read in the internal format, and a
+ * TypeSafe server is given them back as they were written (`DecisionModelClientInputOptions.systemOne`).
+ */
+object DecisionImages {
+
+  // what TypeSafe asks for any request showing it a picture or asking a box question
+  val ImagesHeader = "TypeSafe-Danger-Zone-Images"
+  val DangerZonePrefix = "typesafe-danger-zone-"
+
+  final case class Picture(mediaType: String, base64: String) {
+    def dataUrl: String = s"data:${mediaType};base64,${base64}"
+  }
+
+  // the formats of a TypeSafe asset, and their media types
+  private val formats: Map[String, String] = Map("png" -> "image/png", "jpg" -> "image/jpeg", "jpeg" -> "image/jpeg")
+
+  // the format of a TypeSafe asset of this media type
+  def formatOf(mediaType: String): Option[String] = mediaType.toLowerCase match {
+    case "image/png" => "png".some
+    case "image/jpeg" | "image/jpg" => "jpeg".some
+    case _ => None
+  }
+
+  private def invalid(message: String): JsValue = DecisionErrors.gateway(400, "invalid_request_error", message)
+
+  def has(body: JsObject): Boolean = body.select("images").asOpt[JsArray].exists(_.value.nonEmpty)
+
+  def hasAssets(body: JsObject): Boolean = body.select("assets").asOpt[JsObject].exists(_.value.nonEmpty)
+
+  def hasBox(body: JsObject): Boolean =
+    body.select("questions").asOpt[JsObject].exists(_.values.exists(_.select("type").asOptString.contains(DecisionRequests.Box)))
+
+  def dangerZoneOf(headers: Map[String, String]): Map[String, String] = headers.filter(_._1.toLowerCase.startsWith(DangerZonePrefix))
+
+  // what a picture is, from its first bytes: a bare base64 says nothing else
+  def mediaTypeOf(base64: String): Option[String] = {
+    if (base64.startsWith("iVBORw0KGgo")) "image/png".some
+    else if (base64.startsWith("/9j/")) "image/jpeg".some
+    else if (base64.startsWith("R0lGOD")) "image/gif".some
+    else if (base64.startsWith("UklGR")) "image/webp".some
+    else None
+  }
+
+  def pictureOf(value: JsValue): Option[Picture] = value match {
+    case JsString(url) if url.regionMatches(true, 0, "data:", 0, 5) =>
+      val comma = url.indexOf(',')
+      val meta = if (comma > 5) url.substring(5, comma).split(";").map(_.trim).toSeq else Seq.empty
+      if (comma < 0 || !meta.exists(_.equalsIgnoreCase("base64"))) None
+      else {
+        val base64 = url.substring(comma + 1).filterNot(_.isWhitespace)
+        meta.headOption.filter(_.contains("/")).map(_.toLowerCase).orElse(mediaTypeOf(base64)).map(Picture(_, base64))
+      }
+    case JsString(base64) => mediaTypeOf(base64).map(Picture(_, base64.filterNot(_.isWhitespace)))
+    case obj: JsObject => obj.select("base64").asOptString.map(_.filterNot(_.isWhitespace)).flatMap { base64 =>
+      obj.select("content_type").asOptString.map(_.toLowerCase).orElse(mediaTypeOf(base64)).map(Picture(_, base64))
+    }
+    case _ => None
+  }
+
+  /**
+   * The pictures of `body` the way TypeSafe takes them: assets, whose references go before the state, where the
+   * internal format shows them (the state becomes `[<reference>, ..., <state>]`).
+   */
+  def toAssets(body: JsObject): Either[JsValue, JsObject] = {
+    val images = body.select("images").asOpt[Seq[JsValue]].getOrElse(Seq.empty)
+    images.zipWithIndex.foldLeft[Either[JsValue, Seq[(String, JsValue)]]](Right(Seq.empty)) {
+      case (Right(acc), (image, idx)) => pictureOf(image).flatMap(p => formatOf(p.mediaType).map(f => (p, f))) match {
+        case None => Left(invalid(s"image ${idx + 1} is not a PNG or JPEG image, the only ones TypeSafe takes"))
+        case Some((picture, format)) =>
+          Right(acc :+ (java.util.UUID.randomUUID().toString -> Json.obj("type" -> "image", "data_base64" -> picture.base64, "format" -> format)))
+      }
+      case (left, _) => left
+    }.map {
+      case assets if assets.isEmpty => body - "images"
+      case assets =>
+        val state = body.select("state").asOpt[JsValue].getOrElse(JsNull)
+        val written = body.select("assets").asOpt[JsObject].getOrElse(Json.obj())
+        (body - "images") ++ Json.obj("state" -> JsArray(assets.map(a => JsString(a._1)) :+ state), "assets" -> (written ++ JsObject(assets)))
+    }
+  }
+
+  private def assetOf(ref: String, asset: JsValue): Either[JsValue, Picture] = asset match {
+    case obj: JsObject if obj.select("type").asOptString.exists(_ != "image") => Left(invalid(s"the asset '${ref}' is not an image"))
+    case obj: JsObject => (obj.select("data_base64").asOptString, obj.select("format").asOptString.map(_.toLowerCase)) match {
+      case (None, _) if obj.select("part").isDefined => Left(invalid(s"the part of the asset '${ref}' is not in the request"))
+      case (None, _) => Left(invalid(s"the asset '${ref}' has no 'data_base64'"))
+      case (Some(base64), Some(format)) => formats.get(format).map(Picture(_, base64)).toRight(invalid(s"the format of the asset '${ref}' is png, jpg or jpeg"))
+      case (Some(_), None) => Left(invalid(s"the asset '${ref}' has no 'format'"))
+    }
+    case _ => Left(invalid(s"the asset '${ref}' is not an object"))
+  }
+
+  private def strings(value: JsValue): Seq[String] = value match {
+    case JsString(str) => Seq(str)
+    case JsArray(values) => values.toSeq.flatMap(strings)
+    case JsObject(fields) => fields.values.toSeq.flatMap(strings)
+    case _ => Seq.empty
+  }
+
+  // a reference is the whole value or a piece of a text, read from the left, the longest first; keys are names, never pictures
+  private def replaced(value: JsValue, labels: Seq[(String, String)]): JsValue = value match {
+    case JsString(str) => labels.find(_._1 == str) match {
+      case Some((_, label)) => JsString(label)
+      case None =>
+        val sb = new StringBuilder
+        var i = 0
+        while (i < str.length) {
+          labels.find { case (ref, _) => str.startsWith(ref, i) } match {
+            case Some((ref, label)) => sb.append(label); i += ref.length
+            case None => sb.append(str.charAt(i)); i += 1
+          }
+        }
+        JsString(sb.toString)
+    }
+    case JsArray(values) => JsArray(values.map(replaced(_, labels)))
+    case JsObject(fields) => JsObject(fields.map { case (k, v) => k -> replaced(v, labels) })
+    case other => other
+  }
+
+  /**
+   * A request with TypeSafe assets in the internal format: the assets become `images`, in their order, and each
+   * reference, wherever the caller wrote it, the name of its picture (`[image 2]`). An asset nothing refers to is
+   * refused, as TypeSafe refuses it.
+   */
+  def fromAssets(body: JsObject): Either[JsValue, JsObject] = body.select("assets").asOpt[JsValue] match {
+    case None | Some(JsNull) => Right(body)
+    case Some(JsObject(fields)) if fields.isEmpty => Right(body - "assets")
+    case Some(JsObject(fields)) =>
+      val state = body.select("state").asOpt[JsValue].getOrElse(JsNull)
+      val questions = body.select("questions").asOpt[JsValue].getOrElse(JsNull)
+      val texts = strings(state) ++ strings(questions)
+      fields.toSeq.foldLeft[Either[JsValue, Seq[(String, Picture)]]](Right(Seq.empty)) {
+        case (Right(_), (ref, _)) if ref.trim.isEmpty => Left(invalid("a reference cannot be empty"))
+        case (Right(_), (ref, _)) if !texts.exists(_.contains(ref)) => Left(invalid(s"the asset '${ref}' is not referenced"))
+        case (Right(acc), (ref, asset)) => assetOf(ref, asset).map(p => acc :+ (ref -> p))
+        case (left, _) => left
+      }.map { pictures =>
+        val images = body.select("images").asOpt[Seq[JsValue]].getOrElse(Seq.empty)
+        val labels = pictures.zipWithIndex.map { case ((ref, _), i) => ref -> s"[image ${images.size + i + 1}]" }.sortBy(-_._1.length)
+        (body - "assets") ++ Json.obj(
+          "state" -> replaced(state, labels),
+          "questions" -> replaced(questions, labels),
+          "images" -> (images ++ pictures.map(p => JsString(p._2.dataUrl))),
+        )
+      }
+    case Some(_) => Left(invalid("'assets' must be an object"))
   }
 }
 
