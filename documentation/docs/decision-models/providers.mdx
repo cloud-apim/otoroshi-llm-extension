@@ -54,7 +54,9 @@ A decision model entity connects the gateway to one provider. Every provider bel
 
 ## TypeSafe
 
-The reference implementation of the System One API, with the Jev models. Pin a versioned model such as `jev-1.13.0` when your thresholds must stay stable, or follow `jev-latest`.
+The reference implementation of the System One API, with the Jev models. Pin a versioned model such as `jev-1.14.0` when your thresholds must stay stable, follow `jev-latest`, or try what comes next with `jev-preview`.
+
+Jev looks at pictures, PNG or JPEG, and `jev-1.14.0` answers `box` questions: where, in a picture, is what the instructions describe. Pictures reach Jev the way its API takes them, as `assets`, whatever API your applications call and however they wrote them (see [pictures](/docs/decision-models/plugins#pictures)). The gateway sends the `TypeSafe-Danger-Zone-Images` header TypeSafe asks for along with them, and passes on to TypeSafe the other `TypeSafe-Danger-Zone-*` headers your applications send to the System One API, such as the one of long context.
 
 ## OpenRouter
 

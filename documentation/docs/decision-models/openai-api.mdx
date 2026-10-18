@@ -157,7 +157,7 @@ The questions are the same as the ones of the [System One API](/docs/decision-mo
 
 ### Pictures
 
-`input_image` parts carry pictures as data URLs (`data:image/png;base64,...`). They are shown to the decision models that look at them, like the ones of OpenAI, Clef on Cloudflare Workers AI or a self-hosted server. A model that reads text only refuses the request with a `400`: a decision is never made on a part of what it is about.
+`input_image` parts carry pictures as data URLs (`data:image/png;base64,...`). They are shown to the decision models that look at them, like the ones of OpenAI, Jev of TypeSafe, Clef on Cloudflare Workers AI or a self-hosted server: each one receives them the way its API takes them. A model that reads text only refuses the request with a `400`: a decision is never made on a part of what it is about.
 
 ## Errors
 

@@ -92,6 +92,41 @@ print(result.choices["team"].choice)
 
 From there the provider is a gateway setting: [pin the model](/docs/decision-models/providers#pin-the-model) of the entity and the same code is served by Jev, Clef or a model you host.
 
+Request bodies are read the way TypeSafe reads them: plain JSON, compressed with `gzip` or `zstd` (the SDKs compress the bodies of 1 KiB or more), or `multipart/form-data`, the JSON in a part named `request` and each picture in a part of its own. Up to 32 MiB.
+
+## Pictures
+
+A request shows pictures to the decision model as `assets`, the way of the System One API: each one is declared once under a reference of your choice, and the reference is written where the picture belongs, in the `state`, in the `instructions` or in the `criteria` of a question.
+
+```js
+{
+  "state": {
+    "photo": "6f1c2a3e-photo",
+    "ticket": "My screen is broken since this morning"
+  },
+  "questions": {
+    "broken": {
+      "type": "noul",
+      "instructions": "Does `photo` show a broken screen?"
+    }
+  },
+  "assets": {
+    "6f1c2a3e-photo": {
+      "type": "image",
+      "data_base64": "iVBORw0KGgoAAAANSUhEUgAA...",
+      "format": "png"
+    }
+  }
+}
+```
+
+Every decision model that looks at pictures answers it:
+
+- **Jev** gets the request exactly as it was written, references in place
+- **Clef**, the **OpenAI** models and **self-hosted servers** get the pictures the way their own API takes them, each reference being replaced by the name of its picture (`[image 1]`) so the questions still say which picture they are about
+
+The `images` array of Cloudflare (data URLs, shown before the state) is read too, and reaches Jev as assets. A model that reads text only refuses pictures with a `400`: a decision is never made on a part of what it is about.
+
 ## Model routing
 
 When several decision models are configured in `refs`, the `model` field of the request picks one:
@@ -119,6 +154,8 @@ A client written for the System One API gets the errors it expects, with the sta
 | Status | When |
 |--------|------|
 | `422` | The request is not a System One request: no `state`, no `questions`, a question without `type` or `instructions`. Refused by the gateway, with the field at fault |
+| `400` | An asset nothing refers to, a picture that is not a PNG or a JPEG, a multipart part that is the picture of no asset, or pictures for a model that reads text only |
+| `413`, `415` | A body over 32 MiB, or compressed with something else than `gzip` or `zstd` |
 | `401`, `422`, `429`, `529`... | What the provider answered, body included. A `Retry-After` header is passed along, so SDK retries behave as they do against the provider |
 | `402` | A [budget](/docs/cost-optimizations/budgets) is exhausted |
 | `403` | The model is not one the consumer may use, or it has no known price while the decision model requires one |
