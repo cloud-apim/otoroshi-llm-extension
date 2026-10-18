@@ -1,11 +1,15 @@
 package otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins
 
-import org.apache.pekko.stream.Materializer
+import com.github.luben.zstd.ZstdInputStream
+import org.apache.pekko.http.scaladsl.model.{ContentType, HttpEntity, Multipart}
+import org.apache.pekko.http.scaladsl.unmarshalling.Unmarshal
+import org.apache.pekko.stream.{Materializer, StreamLimitReachedException}
+import org.apache.pekko.stream.scaladsl.Sink
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.ModelTarget
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.DecisionModel
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.OpenAiDecisions
-import com.cloud.apim.otoroshi.extensions.aigateway.{DecisionErrors, DecisionModelClientInputOptions, DecisionRequests, DecisionResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{DecisionErrors, DecisionImages, DecisionModelClientInputOptions, DecisionRequests, DecisionResponse}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
@@ -15,7 +19,11 @@ import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import play.api.libs.json.*
 import play.api.mvc.{Result, Results}
 
+import java.io.{ByteArrayInputStream, InputStream}
+import java.util.Base64
 import java.util.concurrent.TimeoutException
+import java.util.zip.GZIPInputStream
+import scala.concurrent.duration.DurationInt
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.{Failure, Success, Try}
 
@@ -101,6 +109,127 @@ object DecisionModelsResolver {
   }
 }
 
+/**
+ * The body of a System One request, as the TypeSafe api takes it: json, compressed or not (`gzip`, `zstd`, which
+ * its sdks use for any body of 1 KiB or more), or multipart, the pictures of the assets being parts of their own.
+ * It is read as json, the parts of the assets in their `data_base64`, the way the gateway sends them on.
+ */
+object SystemOneBodies {
+
+  // the limit of the TypeSafe api, compressed or not
+  val maxSize: Int = 32 * 1024 * 1024
+
+  // the part of a picture: an image, bytes, or nothing said (`text/plain` by default)
+  private val partTypes = Set("image/png", "image/jpeg", "image/jpg", "application/octet-stream", "text/plain")
+
+  val jsonInvalid: JsValue = DecisionErrors.invalid(Seq(Json.obj("type" -> "json_invalid", "loc" -> Seq("body"), "msg" -> "JSON decode error")))
+
+  private def tooLarge: JsValue = DecisionErrors.gateway(413, "invalid_request_error", "the request body is larger than 32 MiB")
+
+  private def invalid(message: String): JsValue = DecisionErrors.gateway(400, "invalid_request_error", message)
+
+  private def header(ctx: NgbBackendCallContext, name: String): Option[String] =
+    ctx.request.headers.collectFirst { case (k, v) if k.equalsIgnoreCase(name) => v }
+
+  private def inflated(stream: => InputStream): Either[JsValue, ByteString] = Try {
+    val in = stream
+    try {
+      val out = ByteString.newBuilder
+      val buffer = new Array[Byte](64 * 1024)
+      var total = 0L
+      var read = in.read(buffer)
+      while (read >= 0 && total <= maxSize) {
+        out.putBytes(buffer, 0, read)
+        total += read
+        read = in.read(buffer)
+      }
+      if (total > maxSize) Left(tooLarge) else Right(out.result())
+    } finally in.close()
+  } match {
+    case Success(result) => result
+    case Failure(e) => Left(invalid(s"the request body could not be decompressed: ${e.getMessage}"))
+  }
+
+  // the first bytes of a gzip and of a zstd frame
+  private val gzipMagic = ByteString(Array(0x1f, 0x8b).map(_.toByte))
+  private val zstdMagic = ByteString(Array(0x28, 0xb5, 0x2f, 0xfd).map(_.toByte))
+
+  /**
+   * The body as it was written. Only bytes that are compressed are decompressed: a body a proxy already
+   * decompressed, its header left behind, is read as the plain one it is.
+   */
+  def decoded(bytes: ByteString, encoding: Option[String]): Either[JsValue, ByteString] =
+    encoding.toSeq.flatMap(_.split(",")).map(_.trim.toLowerCase).filter(e => e.nonEmpty && e != "identity") match {
+      case Seq() => Right(bytes)
+      case Seq("gzip" | "x-gzip") if !bytes.startsWith(gzipMagic) => Right(bytes)
+      case Seq("gzip" | "x-gzip") => inflated(new GZIPInputStream(new ByteArrayInputStream(bytes.toArrayUnsafe())))
+      case Seq("zstd") if !bytes.startsWith(zstdMagic) => Right(bytes)
+      case Seq("zstd") => inflated(new ZstdInputStream(new ByteArrayInputStream(bytes.toArrayUnsafe())))
+      case Seq(other) => Left(DecisionErrors.gateway(415, "invalid_request_error", s"the content encoding '${other}' is not supported, gzip and zstd are"))
+      case _ => Left(DecisionErrors.gateway(415, "invalid_request_error", "a request body is compressed once at most"))
+    }
+
+  // the json of a multipart request (its `request` part), the assets given the bytes of their parts
+  def assembled(parts: Seq[(String, String, ByteString)]): Either[JsValue, JsValue] = {
+    if (parts.exists(_._1.trim.isEmpty) || parts.map(_._1).distinct.size != parts.size) Left(invalid("the parts of a multipart request have unique names"))
+    else parts.find(_._1 == "request") match {
+      case None => Left(invalid("the json of a multipart request is its part named 'request'"))
+      case Some((_, _, json)) => Try(Json.parse(json.utf8String)).toOption.flatMap(_.asOpt[JsObject]) match {
+        case None => Left(jsonInvalid)
+        case Some(request) =>
+          val files = parts.filterNot(_._1 == "request").map(p => p._1 -> p).toMap
+          val assets = request.select("assets").asOpt[JsObject].getOrElse(Json.obj())
+          val named = assets.fields.toSeq.flatMap { case (ref, asset) => asset.select("part").asOptString.map(ref -> _) }
+          val unused = files.keySet -- named.map(_._2)
+          if (named.map(_._2).distinct.size != named.size) Left(invalid("a part is the picture of one asset only"))
+          else if (unused.nonEmpty) Left(invalid(s"the part '${unused.head}' is the picture of no asset"))
+          else named.foldLeft[Either[JsValue, JsObject]](Right(assets)) {
+            case (Right(acc), (ref, name)) => files.get(name) match {
+              case None => Left(invalid(s"the part of the asset '${ref}' is not in the request"))
+              case Some((_, mediaType, _)) if !partTypes.contains(mediaType) => Left(invalid(s"the part '${name}' is not a PNG or JPEG image (${mediaType})"))
+              case Some((_, mediaType, data)) =>
+                val base64 = Base64.getEncoder.encodeToString(data.toArrayUnsafe())
+                val asset = acc.select(ref).as[JsObject]
+                val format = asset.select("format").asOptString
+                  .orElse(DecisionImages.formatOf(mediaType))
+                  .orElse(DecisionImages.mediaTypeOf(base64).flatMap(DecisionImages.formatOf))
+                Right(acc ++ Json.obj(ref -> ((asset - "part" - "format") ++ Json.obj("data_base64" -> base64) ++ format.map(f => Json.obj("format" -> f)).getOrElse(Json.obj()))))
+            }
+            case (left, _) => left
+          }.map(resolved => if (named.isEmpty) request else request ++ Json.obj("assets" -> resolved))
+      }
+    }
+  }
+
+  private def multipart(contentType: String, bytes: ByteString)(using ec: ExecutionContext, mat: Materializer): Future[Either[JsValue, JsValue]] =
+    ContentType.parse(contentType) match {
+      case Left(_) => Left(invalid("the content type of the multipart request cannot be read")).vfuture
+      case Right(ct) =>
+        Unmarshal(HttpEntity(ct, bytes)).to[Multipart.FormData]
+          .flatMap(_.parts.mapAsync(1)(part => part.entity.toStrict(30.seconds).map(e => (part.name, e.contentType.mediaType.value, e.data))).runWith(Sink.seq))
+          .map(assembled)
+          .recover { case e: Throwable => Left(invalid(s"the multipart request cannot be read: ${e.getMessage}")) }
+    }
+
+  def read(ctx: NgbBackendCallContext)(using ec: ExecutionContext, mat: Materializer): Future[Either[JsValue, JsValue]] = {
+    ctx.request.body
+      .limitWeighted(maxSize.toLong)(_.size.toLong)
+      .runFold(ByteString.empty)(_ ++ _)
+      .map(raw => decoded(raw, header(ctx, "Content-Encoding")))
+      .recover { case _: StreamLimitReachedException => Left(tooLarge) }
+      .flatMap {
+        case Left(err) => Left(err).vfuture
+        case Right(bytes) => header(ctx, "Content-Type").filter(_.toLowerCase.startsWith("multipart/")) match {
+          case Some(contentType) => multipart(contentType, bytes)
+          case None => Try(Json.parse(bytes.utf8String)) match {
+            case Failure(_) => Left(jsonInvalid).vfuture
+            case Success(json) => Right(json).vfuture
+          }
+        }
+      }
+  }
+}
+
 object DecisionModels {
 
   private def errorResult(status: Int, body: JsValue, retryAfter: Option[String] = None): Result = {
@@ -126,15 +255,25 @@ object DecisionModels {
   private def failed(err: JsValue): Either[NgProxyEngineError, BackendCallResponse] =
     Left(NgProxyEngineError.NgResultProxyEngineError(resultOf(err)))
 
-  /** A System One request, asked to the decision model of `refs` it is for. `openai` is the request it was made of, if any */
-  def decide(refs: Seq[String], body: JsObject, attrs: TypedMap, openai: Option[JsObject] = None)(using env: Env, ec: ExecutionContext): Future[Either[JsValue, DecisionResponse]] = {
+  /**
+   * A System One request, asked to the decision model of `refs` it is for. `openai` is the request it was made of,
+   * if any, `systemOne` the one written with TypeSafe assets, and `dangerZone` the TypeSafe headers of the caller.
+   */
+  def decide(
+    refs: Seq[String],
+    body: JsObject,
+    attrs: TypedMap,
+    openai: Option[JsObject] = None,
+    systemOne: Option[JsObject] = None,
+    dangerZone: Map[String, String] = Map.empty,
+  )(using env: Env, ec: ExecutionContext): Future[Either[JsValue, DecisionResponse]] = {
     val ext = env.adminExtensions.extension[AiExtension].get
     DecisionModelsResolver.resolve(body, refs.flatMap(ref => ext.states.decisionModel(ref))) match {
       case None => DecisionErrors.gateway(500, "api_error", "no decision model is served here").leftf
       case Some(resolved) => resolved.entity.getDecisionModelClient() match {
         case None => DecisionErrors.gateway(500, "api_error", "failed to create the client of the decision model").leftf
         case Some(client) =>
-          val options = DecisionModelClientInputOptions.format.reads(resolved.body).get.copy(openai = openai)
+          val options = DecisionModelClientInputOptions.format.reads(resolved.body).get.copy(openai = openai, systemOne = systemOne, dangerZone = dangerZone)
           client.decide(options, resolved.body, attrs).recover {
             // no answer at all, and nothing took over
             case e: TimeoutException => Left(DecisionErrors.gateway(504, "timeout_error", Option(e.getMessage).getOrElse("the decision model did not answer in time")))
@@ -145,20 +284,25 @@ object DecisionModels {
   }
 
   def handleRequest(config: DecisionModelsConfig, ctx: NgbBackendCallContext)(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
-    ctx.request.body.runFold(ByteString.empty)(_ ++ _).flatMap { bodyRaw =>
-      Try(Json.parse(bodyRaw.utf8String)) match {
-        case Failure(_) => failed(DecisionErrors.invalid(Seq(Json.obj("type" -> "json_invalid", "loc" -> Seq("body"), "msg" -> "JSON decode error")))).vfuture
-        case Success(json) =>
-          val issues = DecisionRequests.issues(json)
-          if (issues.nonEmpty) {
-            failed(DecisionErrors.invalid(issues)).vfuture
-          } else {
-            decide(config.refs, json.asObject, ctx.attrs).map {
-              case Left(err) => failed(err)
-              case Right(decision) => Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(decision.toJson(env))), None))
-            }
+    SystemOneBodies.read(ctx).flatMap {
+      case Left(err) => failed(err).vfuture
+      case Right(json) =>
+        val issues = DecisionRequests.issues(json)
+        if (issues.nonEmpty) {
+          failed(DecisionErrors.invalid(issues)).vfuture
+        } else {
+          val request = json.asObject
+          // read in the internal format, every provider takes it; TypeSafe is given the assets back as they were
+          DecisionImages.fromAssets(request) match {
+            case Left(err) => failed(err).vfuture
+            case Right(body) =>
+              val original = Some(request).filter(DecisionImages.hasAssets)
+              decide(config.refs, body, ctx.attrs, systemOne = original, dangerZone = DecisionImages.dangerZoneOf(ctx.request.headers)).map {
+                case Left(err) => failed(err)
+                case Right(decision) => Right(BackendCallResponse.apply(NgPluginHttpResponse.fromResult(Results.Ok(decision.toJson(env))), None))
+              }
           }
-      }
+        }
     }
   }
 }

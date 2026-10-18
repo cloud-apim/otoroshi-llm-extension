@@ -918,13 +918,16 @@ class DecisionCallFunction extends WorkflowFunction {
       case None => WorkflowError(s"decision model not found", Some(Json.obj("provider_id" -> provider)), None).leftf
       case Some(provider) => provider.getDecisionModelClient() match {
         case None => WorkflowError(s"unable to instantiate client for decision model", Some(Json.obj("provider_id" -> provider.id)), None).leftf
-        case Some(client) => {
-          val options = DecisionModelClientInputOptions.format.reads(payload).get
-          // its own attributes: what auditing this call writes must not leak into the next call of the workflow
-          client.decide(options, payload, ChildCall.attrs(wfr.attrs)).map {
-            case Left(error) => WorkflowError(s"error while calling decision model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
-            case Right(response) => response.toJson(env).right
-          }
+        // pictures written as TypeSafe assets are read as the System One api reads them
+        case Some(client) => DecisionImages.fromAssets(payload) match {
+          case Left(error) => WorkflowError(s"invalid decision payload", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).leftf
+          case Right(body) =>
+            val options = DecisionModelClientInputOptions.format.reads(body).get.copy(systemOne = Some(payload).filter(DecisionImages.hasAssets))
+            // its own attributes: what auditing this call writes must not leak into the next call of the workflow
+            client.decide(options, body, ChildCall.attrs(wfr.attrs)).map {
+              case Left(error) => WorkflowError(s"error while calling decision model", Some(error.asOpt[JsObject].getOrElse(Json.obj("error" -> error))), None).left
+              case Right(response) => response.toJson(env).right
+            }
         }
       }
     }

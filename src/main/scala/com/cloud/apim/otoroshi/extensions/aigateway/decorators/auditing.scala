@@ -980,10 +980,11 @@ object DecisionModelClientWithAuditing {
     new DecisionModelClientWithAuditing(tuple._1, tuple._2)
   }
 
-  // the pictures a state comes with (Cloudflare `images`) are megabytes of base64: an event says how many there were
-  def auditedBody(rawBody: JsObject): JsObject = rawBody.select("images").asOpt[JsArray] match {
-    case Some(images) => rawBody ++ Json.obj("images" -> s"${images.value.size} image(s)")
-    case None => rawBody
+  // the pictures a state comes with (`images`, TypeSafe `assets`) are megabytes of base64: an event says how many there were
+  def auditedBody(rawBody: JsObject): JsObject = rawBody.applyOnWithOpt(rawBody.select("images").asOpt[JsArray]) {
+    case (body, images) => body ++ Json.obj("images" -> s"${images.value.size} image(s)")
+  }.applyOnWithOpt(rawBody.select("assets").asOpt[JsObject]) {
+    case (body, assets) => body ++ Json.obj("assets" -> s"${assets.value.size} asset(s)")
   }
 }
 
