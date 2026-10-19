@@ -268,7 +268,7 @@
     },
     {
       "slug": "glm-5-3-flash",
-      "name": "GLM 5.3 Flash",
+      "name": "GLM-5.3-Flash",
       "creator": "zai",
       "coding_index": 71.5
     },
@@ -427,6 +427,12 @@
       "name": "Claude Sonnet 4.6 (Max)",
       "creator": "anthropic",
       "coding_index": 63
+    },
+    {
+      "slug": "agnes-2-5-pro-beta",
+      "name": "Agnes 2.5 Pro Beta",
+      "creator": "agnes-ai",
+      "coding_index": 62.3
     },
     {
       "slug": "motif-0714",
@@ -607,12 +613,6 @@
       "name": "Inkling Small",
       "creator": "thinking-machines",
       "coding_index": 52.9
-    },
-    {
-      "slug": "solar-pro4",
-      "name": "Solar Pro 4",
-      "creator": "upstage",
-      "coding_index": 52.7
     },
     {
       "slug": "minimax-m2-7",
