@@ -59,7 +59,7 @@ object PersistentMemory {
         location = otoroshi.models.EntityLocation.readFromKey(json),
         id = (json \ "id").as[String],
         name = (json \ "name").as[String],
-        description = (json \ "description").as[String],
+        description = (json \ "description").asOpt[String].getOrElse(""),
         metadata = (json \ "metadata").asOpt[Map[String, String]].getOrElse(Map.empty),
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         provider = (json \ "provider").as[String],

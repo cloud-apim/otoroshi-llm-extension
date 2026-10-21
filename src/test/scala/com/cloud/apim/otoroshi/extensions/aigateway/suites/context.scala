@@ -301,6 +301,57 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     await(2.seconds)
   }
 
+  test("a prompt context created without description is the default context of a provider") {
+    val contextId = UUID.randomUUID().toString
+    val created = client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").createRaw(Json.obj(
+      "id" -> contextId,
+      "name" -> "butler",
+      "pre_messages" -> Json.arr(Json.obj("role" -> "system", "content" -> "You are an english butler")),
+    )).awaitf(10.seconds)
+    assert(created.createdOrUpdated, s"the prompt context should be created: ${created.state}")
+
+    val llmProvider1 = ollamaProvider("ollama 1", "llama3.2", ollama1Port, Some(contextId), Seq.empty)
+    val route = NgRoute(
+      location = EntityLocation.default,
+      id = UUID.randomUUID().toString,
+      name = "test route",
+      description = "test route",
+      tags = Seq.empty,
+      metadata = Map.empty,
+      enabled = true,
+      debugFlow = false,
+      capture = false,
+      exportReporting = false,
+      frontend = NgFrontend.empty.copy(domains = Seq(NgDomainAndPath("test.oto.tools/chat"))),
+      backend = NgBackend.empty.copy(targets = Seq(NgTarget.default)),
+      plugins = NgPlugins(Seq(NgPluginInstance(
+        plugin = s"cp:${classOf[OpenAiCompatProxy].getName}",
+        config = NgPluginInstanceConfig(Json.obj(
+          "refs" -> Json.arr(llmProvider1.id)
+        ))
+      )))
+    )
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").upsertEntity(llmProvider1).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+
+    responses.clear()
+    client.call("POST", s"http://test.oto.tools:${port}/chat", Map.empty, Some(Json.obj(
+      "messages" -> Json.arr(Json.obj(
+        "role" -> "user",
+        "content" -> "How an llm works ?"
+      ))
+    ))).awaitf(30.seconds)
+    assertEquals(responses("latest").size, 2, "there should be 2 messages")
+    assert(responses("latest").head.stringify.contains("butler"), "there should be a butler")
+    responses.clear()
+
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").deleteEntity(llmProvider1).awaitf(10.seconds)
+    client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").deleteRaw(contextId).awaitf(10.seconds)
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+  }
+
   test("llm provider can have multiple possible contexts openai") {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     /////////                                  setup                                                         ///////////

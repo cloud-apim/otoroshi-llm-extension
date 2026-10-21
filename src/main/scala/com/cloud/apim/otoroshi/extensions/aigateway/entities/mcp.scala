@@ -838,7 +838,7 @@ object McpConnector {
         id = (json \ "id").as[String],
         enabled = (json \ "enabled").asOpt[Boolean].getOrElse(true),
         name = (json \ "name").as[String],
-        description = (json \ "description").as[String],
+        description = (json \ "description").asOpt[String].getOrElse(""),
         metadata = (json \ "metadata").asOpt[Map[String, String]].getOrElse(Map.empty),
         tags = (json \ "tags").asOpt[Seq[String]].getOrElse(Seq.empty[String]),
         pool = McpConnectorPoolSettings((json \ "pool" \ "size").asOpt[Int].filter(_ >= 0).getOrElse(1)),

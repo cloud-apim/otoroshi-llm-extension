@@ -200,26 +200,35 @@ When set to `false`, the options defined on the provider entity are always used,
 
 ## Context
 
-The `context` object lets you define system prompts that will be prepended to every request.
+The `context` object wraps every request with the messages of a [prompt context](/docs/prompt-engineering/prompt-context): its `pre_messages` (a system prompt for instance) come before the messages of the user, its `post_messages` after them. Both fields reference prompt context entities by their id, the text of the prompts lives in the prompt contexts.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `default` | string | — | Default system prompt applied to all requests |
-| `contexts` | array | `[]` | List of named context strings that users can select from |
+| `default` | string | — | Id of the prompt context applied when the request names none |
+| `contexts` | array | `[]` | Ids of the prompt contexts users can pick from |
 
 ```js
 {
   "context": {
-    "default": "You are a helpful assistant specialized in customer support.",
+    "default": "prompt-context_support",
     "contexts": [
-      "You are a technical expert.",
-      "You are a creative writer."
+      "prompt-context_tech-expert",
+      "prompt-context_creative-writer"
     ]
   }
 }
 ```
 
-When `contexts` are defined, users can select a context by including a `context_id` (index) in their request.
+Users pick one of the `contexts` with a `context` field in their request, holding the id or the name of the prompt context. A prompt context that is not listed in `contexts` is ignored.
+
+```js
+{
+  "context": "prompt-context_tech-expert",
+  "messages": [
+    { "role": "user", "content": "How do I rotate my api keys?" }
+  ]
+}
+```
 
 ## Model restrictions
 
@@ -444,7 +453,7 @@ These metadata overrides are useful when using OpenAI-compatible providers that 
   },
   "provider_fallback": "provider_mistral_backup",
   "context": {
-    "default": "You are a helpful assistant."
+    "default": "prompt-context_support"
   },
   "models": {
     "include": ["gpt-4o.*"],
