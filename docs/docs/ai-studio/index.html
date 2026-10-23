@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="generator" content="Docusaurus v3.10.2">
 <title data-rh="true">AI Studio | Otoroshi LLM Extension</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:image" content="https://cloud-apim.github.io/otoroshi-llm-extension/img/otoroshi-llm-extension-logo.png"><meta data-rh="true" name="twitter:image" content="https://cloud-apim.github.io/otoroshi-llm-extension/img/otoroshi-llm-extension-logo.png"><meta data-rh="true" property="og:url" content="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="current"><meta data-rh="true" name="docusaurus_tag" content="docs-default-current"><meta data-rh="true" name="docsearch:version" content="current"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-current"><meta data-rh="true" property="og:title" content="AI Studio | Otoroshi LLM Extension"><meta data-rh="true" name="description" content="A simple, OpenRouter-like console on top of the LLM extension - workspaces, bring your own keys, API keys, chat, activity, logs and budgets, all backed by regular Otoroshi entities."><meta data-rh="true" property="og:description" content="A simple, OpenRouter-like console on top of the LLM extension - workspaces, bring your own keys, API keys, chat, activity, logs and budgets, all backed by regular Otoroshi entities."><link data-rh="true" rel="icon" href="/otoroshi-llm-extension/img/otoroshi-llm-extension-logo-no-bg-no-text.png"><link data-rh="true" rel="canonical" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio"><link data-rh="true" rel="alternate" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio" hreflang="en"><link data-rh="true" rel="alternate" href="https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio" hreflang="x-default"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"AI Studio","item":"https://cloud-apim.github.io/otoroshi-llm-extension/docs/ai-studio"}]}</script><link rel="stylesheet" href="/otoroshi-llm-extension/assets/css/styles.33a15500.css">
-<script src="/otoroshi-llm-extension/assets/js/runtime~main.21c21ad3.js" defer="defer"></script>
-<script src="/otoroshi-llm-extension/assets/js/main.c29c7508.js" defer="defer"></script>
+<script src="/otoroshi-llm-extension/assets/js/runtime~main.bac3125a.js" defer="defer"></script>
+<script src="/otoroshi-llm-extension/assets/js/main.d56fba21.js" defer="defer"></script>
 </head>
 <body>
 <svg style="display: none;"><defs>
@@ -283,6 +283,24 @@ run. The <strong>Budget</strong> button of an API key creates a budget for that 
 <p><em>The budgets of the workspace with their live consumption.</em></p>
 <p><img decoding="async" loading="lazy" alt="Editing a budget: limits, period, action when exceeded and scope" src="/otoroshi-llm-extension/assets/images/ai-studio-budget-edit-a5a6013ac9df8129ce0ad308837eb0c1.png" width="1393" height="911" class="img_ev3q"></p>
 <p><em>A budget is always limited to its workspace, then to the whole workspace, one API key, or a custom scope.</em></p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="one-limit-for-each-person">One limit for each person<a href="#one-limit-for-each-person" class="hash-link" aria-label="Direct link to One limit for each person" title="Direct link to One limit for each person" translate="no">​</a></h4>
+<p>Turn on <strong>By consumer</strong> and the budget gives everyone their own limit: &quot;1,000 tokens per person per month&quot; for
+the whole team, with a single budget. A person&#x27;s chats in the studio and the calls of the API keys they own share
+their limit, whatever the application. <strong>View consumers</strong> shows who consumed what in the current window, with
+the extensions each one took, and lets you extend or reset the window of one person.</p>
+<p><img decoding="async" loading="lazy" alt="The consumers of a budget by consumer: their consumption of their own limit and their extensions" src="/otoroshi-llm-extension/assets/images/ai-studio-budget-consumers-18f7f6ff3b372621a28fe7555aa9b1c1.png" width="1045" height="409" class="img_ev3q"></p>
+<p><em>Each person with their own limit, the extensions they took, and what you can do for them.</em></p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="extensions-taken-by-the-people-themselves">Extensions, taken by the people themselves<a href="#extensions-taken-by-the-people-themselves" class="hash-link" aria-label="Direct link to Extensions, taken by the people themselves" title="Direct link to Extensions, taken by the people themselves" translate="no">​</a></h4>
+<p>Allow <strong>Extensions</strong> on a budget and set what one adds and how many can be taken in a window. When someone used
+their limit up and needs to finish their work, they take their extension themselves: right from the chat where
+their message was refused, or from their usage page. The limit grows for the current window only, and no more
+than you allowed.</p>
+<p><img decoding="async" loading="lazy" alt="A budget by consumer with an extension of 100 tokens, once per window" src="/otoroshi-llm-extension/assets/images/ai-studio-budget-by-consumer-76c6742bfde9c058d0d89ade4a12eadd.png" width="684" height="895" class="img_ev3q"></p>
+<p><em>Each person gets 1,000 tokens a month, and can extend them once by 100 tokens.</em></p>
+<p><img decoding="async" loading="lazy" alt="A message refused by a used up budget, with the extension offered in the chat" src="/otoroshi-llm-extension/assets/images/ai-studio-chat-budget-extension-3e2aea172e3fda3c128c7d1805f2b6cb.png" width="761" height="187" class="img_ev3q"></p>
+<p><em>The chat offers the extension where the message was refused: one click, then send the message again.</em></p>
+<p><img decoding="async" loading="lazy" alt="The budgets of a person on their usage page, with the extension they can still take" src="/otoroshi-llm-extension/assets/images/ai-studio-my-usage-extension-19a2e7be9cc88350d99fc2f68fcd7392.png" width="1009" height="134" class="img_ev3q"></p>
+<p><em>Everyone sees their own limit and the extensions they have left.</em></p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="follow-the-activity">Follow the activity<a href="#follow-the-activity" class="hash-link" aria-label="Direct link to Follow the activity" title="Direct link to Follow the activity" translate="no">​</a></h3>
 <p><strong>Activity</strong> shows spend, requests, tokens, cache hit rate and latency, compared to the previous
 period, with the usage broken down by model, by API key and by user. Filter the whole page on one API
