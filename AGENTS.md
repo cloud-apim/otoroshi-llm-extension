@@ -80,7 +80,7 @@ Test configuration uses `domains/providers.scala` for test data factories.
 
 ## Dependencies
 
-- **Otoroshi 18.0.0-preview2** - Base API gateway (provided dependency, brings Play 3 / Pekko)
+- **Otoroshi 18.0.0** - Base API gateway (provided dependency, brings Play 3 / Pekko)
 - **Langchain4j 1.15.0** - LLM integration library
 - **Jlama 0.8.4** - Local LLM inference
 - **Jackson 2.22.2** - JSON processing (kept in sync with otoroshi)
