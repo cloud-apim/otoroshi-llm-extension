@@ -92,17 +92,60 @@ curl https://api.domain.tld/v1/decisions \
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `input` | string or array | What the questions are about: a text, or `user` messages made of `input_text` and `input_image` parts |
-| `questions` | array | The questions. Each has a `type`, `instructions` and an optional `name` |
+| `input` | string or array | What the questions are about: a text, or a whole [conversation](#conversations-and-tool-calls) |
+| `questions` | array | 1 to 400 questions. Each has a `type`, `instructions` (a text, or `input_text`, `input_image` and `input_json` parts) and an optional `name` |
 | `model` | string | The model to ask. Optional: the model of the decision model entity is used when omitted |
+| `safety_identifier` | string | The end user of your application, given to OpenAI for its abuse monitoring |
+| `prompt_cache_key`, `prompt_cache_options` | string, object | The prompt cache settings of OpenAI, with the `prompt_cache_breakpoint` of the parts |
 
 | Type | Asks | With |
 |------|------|------|
 | `predicate` | How likely a statement about the input is true | Nothing more |
-| `choice` | One value among several | `choices`: each `value`, a string or a boolean, and an optional `description` |
+| `choice` | One value among several | `choices`: 2 to 255, each with a `value`, a string or a boolean, and an optional `description` |
 | `score` | A position on an ordered scale | `levels`: each `label` and an optional `description`, from the lowest to the highest |
 
-Every question is asked in one call, against the same input. The gateway checks a request before any provider is called, and answers what it cannot read with a `400` naming the parameter at fault.
+Every question is asked in one call, against the same input. The gateway checks a request with the rules of OpenAI before any provider is called, and answers what it cannot read with a `400` naming the parameter at fault.
+
+## Conversations and tool calls
+
+The `input` can be a whole conversation, written the way the Responses API writes it: messages of a `user` (`input_text`, `input_image` and `input_json` parts), of a `developer` or of the `system`, answers of the `assistant` (`output_text` and `refusal` parts), function calls and custom tool calls with their outputs. Ask whether an agent called the right tool, whether its answer holds to what the tool returned, whether the customer is satisfied, in one call:
+
+```js
+{
+  "model": "gpt-6-luna",
+  "input": [
+    { "role": "developer", "content": "You answer the customers of a shop." },
+    { "role": "user", "content": "Where is my order 42?" },
+    { "type": "function_call", "call_id": "c1", "name": "find_order", "arguments": "{\"id\":42}" },
+    { "type": "function_call_output", "call_id": "c1", "output": "delivered yesterday" },
+    { "role": "assistant", "content": "Your order is on its way." }
+  ],
+  "questions": [
+    { "type": "predicate", "name": "grounded", "instructions": "Does the last answer agree with what the tool returned?" }
+  ]
+}
+```
+
+Each output answers a call of the conversation, by its `call_id`. OpenAI receives the conversation as it was written. The other decision models read it as a transcript that names the author of each item:
+
+```text
+[developer]
+You answer the customers of a shop.
+
+[user]
+Where is my order 42?
+
+[function call find_order (c1)]
+{"id":42}
+
+[function call output (c1)]
+delivered yesterday
+
+[assistant]
+Your order is on its way.
+```
+
+An `input_json` part holds an object or an array of objects, read as the compact JSON it is, the way OpenAI reads it. Give it a record, an order, the result of a query, as they are.
 
 ## Response
 
@@ -157,7 +200,9 @@ The questions are the same as the ones of the [System One API](/docs/decision-mo
 
 ### Pictures
 
-`input_image` parts carry pictures as data URLs (`data:image/png;base64,...`). They are shown to the decision models that look at them, like the ones of OpenAI, Jev of TypeSafe, Clef on Cloudflare Workers AI or a self-hosted server: each one receives them the way its API takes them. A model that reads text only refuses the request with a `400`: a decision is never made on a part of what it is about.
+`input_image` parts carry pictures, in the conversation as in the instructions of a question, as data URLs (`data:image/png;base64,...`) or as the `https://` address they are at. They are shown to the decision models that look at them, like the ones of OpenAI, Jev of TypeSafe, Clef on Cloudflare Workers AI or a self-hosted server: each one receives them the way its API takes them, a picture of the instructions being named where it was (`[image 2]`) for the models shown every picture before the input.
+
+OpenAI fetches a picture from its address, and a self-hosted server receives the address as it is. Jev and Clef take the picture itself: give it to them as a data URL. A model that cannot see a picture refuses the request with a `400`: a decision is never made on a part of what it is about.
 
 ## Errors
 
@@ -176,7 +221,7 @@ Errors come in the format of the OpenAI API, so the SDKs raise the exception the
 
 | Status | When |
 |--------|------|
-| `400` | The request cannot be read, or it holds pictures for a model that reads text only |
+| `400` | The request cannot be read, or it holds pictures for a model that reads text only, or the address of a picture for a model that takes the picture itself |
 | `401`, `422`, `429`, `529`... | What the provider answered, said in the words of the OpenAI API. A `Retry-After` header is passed along |
 | `402` | A [budget](/docs/cost-optimizations/budgets) is exhausted |
 | `403` | The model is not one the consumer may use, or it has no known price while the decision model requires one |

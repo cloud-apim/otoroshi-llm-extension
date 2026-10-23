@@ -9,6 +9,7 @@ import com.cloud.apim.otoroshi.extensions.aigateway.{DecisionAnswers, DecisionEr
 import otoroshi.models.EntityLocation
 import otoroshi.next.models.*
 import otoroshi.utils.syntax.implicits.*
+import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{OpenAICompatDecisions, OpenAiCompatApi}
 import play.api.libs.json.*
 import reactor.core.publisher.Mono
@@ -214,6 +215,62 @@ class OpenAiDecisionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(other.select("model").asOpt[String], None, "no model: the one of the decision model")
     assertEquals(other.select("questions").as[JsObject].keys.toSeq, Seq("question_0", "same", "question_2"))
     assertEquals(read(Json.obj("input" -> "hello", "questions" -> Json.arr(Json.obj("type" -> "predicate", "instructions" -> "x")))).systemOne.select("state").asString, "hello")
+    // the json of a user is read as text, as OpenAI reads it, 32 levels deep at most
+    val deepest = (1 to 31).foldLeft[JsValue](Json.obj()) { case (acc, _) => Json.obj("a" -> acc) }
+    val json = read(Json.obj(
+      "input" -> Json.arr(Json.obj("role" -> "user", "content" -> Json.arr(
+        Json.obj("type" -> "input_text", "text" -> "Our orders:"),
+        Json.obj("type" -> "input_json", "data" -> Json.arr(Json.obj("id" -> 42, "status" -> "lost"))),
+        Json.obj("type" -> "input_json", "data" -> deepest),
+      ))),
+      "questions" -> Json.arr(Json.obj("type" -> "predicate", "instructions" -> "x")),
+    )).systemOne
+    assertEquals(json.select("state").asString, s"Our orders:\n\n[{\"id\":42,\"status\":\"lost\"}]\n\n${Json.stringify(deepest)}")
+    // a transcript says who wrote what, and where each picture was: the ones of the instructions come after
+    val transcript = read(Json.obj(
+      "input" -> Json.arr(
+        Json.obj("role" -> "developer", "content" -> "You sort the tickets of a shop."),
+        Json.obj("role" -> "user", "content" -> Json.arr(
+          Json.obj("type" -> "input_text", "text" -> "Where is my order?"),
+          Json.obj("type" -> "input_json", "data" -> Json.obj("order" -> 42)),
+        )),
+        Json.obj("type" -> "function_call", "call_id" -> "c1", "namespace" -> "shop", "name" -> "find_order", "arguments" -> "{\"id\":42}", "status" -> "completed"),
+        Json.obj("type" -> "function_call_output", "call_id" -> "c1", "output" -> Json.arr(
+          Json.obj("type" -> "input_text", "text" -> "lost"),
+          Json.obj("type" -> "input_image", "image_url" -> "https://shop.tld/42.png"),
+        )),
+        Json.obj("type" -> "custom_tool_call", "call_id" -> "c2", "name" -> "grep", "input" -> "order 42"),
+        Json.obj("type" -> "custom_tool_call_output", "call_id" -> "c2", "output" -> "no match"),
+        Json.obj("role" -> "assistant", "type" -> "message", "phase" -> "final_answer", "content" -> Json.arr(
+          Json.obj("type" -> "output_text", "text" -> "Let me check."),
+          Json.obj("type" -> "refusal", "refusal" -> "I cannot say more."),
+        )),
+        Json.obj("role" -> "system", "content" -> Json.arr(Json.obj("type" -> "input_text", "text" -> "Be brief.", "prompt_cache_breakpoint" -> Json.obj("mode" -> "explicit")))),
+      ),
+      "questions" -> Json.arr(
+        Json.obj("type" -> "predicate", "name" -> "lost", "instructions" -> "Is the order lost?"),
+        Json.obj("type" -> "predicate", "name" -> "same", "instructions" -> Json.arr(
+          Json.obj("type" -> "input_text", "text" -> "Is it this one?"),
+          Json.obj("type" -> "input_image", "image_url" -> image),
+          Json.obj("type" -> "input_json", "data" -> Json.obj("ref" -> "A-42")),
+        )),
+      ),
+      "prompt_cache_key" -> "shop",
+      "prompt_cache_options" -> Json.obj("mode" -> "explicit", "ttl" -> "30m"),
+    )).systemOne
+    assertEquals(transcript.select("state").asString, Seq(
+      "[developer]\nYou sort the tickets of a shop.",
+      "[user]\nWhere is my order?\n\n{\"order\":42}",
+      "[function call shop.find_order (c1)]\n{\"id\":42}",
+      "[function call output (c1)]\nlost\n\n[image 1]",
+      "[custom tool call grep (c2)]\norder 42",
+      "[custom tool call output (c2)]\nno match",
+      "[assistant]\nLet me check.\n\nI cannot say more.",
+      "[system]\nBe brief.",
+    ).mkString("\n\n"))
+    assertEquals(transcript.select("images").as[Seq[String]], Seq("https://shop.tld/42.png", image))
+    assertEquals(transcript.at("questions.lost.instructions").asString, "Is the order lost?")
+    assertEquals(transcript.at("questions.same.instructions").asString, "Is it this one?\n\n[image 2]\n\n{\"ref\":\"A-42\"}")
   }
 
   test("a request that cannot be read is refused, with the parameter at fault") {
@@ -227,11 +284,47 @@ class OpenAiDecisionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     def withQuestion(q: JsObject) = Json.obj("input" -> "x", "questions" -> Json.arr(question, q))
     assertEquals(param(JsString("nope")), None)
     assertEquals(param(Json.obj("questions" -> Json.arr(question))), Some("input"))
-    assertEquals(param(Json.obj("input" -> Json.arr(Json.obj("role" -> "assistant", "content" -> "x")), "questions" -> Json.arr(question))), Some("input[0].role"))
-    assertEquals(param(Json.obj("input" -> Json.arr(Json.obj("role" -> "user", "content" -> Json.arr(Json.obj("type" -> "input_image", "image_url" -> "https://x.com/a.png")))), "questions" -> Json.arr(question))), Some("input[0].content[0].image_url"))
-    assertEquals(param(Json.obj("input" -> Json.arr(Json.obj("role" -> "user", "content" -> Json.arr(Json.obj("type" -> "input_file", "file_id" -> "f")))), "questions" -> Json.arr(question))), Some("input[0].content[0].type"))
+    def withInput(items: JsValue*) = Json.obj("input" -> JsArray(items), "questions" -> Json.arr(question))
+    def user(parts: JsValue*) = Json.obj("role" -> "user", "content" -> JsArray(parts))
+    assertEquals(param(withInput(Json.obj("role" -> "tool", "content" -> "x"))), Some("input[0].role"))
+    assertEquals(param(withInput(Json.obj("type" -> "reasoning", "summary" -> Json.arr()))), Some("input[0].type"))
+    // a developer writes texts, an assistant answers texts or refusals
+    assertEquals(param(withInput(Json.obj("role" -> "system", "content" -> Json.arr(Json.obj("type" -> "input_image", "image_url" -> image))))), Some("input[0].content[0].type"))
+    assertEquals(param(withInput(Json.obj("role" -> "assistant", "content" -> Json.arr(Json.obj("type" -> "input_text", "text" -> "x"))))), Some("input[0].content[0].type"))
+    assertEquals(param(withInput(user(Json.obj("type" -> "input_file", "file_id" -> "f")))), Some("input[0].content[0].type"))
+    // a picture is a data url or an address, never a file
+    assertEquals(param(withInput(user(Json.obj("type" -> "input_image", "file_id" -> "f")))), Some("input[0].content[0].image_url"))
+    assertEquals(param(withInput(user(Json.obj("type" -> "input_image", "image_url" -> "file-123")))), Some("input[0].content[0].image_url"))
+    assertEquals(param(withInput(user(Json.obj("type" -> "input_image", "image_url" -> image, "detail" -> "medium")))), Some("input[0].content[0].detail"))
+    // json is an object or an array of objects, 32 levels deep at most
+    assertEquals(param(withInput(user(Json.obj("type" -> "input_json", "data" -> "x")))), Some("input[0].content[0].data"))
+    assertEquals(param(withInput(user(Json.obj("type" -> "input_json", "data" -> Json.arr(1, 2))))), Some("input[0].content[0].data"))
+    val tooDeep = (1 to 32).foldLeft[JsValue](Json.obj()) { case (acc, _) => Json.obj("a" -> acc) }
+    assertEquals(param(withInput(user(Json.obj("type" -> "input_json", "data" -> tooDeep)))), Some("input[0].content[0].data"))
+    // a tool output answers a tool call of the input, wherever it is and whatever its kind, in the words of OpenAI
+    assertEquals(param(withInput(Json.obj("type" -> "function_call_output", "call_id" -> "c1", "output" -> "x"))), Some("input[0].call_id"))
+    assertEquals(OpenAiDecisions.read(withInput(Json.obj("type" -> "function_call_output", "call_id" -> "c1", "output" -> "x"))).left.toOption.map(_.at("error.message").asString),
+      Some("A tool call output must reference a tool call in the input."))
+    read(withInput(
+      Json.obj("type" -> "function_call_output", "call_id" -> "c1", "output" -> "x"),
+      Json.obj("type" -> "custom_tool_call", "call_id" -> "c1", "name" -> "grep", "input" -> "x"),
+    ))
+    assertEquals(param(withInput(Json.obj("type" -> "function_call", "call_id" -> "c1", "name" -> "f"))), Some("input[0].arguments"))
+    assertEquals(param(withInput(Json.obj("type" -> "function_call", "call_id" -> "", "name" -> "f", "arguments" -> "{}"))), Some("input[0].call_id"))
     assertEquals(param(Json.obj("input" -> "x")), Some("questions"))
     assertEquals(param(Json.obj("input" -> "x", "questions" -> Json.arr())), Some("questions"))
+    assertEquals(param(Json.obj("input" -> "x", "questions" -> JsArray((0 to OpenAiDecisions.MaxQuestions).map(_ => question)))), Some("questions"))
+    assertEquals(param(withQuestion(Json.obj("type" -> "predicate", "name" -> 1, "instructions" -> "x"))), Some("questions[1].name"))
+    assertEquals(param(withQuestion(Json.obj("type" -> "predicate", "instructions" -> Json.arr(Json.obj("type" -> "output_text", "text" -> "x"))))), Some("questions[1].instructions[0].type"))
+    // two choices at least, said the way OpenAI says it
+    assertEquals(param(withQuestion(Json.obj("type" -> "choice", "instructions" -> "x", "choices" -> Json.arr(Json.obj("value" -> "a"))))), Some("questions[1].choices"))
+    def errorOf(body: JsValue): Option[(String, String)] = OpenAiDecisions.read(body).left.toOption.map(e => (e.at("error.message").asString, e.at("error.code").asString))
+    assertEquals(errorOf(withQuestion(Json.obj("type" -> "choice", "instructions" -> "x", "choices" -> Json.arr(Json.obj("value" -> "a"))))), Some((
+      "Invalid 'questions[1].choices': array too short. Expected an array with minimum length 2, but got an array with length 1 instead.", "array_below_min_length")))
+    assertEquals(errorOf(Json.obj("input" -> "x", "questions" -> Json.arr())), Some((
+      "Invalid 'questions': empty array. Expected an array with minimum length 1, but got an empty array instead.", "empty_array")))
+    assertEquals(errorOf(Json.obj("input" -> "x", "questions" -> JsArray((0 to OpenAiDecisions.MaxQuestions).map(_ => question)))), Some((
+      "Invalid 'questions': array too long. Expected an array with maximum length 400, but got an array with length 401 instead.", "array_above_max_length")))
     assertEquals(param(Json.obj("input" -> "x", "questions" -> Json.obj("q" -> question))), Some("questions"))
     assertEquals(param(withQuestion(Json.obj("type" -> "rank", "instructions" -> "x"))), Some("questions[1].type"))
     assertEquals(param(withQuestion(Json.obj("type" -> "predicate"))), Some("questions[1].instructions"))
@@ -375,6 +468,20 @@ class OpenAiDecisionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(relayed.json.at("error.type").asString, "invalid_request_error")
     assert(relayed.json.at("error.message").asString.contains("images"), relayed.body)
     assertEquals(okCalls.get(), before, "the provider should not have been called")
+    // a picture given by its address is fetched by OpenAI only: Workers AI and Jev take the picture itself
+    val linked = request ++ Json.obj("input" -> Json.arr(Json.obj("role" -> "user", "content" -> Json.arr(
+      Json.obj("type" -> "input_text", "text" -> "Is the screen broken?"),
+      Json.obj("type" -> "input_image", "image_url" -> "https://shop.tld/screen.png"),
+    ))))
+    cloudflareBody.set(JsNull)
+    Seq(s"${cloudflare.id}###_default", s"${typesafe.id}###${jev}").foreach { model =>
+      val refused = post(s"http://unified-openai-decisions.oto.tools:${port}/v1/decisions", linked ++ Json.obj("model" -> model))
+      assertEquals(refused.status, 400, s"status should be 400, got ${refused.body}")
+      assertEquals(refused.json.at("error.type").asString, "invalid_request_error")
+      assert(refused.json.at("error.message").asString.contains("data URL"), refused.body)
+    }
+    assertEquals(okCalls.get(), before, "Jev should not have been called")
+    assertEquals(cloudflareBody.get(), JsNull, "Workers AI should not have been called")
   }
 
   test("a System One request is asked to OpenAI in its own words") {
@@ -385,8 +492,10 @@ class OpenAiDecisionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     )
     val state = Json.obj("ticket" -> "The checkout fails")
     val body = OpenAiDecisionRequests.bodyOf(DecisionModelClientInputOptions(state, questions), Json.obj()).toOption.get
-    // a structured state is read as the json it is
-    assertEquals(body.select("input").asString, Json.prettyPrint(state))
+    // a structured state is given as the json it is, a state OpenAI does not take as json as text
+    assertEquals(body.select("input").as[JsValue], Json.arr(Json.obj("role" -> "user", "content" -> Json.arr(Json.obj("type" -> "input_json", "data" -> state)))))
+    val listed = OpenAiDecisionRequests.bodyOf(DecisionModelClientInputOptions(Json.arr("a", "b"), questions), Json.obj()).toOption.get
+    assertEquals(listed.select("input").asString, Json.prettyPrint(Json.arr("a", "b")))
     assertEquals(body.select("questions").as[Seq[JsObject]], Seq(
       Json.obj("type" -> "predicate", "name" -> "urgent", "instructions" -> "Is it urgent?\nYes means: someone is blocked\nNo means: it can wait"),
       Json.obj("type" -> "choice", "name" -> "team", "instructions" -> "Which team?", "choices" -> Json.arr(
@@ -395,13 +504,16 @@ class OpenAiDecisionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
       )),
       Json.obj("type" -> "score", "name" -> "severity", "instructions" -> "How severe?", "levels" -> Json.arr(Json.obj("label" -> "Minor"), Json.obj("label" -> "Blocking"))),
     ))
-    // the pictures of a state go before it, data urls or the objects Cloudflare also takes
-    val withImages = OpenAiDecisionRequests.bodyOf(DecisionModelClientInputOptions(JsString("Is it broken?"), questions), Json.obj("images" -> Json.arr(image, Json.obj("content_type" -> "image/jpeg", "base64" -> "aGV5")))).toOption.get
+    // the pictures of a state go before it, data urls, the objects Cloudflare also takes or the addresses OpenAI fetches
+    val withImages = OpenAiDecisionRequests.bodyOf(DecisionModelClientInputOptions(JsString("Is it broken?"), questions), Json.obj("images" -> Json.arr(image, Json.obj("content_type" -> "image/jpeg", "base64" -> "aGV5"), "https://shop.tld/a.png"))).toOption.get
     assertEquals(withImages.select("input").as[JsValue], Json.arr(Json.obj("role" -> "user", "content" -> Json.arr(
       Json.obj("type" -> "input_image", "image_url" -> image),
       Json.obj("type" -> "input_image", "image_url" -> "data:image/jpeg;base64,aGV5"),
+      Json.obj("type" -> "input_image", "image_url" -> "https://shop.tld/a.png"),
       Json.obj("type" -> "input_text", "text" -> "Is it broken?"),
     ))))
+    val pictured = OpenAiDecisionRequests.bodyOf(DecisionModelClientInputOptions(state, questions), Json.obj("images" -> Json.arr(image))).toOption.get
+    assertEquals(pictured.at("input.0.content").as[Seq[JsObject]].map(_.select("type").asString), Seq("input_image", "input_json"))
     // OpenAI answers three types of questions
     val rank = OpenAiDecisionRequests.bodyOf(DecisionModelClientInputOptions(state, Json.obj("order" -> Json.obj("type" -> "rank", "instructions" -> "x"))), Json.obj())
     assertEquals(rank.left.toOption.flatMap(e => DecisionErrors.classify(e) match {
@@ -441,6 +553,10 @@ class OpenAiDecisionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(resp.json.at("answers.refuse").as[JsObject], Json.obj("type" -> "refusal"))
     // 350 input tokens of gpt-6-luna, its output being always empty
     assertEquals(resp.json.at("costs.total_cost").asOpt[BigDecimal], (BigDecimal(inputTokens) * BigDecimal("0.0000001")).some, s"unexpected costs: ${resp.body}")
+    // at the prices of its decisions api, where an output costs nothing, unlike a chat one
+    val costs = otoroshi.env.adminExtensions.extension[AiExtension].get.costsTracking
+    assertEquals(costs.computeCosts("openai", "gpt-6-luna", 1000L, 1000L, 0L, api = "decisions".some).toOption.map(c => (c.inputCost, c.outputCost)), Some((BigDecimal("0.0001"), BigDecimal(0))))
+    assertEquals(costs.computeCosts("openai", "gpt-6-luna", 1000L, 1000L, 0L).toOption.map(_.outputCost), Some(BigDecimal("0.0005")))
   }
 
   test("a request in the OpenAI format reaches a decision model of OpenAI as it was written") {
@@ -448,17 +564,31 @@ class OpenAiDecisionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val asked = request ++ Json.obj(
       "model" -> s"${openai.id}###_default",
       "safety_identifier" -> "user-42",
-      "input" -> Json.arr(Json.obj("role" -> "user", "content" -> Json.arr(
-        Json.obj("type" -> "input_text", "text" -> "Is the screen broken?"),
-        Json.obj("type" -> "input_image", "image_url" -> image, "detail" -> "high"),
+      "prompt_cache_key" -> "shop",
+      "prompt_cache_options" -> Json.obj("mode" -> "explicit", "ttl" -> "30m"),
+      "input" -> Json.arr(
+        Json.obj("role" -> "developer", "content" -> Json.arr(Json.obj("type" -> "input_text", "text" -> "You sort the tickets of a shop.", "prompt_cache_breakpoint" -> Json.obj("mode" -> "explicit")))),
+        Json.obj("role" -> "user", "content" -> Json.arr(
+          Json.obj("type" -> "input_text", "text" -> "Is the screen broken?"),
+          Json.obj("type" -> "input_image", "image_url" -> image, "detail" -> "high"),
+          Json.obj("type" -> "input_image", "image_url" -> "https://shop.tld/screen.png"),
+        )),
+        Json.obj("type" -> "function_call", "call_id" -> "c1", "name" -> "find_order", "arguments" -> "{\"id\":42}"),
+        Json.obj("type" -> "function_call_output", "call_id" -> "c1", "output" -> "delivered yesterday"),
+      ),
+      "questions" -> ((request.select("questions").as[JsArray]) :+ Json.obj("type" -> "predicate", "name" -> "refuse", "instructions" -> Json.arr(
+        Json.obj("type" -> "input_text", "text" -> "Something it will not answer about"),
+        Json.obj("type" -> "input_json", "data" -> Json.obj("order" -> 42)),
       ))),
-      "questions" -> ((request.select("questions").as[JsArray]) :+ Json.obj("type" -> "predicate", "name" -> "refuse", "instructions" -> "Something it will not answer")),
     )
     val resp = post(s"http://unified-openai-decisions.oto.tools:${port}/v1/decisions", asked)
     assertEquals(resp.status, 200, s"status should be 200, got ${resp.body}")
-    // what only OpenAI knows of goes along: the end user, the detail of a picture, a question without a name
+    // what only OpenAI knows of goes along: the end user, the prompt cache, the detail and the address of a
+    // picture, the authors of a transcript, the parts of the instructions, a question without a name
     assertEquals(openaiBody.get().select("safety_identifier").asString, "user-42")
-    assertEquals(openaiBody.get().at("input.0.content.1.detail").asString, "high")
+    assertEquals(openaiBody.get().select("prompt_cache_key").asString, "shop")
+    assertEquals(openaiBody.get().select("prompt_cache_options").as[JsObject], Json.obj("mode" -> "explicit", "ttl" -> "30m"))
+    assertEquals(openaiBody.get().select("input").as[JsArray], asked.select("input").as[JsArray])
     assertEquals(openaiBody.get().select("questions").as[JsArray], asked.select("questions").as[JsArray])
     assertEquals(openaiBody.get().select("model").asString, "gpt-6-luna")
     assertEquals(openaiBody.get().select("provider").asOpt[JsValue], None)

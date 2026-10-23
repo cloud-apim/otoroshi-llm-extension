@@ -1739,6 +1739,14 @@ object DecisionImages {
 
   def has(body: JsObject): Boolean = body.select("images").asOpt[JsArray].exists(_.value.nonEmpty)
 
+  // a picture given by the address it is at: the gateway never fetches one, OpenAI does, Cloudflare and TypeSafe do not
+  def isLink(url: String): Boolean = url.regionMatches(true, 0, "http://", 0, 7) || url.regionMatches(true, 0, "https://", 0, 8)
+
+  def hasLinks(body: JsObject): Boolean = body.select("images").asOpt[Seq[JsValue]].exists(_.exists {
+    case JsString(url) => isLink(url)
+    case _ => false
+  })
+
   def hasAssets(body: JsObject): Boolean = body.select("assets").asOpt[JsObject].exists(_.value.nonEmpty)
 
   def hasBox(body: JsObject): Boolean =
@@ -1778,6 +1786,7 @@ object DecisionImages {
   def toAssets(body: JsObject): Either[JsValue, JsObject] = {
     val images = body.select("images").asOpt[Seq[JsValue]].getOrElse(Seq.empty)
     images.zipWithIndex.foldLeft[Either[JsValue, Seq[(String, JsValue)]]](Right(Seq.empty)) {
+      case (Right(_), (JsString(url), idx)) if isLink(url) => Left(invalid(s"image ${idx + 1} is a link: TypeSafe takes the picture itself, as a data URL"))
       case (Right(acc), (image, idx)) => pictureOf(image).flatMap(p => formatOf(p.mediaType).map(f => (p, f))) match {
         case None => Left(invalid(s"image ${idx + 1} is not a PNG or JPEG image, the only ones TypeSafe takes"))
         case Some((picture, format)) =>

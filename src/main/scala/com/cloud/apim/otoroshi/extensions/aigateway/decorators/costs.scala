@@ -112,6 +112,15 @@ case class CostModel(name: String, raw: JsValue) {
       name
     }
   }
+  // the prices of an api billed apart (`input_cost_per_token_decisions` for the decisions api of OpenAI), in place
+  // of the usual ones it has a price of its own for
+  def pricedFor(api: String): CostModel = raw match {
+    case obj: JsObject =>
+      val suffix = s"_${api}"
+      val own = obj.fields.collect { case (key, value) if key.contains("cost") && key.endsWith(suffix) => key.stripSuffix(suffix) -> value }
+      if (own.isEmpty) this else copy(raw = obj ++ JsObject(own))
+    case _ => this
+  }
   lazy val mode = raw.select("mode").asOptString.getOrElse("completion")
   lazy val deprecation_date = raw.select("deprecation_date").asOpt[String]
   lazy val supports_function_calling = raw.select("supports_function_calling").asOptBoolean.getOrElse(false)
@@ -373,8 +382,9 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
     inputTokens: Long,
     outputTokens: Long,
     reasoningTokens: Long,
+    api: Option[String] = None,
   ): Either[String, CostsOutput] = {
-    lookupModel(provider, modelName) match {
+    lookupModel(provider, modelName).map(model => api.map(model.pricedFor).getOrElse(model)) match {
       case None =>
         if (extension.logger.isWarnEnabled) extension.logger.warn(s"unable to find costs for model: '${provider}-${modelName}'")
         Left("model not found")
@@ -949,7 +959,7 @@ class DecisionModelClientWithCostsTracking(originalModel: DecisionModel, val dec
             provider <- DecisionCosts.pricingProvider(originalModel)
             // looked up first, so that a model without a price is not a warning on every call
             name     <- DecisionCosts.models(originalModel, Some(resp.model), opts.model).find(n => ext.costsTracking.canHandle(provider, n))
-            computed <- ext.costsTracking.computeCosts(provider, name, usage.input, usage.output, 0L).toOption
+            computed <- ext.costsTracking.computeCosts(provider, name, usage.input, usage.output, 0L, api = "decisions".some).toOption
           } yield computed
         }
         // stored where auditing reads it, so budgets, audit events and metrics all pick it up

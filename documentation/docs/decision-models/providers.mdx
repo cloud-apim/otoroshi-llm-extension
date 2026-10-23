@@ -88,7 +88,7 @@ The model is named the way Workers AI names it (`@cf/cloudflare/clef`, `@cf/clou
 
 ## OpenAI
 
-The decision models of OpenAI, on its [decisions API](https://developers.openai.com/api/reference/resources/decisions/methods/create). They answer the System One requests of your applications like any other provider: the gateway asks the questions in the format of OpenAI and gives the answers back in the one they were asked with. A request written with the OpenAI SDKs on the [OpenAI decisions API](/docs/decision-models/openai-api) of the gateway reaches OpenAI exactly as it was written, end user identifier and picture details included.
+The decision models of OpenAI, on its [decisions API](https://developers.openai.com/api/reference/resources/decisions/methods/create). They answer the System One requests of your applications like any other provider: the gateway asks the questions in the format of OpenAI and gives the answers back in the one they were asked with. A request written with the OpenAI SDKs on the [OpenAI decisions API](/docs/decision-models/openai-api) of the gateway reaches OpenAI exactly as it was written, conversations, end user identifier, prompt cache settings and picture details included. A structured state of a System One request is given to OpenAI as the JSON it is, and every decision is billed at the prices of the OpenAI decisions API.
 
 ```js
 {

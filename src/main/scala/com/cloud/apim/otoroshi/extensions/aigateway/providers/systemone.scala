@@ -119,6 +119,9 @@ object SystemOneResponses {
   def noImages(providerName: String): JsValue =
     DecisionErrors.gateway(400, "invalid_request_error", s"the decision models of ${providerName} do not look at images")
 
+  def noLinks(providerName: String): JsValue =
+    DecisionErrors.gateway(400, "invalid_request_error", s"the decision models of ${providerName} take the pictures themselves, as data URLs, not links to them")
+
   def read(providerName: String, resp: WSResponse, requestedModel: String, env: Env): Either[JsValue, DecisionResponse] = {
     if (env.isDev || AiExtension.logger.isDebugEnabled) {
       val msg = s"provider response '${providerName}' - ${resp.status} - ${resp.body}"
@@ -222,6 +225,8 @@ class CloudflareDecisionModelClient(
   override def decide(opts: DecisionModelClientInputOptions, rawBody: JsObject, attrs: TypedMap)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, DecisionResponse]] = {
     opts.model.orElse(options.model) match {
       case None => SystemOneResponses.noModel.leftf
+      // Workers AI does not fetch a picture
+      case Some(_) if DecisionImages.hasLinks(rawBody) => SystemOneResponses.noLinks("Cloudflare").leftf
       case Some(model) =>
         val body = (rawBody - "provider") ++ Json.obj("model" -> model.split("/").last)
         api.call(s"${baseUrl}/accounts/${accountId}/ai/run/${model}", body).map(resp => SystemOneResponses.read("Cloudflare", resp, model, env))

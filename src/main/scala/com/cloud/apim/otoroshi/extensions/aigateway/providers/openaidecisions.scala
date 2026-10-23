@@ -7,6 +7,7 @@ import otoroshi.utils.syntax.implicits.*
 import play.api.libs.json.*
 import play.api.libs.ws.WSResponse
 
+import java.nio.charset.StandardCharsets
 import scala.concurrent.{ExecutionContext, Future}
 import scala.util.Try
 
@@ -30,6 +31,25 @@ object OpenAiDecisions {
   val Refusal = DecisionRequests.Refusal
   val knownTypes: Seq[String] = Seq(Predicate, Choice, Score)
 
+  // the limits OpenAI sets on the questions of a request
+  val MaxQuestions = 400
+  val MinChoices = 2
+  val MaxChoices = 255
+
+  // the items of an input, and the parts of their contents
+  val Message = "message"
+  val FunctionCall = "function_call"
+  val FunctionCallOutput = "function_call_output"
+  val CustomToolCall = "custom_tool_call"
+  val CustomToolCallOutput = "custom_tool_call_output"
+  val itemTypes: Seq[String] = Seq(Message, FunctionCall, FunctionCallOutput, CustomToolCall, CustomToolCallOutput)
+  val roles: Seq[String] = Seq("user", "developer", "system", "assistant")
+  val InputText = "input_text"
+  val InputImage = "input_image"
+  val InputJson = "input_json"
+  val OutputText = "output_text"
+  val imageDetails: Seq[String] = Seq("low", "high", "auto", "original")
+
   // the names a System One server takes for a question: Cloudflare documents letters, digits, `_`, `.` and `-`
   private val QuestionKey = "^[A-Za-z0-9_.-]{1,100}$".r
 
@@ -42,6 +62,16 @@ object OpenAiDecisions {
     ))
 
   private def missing(param: String): JsObject = error(s"Missing required parameter: '${param}'.", param.some)
+
+  private def invalidValue(value: String, supported: Seq[String], param: String): JsObject =
+    error(s"Invalid value: '${value}'. Supported values are: ${supported.map(v => s"'${v}'").mkString(", ")}.", param.some)
+
+  // a string field of `obj`, the object at `path`
+  private def stringOf(obj: JsObject, field: String, path: String): Either[JsObject, String] = obj.value.get(field) match {
+    case Some(JsString(value)) => Right(value)
+    case None | Some(JsNull) => Left(missing(s"${path}.${field}"))
+    case Some(_) => Left(error(s"'${field}' must be a string.", s"${path}.${field}".some))
+  }
 
   private def all[A, B](items: Seq[A])(f: (A, Int) => Either[JsObject, B]): Either[JsObject, Seq[B]] =
     items.zipWithIndex.foldLeft[Either[JsObject, Seq[B]]](Right(Seq.empty)) {
@@ -174,87 +204,216 @@ object OpenAiDecisions {
     }
   }
 
+  /** What a content is made of: texts, and pictures, which go along as the `images` of the System One request */
+  sealed trait Piece
+  final case class TextPiece(text: String) extends Piece
+  final case class ImagePiece(url: String) extends Piece
+
+  /** An item of the input: who wrote it (`label`) and what it holds. A tool call and its output share a `callId` */
+  final case class Item(kind: String, label: String, pieces: Seq[Piece], callId: Option[String] = None) {
+    def fromUser: Boolean = kind == Message && label == "user"
+  }
+
+  private def imagesOf(pieces: Seq[Piece]): Seq[String] = pieces.collect { case ImagePiece(url) => url }
+
+  // the texts as they are, and each picture named by its place among the `images`, from `first` on
+  private def rendered(pieces: Seq[Piece], first: Int): (Seq[String], Int) = pieces.foldLeft((Seq.empty[String], first)) {
+    case ((texts, n), TextPiece(text)) => (texts :+ text, n)
+    case ((texts, n), ImagePiece(_)) => (texts :+ s"[image ${n}]", n + 1)
+  }
+
+  /**
+   * The state of the System One request. What a user wrote is the state as it is, the pictures being shown before
+   * it; an input with other authors is a transcript saying who wrote each item, and where each picture was.
+   */
+  private def stateOf(items: Seq[Item]): String = {
+    if (items.forall(_.fromUser)) items.flatMap(_.pieces).collect { case TextPiece(text) => text }.mkString("\n\n")
+    else items.foldLeft((Seq.empty[String], 1)) { case ((blocks, n), item) =>
+      val (texts, next) = rendered(item.pieces, n)
+      (blocks :+ s"[${item.label}]\n${texts.mkString("\n\n")}", next)
+    }._1.mkString("\n\n")
+  }
+
   def read(body: JsValue): Either[JsObject, Request] = body match {
     case obj: JsObject =>
       for {
-        input <- inputOf(obj)
-        questions <- questionsOf(obj)
-      } yield Request(obj, JsString(input._1.mkString("\n\n")), input._2, questions)
+        items <- inputOf(obj)
+        asked <- questionsOf(obj)
+      } yield {
+        // the pictures of the instructions come after the ones of the input, each named where it was
+        val pictures = imagesOf(items.flatMap(_.pieces))
+        val questions = asked.foldLeft((Seq.empty[Question], pictures.size + 1)) { case ((acc, n), (question, pieces)) =>
+          val (texts, next) = rendered(pieces, n)
+          (acc :+ question.copy(instructions = texts.mkString("\n\n")), next)
+        }._1
+        Request(obj, JsString(stateOf(items)), pictures ++ imagesOf(asked.flatMap(_._2)), withKeys(questions))
+      }
     case _ => Left(error("The request body must be a JSON object."))
   }
 
-  // the texts and the images of the input, in their order
-  private def inputOf(obj: JsObject): Either[JsObject, (Seq[String], Seq[String])] = obj.value.get("input") match {
+  // the items of the input, in their order: a text is a message of a user
+  private def inputOf(obj: JsObject): Either[JsObject, Seq[Item]] = obj.value.get("input") match {
     case None | Some(JsNull) => Left(missing("input"))
-    case Some(JsString(text)) => Right((Seq(text), Seq.empty))
-    case Some(JsArray(messages)) => all(messages.toSeq)((m, i) => messageOf(m, s"input[${i}]")).map(parts => (parts.flatMap(_._1), parts.flatMap(_._2)))
-    case Some(_) => Left(error("'input' must be a string or an array of user messages.", "input".some))
+    case Some(JsString(text)) => Right(Seq(Item(Message, "user", Seq(TextPiece(text)))))
+    case Some(JsArray(items)) => all(items.toSeq)((item, i) => itemOf(item, s"input[${i}]")).flatMap(answered)
+    case Some(_) => Left(error("'input' must be a string or an array of input items.", "input".some))
   }
 
-  private def messageOf(message: JsValue, path: String): Either[JsObject, (Seq[String], Seq[String])] = message match {
-    case obj: JsObject if !obj.select("role").asOptString.contains("user") =>
-      Left(error("Only user messages are supported.", s"${path}.role".some))
-    case obj: JsObject => obj.value.get("content") match {
-      case Some(JsString(text)) => Right((Seq(text), Seq.empty))
-      case Some(JsArray(parts)) => all(parts.toSeq)((p, i) => partOf(p, s"${path}.content[${i}]")).map(parts => (parts.flatMap(_._1), parts.flatMap(_._2)))
-      case None | Some(JsNull) => Left(missing(s"${path}.content"))
-      case Some(_) => Left(error("'content' must be a string or an array of parts.", s"${path}.content".some))
+  private def itemOf(item: JsValue, path: String): Either[JsObject, Item] = item match {
+    case obj: JsObject => obj.select("type").asOptString.getOrElse(Message) match {
+      case Message => obj.select("role").asOptString match {
+        case Some(role @ "user") => contentOf(obj, "content", path, Seq(InputText, InputImage, InputJson)).map(Item(Message, role, _))
+        case Some(role @ ("developer" | "system")) => contentOf(obj, "content", path, Seq(InputText)).map(Item(Message, role, _))
+        case Some(role @ "assistant") => contentOf(obj, "content", path, Seq(OutputText, Refusal)).map(Item(Message, role, _))
+        case Some(role) => Left(invalidValue(role, roles, s"${path}.role"))
+        case None => Left(missing(s"${path}.role"))
+      }
+      case kind @ (FunctionCall | CustomToolCall) => for {
+        callId <- callIdOf(obj, path)
+        name <- stringOf(obj, "name", path)
+        arguments <- stringOf(obj, if (kind == FunctionCall) "arguments" else "input", path)
+      } yield {
+        val qualified = obj.select("namespace").asOptString.map(namespace => s"${namespace}.${name}").getOrElse(name)
+        Item(kind, s"${kind.replace('_', ' ')} ${qualified} (${callId})", Seq(TextPiece(arguments)), callId.some)
+      }
+      case kind @ (FunctionCallOutput | CustomToolCallOutput) => for {
+        callId <- callIdOf(obj, path)
+        output <- contentOf(obj, "output", path, Seq(InputText, InputImage))
+      } yield Item(kind, s"${kind.replace('_', ' ')} (${callId})", output, callId.some)
+      case kind => Left(invalidValue(kind, itemTypes, s"${path}.type"))
     }
-    case _ => Left(error("A message must be a JSON object.", path.some))
+    case _ => Left(error("An input item must be a JSON object.", path.some))
   }
 
-  private def partOf(part: JsValue, path: String): Either[JsObject, (Seq[String], Seq[String])] = part.select("type").asOptString match {
-    case Some("input_text") => part.select("text").asOptString match {
-      case Some(text) => Right((Seq(text), Seq.empty))
-      case None => Left(missing(s"${path}.text"))
-    }
-    case Some("input_image") => part.select("image_url").asOptString match {
-      case Some(url) if url.regionMatches(true, 0, "data:", 0, 5) => Right((Seq.empty, Seq(url)))
-      case Some(_) => Left(error("Images must be data URLs: external URLs and file IDs are not supported.", s"${path}.image_url".some))
-      case None => Left(missing(s"${path}.image_url"))
-    }
-    case _ => Left(error("A part is either 'input_text' or 'input_image'.", s"${path}.type".some))
+  private def callIdOf(obj: JsObject, path: String): Either[JsObject, String] =
+    stringOf(obj, "call_id", path).filterOrElse(_.nonEmpty, error("'call_id' cannot be empty.", s"${path}.call_id".some))
+
+  // each tool output answers a tool call of the input, wherever it is and whatever its kind, as OpenAI checks it
+  private def answered(items: Seq[Item]): Either[JsObject, Seq[Item]] = {
+    val calls = items.collect { case Item(FunctionCall | CustomToolCall, _, _, Some(callId)) => callId }.toSet
+    items.zipWithIndex.collectFirst {
+      case (Item(FunctionCallOutput | CustomToolCallOutput, _, _, Some(callId)), i) if !calls.contains(callId) =>
+        error("A tool call output must reference a tool call in the input.", s"input[${i}].call_id".some)
+    }.toLeft(items)
   }
 
-  private def questionsOf(obj: JsObject): Either[JsObject, Seq[Question]] = obj.value.get("questions") match {
+  // what OpenAI says of an array of the wrong length
+  private def tooShort(param: String, min: Int, length: Int): JsObject =
+    if (length == 0) error(s"Invalid '${param}': empty array. Expected an array with minimum length ${min}, but got an empty array instead.", param.some, code = "empty_array".some)
+    else error(s"Invalid '${param}': array too short. Expected an array with minimum length ${min}, but got an array with length ${length} instead.", param.some, code = "array_below_min_length".some)
+
+  private def tooLong(param: String, max: Int, length: Int): JsObject =
+    error(s"Invalid '${param}': array too long. Expected an array with maximum length ${max}, but got an array with length ${length} instead.", param.some, code = "array_above_max_length".some)
+
+  // a text, or parts of the types the field takes
+  private def contentOf(obj: JsObject, field: String, path: String, types: Seq[String]): Either[JsObject, Seq[Piece]] = obj.value.get(field) match {
+    case Some(JsString(text)) => Right(Seq(TextPiece(text)))
+    case Some(JsArray(parts)) => all(parts.toSeq)((part, i) => partOf(part, s"${path}.${field}[${i}]", types))
+    case None | Some(JsNull) => Left(missing(s"${path}.${field}"))
+    case Some(_) => Left(error(s"'${field}' must be a string or an array of parts.", s"${path}.${field}".some))
+  }
+
+  private def partOf(part: JsValue, path: String, types: Seq[String]): Either[JsObject, Piece] = part match {
+    case obj: JsObject => obj.select("type").asOptString match {
+      case None => Left(missing(s"${path}.type"))
+      case Some(kind) if !types.contains(kind) => Left(invalidValue(kind, types, s"${path}.type"))
+      case Some(InputImage) => imageOf(obj, path)
+      case Some(InputJson) => jsonOf(obj, path)
+      case Some(Refusal) => stringOf(obj, "refusal", path).map(TextPiece.apply)
+      case Some(_) => stringOf(obj, "text", path).map(TextPiece.apply)
+    }
+    case _ => Left(error("A part must be a JSON object.", path.some))
+  }
+
+  // a picture as a data url, or the address OpenAI fetches it from: a file id is neither
+  private def imageOf(obj: JsObject, path: String): Either[JsObject, Piece] = obj.value.get("detail") match {
+    case Some(JsString(detail)) if !imageDetails.contains(detail) => Left(invalidValue(detail, imageDetails, s"${path}.detail"))
+    case _ => stringOf(obj, "image_url", path).flatMap { url =>
+      if (url.regionMatches(true, 0, "data:", 0, 5) || DecisionImages.isLink(url)) Right(ImagePiece(url))
+      else Left(error("Images must be data URLs or HTTP(S) URLs: file IDs are not supported.", s"${path}.image_url".some))
+    }
+  }
+
+  // a json object or an array of objects, which OpenAI reads as text
+  private def jsonOf(obj: JsObject, path: String): Either[JsObject, Piece] = obj.value.get("data") match {
+    case None | Some(JsNull) => Left(missing(s"${path}.data"))
+    case Some(data) if !isJsonData(data) => Left(error("'data' must be a JSON object or an array of objects.", s"${path}.data".some))
+    case Some(data) if !withinJsonLimits(data) =>
+      Left(error("'data' is limited to 32 levels of containers, 10,000 values and 256 KiB of compact JSON.", s"${path}.data".some))
+    case Some(data) => Right(TextPiece(Json.stringify(data)))
+  }
+
+  /** What an `input_json` part holds: an object, or an array of objects */
+  def isJsonData(value: JsValue): Boolean = value match {
+    case _: JsObject => true
+    case JsArray(values) => values.forall(_.isInstanceOf[JsObject])
+    case _ => false
+  }
+
+  // how deep the containers of a json value go, and how many values it holds
+  private def shapeOf(value: JsValue): (Int, Int) = {
+    val children = value match {
+      case JsObject(fields) => fields.values.toSeq
+      case JsArray(values) => values.toSeq
+      case _ => Seq.empty
+    }
+    val own = if (value.isInstanceOf[JsObject] || value.isInstanceOf[JsArray]) 1 else 0
+    children.map(shapeOf).foldLeft((own, 1)) { case ((depth, count), (d, c)) => (depth.max(d + 1), count + c) }
+  }
+
+  /** Whether OpenAI takes `value` in an `input_json` part: 32 levels of containers, 10,000 values, 256 KiB of compact json */
+  def withinJsonLimits(value: JsValue): Boolean = {
+    val (depth, count) = shapeOf(value)
+    depth <= 32 && count <= 10000 && Json.stringify(value).getBytes(StandardCharsets.UTF_8).length <= 256 * 1024
+  }
+
+  private def questionsOf(obj: JsObject): Either[JsObject, Seq[(Question, Seq[Piece])]] = obj.value.get("questions") match {
     case None | Some(JsNull) => Left(missing("questions"))
-    case Some(JsArray(items)) if items.isEmpty => Left(error("At least one question is required.", "questions".some))
-    case Some(JsArray(items)) => all(items.toSeq)((q, i) => questionOf(q, i)).map(withKeys)
+    case Some(JsArray(items)) if items.isEmpty => Left(tooShort("questions", 1, 0))
+    case Some(JsArray(items)) if items.size > MaxQuestions => Left(tooLong("questions", MaxQuestions, items.size))
+    case Some(JsArray(items)) => all(items.toSeq)((q, i) => questionOf(q, i))
     case Some(_) => Left(error("'questions' must be an array.", "questions".some))
   }
 
-  private def questionOf(value: JsValue, index: Int): Either[JsObject, Question] = {
+  // a question, its instructions being written once the pictures of every question are numbered
+  private def questionOf(value: JsValue, index: Int): Either[JsObject, (Question, Seq[Piece])] = {
     val path = s"questions[${index}]"
     value match {
       case question: JsObject =>
-        val name = question.select("name").asOptString
-        (question.select("type").asOptString, question.select("instructions").asOptString) match {
+        (question.select("type").asOptString, question.value.get("name")) match {
           case (None, _) => Left(missing(s"${path}.type"))
-          case (Some(kind), _) if !knownTypes.contains(kind) =>
-            Left(error(s"Invalid value: '${kind}'. Supported values are: ${knownTypes.map(t => s"'${t}'").mkString(", ")}.", s"${path}.type".some))
-          case (_, None) => Left(missing(s"${path}.instructions"))
-          case (Some(Choice), Some(instructions)) => choicesOf(question, path).map(cs => Question(index, name, Choice, instructions, choices = cs))
-          case (Some(Score), Some(instructions)) => levelsOf(question, path).map(ls => Question(index, name, Score, instructions, levels = ls))
-          case (Some(kind), Some(instructions)) => Right(Question(index, name, kind, instructions))
+          case (Some(kind), _) if !knownTypes.contains(kind) => Left(invalidValue(kind, knownTypes, s"${path}.type"))
+          case (_, Some(name)) if !name.isInstanceOf[JsString] && name != JsNull => Left(error("'name' must be a string.", s"${path}.name".some))
+          case (Some(kind), name) =>
+            val asked = Question(index, name.flatMap(_.asOpt[String]), kind, "")
+            contentOf(question, "instructions", path, Seq(InputText, InputImage, InputJson)).flatMap { pieces =>
+              val typed = kind match {
+                case Choice => choicesOf(question, path).map(cs => asked.copy(choices = cs))
+                case Score => levelsOf(question, path).map(ls => asked.copy(levels = ls))
+                case _ => Right(asked)
+              }
+              typed.map(_ -> pieces)
+            }
         }
       case _ => Left(error("A question must be a JSON object.", path.some))
     }
   }
 
   private def choicesOf(question: JsObject, path: String): Either[JsObject, Seq[ChoiceOption]] = question.select("choices").asOpt[JsValue] match {
-    case Some(JsArray(items)) if items.nonEmpty =>
+    case Some(JsArray(items)) =>
       all(items.toSeq) { (item, i) =>
         item.select("value").asOpt[JsValue] match {
           case Some(v @ (_: JsString | _: JsBoolean)) => Right(ChoiceOption(v, item.select("description").asOptString))
           case _ => Left(error("A choice value is a string or a boolean.", s"${path}.choices[${i}].value".some))
         }
       }.flatMap { options =>
-        if (options.map(_.value).distinct.size != options.size) Left(error("Each choice must be unique.", s"${path}.choices".some))
+        if (options.size < MinChoices) Left(tooShort(s"${path}.choices", MinChoices, options.size))
+        else if (options.size > MaxChoices) Left(tooLong(s"${path}.choices", MaxChoices, options.size))
+        else if (options.map(_.value).distinct.size != options.size) Left(error("Each choice must be unique.", s"${path}.choices".some))
         // `"true"` and `true` are two choices here, and one option name for a System One server
         else if (options.map(_.key).distinct.size != options.size) Left(error("A choice cannot be both a string and a boolean of the same text.", s"${path}.choices".some))
         else Right(options)
       }
-    case Some(JsArray(_)) => Left(error("At least one choice is required.", s"${path}.choices".some))
     case None | Some(JsNull) => Left(missing(s"${path}.choices"))
     case Some(_) => Left(error("'choices' must be an array.", s"${path}.choices".some))
   }
@@ -408,13 +567,20 @@ object OpenAiDecisionRequests {
         case (left, _) => left
       }
       val images = rawBody.select("images").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap(imageUrlOf)
-      val state = text(opts.state)
-      val input: JsValue =
-        if (images.isEmpty) JsString(state)
-        else Json.arr(Json.obj("role" -> "user", "content" -> JsArray(
-          images.map(url => Json.obj("type" -> "input_image", "image_url" -> url)) ++
-            Seq(state).filter(_.nonEmpty).map(t => Json.obj("type" -> "input_text", "text" -> t))
+      // a structured state is given as the json it is, when OpenAI takes it that way
+      val state: Either[JsValue, String] = opts.state match {
+        case json if OpenAiDecisions.isJsonData(json) && OpenAiDecisions.withinJsonLimits(json) => Left(json)
+        case other => Right(text(other))
+      }
+      val input: JsValue = (images, state) match {
+        case (Seq(), Right(text)) => JsString(text)
+        case _ => Json.arr(Json.obj("role" -> "user", "content" -> JsArray(
+          images.map(url => Json.obj("type" -> OpenAiDecisions.InputImage, "image_url" -> url)) ++ (state match {
+            case Left(json) => Seq(Json.obj("type" -> OpenAiDecisions.InputJson, "data" -> json))
+            case Right(text) => Seq(text).filter(_.nonEmpty).map(t => Json.obj("type" -> OpenAiDecisions.InputText, "text" -> t))
+          })
         )))
+      }
       questions.map(qs => Json.obj("input" -> input, "questions" -> qs))
   }
 
