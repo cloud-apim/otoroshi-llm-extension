@@ -255,6 +255,12 @@ object OpenRouterCatalog {
       ))
     }
   }
+
+  // the models of a catalog, as OpenRouter publishes it (`data`), by their key in the price table
+  def costModels(catalog: JsValue): Map[String, CostModel] =
+    catalog.select("data").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
+      .flatMap(model => toCostModel(model).map(cost => (s"openrouter-${cost.name}", cost)))
+      .toMap
 }
 
 class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCatalog) {
@@ -287,15 +293,20 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
 
   val staticModels: Map[String, CostModel] = litllmModels ++ customModels ++ userProvidedModels
 
-  // models discovered at runtime from a provider catalog (see refreshOpenRouterCatalog). Kept apart from
-  // the static ones so that a refresh never drops what the resource files provide, and pre-merged so that
-  // reads stay O(1) - `models` is hit on every single call.
-  private val dynamicModelsRef = new AtomicReference[Map[String, CostModel]](Map.empty)
-  private val allModelsRef = new AtomicReference[Map[String, CostModel]](staticModels)
+  // the prices OpenRouter published when the data files were last refreshed (`scripts/update-data-files.mjs`):
+  // the LiteLLM table no longer lists its models
+  val bundledOpenRouterModels: Map[String, CostModel] =
+    scala.util.Try(OpenRouterCatalog.costModels(Json.parse(getResourceCode("data/openrouter-models.json")))).getOrElse(Map.empty)
+
+  // models of a provider catalog: the bundled OpenRouter prices, replaced by the ones the catalog sync fetches
+  // (see refreshOpenRouterCatalog). Kept apart from the static ones so that a refresh never drops what the
+  // resource files provide, and pre-merged so that reads stay O(1) - `models` is hit on every single call.
+  private val dynamicModelsRef = new AtomicReference[Map[String, CostModel]](bundledOpenRouterModels)
+  private val allModelsRef = new AtomicReference[Map[String, CostModel]](bundledOpenRouterModels ++ staticModels)
   // The same models by their key in lower case. A provider serving `Qwen3-32B` under that name also takes
   // `qwen3-32b`, and the sources do not agree on the spelling: a model is found whatever its case, the entry
   // spelled as asked first
-  private val lowerCaseModelsRef = new AtomicReference[Map[String, CostModel]](lowerCased(staticModels))
+  private val lowerCaseModelsRef = new AtomicReference[Map[String, CostModel]](lowerCased(bundledOpenRouterModels ++ staticModels))
   private val openRouterSchedulerRef = new AtomicReference[Cancellable]()
 
   def dynamicModels: Map[String, CostModel] = dynamicModelsRef.get()
@@ -446,8 +457,8 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
     Option(openRouterSchedulerRef.get()).foreach(_.cancel())
   }
 
-  // OpenRouter publishes the price of every model it serves on a public endpoint. Syncing it gives a price to
-  // the models missing from the static table, which would otherwise be billed at zero and leave budgets untouched.
+  // OpenRouter publishes the price of every model it serves on a public endpoint. Syncing it keeps the bundled
+  // prices up to date, and prices the models it ships between two releases of the extension.
   def refreshOpenRouterCatalog()(using ec: ExecutionContext): Future[Int] = {
     env.Ws.url(settings.openRouterCatalogUrl)
       .withRequestTimeout(30.seconds)
@@ -457,9 +468,7 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
           extension.logger.error(s"unable to fetch the openrouter models catalog: ${resp.status} - ${resp.body[String].take(256)}")
           dynamicModels.size
         } else {
-          val models = resp.json.select("data").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
-            .flatMap(model => OpenRouterCatalog.toCostModel(model).map(cost => (s"openrouter-${cost.name}", cost)))
-            .toMap
+          val models = OpenRouterCatalog.costModels(resp.json)
           if (models.isEmpty) {
             extension.logger.warn("the openrouter models catalog came back empty, keeping the previous one")
             dynamicModels.size

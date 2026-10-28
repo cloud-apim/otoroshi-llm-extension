@@ -53,7 +53,7 @@ costs-tracking {
 | `enabled` | boolean | `true` | Enable or disable cost tracking |
 | `embed-costs-tracking-in-responses` | boolean | `false` | Always embed costs in LLM responses |
 | `custom-prices` | string (JSON) | `"{}"` | Custom model prices in LiteLLM format (see below) |
-| `openrouter-catalog.enabled` | boolean | `false` | Keep OpenRouter model prices in sync with its public catalog. Opt-in: it is the only outbound call the extension makes on its own |
+| `openrouter-catalog.enabled` | boolean | `false` | Keep the built-in OpenRouter prices in sync with its public catalog. Opt-in: it is the only outbound call the extension makes on its own |
 | `openrouter-catalog.refresh-every` | duration | `6 hours` | How often the OpenRouter catalog is refreshed |
 | `models-catalog.enabled` | boolean | `true` | Price the models the price table does not know with the bundled [models.dev](https://models.dev) catalog |
 | `models-catalog.price-currencies` | object | `{ scaleway = eur }` | The currency of the models.dev prices of a provider, when not dollars |
@@ -73,10 +73,10 @@ Costs are always billed from the most accurate source available for the call:
    - **User-defined prices**: your own prices via the `custom-prices` config, which always win
    - **Built-in custom prices**: additional prices shipped by the extension for models absent from LiteLLM
    - **Built-in LiteLLM prices**: the full [LiteLLM](https://docs.litellm.ai/) model price dictionary, bundled with the extension
-   - **The OpenRouter catalog**, when enabled, kept in sync with the prices OpenRouter publishes, so new models are priced the day they ship
+   - **Built-in OpenRouter prices**: the prices OpenRouter publishes for every model it serves, bundled with the extension, each variant at its own price (`:batch`, `:free`...). With `openrouter-catalog.enabled`, they are kept in sync with OpenRouter, so new models are priced the day they ship
    - **The models.dev catalog**, bundled with the extension, which prices thousands of models across more than 200 providers. It is only used for the provider that actually serves the model, and it recognizes the many ways providers spell a model id: `models/gemini-2.5-flash`, dated snapshots like `claude-sonnet-4-5-20250929`, `claude-sonnet-4.5` versus `claude-sonnet-4-5`, and so on. Prices sourced this way are the ones a model shows in its [enriched `/models` entry](/docs/llm-gateway/openai-compat-api#enriched-models), with `"source": "models.dev"`
 
-OpenRouter model variants and aliases — `anthropic/claude-opus-5:batch`, `~vendor/model-latest` — are billed at the price of the model they point to.
+An OpenRouter variant or alias without a price of its own — `vendor/model:some-variant`, `~vendor/model-latest` — is billed at the price of the model it points to.
 
 ### Supported modalities
 

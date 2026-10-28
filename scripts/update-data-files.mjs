@@ -2,6 +2,7 @@
 // Refreshes the data files bundled in src/main/resources/data from their upstream sources:
 //
 // - ltllm-prices.json   the LiteLLM price table (costs tracking)
+// - openrouter-models.json  the models OpenRouter serves with their prices, which LiteLLM no longer lists (costs tracking)
 // - catalog.json        the models.dev catalog (models metadata, costs tracking fallback)
 // - eg-models.json      the EcoLogits models (environmental impacts)
 // - eg-elec.json        the EcoLogits electricity mixes (environmental impacts)
@@ -10,7 +11,7 @@
 // Every file is downloaded, parsed and checked before it replaces the bundled one, and a file that lost more
 // than 20% of its entries is refused: an upstream breakage should not silently empty a price table.
 //
-// usage: node scripts/update-data-files.mjs [--only litellm,models.dev,ecologits,artificialanalysis] [--check] [--force] [--out <dir>]
+// usage: node scripts/update-data-files.mjs [--only litellm,openrouter,models.dev,ecologits,artificialanalysis] [--check] [--force] [--out <dir>]
 //
 //   --only   the sources to refresh (default: all of them)
 //   --check  downloads and checks everything, writes nothing
@@ -40,6 +41,7 @@ function invalid(message) {
 }
 
 const MODELS_DEV_URL = 'https://models.dev/catalog.json';
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/models';
 const ARTIFICIAL_ANALYSIS_URL = 'https://artificialanalysis.ai/api/v2/data/llms/models';
 const ARTIFICIAL_ANALYSIS_KEY = 'ARTIFICIAL_ANALYSIS_API_KEY';
 const CODING_INDEX = 'artificial_analysis_coding_index';
@@ -61,6 +63,23 @@ function codingIndexed(json) {
     }));
 }
 
+// The models OpenRouter prices, as the bundled file keeps them: its public api answers with `data`, a list of
+// models with a long description each, the bundled file keeps `data` with what costs tracking reads of a model
+function openRouterPriced(json) {
+  if (!isObject(json) || !Array.isArray(json.data)) invalid('no `data` array');
+  if (json.data.some((m) => !isObject(m) || typeof m.id !== 'string')) invalid('a model has no id');
+  return json.data
+    .filter((m) => isObject(m.pricing))
+    .map((m) => ({
+      id: m.id,
+      name: m.name,
+      context_length: m.context_length,
+      architecture: isObject(m.architecture) ? { input_modalities: m.architecture.input_modalities, output_modalities: m.architecture.output_modalities } : undefined,
+      pricing: m.pricing,
+      top_provider: isObject(m.top_provider) ? { context_length: m.top_provider.context_length, max_completion_tokens: m.top_provider.max_completion_tokens } : undefined,
+    }));
+}
+
 const SOURCES = [
   {
     source: 'litellm',
@@ -72,6 +91,17 @@ const SOURCES = [
       const entries = Object.entries(json).filter(([name]) => name !== 'sample_spec');
       if (entries.some(([, v]) => !isObject(v))) invalid('an entry is not an object');
       return entries.length;
+    },
+  },
+  {
+    source: 'openrouter',
+    file: 'openrouter-models.json',
+    url: OPENROUTER_URL,
+    count: (json) => openRouterPriced(json).length,
+    // one model a line, sorted by id: a price change is a one line diff
+    format: (json) => {
+      const models = openRouterPriced(json).sort((a, b) => a.id.localeCompare(b.id));
+      return `{\n  "origin": ${JSON.stringify(OPENROUTER_URL)},\n  "data": [\n${models.map((m) => `    ${JSON.stringify(m)}`).join(',\n')}\n  ]\n}\n`;
     },
   },
   {
@@ -135,7 +165,7 @@ function parseArgs(argv) {
     else if (arg === '--only') args.only = (argv[++i] || '').split(',').map((s) => s.trim()).filter(Boolean);
     else if (arg === '--out') args.out = resolve(argv[++i] || '');
     else if (arg === '-h' || arg === '--help') {
-      console.log('usage: node scripts/update-data-files.mjs [--only litellm,models.dev,ecologits,artificialanalysis] [--check] [--force] [--out <dir>]');
+      console.log('usage: node scripts/update-data-files.mjs [--only litellm,openrouter,models.dev,ecologits,artificialanalysis] [--check] [--force] [--out <dir>]');
       process.exit(0);
     } else {
       console.error(`unknown argument: ${arg}`);
@@ -223,7 +253,7 @@ async function main() {
   const locked = wanted.filter((s) => s.key && !process.env[s.key] && !args.only);
   const entries = wanted.filter((s) => !locked.includes(s));
   console.log(`${args.check ? 'checking' : 'refreshing'} ${entries.length} file(s) in ${args.out}`);
-  locked.forEach((s) => console.log(`  skip  ${s.file.padEnd(18)} set ${s.key} to refresh it`));
+  locked.forEach((s) => console.log(`  skip  ${s.file.padEnd(22)} set ${s.key} to refresh it`));
   const results = await Promise.allSettled(entries.map((e) => refresh(e, args)));
   let failures = 0;
   let written = 0;
@@ -231,10 +261,10 @@ async function main() {
     const entry = entries[i];
     if (r.status === 'fulfilled') {
       if (r.value.changed) written++;
-      console.log(`  ok    ${entry.file.padEnd(18)} ${r.value.message}`);
+      console.log(`  ok    ${entry.file.padEnd(22)} ${r.value.message}`);
     } else {
       failures++;
-      console.log(`  error ${entry.file.padEnd(18)} ${r.reason.message} (${entry.url})`);
+      console.log(`  error ${entry.file.padEnd(22)} ${r.reason.message} (${entry.url})`);
     }
   });
   if (!args.check && written > 0) {
