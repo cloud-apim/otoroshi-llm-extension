@@ -13,7 +13,7 @@ import { budgetsListOp, budgetsOfConsumer, extendOwnOp, extensionLabel, extensio
 import { deleteConversation, getConversation, listConversations, listWorkspaceModels, saveConversation } from '../lib/models';
 import { bootstrap } from '../lib/bootstrap';
 import { useRouter } from '../lib/router';
-import { capabilitiesOf, chatUsable, contextOf, fmtPrice, fmtTokens, imageGenerator, imageOutput, modelLabel, promptPrice } from '../lib/modelmeta';
+import { capabilitiesOf, chatUsable, contextOf, fmtPrice, fmtTokens, imageGenerator, imageOutput, labelOfModelId, modelLabel, promptPrice } from '../lib/modelmeta';
 import {
   answerSlot,
   columnThread,
@@ -103,13 +103,17 @@ function pickerFacts(model) {
 function ModelPicker({ value, onChange, models, width = 520 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
-  const filtered = models.filter((m) => !q || m.id.toLowerCase().includes(q.toLowerCase())).slice(0, 80);
+  const matches = (m) => [m.id, modelLabel(m)].some((s) => s.toLowerCase().includes(q.toLowerCase()));
+  const filtered = models.filter((m) => !q || matches(m)).slice(0, 80);
+  const selected = models.find((m) => m.id === value);
+  const label = value ? (selected ? modelLabel(selected) : labelOfModelId(value)) : '';
   return (
     <div style={{ position: 'relative', width, maxWidth: width === '100%' ? undefined : '60vw' }}>
       <input
         className="input"
-        value={open ? q : value}
-        placeholder={value || 'Select a model'}
+        value={open ? q : label}
+        placeholder={label || 'Select a model'}
+        title={value || undefined}
         onFocus={() => {
           setQ('');
           setOpen(true);
