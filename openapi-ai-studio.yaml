@@ -1,0 +1,5059 @@
+openapi: 3.1.0
+info:
+  title: AI Studio API
+  version: 1.0.0
+  summary: Everything AI Studio needs from Otoroshi to run.
+  description: |
+    The api AI Studio runs on, whatever the edition: the OSS studio served by the LLM extension, AI Studio Enterprise
+    and the Cloud APIM console all drive the same Otoroshi through it.
+
+    **The studio admin api** (`/api/extensions/cloud-apim/extensions/ai-extension/studio`) is served by the LLM
+    extension on the Otoroshi admin api. It is the only code building the entities of a workspace: a workspace is an
+    Otoroshi route with its team, and every provider, model, api key, budget, preset, tool or MCP server of it is an
+    Otoroshi entity tagged with the workspace. It exchanges views, never raw entities: what a page shows, and the form
+    it sends back.
+
+    - It can be called with an admin api key (`Otoroshi-Client-Id` / `Otoroshi-Client-Secret` headers, or basic auth),
+      which is what AI Studio Enterprise and the console do with their service account, or through the backoffice
+      (`/bo/api/proxy`) with the session of a backoffice user, which is what the OSS studio does.
+    - Every entity read or written is checked against the rights of the caller, the way the generic admin api checks
+      them: the `otoroshi-access-rights` metadata of an api key (none means no restriction), the rights of the
+      backoffice user for a relayed call. What a caller cannot read does not exist for it (404), what it cannot write
+      is refused (403). `Otoroshi-Tenant` is the tenant the caller works in.
+    - Who can read the route of a workspace reads it, chats and sees its usage; who can write it does everything
+      else. The view of a workspace gives these rights as AI Studio `permissions`.
+
+    **Forms.** A field absent from a body keeps the current value, `null` clears it. Numbers are also read from
+    numeric strings, booleans from `"true"` / `"false"`. A secret shown masked (AI Studio Enterprise masks them)
+    comes back as `__ai_studio_secret__`, which stands for the value already stored.
+
+    **Operations.** The pages of AI Studio do not call routes, they run operations
+    (`ui/ai-studio/src/core/ops.js`): each one names the AI Studio permission it needs and the route serving it.
+    `x-ai-studio-ops` lists the operations each route serves, `x-ai-studio-backend` the other calls of the backend of
+    the front (`ui/ai-studio/src/lib/backend.js`). Several operations can share a route: AI Studio
+    Enterprise checks a different permission for them (`keys.get` and `keys.reveal`), or narrows what they return to
+    the person calling (`own`). `audit` marks the writes AI Studio Enterprise records, `reveals` an answer giving a
+    secret masked everywhere else, `secretOnce` the creation or reset of a secret, the only time it is given unmasked.
+
+    **Chat.** The models of a workspace are called through its OpenAI compatible endpoint
+    (`<base_url>/chat/completions`, ...). AI Studio calls it without an api key, on behalf of a user: the studio admin
+    api relays a call for the user an `AI-Studio-User-Email` header names (`/workspaces/{id}/proxy/...`), the
+    backoffice for the signed-in user. The usage, the budgets scoped to users and the audit events are the ones of
+    that user.
+
+    **The backoffice routes** (`/extensions/cloud-apim/extensions/ai-extension/studio`) only serve the OSS studio,
+    with the backoffice session of its user: the values of the page, the chat of the signed-in user and their
+    conversations. AI Studio Enterprise and the console keep the conversations in their own database.
+
+    **Errors** are `{ error, error_description }` objects, `error` being a code (`bad_request`, `forbidden`,
+    `not_found`, `conflict`, `internal_error`, ...). The calls relayed to a workspace answer the way the gateway does.
+  contact:
+    name: Cloud APIM
+    email: contact@cloud-apim.com
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+externalDocs:
+  description: Otoroshi LLM extension
+  url: https://www.cloud-apim.com/fr/opensource/otoroshi-llm-extension
+
+servers:
+  - url: '{scheme}://{adminApiHost}'
+    description: The Otoroshi admin api, with an admin api key
+    variables:
+      scheme:
+        default: http
+        enum: [http, https]
+      adminApiHost:
+        default: otoroshi-api.oto.tools:8080
+  - url: '{scheme}://{backofficeHost}/bo/api/proxy'
+    description: The Otoroshi admin api through the backoffice, with the session of a backoffice user
+    variables:
+      scheme:
+        default: http
+        enum: [http, https]
+      backofficeHost:
+        default: otoroshi.oto.tools:8080
+
+security:
+  - adminApiClientId: []
+    adminApiClientSecret: []
+  - adminApiBasic: []
+  - backofficeSession: []
+
+tags:
+  - name: Information
+    description: What the extension serves, and the providers a workspace can connect.
+  - name: Workspaces
+    description: A workspace is an Otoroshi route serving an OpenAI compatible endpoint, with its own team.
+  - name: Providers
+    description: One connection per provider, with an entity per capability it serves (text, embedding, image, audio, moderation, ocr, video, decision).
+  - name: Model access and guardrails
+    description: The same on every model of the workspace.
+  - name: Routing
+    description: The default provider, the fallbacks, the load balancers and the routers.
+  - name: Presets
+    description: System and trailing messages a chat can pick, attached to providers.
+  - name: Tools
+    description: Http functions, MCP connectors and search engines the models can call.
+  - name: MCP server
+    description: The MCP server of the workspace, served on `<base_url>/mcp` with the api keys of the models.
+  - name: API keys
+    description: The keys calling the endpoint of the workspace.
+  - name: Budgets
+    description: Dollar and token limits, always scoped to the workspace first.
+  - name: Analytics
+    description: The usage of the workspace, from the Otoroshi user analytics.
+  - name: Chat
+    description: The endpoint of a workspace, called on behalf of a user.
+  - name: Backoffice
+    description: The routes only the OSS studio calls, with the backoffice session of its user.
+
+paths:
+
+  #################################################################################################
+  # information
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/_info:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+    get:
+      tags: [Information]
+      operationId: getInfo
+      summary: The version of the extension, its features and the exposure of the workspaces
+      description: A client built against this api checks the features it needs before starting (AI Studio Enterprise refuses to start without them).
+      responses:
+        '200':
+          description: The information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Info'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/catalog:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+    get:
+      tags: [Information]
+      operationId: getCatalog
+      summary: The provider kinds a workspace can connect
+      description: What the "bring your own key" form needs for each kind, with what the gateway knows of its models (`insights`).
+      x-ai-studio-backend: catalog
+      responses:
+        '200':
+          description: The catalog, sorted by label
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [providers]
+                properties:
+                  providers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CatalogProvider'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  #################################################################################################
+  # workspaces
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+    get:
+      tags: [Workspaces]
+      operationId: listWorkspaces
+      summary: The workspaces the caller can read
+      x-ai-studio-backend: workspaces.list
+      responses:
+        '200':
+          description: The workspaces, sorted by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Workspace'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Workspaces]
+      operationId: createWorkspace
+      summary: Creates a workspace
+      description: |
+        Creates the team of the workspace (`team_ai_studio_<id>`), then its route (`route_ai_studio_<id>`) in the tenant
+        of the caller. A caller who is not an admin of the tenant also puts it in the teams it can write, so it still
+        sees what it creates. Two workspaces never share a slug, whoever can see them: they would answer on the same
+        domain.
+      x-ai-studio-backend: workspaces.create
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceCreate'
+      responses:
+        '201':
+          description: The workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Workspaces]
+      operationId: getWorkspace
+      summary: A workspace
+      x-ai-studio-ops:
+        - { name: workspace.get, access: 'workspace:read' }
+      responses:
+        '200':
+          description: The workspace
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Workspaces]
+      operationId: updateWorkspace
+      summary: Updates a workspace
+      description: The same as `PATCH`.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceUpdate'
+      responses:
+        '200':
+          $ref: '#/components/responses/WorkspaceView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    patch:
+      tags: [Workspaces]
+      operationId: patchWorkspace
+      summary: Updates a workspace
+      description: An empty body repairs a route created by an earlier studio (`needs_repair`).
+      x-ai-studio-ops:
+        - { name: workspace.update, access: 'config:write', audit: true }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceUpdate'
+      responses:
+        '200':
+          $ref: '#/components/responses/WorkspaceView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [Workspaces]
+      operationId: deleteWorkspace
+      summary: Deletes a workspace and everything in it
+      description: The route first, so nothing is served while the rest is removed, then its api keys, budgets, models, presets, MCP server and tools, then its team.
+      x-ai-studio-ops:
+        - { name: workspace.delete, access: 'workspace:delete', audit: true }
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/models:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Workspaces]
+      operationId: listWorkspaceModels
+      summary: The models the endpoint of the workspace serves
+      description: |
+        Every model of every provider and model entity the route serves, with the ids a request names: the model
+        alone when the modality has a single entity, `<provider slug>/<model>` otherwise, `<provider slug>###<model>`
+        when the model has a slash of its own. Each model carries what the gateway knows of it (`metadata`).
+      x-ai-studio-ops:
+        - { name: models.list, access: 'workspace:read' }
+      parameters:
+        - $ref: '#/components/parameters/Force'
+      responses:
+        '200':
+          description: The providers and their models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceModels'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  #################################################################################################
+  # providers
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/providers:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Providers]
+      operationId: listProviders
+      summary: The providers of the workspace
+      description: 'Load balancers and routers are not providers: see the routing.'
+      x-ai-studio-ops:
+        - { name: providers.list, access: 'config:read' }
+      responses:
+        '200':
+          description: The providers, sorted by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Connection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Providers]
+      operationId: createProvider
+      summary: Connects a provider
+      description: |
+        Creates an entity per capability enabled (the text one by default, the first capability of a provider without
+        text otherwise), and serves them on the route of the workspace. A new provider is given every tool of the
+        workspace, unless `tools` says otherwise. A decision model answered by a text provider (`llm-emulation`) names
+        that provider in `fields.provider`.
+      x-ai-studio-ops:
+        - { name: providers.create, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionCreate'
+      responses:
+        '201':
+          description: The provider
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Connection'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/providers/_models:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    post:
+      tags: [Providers]
+      operationId: listDraftProviderModels
+      summary: The models of a provider being edited, before it is saved
+      description: |
+        From a fresh connection of `kind`, or from the saved provider `connection_id` (its token and settings are used
+        unless the body gives others). Every model is listed, the ones with no known price included.
+      x-ai-studio-ops:
+        - { name: providers.draftModels, access: 'config:write' }
+      parameters:
+        - $ref: '#/components/parameters/Force'
+        - $ref: '#/components/parameters/Enriched'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DraftModelsRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/ProviderModels'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/ProviderModelsError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/providers/{cid}:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/ProviderId'
+    get:
+      tags: [Providers]
+      operationId: getProvider
+      summary: A provider
+      x-ai-studio-ops:
+        - { name: providers.get, access: 'config:read' }
+      responses:
+        '200':
+          $ref: '#/components/responses/ConnectionView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Providers]
+      operationId: updateProvider
+      summary: Updates a provider
+      description: A capability turned off deletes its entity, one turned on creates it. The kind of a provider never changes.
+      x-ai-studio-ops:
+        - { name: providers.update, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConnectionUpdate'
+      responses:
+        '200':
+          $ref: '#/components/responses/ConnectionView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [Providers]
+      operationId: deleteProvider
+      summary: Deletes a provider and the entities of its capabilities
+      x-ai-studio-ops:
+        - { name: providers.delete, access: 'config:write', audit: true }
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/providers/{cid}/models:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/ProviderId'
+    get:
+      tags: [Providers]
+      operationId: listProviderModels
+      summary: The models a saved provider serves
+      description: Listed by the provider itself, kept in cache, and filtered by the model access of the provider and its known costs requirement.
+      x-ai-studio-ops:
+        - { name: providers.models, access: 'config:read' }
+      parameters:
+        - $ref: '#/components/parameters/Force'
+        - $ref: '#/components/parameters/Enriched'
+      responses:
+        '200':
+          $ref: '#/components/responses/ProviderModels'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          $ref: '#/components/responses/ProviderModelsError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/model-entities:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Providers]
+      operationId: listModelEntities
+      summary: Every model entity of the workspace
+      description: Load balancers and routers included, the way a guardrail, a preset, a tool or a router refers to them (by entity id). What the pickers offer.
+      x-ai-studio-ops:
+        - { name: modelEntities.list, access: 'config:read' }
+      responses:
+        '200':
+          description: The entities, by modality then by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ModelEntity'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  #################################################################################################
+  # model access and guardrails
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/model-access:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Model access and guardrails]
+      operationId: getModelAccess
+      summary: The models the workspace lets through
+      x-ai-studio-ops:
+        - { name: modelAccess.get, access: 'config:read' }
+      responses:
+        '200':
+          $ref: '#/components/responses/ModelAccessView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Model access and guardrails]
+      operationId: saveModelAccess
+      summary: Sets the models the workspace lets through, on every model entity
+      x-ai-studio-ops:
+        - { name: modelAccess.save, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelAccessWrite'
+      responses:
+        '200':
+          $ref: '#/components/responses/ModelAccessView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/guardrails:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Model access and guardrails]
+      operationId: getGuardrails
+      summary: The guardrails of the workspace
+      x-ai-studio-ops:
+        - { name: guardrails.get, access: 'config:read' }
+      responses:
+        '200':
+          $ref: '#/components/responses/GuardrailsView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Model access and guardrails]
+      operationId: saveGuardrails
+      summary: Sets the guardrails of the workspace, on every text provider
+      description: A guardrail judged by a text model (`prompt_injection`, `pif`, `secrets_leakage`, `moderation`, `toxic_language`, `gibberish`) is given the first text provider of the workspace when its config names none.
+      x-ai-studio-ops:
+        - { name: guardrails.save, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GuardrailsWrite'
+      responses:
+        '200':
+          $ref: '#/components/responses/GuardrailsView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  #################################################################################################
+  # routing
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/routing:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Routing]
+      operationId: getRouting
+      summary: The routing of the workspace
+      x-ai-studio-ops:
+        - { name: routing.get, access: 'config:read' }
+      responses:
+        '200':
+          $ref: '#/components/responses/RoutingView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Routing]
+      operationId: saveRouting
+      summary: Sets the default provider and the fallbacks
+      x-ai-studio-ops:
+        - { name: routing.save, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoutingWrite'
+      responses:
+        '200':
+          $ref: '#/components/responses/RoutingView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/load-balancers:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Routing]
+      operationId: listLoadBalancers
+      summary: The load balancers of the workspace
+      x-ai-studio-ops:
+        - { name: balancers.list, access: 'config:read' }
+      responses:
+        '200':
+          description: The load balancers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LoadBalancer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Routing]
+      operationId: createLoadBalancer
+      summary: Creates a load balancer, served by the workspace as a provider
+      description: Without `targets`, it balances the first two providers of the workspace.
+      x-ai-studio-ops:
+        - { name: balancers.create, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoadBalancerWrite'
+      responses:
+        '201':
+          description: The load balancer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoadBalancer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/load-balancers/{lid}:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/LoadBalancerId'
+    get:
+      tags: [Routing]
+      operationId: getLoadBalancer
+      summary: A load balancer
+      x-ai-studio-ops:
+        - { name: balancers.get, access: 'config:read' }
+      responses:
+        '200':
+          $ref: '#/components/responses/LoadBalancerView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Routing]
+      operationId: updateLoadBalancer
+      summary: Updates a load balancer
+      x-ai-studio-ops:
+        - { name: balancers.update, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoadBalancerWrite'
+      responses:
+        '200':
+          $ref: '#/components/responses/LoadBalancerView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [Routing]
+      operationId: deleteLoadBalancer
+      summary: Deletes a load balancer
+      x-ai-studio-ops:
+        - { name: balancers.delete, access: 'config:write', audit: true }
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/routers:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Routing]
+      operationId: listRouters
+      summary: The routers of the workspace
+      x-ai-studio-ops:
+        - { name: routers.list, access: 'config:read' }
+      responses:
+        '200':
+          description: The routers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Router'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Routing]
+      operationId: createRouter
+      summary: Creates a router, served by the workspace as a provider
+      description: Its routing models (`code-router`, `auto-router`, `smart-router`, `intent-router`, `fusion-router`) are the ones it has candidates for.
+      x-ai-studio-ops:
+        - { name: routers.create, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouterWrite'
+      responses:
+        '201':
+          description: The router
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Router'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/routers/{rid}:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/RouterId'
+    get:
+      tags: [Routing]
+      operationId: getRouter
+      summary: A router
+      x-ai-studio-ops:
+        - { name: routers.get, access: 'config:read' }
+      responses:
+        '200':
+          $ref: '#/components/responses/RouterView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Routing]
+      operationId: updateRouter
+      summary: Updates a router
+      x-ai-studio-ops:
+        - { name: routers.update, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouterWrite'
+      responses:
+        '200':
+          $ref: '#/components/responses/RouterView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      tags: [Routing]
+      operationId: deleteRouter
+      summary: Deletes a router
+      x-ai-studio-ops:
+        - { name: routers.delete, access: 'config:write', audit: true }
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  #################################################################################################
+  # presets
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/presets:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Presets]
+      operationId: listPresets
+      summary: The presets of the workspace
+      description: AI Studio Enterprise only gives their `id` and `name` to who chats without reading the configuration (`chat.presets`).
+      x-ai-studio-ops:
+        - { name: presets.list, access: 'config:read' }
+        - { name: chat.presets, access: 'chat:use' }
+      responses:
+        '200':
+          description: The presets, sorted by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Preset'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Presets]
+      operationId: createPreset
+      summary: Creates a preset
+      description: Attached to every text provider of the workspace unless `providers` says otherwise.
+      x-ai-studio-ops:
+        - { name: presets.create, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresetWrite'
+      responses:
+        '201':
+          description: The preset
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Preset'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/presets/{pid}:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/PresetId'
+    get:
+      tags: [Presets]
+      operationId: getPreset
+      summary: A preset
+      x-ai-studio-ops:
+        - { name: presets.get, access: 'config:read' }
+      responses:
+        '200':
+          $ref: '#/components/responses/PresetView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Presets]
+      operationId: updatePreset
+      summary: Updates a preset
+      x-ai-studio-ops:
+        - { name: presets.update, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresetWrite'
+      responses:
+        '200':
+          $ref: '#/components/responses/PresetView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Presets]
+      operationId: deletePreset
+      summary: Deletes a preset, detached from every provider first
+      x-ai-studio-ops:
+        - { name: presets.delete, access: 'config:write', audit: true }
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  #################################################################################################
+  # tools
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/tools:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Tools]
+      operationId: listTools
+      summary: Every tool of the workspace, whatever its kind
+      description: AI Studio Enterprise only gives their `id`, `name`, `kind` and `providers` to who chats without reading the configuration (`chat.tools`).
+      x-ai-studio-ops:
+        - { name: tools.list, access: 'config:read' }
+        - { name: chat.tools, access: 'chat:use' }
+      responses:
+        '200':
+          description: The tools, sorted by name, each with its kind
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ListedTool'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/tools/{kind}:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/ToolKind'
+    get:
+      tags: [Tools]
+      operationId: listToolsOfKind
+      summary: The tools of a kind
+      x-ai-studio-ops:
+        - { name: tools.listOfKind, access: 'config:read' }
+      responses:
+        '200':
+          description: The tools, sorted by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tool'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Tools]
+      operationId: createTool
+      summary: Creates a tool
+      description: |
+        Attached to every text provider of the workspace unless `providers` says otherwise. An MCP connector speaks the
+        stateless Streamable HTTP revision (`http_2026_07_28`). `template` creates a ready-made http function, the
+        fields sent alongside overriding it.
+      x-ai-studio-ops:
+        - { name: tools.create, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToolWrite'
+      responses:
+        '201':
+          description: The tool
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tool'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/tools/{kind}/{tid}:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/ToolKind'
+      - $ref: '#/components/parameters/ToolId'
+    get:
+      tags: [Tools]
+      operationId: getTool
+      summary: A tool
+      x-ai-studio-ops:
+        - { name: tools.get, access: 'config:read' }
+      responses:
+        '200':
+          $ref: '#/components/responses/ToolView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Tools]
+      operationId: updateTool
+      summary: Updates a tool
+      description: What the studio does not show (tls, proxy, response selection of a function, the transport of a connector) is kept as it was set.
+      x-ai-studio-ops:
+        - { name: tools.update, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ToolWrite'
+      responses:
+        '200':
+          $ref: '#/components/responses/ToolView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Tools]
+      operationId: deleteTool
+      summary: Deletes a tool, detached from every provider first
+      x-ai-studio-ops:
+        - { name: tools.delete, access: 'config:write', audit: true }
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  #################################################################################################
+  # mcp server
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/mcp-server:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [MCP server]
+      operationId: getMcpServer
+      summary: The MCP server of the workspace
+      x-ai-studio-ops:
+        - { name: mcpServer.get, access: 'config:read' }
+      responses:
+        '200':
+          $ref: '#/components/responses/McpServerView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [MCP server]
+      operationId: saveMcpServer
+      summary: Creates or updates the MCP server of the workspace
+      description: 'Only the fields the studio owns are written: what is set on the entity from the Otoroshi console (oauth, scopes, overlays, registry publication) is left as it is.'
+      x-ai-studio-ops:
+        - { name: mcpServer.save, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/McpServerWrite'
+      responses:
+        '200':
+          $ref: '#/components/responses/McpServerView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [MCP server]
+      operationId: deleteMcpServer
+      summary: Stops serving the MCP server of the workspace and deletes it
+      x-ai-studio-ops:
+        - { name: mcpServer.delete, access: 'config:write', audit: true }
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  #################################################################################################
+  # api keys
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/apikeys:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [API keys]
+      operationId: listApikeys
+      summary: The api keys of the workspace
+      x-ai-studio-ops:
+        - { name: keys.list, access: 'config:read' }
+        - { name: mykeys.list, access: 'keys:own', own: apikeys }
+      responses:
+        '200':
+          description: The api keys, sorted by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Apikey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [API keys]
+      operationId: createApikey
+      summary: Creates an api key, authorized on the route of the workspace only
+      description: Its quotas are the defaults of AI Studio unless `quotas` says otherwise. A `credit_limit` creates the budget limiting it.
+      x-ai-studio-ops:
+        - { name: keys.create, access: 'keys:manage', audit: true, secretOnce: true }
+        - { name: mykeys.create, access: 'keys:own', audit: true, secretOnce: true, own: apikeys }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApikeyWrite'
+      responses:
+        '201':
+          description: The api key, with its secret
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Apikey'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/apikeys/{kid}:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/ApikeyId'
+    get:
+      tags: [API keys]
+      operationId: getApikey
+      summary: An api key
+      x-ai-studio-ops:
+        - { name: keys.get, access: 'config:read' }
+        - { name: keys.reveal, access: 'keys:manage', audit: true, reveals: true }
+        - { name: mykeys.reveal, access: 'keys:own', audit: true, reveals: true, own: apikeys }
+      responses:
+        '200':
+          $ref: '#/components/responses/ApikeyView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [API keys]
+      operationId: updateApikey
+      summary: Updates an api key
+      description: 'An expired key reads as disabled: a new `valid_until` enables it again, unless `enabled` says otherwise.'
+      x-ai-studio-ops:
+        - { name: keys.update, access: 'keys:manage', audit: true }
+        - { name: mykeys.update, access: 'keys:own', audit: true, own: apikeys }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApikeyWrite'
+      responses:
+        '200':
+          $ref: '#/components/responses/ApikeyView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [API keys]
+      operationId: deleteApikey
+      summary: Deletes an api key and the budget limiting it
+      x-ai-studio-ops:
+        - { name: keys.delete, access: 'keys:manage', audit: true }
+        - { name: mykeys.delete, access: 'keys:own', audit: true, own: apikeys }
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/apikeys/{kid}/_reset-secret:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/ApikeyId'
+    post:
+      tags: [API keys]
+      operationId: resetApikeySecret
+      summary: Gives an api key a new secret
+      description: 'No pending rotation secret is kept: the previous bearer and basic credentials of the key stop working.'
+      x-ai-studio-ops:
+        - { name: keys.resetSecret, access: 'keys:manage', audit: true, secretOnce: true }
+        - { name: mykeys.resetSecret, access: 'keys:own', audit: true, secretOnce: true, own: apikeys }
+      responses:
+        '200':
+          $ref: '#/components/responses/ApikeyView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  #################################################################################################
+  # budgets
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/budgets:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Budgets]
+      operationId: listBudgets
+      summary: The budgets of the workspace
+      x-ai-studio-ops:
+        - { name: budgets.list, access: 'config:read' }
+        - { name: mybudgets.list, access: 'usage:own', own: budgets }
+      parameters:
+        - name: consumption
+          in: query
+          description: Adds the consumption of the current cycle to each budget, or for a budget counting its consumers apart, how many it counted (`consumers_count`), unless `consumer` names one of them.
+          schema:
+            type: boolean
+        - $ref: '#/components/parameters/Consumer'
+      responses:
+        '200':
+          description: The budgets, sorted by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Budget'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Budgets]
+      operationId: createBudget
+      summary: Creates a budget
+      x-ai-studio-ops:
+        - { name: budgets.create, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BudgetWrite'
+      responses:
+        '201':
+          description: The budget
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Budget'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/budgets/{bid}:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/BudgetId'
+    get:
+      tags: [Budgets]
+      operationId: getBudget
+      summary: A budget, with the consumption of its current cycle
+      description: 'A budget counting its consumers apart has no consumption of its own: it is the one of the consumer `consumer` names.'
+      x-ai-studio-ops:
+        - { name: budgets.get, access: 'config:read' }
+      parameters:
+        - $ref: '#/components/parameters/Consumer'
+      responses:
+        '200':
+          $ref: '#/components/responses/BudgetView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Budgets]
+      operationId: updateBudget
+      summary: Updates a budget
+      x-ai-studio-ops:
+        - { name: budgets.update, access: 'config:write', audit: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BudgetWrite'
+      responses:
+        '200':
+          $ref: '#/components/responses/BudgetView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Budgets]
+      operationId: deleteBudget
+      summary: Deletes a budget
+      x-ai-studio-ops:
+        - { name: budgets.delete, access: 'config:write', audit: true }
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/budgets/{bid}/consumption:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/BudgetId'
+    get:
+      tags: [Budgets]
+      operationId: getBudgetConsumption
+      summary: The consumption of the current cycle
+      x-ai-studio-ops:
+        - { name: budgets.consumption, access: 'config:read' }
+      parameters:
+        - $ref: '#/components/parameters/Consumer'
+      responses:
+        '200':
+          $ref: '#/components/responses/ConsumptionView'
+        '400':
+          description: '`consumer_required`: the budget counts its consumers apart, `consumer` must name one'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: The budget is not found, or nothing was consumed yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/budgets/{bid}/consumers:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/BudgetId'
+    get:
+      tags: [Budgets]
+      operationId: listBudgetConsumers
+      summary: The consumers a budget "by consumer" counted in the current cycle
+      description: The ones that consumed most first.
+      x-ai-studio-ops:
+        - { name: budgets.consumers, access: 'config:read' }
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: q
+          in: query
+          description: Keeps the consumers containing this text, case insensitive
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of consumers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, items]
+                properties:
+                  total:
+                    type: integer
+                    description: How many consumers match
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [consumer, consumption]
+                      properties:
+                        consumer:
+                          type: [string, 'null']
+                          description: The email of the person
+                        consumption:
+                          $ref: '#/components/schemas/Consumption'
+        '400':
+          description: '`not_by_consumer`: the budget does not count its consumers apart'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/budgets/{bid}/consumption/_reset:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/BudgetId'
+    post:
+      tags: [Budgets]
+      operationId: resetBudgetConsumption
+      summary: Resets the consumption of the current cycle
+      description: Of one consumer when `consumer` names one, of every cycle with `all=true`.
+      x-ai-studio-ops:
+        - { name: budgets.reset, access: 'config:write', audit: true }
+      parameters:
+        - $ref: '#/components/parameters/Consumer'
+        - name: all
+          in: query
+          description: Resets every cycle, not only the current one
+          schema:
+            type: boolean
+      responses:
+        '200':
+          $ref: '#/components/responses/Done'
+        '400':
+          description: '`consumer_not_allowed`: the budget does not count its consumers apart'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/budgets/{bid}/consumption/_extend:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/BudgetId'
+    post:
+      tags: [Budgets]
+      operationId: extendBudget
+      summary: Takes one of the extensions the budget allows
+      description: |
+        For a consumer when the budget counts its consumers apart: AI Studio Enterprise and the console relay here the
+        one a person takes for themselves, the consumer forced on them (`mybudgets.extend`). A consumer takes one once
+        it consumed in the cycle. The person AI Studio names in `AI-Studio-User-Email` is recorded in the audit event.
+      x-ai-studio-ops:
+        - { name: budgets.extend, access: 'config:write', audit: true }
+        - { name: mybudgets.extend, access: 'usage:own', audit: true, own: budgets }
+      parameters:
+        - $ref: '#/components/parameters/Consumer'
+        - name: AI-Studio-User-Email
+          in: header
+          description: The person taking the extension, recorded in the audit event
+          schema:
+            type: string
+            format: email
+      responses:
+        '200':
+          $ref: '#/components/responses/ConsumptionView'
+        '400':
+          description: '`consumer_required` or `consumer_not_allowed`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The caller cannot write the budget
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`extensions_disabled` (the budget allows none), `no_consumption` (nothing consumed in the cycle yet) or `extensions_exhausted` (every extension of the cycle taken, `extensions_max` given)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [Budgets]
+      operationId: cancelBudgetExtensions
+      summary: Cancels the extensions taken in the current cycle
+      description: The amounts are removed, the number taken is kept, or cancelling then taking again would go past it.
+      x-ai-studio-ops:
+        - { name: budgets.unextend, access: 'config:write', audit: true }
+      parameters:
+        - $ref: '#/components/parameters/Consumer'
+      responses:
+        '200':
+          $ref: '#/components/responses/Done'
+        '400':
+          description: '`consumer_required` or `consumer_not_allowed`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  #################################################################################################
+  # analytics
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/analytics/_query:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+    post:
+      tags: [Analytics]
+      operationId: runAnalyticsQuery
+      summary: Runs an llm or mcp query of the extension on the usage of the workspace
+      description: |
+        Always narrowed to the route and the tenant of the workspace, whatever the filters say. Served by the leader
+        only, with an active user analytics exporter (PostgreSQL).
+      x-ai-studio-ops:
+        - { name: analytics.query, access: 'usage:own' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyticsQuery'
+      responses:
+        '200':
+          description: The result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: The workspace or the query is unknown, or this instance is not the leader
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '412':
+          description: No active user analytics exporter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  #################################################################################################
+  # chat, on behalf of a user
+  #################################################################################################
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/chat/completions:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyChatCompletions
+      summary: A chat completion, streamed or not
+      description: The OpenAI chat completions api. Without a `model`, the default provider of the workspace answers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+      responses:
+        '200':
+          description: The completion, or its chunks with `stream`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletion'
+            text/event-stream:
+              schema:
+                type: string
+                description: '`data: <chunk json>` lines, the last chunk carrying `usage` (and `costs`), then `data: [DONE]`'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/responses:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyResponses
+      summary: A response, with the OpenAI responses api
+      description: Served for every text provider, converted when the provider only speaks chat completions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAiRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJsonOrStream'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/open-responses:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyOpenResponses
+      summary: A response, with the Open Responses api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAiRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJsonOrStream'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/oai-responses:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyOaiResponses
+      summary: A response, with the OpenAI responses api whatever the workspace is set to
+      description: '`/responses` answers with the Open Responses api when the workspace is set so (`use_open_response_for_responses`), this one never does.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAiRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJsonOrStream'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/messages:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyMessages
+      summary: A message, with the Anthropic messages api
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAiRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJsonOrStream'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/embeddings:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyEmbeddings
+      summary: Embeddings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, input]
+              properties:
+                model:
+                  type: string
+                input:
+                  oneOf:
+                    - type: string
+                    - type: array
+                      items:
+                        type: string
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJson'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/images/generations:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyImagesGenerations
+      summary: Draws images
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, prompt]
+              properties:
+                model:
+                  type: string
+                prompt:
+                  type: string
+                n:
+                  type: integer
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/ImagesAnswer'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/images/edits:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyImagesEdits
+      summary: Changes images the way a prompt says
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [model, prompt]
+              properties:
+                model:
+                  type: string
+                prompt:
+                  type: string
+                image:
+                  type: string
+                  format: binary
+                  description: One image
+                image[]:
+                  type: array
+                  description: Several images, the way the OpenAI sdks send them
+                  items:
+                    type: string
+                    format: binary
+      responses:
+        '200':
+          $ref: '#/components/responses/ImagesAnswer'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/audio/speech:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyAudioSpeech
+      summary: Speaks a text
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, input]
+              properties:
+                model:
+                  type: string
+                input:
+                  type: string
+                voice:
+                  type: string
+                response_format:
+                  type: string
+              additionalProperties: true
+      responses:
+        '200':
+          description: The audio
+          content:
+            audio/*:
+              schema:
+                type: string
+                format: binary
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/audio/transcriptions:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyAudioTranscriptions
+      summary: Writes down what an audio file says
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AudioFileForm'
+      responses:
+        '200':
+          $ref: '#/components/responses/TextAnswer'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/audio/translations:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyAudioTranslations
+      summary: Writes down what an audio file says, in English
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AudioFileForm'
+      responses:
+        '200':
+          $ref: '#/components/responses/TextAnswer'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/moderations:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyModerations
+      summary: Moderates a text
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, input]
+              properties:
+                model:
+                  type: string
+                input:
+                  type: string
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJson'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/ocr:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyOcr
+      summary: Reads a document
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [model, file]
+              properties:
+                model:
+                  type: string
+                file:
+                  type: string
+                  format: binary
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAiRequest'
+      responses:
+        '200':
+          description: The pages, as markdown
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        markdown:
+                          type: string
+                      additionalProperties: true
+                  usage_info:
+                    type: object
+                    additionalProperties: true
+                additionalProperties: true
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/systemone:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxySystemOne
+      summary: Asks a decision model typed questions, with the System One api
+      description: The questions are `noul`, `choice` or `score`, answered with probabilities. The body can also be gzip, zstd or multipart.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, state, questions]
+              properties:
+                model:
+                  type: string
+                state:
+                  description: What the questions are about
+                questions:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJson'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/decisions:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    post:
+      tags: [Chat]
+      operationId: proxyDecisions
+      summary: Asks a decision model, with the decisions api of OpenAI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAiRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJson'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/mcp:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+    post:
+      tags: [Chat]
+      operationId: proxyMcp
+      summary: A JSON-RPC request on the MCP server of the workspace
+      description: The server answers a client that never initializes, so a single request needs no session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [jsonrpc, method]
+              properties:
+                jsonrpc:
+                  const: '2.0'
+                id:
+                  type: [integer, string]
+                method:
+                  type: string
+                  examples: [tools/list, tools/call]
+                params:
+                  type: object
+                  additionalProperties: true
+      responses:
+        '200':
+          description: The JSON-RPC answer, or a stream of events whose last message is the answer
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/event-stream:
+              schema:
+                type: string
+        '404':
+          description: The workspace serves no MCP server
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GatewayError'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/models:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+    get:
+      tags: [Chat]
+      operationId: proxyModels
+      summary: The OpenAI listing of the models the workspace serves
+      parameters:
+        - name: enriched
+          in: query
+          description: Adds a `_metadata` object to each model
+          schema:
+            type: boolean
+        - name: kind
+          in: query
+          description: Keeps the models of at least one of these types (repeatable, comma separated)
+          schema:
+            type: string
+            examples: ['image,video']
+        - name: endpoint
+          in: query
+          description: Keeps the models served on at least one of these endpoints (repeatable, comma separated)
+          schema:
+            type: string
+            examples: ['chat_completions,responses']
+        - name: has_cost
+          in: query
+          description: Keeps the models costs tracking can (or cannot) bill
+          schema:
+            type: boolean
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJson'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/contexts:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+    get:
+      tags: [Chat]
+      operationId: proxyContexts
+      summary: The presets the workspace serves
+      responses:
+        '200':
+          description: The presets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, name]
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/providers:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+    get:
+      tags: [Chat]
+      operationId: proxyProviders
+      summary: Every provider kind the gateway supports, with its capabilities
+      parameters:
+        - name: capabilities
+          in: query
+          description: Keeps the providers exposing all of these capabilities (repeatable, comma separated)
+          schema:
+            type: string
+            examples: ['text,image']
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJson'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/model-capabilities:
+    parameters:
+      - $ref: '#/components/parameters/Tenant'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/UserEmail'
+      - $ref: '#/components/parameters/UserName'
+    get:
+      tags: [Chat]
+      operationId: proxyModelCapabilities
+      summary: The model types the gateway supports, each with the provider kinds exposing it
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJson'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  #################################################################################################
+  # backoffice (the OSS studio)
+  #################################################################################################
+
+  /extensions/cloud-apim/extensions/ai-extension/studio/bootstrap:
+    servers:
+      - url: '{scheme}://{backofficeHost}'
+        description: The Otoroshi backoffice, with the session of its user
+        variables:
+          scheme:
+            default: http
+            enum: [http, https]
+          backofficeHost:
+            default: otoroshi.oto.tools:8080
+    get:
+      tags: [Backoffice]
+      operationId: getBootstrap
+      summary: The values the page of the studio is served with
+      description: Injected in the page served by the extension (`window.__AI_STUDIO__`); fetched from here by a page served by another server (the vite dev server).
+      security:
+        - backofficeSession: []
+      responses:
+        '200':
+          description: The values
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Bootstrap'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/proxy/{endpoint}:
+    servers:
+      - url: '{scheme}://{backofficeHost}'
+        description: The Otoroshi backoffice, with the session of its user
+        variables:
+          scheme:
+            default: http
+            enum: [http, https]
+          backofficeHost:
+            default: otoroshi.oto.tools:8080
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - name: endpoint
+        in: path
+        required: true
+        description: |
+          Everything after `/proxy/`, slashes included and not encoded: the same endpoints as the chat of the studio
+          admin api (`chat/completions`, `responses`, `open-responses`, `oai-responses`, `messages`, `embeddings`,
+          `images/generations`, `images/edits`, `audio/speech`, `audio/transcriptions`, `audio/translations`,
+          `moderations`, `ocr`, `systemone`, `decisions`, `mcp`, `models`, `contexts`, `providers`,
+          `model-capabilities`), with the same bodies and answers.
+        schema:
+          type: string
+          examples: [chat/completions]
+      - $ref: '#/components/parameters/SessionId'
+      - $ref: '#/components/parameters/EmbedCosts'
+    get:
+      tags: [Backoffice]
+      operationId: backofficeProxyGet
+      summary: The endpoint of a workspace, for the signed-in user
+      description: Who can read the workspace can call it. The usage, the budgets scoped to users and the audit events are the ones of the signed-in user.
+      security:
+        - backofficeSession: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJson'
+        default:
+          $ref: '#/components/responses/ProxyError'
+    post:
+      tags: [Backoffice]
+      operationId: backofficeProxyPost
+      summary: The endpoint of a workspace, for the signed-in user
+      description: Who can read the workspace can call it. The body is relayed as it comes.
+      security:
+        - backofficeSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenAiRequest'
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          $ref: '#/components/responses/GatewayJsonOrStream'
+        default:
+          $ref: '#/components/responses/ProxyError'
+
+  /extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/conversations:
+    servers:
+      - url: '{scheme}://{backofficeHost}'
+        description: The Otoroshi backoffice, with the session of its user
+        variables:
+          scheme:
+            default: http
+            enum: [http, https]
+          backofficeHost:
+            default: otoroshi.oto.tools:8080
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Backoffice]
+      operationId: listConversations
+      summary: The conversations of the signed-in user in a workspace
+      description: Kept in Redis, or in PostgreSQL when the danger zone says so (`conversations_store`).
+      x-ai-studio-backend: urls.conversations
+      security:
+        - backofficeSession: []
+      responses:
+        '200':
+          description: The conversations, the most recent first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ConversationSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ConversationsStoreError'
+
+  /extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}/conversations/{cid}:
+    servers:
+      - url: '{scheme}://{backofficeHost}'
+        description: The Otoroshi backoffice, with the session of its user
+        variables:
+          scheme:
+            default: http
+            enum: [http, https]
+          backofficeHost:
+            default: otoroshi.oto.tools:8080
+    parameters:
+      - $ref: '#/components/parameters/WorkspaceId'
+      - name: cid
+        in: path
+        required: true
+        description: The id of the conversation, chosen by the studio
+        schema:
+          type: string
+    get:
+      tags: [Backoffice]
+      operationId: getConversation
+      summary: A conversation
+      security:
+        - backofficeSession: []
+      responses:
+        '200':
+          $ref: '#/components/responses/ConversationView'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: The workspace or the conversation is not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                additionalProperties: true
+        '500':
+          $ref: '#/components/responses/ConversationsStoreError'
+    put:
+      tags: [Backoffice]
+      operationId: saveConversation
+      summary: Saves a conversation
+      description: Stored as it comes, with the id of the path and the time of the save (`updated_at`).
+      security:
+        - backofficeSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Conversation'
+      responses:
+        '200':
+          $ref: '#/components/responses/ConversationView'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ConversationsStoreError'
+    delete:
+      tags: [Backoffice]
+      operationId: deleteConversation
+      summary: Deletes a conversation
+      security:
+        - backofficeSession: []
+      responses:
+        '204':
+          description: Deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ConversationsStoreError'
+
+  /bo/api/me/preferences/{key}:
+    servers:
+      - url: '{scheme}://{backofficeHost}'
+        description: The Otoroshi backoffice, with the session of its user
+        variables:
+          scheme:
+            default: http
+            enum: [http, https]
+          backofficeHost:
+            default: otoroshi.oto.tools:8080
+    parameters:
+      - name: key
+        in: path
+        required: true
+        description: The preference, `ai_studio_theme` for the theme of the studio
+        schema:
+          type: string
+          examples: [ai_studio_theme]
+    post:
+      tags: [Backoffice]
+      operationId: setPreference
+      summary: Keeps a preference of the backoffice user
+      description: An Otoroshi route. The studio keeps its theme there, which the page is served with.
+      x-ai-studio-backend: prefs.set
+      security:
+        - backofficeSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              description: A json value, `"light"`, `"dark"` or `"system"` for the theme
+      responses:
+        '200':
+          description: The value kept
+          content:
+            application/json:
+              schema: {}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+
+  securitySchemes:
+    adminApiClientId:
+      type: apiKey
+      in: header
+      name: Otoroshi-Client-Id
+      description: The client id of an admin api key, with `Otoroshi-Client-Secret`
+    adminApiClientSecret:
+      type: apiKey
+      in: header
+      name: Otoroshi-Client-Secret
+      description: The client secret of an admin api key, with `Otoroshi-Client-Id`
+    adminApiBasic:
+      type: http
+      scheme: basic
+      description: '`<client id>:<client secret>` of an admin api key'
+    backofficeSession:
+      type: apiKey
+      in: cookie
+      name: otoroshi-session
+      description: The session of a backoffice user (`play.http.session.cookieName`, `otoroshi-session` by default)
+
+  parameters:
+    Tenant:
+      name: Otoroshi-Tenant
+      in: header
+      description: The tenant the caller works in
+      schema:
+        type: string
+        default: default
+    WorkspaceId:
+      name: id
+      in: path
+      required: true
+      description: The id of the workspace
+      schema:
+        type: string
+        examples: [v4e46mctfxxw]
+    ProviderId:
+      name: cid
+      in: path
+      required: true
+      description: The id of the provider (its connection, `conn_...`)
+      schema:
+        type: string
+    ApikeyId:
+      name: kid
+      in: path
+      required: true
+      description: The client id of the api key
+      schema:
+        type: string
+    BudgetId:
+      name: bid
+      in: path
+      required: true
+      description: The id of the budget
+      schema:
+        type: string
+    LoadBalancerId:
+      name: lid
+      in: path
+      required: true
+      description: The id of the load balancer (a provider entity)
+      schema:
+        type: string
+    RouterId:
+      name: rid
+      in: path
+      required: true
+      description: The id of the router (a provider entity)
+      schema:
+        type: string
+    PresetId:
+      name: pid
+      in: path
+      required: true
+      description: The id of the preset (a prompt context entity)
+      schema:
+        type: string
+    ToolKind:
+      name: kind
+      in: path
+      required: true
+      description: The kind of tool
+      schema:
+        $ref: '#/components/schemas/ToolKind'
+    ToolId:
+      name: tid
+      in: path
+      required: true
+      description: The id of the tool
+      schema:
+        type: string
+    Force:
+      name: force
+      in: query
+      description: Asks the providers again instead of reading their models from the cache
+      schema:
+        type: boolean
+    Enriched:
+      name: enriched
+      in: query
+      description: Adds what the gateway knows of each model (`details`)
+      schema:
+        type: boolean
+    Consumer:
+      name: consumer
+      in: query
+      description: A consumer of a budget counting its consumers apart (`by_consumer`), the email of the person
+      schema:
+        type: string
+    UserEmail:
+      name: AI-Studio-User-Email
+      in: header
+      required: true
+      description: |
+        The user the call is made for: its usage, the budgets scoped to users and the audit events are the ones of
+        this user. Naming someone else attributes calls to them, which only who can write the workspace can do.
+      schema:
+        type: string
+        format: email
+    UserName:
+      name: AI-Studio-User-Name
+      in: header
+      description: The name of the user, URL encoded (the email by default)
+      schema:
+        type: string
+    SessionId:
+      name: X-Session-Id
+      in: header
+      description: Groups the calls of one conversation in the logs
+      schema:
+        type: string
+    EmbedCosts:
+      name: embed_costs
+      in: query
+      description: Puts the price of the call in the answer (`costs`), whatever the instance is set to
+      schema:
+        type: boolean
+
+  responses:
+    Unauthorized:
+      description: No valid admin api key, or no backoffice session
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    BadRequest:
+      description: The body or a parameter is invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: The caller cannot write what this call writes
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Not found, or not readable by the caller
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: The name or the slug is already used
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: Something failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Done:
+      description: Done
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [done]
+            properties:
+              done:
+                const: true
+    WorkspaceView:
+      description: The workspace
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Workspace'
+    ConnectionView:
+      description: The provider
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Connection'
+    ProviderModels:
+      description: The models of the provider
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProviderModels'
+    ProviderModelsError:
+      description: The provider could not list its models
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, error_description]
+            properties:
+              error:
+                const: bad_gateway
+              error_description:
+                type: string
+                description: Why, in words (`the provider rejected the credentials, check the API key`, ...)
+              error_details:
+                description: What the provider answered
+    ModelAccessView:
+      description: The model access
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ModelAccess'
+    GuardrailsView:
+      description: The guardrails
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Guardrails'
+    RoutingView:
+      description: The routing
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Routing'
+    LoadBalancerView:
+      description: The load balancer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/LoadBalancer'
+    RouterView:
+      description: The router
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Router'
+    PresetView:
+      description: The preset
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Preset'
+    ToolView:
+      description: The tool
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Tool'
+    McpServerView:
+      description: The MCP server
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/McpServer'
+    ApikeyView:
+      description: The api key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Apikey'
+    BudgetView:
+      description: The budget
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Budget'
+    ConsumptionView:
+      description: The consumption of the current cycle
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Consumption'
+    ConversationView:
+      description: The conversation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Conversation'
+    ConversationsStoreError:
+      description: The conversations store failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    GatewayJson:
+      description: The answer of the gateway
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    GatewayJsonOrStream:
+      description: The answer of the gateway, or its events with `stream`
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+        text/event-stream:
+          schema:
+            type: string
+    ImagesAnswer:
+      description: The images
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              data:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    b64_json:
+                      type: string
+                    url:
+                      type: string
+                  additionalProperties: true
+              usage:
+                type: object
+                additionalProperties: true
+              costs:
+                $ref: '#/components/schemas/Costs'
+            additionalProperties: true
+    TextAnswer:
+      description: The text
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              text:
+                type: string
+            additionalProperties: true
+    ProxyError:
+      description: |
+        A call the gateway refused or failed: `400` (no `AI-Studio-User-Email`, or not an email), `403` (the caller
+        cannot write the workspace, or the workspace is disabled), `404` (no such workspace or endpoint), a budget
+        exceeded (`budget_exceeded: true`), a guardrail denial, or the error of the provider with its status.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GatewayError'
+
+  schemas:
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: A code
+          examples: [bad_request, forbidden, not_found, conflict, internal_error, consumer_required]
+        error_description:
+          type: string
+      additionalProperties: true
+
+    GatewayError:
+      type: object
+      description: The OpenAI shape (`error.message`) for the providers, the Otoroshi one (`error` a code, `error_details` what happened) for the other errors.
+      properties:
+        error:
+          oneOf:
+            - type: string
+            - type: object
+              properties:
+                message:
+                  type: string
+              additionalProperties: true
+        error_description:
+          type: string
+        error_details: {}
+        budget_exceeded:
+          type: boolean
+      additionalProperties: true
+
+    Modality:
+      type: string
+      enum: [text, embedding, image, audio, moderation, ocr, video, decision]
+
+    Permission:
+      type: string
+      description: |
+        What a user can do on a workspace. Who can read its route gets `workspace:read`, `chat:use`, `usage:own`,
+        `config:read` and `activity:read`; who can write it gets them all but `members:read` and `members:manage`,
+        which AI Studio Enterprise gives itself.
+      enum:
+        - 'workspace:read'
+        - 'chat:use'
+        - 'keys:own'
+        - 'usage:own'
+        - 'config:read'
+        - 'activity:read'
+        - 'config:write'
+        - 'keys:manage'
+        - 'members:read'
+        - 'members:manage'
+        - 'workspace:delete'
+
+    Period:
+      type: string
+      description: '`custom` is the period of a budget whose duration was set outside of the studio: it is kept, never set'
+      enum: [lifetime, daily, weekly, monthly, yearly, custom]
+
+    #################################################################################################
+    # information
+    #################################################################################################
+
+    StudioConfig:
+      type: object
+      description: The settings of AI Studio, from the danger zone of Otoroshi
+      required: [enabled, domain, exposure, route_path, public_scheme, public_port, default_throttling_quota, default_daily_quota, default_monthly_quota, conversations_store]
+      properties:
+        enabled:
+          type: boolean
+        domain:
+          type: string
+          description: The domain the workspaces are served on
+          examples: [oto.tools]
+        exposure:
+          type: string
+          description: '`subdomain`: `<slug>.<domain><route_path>`, `path`: `<domain>/<slug><route_path>`'
+          enum: [subdomain, path]
+        route_path:
+          type: string
+          examples: [/v1]
+        public_scheme:
+          type: string
+          examples: [https]
+        public_port:
+          type: string
+          description: '`:<port>`, empty for 80 and 443'
+          examples: [':8080', '']
+        default_throttling_quota:
+          type: integer
+          format: int64
+        default_daily_quota:
+          type: integer
+          format: int64
+        default_monthly_quota:
+          type: integer
+          format: int64
+        conversations_store:
+          type: string
+          enum: [redis, postgresql]
+
+    Info:
+      type: object
+      required: [version, features, config]
+      properties:
+        version:
+          type: string
+          description: The build of the extension, `dev` when it does not run from its jar
+        features:
+          type: array
+          description: |
+            What this api offers beyond the routes of its first version: `caller-rights`, `budget-consumers`,
+            `budget-extensions`, `proxy-on-behalf-of`, `providers-draft-models`, `provider-options`, `model-entities`,
+            `tools-listing`, `mcp-server-meta`, `workspace-permissions`, `secret-sentinel`.
+          items:
+            type: string
+        config:
+          $ref: '#/components/schemas/StudioConfig'
+
+    CatalogField:
+      type: object
+      description: A connection setting of a provider kind
+      required: [name, label, placeholder, default, kind]
+      properties:
+        name:
+          type: string
+        label:
+          type: string
+        placeholder:
+          type: string
+        default:
+          type: string
+        kind:
+          type: string
+          description: '`provider`: a text provider of the workspace'
+          enum: [text, provider]
+
+    CatalogProvider:
+      type: object
+      required: [id, label, capabilities, base_url, base_url_required, token_required, credentials, models, audio_modes, fields, openai_like]
+      properties:
+        id:
+          type: string
+          description: The provider kind
+          examples: [openai]
+        label:
+          type: string
+        capabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/Modality'
+        base_url:
+          type: [string, 'null']
+        base_url_required:
+          type: boolean
+        token_required:
+          type: boolean
+        credentials:
+          type: boolean
+          description: False for a connection that reaches nothing by itself and goes through another one
+        models:
+          type: object
+          description: The suggested model of each capability, the audio one split in `audio_tts` and `audio_stt`
+          additionalProperties:
+            type: string
+        audio_modes:
+          type: array
+          items:
+            type: string
+            enum: [tts, stt]
+        fields:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogField'
+        openai_like:
+          type: boolean
+        insights:
+          $ref: '#/components/schemas/ProviderInsights'
+
+    ProviderInsights:
+      type: object
+      description: What the models catalog knows of the models of a provider kind, empty when it knows none
+      properties:
+        provider:
+          type: string
+        name:
+          type: string
+        doc:
+          type: string
+          format: uri
+        models:
+          type: integer
+        kinds:
+          type: object
+          description: How many models of each type
+          additionalProperties:
+            type: integer
+        reasoning:
+          type: integer
+        tool_call:
+          type: integer
+        vision:
+          type: integer
+        priced:
+          type: integer
+          description: How many models costs tracking bills
+        prompt_from:
+          type: string
+          description: The cheapest input price of its text models, in dollars per token
+        prompt_to:
+          type: string
+        max_context:
+          type: integer
+
+    #################################################################################################
+    # workspaces
+    #################################################################################################
+
+    Workspace:
+      type: object
+      required: [id, name, description, enabled, slug, base_url, tenant, route_id, team_id, mcp_server_ref, needs_repair, permissions, settings]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        enabled:
+          type: boolean
+        slug:
+          type: string
+          description: The name of the workspace in its domain
+        base_url:
+          type: string
+          format: uri
+          description: Where the workspace is served, `/chat/completions` and the other endpoints under it
+          examples: ['https://acme.oto.tools/v1']
+        tenant:
+          type: string
+        route_id:
+          type: string
+          examples: [route_ai_studio_v4e46mctfxxw]
+        team_id:
+          type: string
+          examples: [team_ai_studio_v4e46mctfxxw]
+        mcp_server_ref:
+          type: [string, 'null']
+          description: The MCP server the route serves on `<base_url>/mcp`
+        needs_repair:
+          type: boolean
+          description: A route created by an earlier studio, which an empty `PATCH` repairs
+        permissions:
+          type: array
+          description: What the caller can do on the workspace
+          items:
+            $ref: '#/components/schemas/Permission'
+        settings:
+          $ref: '#/components/schemas/WorkspaceSettings'
+
+    WorkspaceSettings:
+      type: object
+      required: [call_timeout, global_timeout, max_size_upload, decode_images, allowed_ip_addresses, blocked_ip_addresses]
+      properties:
+        call_timeout:
+          type: integer
+          format: int64
+          description: Milliseconds
+          default: 600000
+        global_timeout:
+          type: integer
+          format: int64
+          description: Milliseconds
+          default: 600000
+        max_size_upload:
+          type: integer
+          format: int64
+          description: Bytes
+          default: 104857600
+        decode_images:
+          type: boolean
+        allowed_ip_addresses:
+          type: array
+          description: Only these addresses call the workspace, when there is one
+          items:
+            type: string
+        blocked_ip_addresses:
+          type: array
+          items:
+            type: string
+
+    WorkspaceCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        slug:
+          type: string
+          description: Made of the name when absent, lower case letters, digits and dashes, 48 characters at most
+
+    WorkspaceUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        slug:
+          type: string
+        enabled:
+          type: boolean
+        call_timeout:
+          type: integer
+        global_timeout:
+          type: integer
+        max_size_upload:
+          type: integer
+        decode_images:
+          type: boolean
+        allowed_ip_addresses:
+          type: [array, 'null']
+          items:
+            type: string
+        blocked_ip_addresses:
+          type: [array, 'null']
+          items:
+            type: string
+
+    ModelMetadata:
+      type: object
+      description: What the gateway knows of a model, from the models catalog and the price table it bills with
+      properties:
+        kinds:
+          type: array
+          description: Its Otoroshi model types
+          items:
+            $ref: '#/components/schemas/Modality'
+        has_cost:
+          type: boolean
+          description: Whether costs tracking can bill its calls
+        openai_compatible:
+          type: boolean
+        endpoints:
+          type: array
+          description: The OpenAI endpoints it is served on
+          items:
+            type: string
+            examples: [chat_completions, responses, embeddings, images_generations, images_edits, audio_speech, audio_transcriptions, audio_translations, moderations, ocr, videos, systemone, decisions]
+        mode:
+          type: string
+        capabilities:
+          type: object
+          properties:
+            reasoning:
+              type: boolean
+            reasoning_options:
+              type: array
+              items: {}
+            tool_call:
+              type: boolean
+            structured_output:
+              type: boolean
+            temperature:
+              type: boolean
+            attachment:
+              type: boolean
+            prompt_caching:
+              type: boolean
+            web_search:
+              type: boolean
+        modalities:
+          type: object
+          properties:
+            input:
+              type: array
+              items:
+                type: string
+            output:
+              type: array
+              items:
+                type: string
+        limits:
+          type: object
+          properties:
+            context:
+              type: integer
+            input:
+              type: integer
+            output:
+              type: integer
+        pricing:
+          $ref: '#/components/schemas/Pricing'
+        knowledge:
+          type: string
+        status:
+          type: string
+        deprecation_date:
+          type: string
+        sources:
+          type: object
+          properties:
+            catalog:
+              type: object
+              properties:
+                provider:
+                  type: string
+                model:
+                  type: string
+                match:
+                  type: string
+                  enum: [exact, normalized, approximate, global, global-approximate]
+            pricing:
+              type: object
+              properties:
+                source:
+                  type: string
+                model:
+                  type: string
+                currency:
+                  type: string
+                exchange_rate:
+                  type: number
+      additionalProperties: true
+
+    Pricing:
+      type: object
+      description: The prices it is billed with, in dollars per token (per image, second or character for the others), as strings
+      properties:
+        prompt:
+          type: string
+        completion:
+          type: string
+        input_cache_read:
+          type: string
+        input_cache_write:
+          type: string
+        internal_reasoning:
+          type: string
+        audio:
+          type: string
+        audio_output:
+          type: string
+        image:
+          type: string
+        image_output:
+          type: string
+        input_second:
+          type: string
+        output_second:
+          type: string
+        input_character:
+          type: string
+        video_second:
+          type: string
+
+    WorkspaceModelSource:
+      type: object
+      description: A provider or a model entity the workspace serves
+      required: [id, modality]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        slug:
+          type: string
+        kind:
+          type: string
+        modality:
+          $ref: '#/components/schemas/Modality'
+        default_model:
+          type: [string, 'null']
+        endpoints:
+          type: array
+          items:
+            type: string
+        error:
+          type: string
+          description: Why its models could not be listed (its default model is listed instead)
+        error_details: {}
+
+    WorkspaceModel:
+      type: object
+      required: [id, model, provider, provider_id, provider_kind, modality, created, owned_by, owned_by_with_model, metadata]
+      properties:
+        id:
+          type: string
+          description: What a request names
+          examples: [openai/gpt-4o-mini, 'openrouter###openai/gpt-4o-mini']
+        model:
+          type: string
+        provider:
+          type: string
+          description: The slug of the provider
+        provider_id:
+          type: string
+        provider_kind:
+          type: string
+        modality:
+          $ref: '#/components/schemas/Modality'
+        created:
+          type: integer
+          format: int64
+        owned_by:
+          type: string
+        owned_by_with_model:
+          type: string
+          description: How the model is shown, `<provider name> / <model>`
+        metadata:
+          $ref: '#/components/schemas/ModelMetadata'
+
+    WorkspaceModels:
+      type: object
+      required: [providers, models]
+      properties:
+        providers:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceModelSource'
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceModel'
+
+    #################################################################################################
+    # providers
+    #################################################################################################
+
+    ModalityConf:
+      type: object
+      required: [enabled, model]
+      properties:
+        enabled:
+          type: boolean
+        model:
+          type: string
+          description: Its default model (the voice of the audio capability)
+        stt_model:
+          type: string
+          description: The transcription model, audio only
+
+    Connection:
+      type: object
+      description: A provider of the workspace
+      required: [id, name, kind, description, enabled, require_known_costs, base_url, token, timeout, fields, modalities, entities, tools, options]
+      properties:
+        id:
+          type: string
+          examples: [conn_x1y2z3a4b5c6]
+        name:
+          type: string
+          description: The prefix of its models (`<name>/<model>`), lower case letters, digits and underscores
+        kind:
+          type: string
+          description: A provider kind of the catalog
+        description:
+          type: string
+        enabled:
+          type: boolean
+        require_known_costs:
+          type: boolean
+          description: The models the gateway cannot bill are refused and not listed
+        base_url:
+          type: string
+        token:
+          type: string
+          description: Secret, masked by AI Studio Enterprise
+          x-ai-studio-secret: true
+        timeout:
+          type: number
+          description: Milliseconds
+        fields:
+          type: object
+          description: The extra settings of its kind (see `fields` in the catalog)
+          additionalProperties: true
+        modalities:
+          type: object
+          description: Its capabilities
+          propertyNames:
+            $ref: '#/components/schemas/Modality'
+          additionalProperties:
+            $ref: '#/components/schemas/ModalityConf'
+        entities:
+          type: object
+          description: The id of the entity of each capability
+          propertyNames:
+            $ref: '#/components/schemas/Modality'
+          additionalProperties:
+            type: string
+        tools:
+          type: array
+          description: The tools its text models can call
+          items:
+            type: string
+        options:
+          type: object
+          description: The raw options of its text provider (temperature, max tokens...)
+          additionalProperties: true
+
+    ModalityPatch:
+      oneOf:
+        - type: boolean
+        - type: object
+          properties:
+            enabled:
+              type: boolean
+              default: true
+              description: A capability listed in a body is enabled unless it says `false`
+            model:
+              type: string
+            stt_model:
+              type: string
+
+    ConnectionWrite:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        base_url:
+          type: string
+        token:
+          type: string
+          description: Required for a new provider whose kind says so
+        timeout:
+          type: number
+        enabled:
+          type: boolean
+        require_known_costs:
+          type: boolean
+        fields:
+          type: object
+          additionalProperties: true
+        modalities:
+          type: object
+          propertyNames:
+            $ref: '#/components/schemas/Modality'
+          additionalProperties:
+            $ref: '#/components/schemas/ModalityPatch'
+        tools:
+          type: array
+          description: The tools its text models can call, tools of the workspace only. Needs the text capability.
+          items:
+            type: string
+        options:
+          type: [object, 'null']
+          description: The raw options of its text provider, `null` clears them
+          additionalProperties: true
+
+    ConnectionCreate:
+      allOf:
+        - $ref: '#/components/schemas/ConnectionWrite'
+        - type: object
+          required: [kind]
+          properties:
+            kind:
+              type: string
+              description: A provider kind of the catalog
+
+    ConnectionUpdate:
+      allOf:
+        - $ref: '#/components/schemas/ConnectionWrite'
+        - type: object
+          properties:
+            kind:
+              type: string
+              description: The kind of the provider, which never changes
+
+    DraftModelsRequest:
+      type: object
+      description: '`kind` for a provider not saved yet, `connection_id` for a saved one'
+      properties:
+        kind:
+          type: string
+        connection_id:
+          type: string
+        base_url:
+          type: string
+        token:
+          type: string
+        fields:
+          type: object
+          additionalProperties: true
+
+    ProviderModels:
+      type: object
+      required: [from_cache, models]
+      properties:
+        from_cache:
+          type: boolean
+        models:
+          type: array
+          items:
+            type: string
+        details:
+          type: object
+          description: With `enriched`, what the gateway knows of each model
+          additionalProperties:
+            $ref: '#/components/schemas/ModelMetadata'
+
+    ModelEntity:
+      type: object
+      required: [id, name, modality, kind, model, connection, virtual, enabled]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        modality:
+          $ref: '#/components/schemas/Modality'
+        kind:
+          type: string
+        model:
+          type: [string, 'null']
+        connection:
+          type: [string, 'null']
+          description: The provider it belongs to
+        virtual:
+          type: boolean
+          description: A load balancer or a router
+        enabled:
+          type: boolean
+
+    #################################################################################################
+    # model access and guardrails
+    #################################################################################################
+
+    ModelAccess:
+      type: object
+      required: [include, exclude, mixed]
+      properties:
+        include:
+          type: array
+          description: Regular expressions on the model names
+          items:
+            type: string
+        exclude:
+          type: array
+          items:
+            type: string
+        mixed:
+          type: boolean
+          description: The model entities do not all have the same, the view shows the first one
+
+    ModelAccessWrite:
+      type: object
+      properties:
+        include:
+          type: [array, 'null']
+          items:
+            type: string
+        exclude:
+          type: [array, 'null']
+          items:
+            type: string
+
+    GuardrailKind:
+      type: string
+      enum: [regex, contains, characters, rampart, prompt_injection, pif, secrets_leakage, moderation, toxic_language, gibberish, moderation_model, decision_model, webhook]
+
+    GuardrailFilter:
+      type: object
+      description: The calls a guardrail applies to, none meaning every call
+      required: [from, value]
+      properties:
+        from:
+          type: string
+        value:
+          type: string
+
+    Guardrail:
+      type: object
+      required: [id, enabled, before, after, config, filters]
+      properties:
+        id:
+          $ref: '#/components/schemas/GuardrailKind'
+        enabled:
+          type: boolean
+          default: true
+        before:
+          type: boolean
+          default: true
+          description: Checks the request
+        after:
+          type: boolean
+          default: false
+          description: Checks the answer
+        config:
+          type: object
+          description: |
+            The settings of its kind, over its defaults. A guardrail judged by a text model names its `provider`, a
+            `moderation_model` its `moderation_model`, a `decision_model` its `decision_model` and its `threshold`:
+            models of the workspace only.
+          additionalProperties: true
+        filters:
+          type: array
+          items:
+            $ref: '#/components/schemas/GuardrailFilter'
+      additionalProperties: true
+
+    Guardrails:
+      type: object
+      required: [items, fail_on_deny, mixed]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Guardrail'
+        fail_on_deny:
+          type: boolean
+          description: A denied call fails with an error rather than answering the denial
+        mixed:
+          type: boolean
+          description: The providers do not all have the same, the view shows the first one
+
+    GuardrailsWrite:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [id]
+            properties:
+              id:
+                $ref: '#/components/schemas/GuardrailKind'
+              enabled:
+                type: boolean
+              before:
+                type: boolean
+              after:
+                type: boolean
+              config:
+                type: object
+                additionalProperties: true
+              filters:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GuardrailFilter'
+            additionalProperties: true
+        fail_on_deny:
+          type: boolean
+
+    #################################################################################################
+    # routing
+    #################################################################################################
+
+    Routing:
+      type: object
+      required: [default_provider, order, providers, load_balancers, routers]
+      properties:
+        default_provider:
+          type: [string, 'null']
+          description: The provider answering a request naming no model
+        order:
+          type: array
+          items:
+            type: string
+        providers:
+          type: array
+          items:
+            type: object
+            required: [id, name, kind, model, fallback, chain]
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              kind:
+                type: string
+              model:
+                type: [string, 'null']
+              fallback:
+                type: [string, 'null']
+              chain:
+                type: array
+                description: The provider and the fallbacks it ends up on
+                items:
+                  type: object
+                  required: [id, name]
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+        load_balancers:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoadBalancer'
+        routers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Router'
+
+    RoutingWrite:
+      type: object
+      properties:
+        default_provider:
+          type: string
+          description: A provider the workspace serves
+        fallbacks:
+          type: object
+          description: The fallback of each provider, `null` or an empty string for none
+          additionalProperties:
+            type: [string, 'null']
+
+    LoadBalancingStrategy:
+      type: string
+      enum: [round_robin, random, best_response_time]
+
+    LoadBalancer:
+      type: object
+      required: [id, name, strategy, targets]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        strategy:
+          $ref: '#/components/schemas/LoadBalancingStrategy'
+        targets:
+          type: array
+          items:
+            type: object
+            required: [ref, weight, model]
+            properties:
+              ref:
+                type: string
+              weight:
+                type: number
+              model:
+                type: [string, 'null']
+                description: Another model than the default one of the provider
+
+    LoadBalancerWrite:
+      type: object
+      properties:
+        name:
+          type: string
+          default: balanced
+        strategy:
+          $ref: '#/components/schemas/LoadBalancingStrategy'
+        targets:
+          type: array
+          description: Providers of the workspace, load balancers and routers aside
+          minItems: 1
+          items:
+            oneOf:
+              - type: string
+              - type: object
+                required: [ref]
+                properties:
+                  ref:
+                    type: string
+                  weight:
+                    type: number
+                    default: 1
+                  model:
+                    type: string
+
+    RouterMode:
+      type: string
+      enum: [code, auto, smart, intent, fusion]
+
+    RouterCandidate:
+      description: A provider of the workspace, with another model than its default one when it is an object
+      oneOf:
+        - type: string
+        - type: object
+          required: [ref, model]
+          properties:
+            ref:
+              type: string
+            model:
+              type: string
+
+    IntentCandidate:
+      type: object
+      description: A candidate of the intent router, as the user described it
+      required: [ref]
+      properties:
+        ref:
+          type: string
+        model:
+          type: string
+        description:
+          type: string
+          description: What it is good at
+        name:
+          type: string
+          description: The name of its option
+
+    Router:
+      type: object
+      required: [id, name, modes]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        modes:
+          type: array
+          description: The routing models it serves, the ones with candidates
+          items:
+            $ref: '#/components/schemas/RouterMode'
+        code_router_refs:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouterCandidate'
+        min_coding_score:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.5
+        auto_router_refs:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouterCandidate'
+        auto_router_classifier_ref:
+          type: [string, 'null']
+        auto_router_classifier_model:
+          type: [string, 'null']
+        cost_quality_tradeoff:
+          type: number
+          minimum: 0
+          maximum: 10
+          default: 7
+        allowed_models:
+          type: array
+          items:
+            type: string
+        decision_model_ref:
+          type: [string, 'null']
+          description: The decision model of the smart and intent routers
+        decision_model_model:
+          type: [string, 'null']
+        smart_router_refs:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouterCandidate'
+        smart_router_min_score:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0
+        smart_router_max_score:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 1
+        intent_router_refs:
+          type: array
+          items:
+            $ref: '#/components/schemas/IntentCandidate'
+        intent_router_instructions:
+          type: [string, 'null']
+        intent_router_min_confidence:
+          type: [number, 'null']
+          minimum: 0
+          maximum: 1
+        fusion_router_refs:
+          type: array
+          maxItems: 8
+          items:
+            $ref: '#/components/schemas/RouterCandidate'
+        fusion_router_judge_ref:
+          type: [string, 'null']
+        fusion_router_judge_model:
+          type: [string, 'null']
+        fusion_router_synthesizer_ref:
+          type: [string, 'null']
+        fusion_router_synthesizer_model:
+          type: [string, 'null']
+
+    RouterWrite:
+      type: object
+      description: |
+        A router needs candidates for at least one mode. Candidates given as ids keep the model already set for them,
+        `{ ref, model }` objects set it, `null` clears a list. The scores are clamped to their range, the fusion keeps 8
+        candidates at most.
+      properties:
+        name:
+          type: string
+          default: router
+        code_router_refs:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/RouterCandidate'
+        min_coding_score:
+          type: number
+        auto_router_refs:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/RouterCandidate'
+        auto_router_classifier_ref:
+          type: [string, 'null']
+        auto_router_classifier_model:
+          type: [string, 'null']
+        cost_quality_tradeoff:
+          type: number
+        allowed_models:
+          type: [array, 'null']
+          items:
+            type: string
+        decision_model_ref:
+          type: [string, 'null']
+          description: A decision model of the workspace
+        decision_model_model:
+          type: [string, 'null']
+        smart_router_refs:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/RouterCandidate'
+        smart_router_min_score:
+          type: number
+        smart_router_max_score:
+          type: number
+        intent_router_refs:
+          type: [array, 'null']
+          items:
+            oneOf:
+              - type: string
+              - $ref: '#/components/schemas/IntentCandidate'
+        intent_router_instructions:
+          type: [string, 'null']
+        intent_router_min_confidence:
+          type: [number, 'null']
+        fusion_router_refs:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/RouterCandidate'
+        fusion_router_judge_ref:
+          type: [string, 'null']
+        fusion_router_judge_model:
+          type: [string, 'null']
+        fusion_router_synthesizer_ref:
+          type: [string, 'null']
+        fusion_router_synthesizer_model:
+          type: [string, 'null']
+
+    #################################################################################################
+    # presets
+    #################################################################################################
+
+    Preset:
+      type: object
+      required: [id, name, description, system, trailing, providers]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        system:
+          type: string
+          description: The system message put before the messages of a chat
+        trailing:
+          type: string
+          description: The user message put after them
+        providers:
+          type: array
+          description: The text providers it is attached to
+          items:
+            type: string
+
+    PresetWrite:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Required on creation, spaces become dashes
+        description:
+          type: string
+        system:
+          type: string
+        trailing:
+          type: string
+        providers:
+          type: [array, 'null']
+          items:
+            type: string
+
+    #################################################################################################
+    # tools
+    #################################################################################################
+
+    ToolKind:
+      type: string
+      enum: [functions, mcp, search]
+
+    SearchProvider:
+      type: string
+      enum: [tavily, brave, exa, searchapi, google, staan, searxng, duckduckgo]
+
+    Tool:
+      type: object
+      description: The fields of a tool depend on its kind
+      required: [id, name, description, providers]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        providers:
+          type: array
+          description: The text providers whose models can call it
+          items:
+            type: string
+        parameters:
+          type: object
+          description: '`functions`: the json schema of its arguments'
+          additionalProperties: true
+        url:
+          type: string
+          description: '`functions`: the url called, `${arg}` replaced by the arguments; `mcp`: the url of the server'
+        method:
+          type: string
+          description: '`functions`'
+          default: POST
+        headers:
+          type: object
+          description: '`functions` and `mcp`. Secret, masked by AI Studio Enterprise'
+          additionalProperties:
+            type: string
+          x-ai-studio-secret: true
+        body:
+          type: string
+          description: '`functions`'
+        timeout:
+          type: number
+          description: '`functions` and `mcp`, milliseconds'
+          default: 30000
+        kreuzberg:
+          type: boolean
+          description: '`functions`: turns the document answered into markdown'
+        transport:
+          type: string
+          description: '`mcp`'
+          examples: [http_2026_07_28]
+        enabled:
+          type: boolean
+          description: '`mcp`'
+        search_provider:
+          $ref: '#/components/schemas/SearchProvider'
+        token:
+          type: string
+          description: '`search`. Secret, masked by AI Studio Enterprise'
+          x-ai-studio-secret: true
+        base_url:
+          type: string
+          description: '`search`'
+
+    ListedTool:
+      allOf:
+        - $ref: '#/components/schemas/Tool'
+        - type: object
+          required: [kind]
+          properties:
+            kind:
+              $ref: '#/components/schemas/ToolKind'
+
+    ToolWrite:
+      type: object
+      description: The fields of its kind, `name` required, `url` required for a function and a connector
+      properties:
+        template:
+          type: string
+          description: Creates a ready-made http function, on creation only
+          enum: [web_fetch]
+        name:
+          type: string
+        description:
+          type: string
+        providers:
+          type: [array, 'null']
+          items:
+            type: string
+        parameters:
+          type: [object, 'null']
+          additionalProperties: true
+        url:
+          type: string
+        method:
+          type: string
+          description: '`GET` when absent on creation'
+        headers:
+          type: [object, 'null']
+          additionalProperties:
+            type: string
+        body:
+          type: string
+        timeout:
+          type: number
+        kreuzberg:
+          type: boolean
+        enabled:
+          type: boolean
+        search_provider:
+          $ref: '#/components/schemas/SearchProvider'
+        token:
+          type: string
+        base_url:
+          type: string
+
+    #################################################################################################
+    # mcp server
+    #################################################################################################
+
+    McpServer:
+      type: object
+      required: [served, url, id, name, description, enabled, functions, connectors, expose_as_meta, meta_semantic_search]
+      properties:
+        served:
+          type: boolean
+          description: Whether the workspace serves one
+        url:
+          type: string
+          format: uri
+          description: '`<base_url>/mcp`'
+        id:
+          type: [string, 'null']
+        name:
+          type: string
+        description:
+          type: string
+        enabled:
+          type: boolean
+        functions:
+          type: array
+          description: The http functions it exposes
+          items:
+            type: string
+        connectors:
+          type: array
+          description: The MCP connectors whose tools it exposes
+          items:
+            type: string
+        expose_as_meta:
+          type: boolean
+          description: The tools are exposed behind a few meta tools (list, search, schema, execute) instead of one by one
+        meta_semantic_search:
+          type: boolean
+
+    McpServerWrite:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Required when the workspace serves none yet
+        description:
+          type: string
+        enabled:
+          type: boolean
+        functions:
+          type: [array, 'null']
+          items:
+            type: string
+        connectors:
+          type: [array, 'null']
+          items:
+            type: string
+        expose_as_meta:
+          type: boolean
+        meta_semantic_search:
+          type: boolean
+
+    #################################################################################################
+    # api keys
+    #################################################################################################
+
+    ModelPatterns:
+      type: object
+      description: Regular expressions on `model`, `provider/model` or `provider###model`, without commas
+      required: [include, exclude]
+      properties:
+        include:
+          type: array
+          items:
+            type: string
+        exclude:
+          type: array
+          items:
+            type: string
+
+    Quotas:
+      type: object
+      properties:
+        throttling_quota:
+          type: [integer, 'null']
+          format: int64
+          description: Calls per second
+        daily_quota:
+          type: [integer, 'null']
+          format: int64
+        monthly_quota:
+          type: [integer, 'null']
+          format: int64
+
+    Apikey:
+      type: object
+      required: [client_id, client_secret, bearer, name, description, enabled, valid_until, expired, owner, models, uses_workspace_quotas, quotas, credit_limit]
+      properties:
+        client_id:
+          type: string
+        client_secret:
+          type: [string, 'null']
+          description: Secret, masked by AI Studio Enterprise but on creation, reset and reveal
+          x-ai-studio-secret: true
+        bearer:
+          type: [string, 'null']
+          description: The bearer token of the key. Secret, masked like the client secret
+          x-ai-studio-secret: true
+        name:
+          type: string
+        description:
+          type: string
+        enabled:
+          type: boolean
+        valid_until:
+          type: [string, 'null']
+          format: date-time
+          description: When the key stops working
+        expired:
+          type: boolean
+        owner:
+          type: [string, 'null']
+          format: email
+          description: The person the usage of the key counts for, none for a key of the whole workspace
+        models:
+          $ref: '#/components/schemas/ModelPatterns'
+        uses_workspace_quotas:
+          type: boolean
+          description: Its quotas are the defaults of AI Studio
+        quotas:
+          $ref: '#/components/schemas/Quotas'
+        credit_limit:
+          type: [object, 'null']
+          description: The budget limiting the key
+          required: [budget_id, usd, period]
+          properties:
+            budget_id:
+              type: string
+            usd:
+              type: [number, 'null']
+            period:
+              $ref: '#/components/schemas/Period'
+
+    ApikeyWrite:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Required on creation
+        description:
+          type: string
+        enabled:
+          type: boolean
+        valid_until:
+          description: An ISO-8601 instant, epoch milliseconds, or a date (valid through the end of that day, UTC), `null` for a key that never expires
+          oneOf:
+            - type: string
+              examples: ['2027-01-31', '2027-01-31T18:00:00Z']
+            - type: integer
+            - type: 'null'
+        owner:
+          type: [string, 'null']
+          format: email
+          description: '`null` makes it a key of the whole workspace'
+        models:
+          description: '`null` for every model, a list left out is kept'
+          oneOf:
+            - type: object
+              properties:
+                include:
+                  type: array
+                  items:
+                    type: string
+                exclude:
+                  type: array
+                  items:
+                    type: string
+            - type: 'null'
+        quotas:
+          description: Overrides the defaults of AI Studio, `null` goes back to them
+          oneOf:
+            - $ref: '#/components/schemas/Quotas'
+            - type: 'null'
+        credit_limit:
+          description: Sets the budget limiting the key, `null` removes it
+          oneOf:
+            - type: object
+              properties:
+                usd:
+                  type: [number, 'null']
+                period:
+                  $ref: '#/components/schemas/Period'
+            - type: 'null'
+
+    #################################################################################################
+    # budgets
+    #################################################################################################
+
+    BudgetRule:
+      type: object
+      description: A condition on the call, a json path and the value it must have
+      required: [path, value]
+      properties:
+        path:
+          type: string
+          examples: ['$.apikey.metadata.team']
+        value: {}
+
+    Budget:
+      type: object
+      required: [id, name, description, enabled, usd, tokens, period, duration, mode, alert, scope, apikeys, users, models, rules, key_limit, start_at, end_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        enabled:
+          type: boolean
+        usd:
+          type: [number, 'null']
+          description: The dollar limit of a cycle
+        tokens:
+          type: [number, 'null']
+          description: The token limit of a cycle
+        period:
+          $ref: '#/components/schemas/Period'
+        duration:
+          type: [object, 'null']
+          properties:
+            value:
+              type: integer
+            unit:
+              type: string
+        mode:
+          type: string
+          description: '`block` refuses the calls once exceeded, `soft` only alerts'
+          enum: [block, soft]
+        alert:
+          type: number
+          description: The percentage alerting before the limit
+          default: 80
+        scope:
+          type: string
+          description: '`workspace`: every call of the workspace, `apikey`: one api key, `custom`: the api keys, users, models and rules given'
+          enum: [workspace, apikey, custom]
+        apikeys:
+          type: array
+          items:
+            type: string
+        users:
+          type: array
+          items:
+            type: string
+        models:
+          type: array
+          items:
+            type: string
+        rules:
+          type: array
+          description: The conditions added to the one of the workspace, which is always there
+          items:
+            $ref: '#/components/schemas/BudgetRule'
+        key_limit:
+          type: [string, 'null']
+          description: The api key it is the credit limit of
+        start_at:
+          type: [string, 'null']
+          format: date-time
+        end_at:
+          type: [string, 'null']
+          format: date-time
+        by_consumer:
+          type: boolean
+          description: Each person gets the whole limit, their chats and the calls of the keys they own counting together. Absent when it counts nobody apart.
+        partition:
+          type: string
+          description: Counted apart by an expression set outside of the studio, which the studio never changes
+          enum: [custom]
+        extensions_enabled:
+          type: boolean
+          description: Present with the extensions
+        extension_usd:
+          type: [number, 'null']
+          description: What an extension adds to the dollar limit
+        extension_tokens:
+          type: [number, 'null']
+        max_extensions:
+          type: integer
+          description: How many extensions a cycle allows
+        consumption:
+          $ref: '#/components/schemas/Consumption'
+        consumers_count:
+          type: integer
+          description: For a budget "by consumer" listed with `consumption`, how many consumers it counted in the cycle
+
+    BudgetWrite:
+      type: object
+      description: A budget needs a `usd` or a `tokens` limit.
+      properties:
+        name:
+          type: string
+          description: Required on creation
+        description:
+          type: string
+        enabled:
+          type: boolean
+        usd:
+          type: [number, 'null']
+        tokens:
+          type: [number, 'null']
+        period:
+          $ref: '#/components/schemas/Period'
+        mode:
+          type: string
+          enum: [block, soft]
+        alert:
+          type: number
+        scope:
+          type: string
+          description: Deduced from the consumers given when absent. `apikey` needs exactly one api key of the workspace.
+          enum: [workspace, apikey, custom]
+        apikeys:
+          type: [array, 'null']
+          items:
+            type: string
+        users:
+          type: [array, 'null']
+          items:
+            type: string
+        models:
+          type: [array, 'null']
+          items:
+            type: string
+        rules:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/BudgetRule'
+        by_consumer:
+          type: boolean
+          description: Not for a budget scoped to an api key
+        extensions_enabled:
+          type: boolean
+        extension_usd:
+          type: [number, 'null']
+          description: Positive, needs a dollar limit
+        extension_tokens:
+          type: [number, 'null']
+          description: Positive, needs a token limit
+        max_extensions:
+          type: integer
+          minimum: 1
+
+    Consumption:
+      type: object
+      description: |
+        What a cycle consumed, for every limit of a budget: `consumed_<limit>`, `remaining_<limit>` and
+        `allowed_<limit>` (the limit with the extensions taken, `null` without limit), the limits being `total`,
+        `inference`, `image`, `audio`, `video`, `embedding`, `moderation`, `ocr` and `decision`, in `usd` and in
+        `tokens` (`pages` for the ocr).
+      required: [consumed_total_usd, consumed_total_tokens, remaining_total_usd, remaining_total_tokens]
+      properties:
+        consumed_total_usd:
+          type: number
+        consumed_total_tokens:
+          type: integer
+        remaining_total_usd:
+          type: number
+        remaining_total_tokens:
+          type: integer
+        allowed_total_usd:
+          type: [number, 'null']
+        allowed_total_tokens:
+          type: [integer, 'null']
+        partition:
+          type: string
+          description: The consumer, for a budget counting its consumers apart
+        extensions_taken:
+          type: integer
+          description: How many extensions the cycle took
+        extensions_max:
+          type: integer
+        extension:
+          type: object
+          description: What an extension adds to each limit
+          additionalProperties:
+            type: number
+      patternProperties:
+        '^(consumed|remaining)_(total|inference|image|audio|video|embedding|moderation|ocr|decision)_(usd|tokens|pages)$':
+          type: number
+        '^allowed_(total|inference|image|audio|video|embedding|moderation|ocr|decision)_(usd|tokens|pages)$':
+          type: [number, 'null']
+        '^extra_(total|inference|image|audio|video|embedding|moderation|ocr|decision)_(usd|tokens|pages)$':
+          type: number
+          description: What the extensions taken in the cycle add to a limit
+
+    #################################################################################################
+    # analytics
+    #################################################################################################
+
+    AnalyticsQuery:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: An llm or mcp query of the extension
+          pattern: '^cloudapim_(llm|mcp)_'
+          examples: [cloudapim_llm_cost_over_time, cloudapim_llm_calls_log, cloudapim_mcp_tools_table]
+        filters:
+          type: object
+          description: The route and the tenant of the workspace are always added
+          properties:
+            from:
+              type: string
+              description: '`now`, `now-<n><s|m|h|d>` or an ISO-8601 instant'
+              default: now-1h
+              examples: [now-7d, '2026-09-01T10:00:00.000Z']
+            to:
+              type: string
+              default: now
+            apikey_id:
+              type: string
+            err:
+              type: boolean
+              description: Only the calls that failed, or only the ones that did not
+        params:
+          type: object
+          description: The parameters of the query (`user`, the email of a studio user, for every llm query; `limit`, `before` for the logs...)
+          additionalProperties: true
+        bucket:
+          type: string
+          description: The size of the buckets of a timeseries, chosen from the range when absent
+          enum: [1m, 5m, 1h, 6h, 1d]
+        compare:
+          type: boolean
+          description: Also runs the query on the previous period (`compare`)
+        nocache:
+          type: boolean
+
+    AnalyticsResult:
+      type: object
+      required: [shape, data, meta]
+      properties:
+        shape:
+          type: string
+          enum: [timeseries, topN, pie, scalar, metric, table, heatmap]
+        data:
+          type: object
+          description: '`{ value }` for a scalar, `{ points: [{ ts, value }] }` or `{ series: [{ name, points }] }` for a timeseries, `{ items, next }` for a log paged with `before`'
+          additionalProperties: true
+        raw:
+          type: array
+          items: {}
+        meta:
+          type: object
+          properties:
+            execution_ms:
+              type: integer
+            from_cache:
+              type: boolean
+            bucket:
+              type: string
+          additionalProperties: true
+        compare:
+          type: object
+          description: The result on the previous period, with `compare`
+          additionalProperties: true
+
+    #################################################################################################
+    # chat
+    #################################################################################################
+
+    Costs:
+      type: object
+      description: What the gateway billed for the call, with `embed_costs`
+      properties:
+        input_cost:
+          type: number
+        output_cost:
+          type: number
+        reasoning_cost:
+          type: number
+        total_cost:
+          type: number
+        currency:
+          const: dollar
+        source:
+          type: string
+      additionalProperties: true
+
+    OpenAiRequest:
+      type: object
+      description: The body of the api, relayed as it is
+      additionalProperties: true
+
+    ChatMessage:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [system, developer, user, assistant, tool]
+        content:
+          description: A text, or parts (text, images, files)
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+                additionalProperties: true
+            - type: 'null'
+      additionalProperties: true
+
+    ChatCompletionRequest:
+      type: object
+      required: [messages]
+      properties:
+        model:
+          type: string
+          description: An id of the models listing of the workspace
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        stream:
+          type: boolean
+        stream_options:
+          type: object
+          properties:
+            include_usage:
+              type: boolean
+        temperature:
+          type: number
+        top_p:
+          type: number
+        max_tokens:
+          type: integer
+        tools:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      additionalProperties: true
+
+    ChatCompletion:
+      type: object
+      properties:
+        id:
+          type: string
+        model:
+          type: string
+          description: The model that answered
+        choices:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              finish_reason:
+                type: [string, 'null']
+              message:
+                type: object
+                properties:
+                  role:
+                    type: string
+                  content:
+                    type: [string, 'null']
+                  reasoning:
+                    type: string
+                  reasoning_content:
+                    type: string
+                  reasoning_details:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                  images:
+                    type: array
+                    description: What the model drew
+                    items:
+                      type: object
+                      additionalProperties: true
+                  tool_calls:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                additionalProperties: true
+            additionalProperties: true
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            completion_tokens:
+              type: integer
+              description: The reasoning tokens included
+            total_tokens:
+              type: integer
+          additionalProperties: true
+        costs:
+          $ref: '#/components/schemas/Costs'
+      additionalProperties: true
+
+    AudioFileForm:
+      type: object
+      required: [model, file]
+      properties:
+        model:
+          type: string
+        file:
+          type: string
+          format: binary
+      additionalProperties: true
+
+    #################################################################################################
+    # backoffice
+    #################################################################################################
+
+    Bootstrap:
+      type: object
+      required: [theme, basePath, adminUrl, apiPath, extensionId, user, config, otoroshi]
+      properties:
+        theme:
+          type: string
+          enum: [light, dark, system]
+        basePath:
+          type: string
+          examples: [/extensions/cloud-apim/ai-studio]
+        adminUrl:
+          type: string
+          examples: [/bo/dashboard]
+        apiPath:
+          type: string
+          examples: [/extensions/cloud-apim/extensions/ai-extension/studio]
+        extensionId:
+          type: string
+          examples: [cloud-apim.extensions.LlmExtension]
+        user:
+          type: object
+          required: [email, name, superAdmin, rights]
+          properties:
+            email:
+              type: string
+              format: email
+            name:
+              type: string
+            superAdmin:
+              type: boolean
+            rights:
+              type: array
+              description: The rights of the backoffice user
+              items:
+                type: object
+                additionalProperties: true
+        config:
+          $ref: '#/components/schemas/StudioConfig'
+        otoroshi:
+          type: object
+          required: [version, domain]
+          properties:
+            version:
+              type: string
+            domain:
+              type: string
+
+    ConversationSummary:
+      type: object
+      required: [id, title, model, updated_at]
+      properties:
+        id:
+          type: [string, 'null']
+        title:
+          type: [string, 'null']
+        model:
+          type: [string, 'null']
+        updated_at:
+          type: [integer, 'null']
+          format: int64
+          description: Epoch milliseconds
+
+    Conversation:
+      type: object
+      description: |
+        Stored as the studio writes it: a list of messages, an answer keeping its regenerated `versions`, a comparison
+        (`compare`, the models of its columns) giving each turn of the assistant the `answers` of every column.
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        model:
+          type: string
+        compare:
+          type: array
+          maxItems: 3
+          items:
+            type: string
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+                enum: [system, user, assistant]
+              content:
+                type: string
+              reasoning:
+                type: string
+              model:
+                type: string
+              requested:
+                type: string
+              images:
+                type: array
+                items:
+                  type: string
+              attachments:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              usage:
+                type: object
+                additionalProperties: true
+              costs:
+                $ref: '#/components/schemas/Costs'
+              duration:
+                type: number
+              ttft:
+                type: number
+              error:
+                type: boolean
+              stopped:
+                type: boolean
+              at:
+                type: number
+              versions:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+              version:
+                type: integer
+              answers:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+            additionalProperties: true
+        created_at:
+          type: integer
+          format: int64
+        updated_at:
+          type: integer
+          format: int64
+          description: Set by the store on each save
+      additionalProperties: true
