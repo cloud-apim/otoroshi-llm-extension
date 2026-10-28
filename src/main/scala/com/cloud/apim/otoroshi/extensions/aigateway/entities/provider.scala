@@ -489,7 +489,7 @@ object AiProvider {
         val opts = JlamaChatClientOptions.fromJson(options)
         new JlamaChatClient(opts, id).some
       },
-      "loadbalancer" -> { (c: ChatClientContext) => new LoadBalancerChatClient(c.self).some },
+      "loadbalancer" -> { (c: ChatClientContext) => new LoadBalancerChatClient(c.self, c.env).some },
       "otoroshi" -> { (c: ChatClientContext) => new OtoroshiRouterChatClient(c.self).some },
     )
     val likes: Map[String, AiProvider.ChatClientContext => Option[ChatClient]] =

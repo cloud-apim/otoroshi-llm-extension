@@ -4,9 +4,10 @@ import com.cloud.apim.otoroshi.extensions.aigateway.LlmExtensionOneOtoroshiServe
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import otoroshi.models.EntityLocation
 import otoroshi.next.models.*
+import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.BetterFuture
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.OpenAiCompatProxy
-import play.api.libs.json.Json
+import play.api.libs.json.{JsArray, JsString, JsValue, Json}
 import play.api.libs.ws.WSResponse
 import reactor.core.publisher.Mono
 
@@ -37,6 +38,11 @@ class LoadBalancerSuite extends LlmExtensionOneOtoroshiServerPerSuite {
            |  "eval_count": 298,
            |  "eval_duration": 4799921000
            |}""".stripMargin))
+  }).get("/api/tags", (_, response) => {
+    response
+      .status(200)
+      .addHeader("Content-Type", "application/json")
+      .sendString(Mono.just("""{"models":[{"name":"foo"},{"name":"baz"}]}"""))
   }))
 
   val (ollama2Port, _) = createTestServerWithRoutes("ollama2", routes => routes.post("/api/chat", (req, response) => {
@@ -334,6 +340,41 @@ class LoadBalancerSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").deleteEntity(llmProvider4).awaitf(10.seconds)
     client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").deleteEntity(llmProviderLb).awaitf(10.seconds)
     client.forEntity("proxy.otoroshi.io", "v1", "routes").deleteEntity(route).awaitf(10.seconds)
+    await(2.seconds)
+  }
+
+  test("a load balancer lists the models of its targets") {
+    // ollama 1 lists its models, ollama 2 cannot (no /api/tags) and falls back on its default one, ollama 3 has a
+    // model of its own in the load balancer, ollama 4 cannot list and has no default one
+    val llmProvider1 = ollamaProvider("ollama 1", "foo", ollama1Port)
+    val llmProvider2 = ollamaProvider("ollama 2", "foo", ollama2Port)
+    val llmProvider3 = ollamaProvider("ollama 3", "bar", ollama3Port)
+    val llmProvider4 = ollamaProvider("ollama 4", "bar", ollama4Port).copy(options = Json.obj())
+    def balancer(refs: JsValue*): AiProvider = AiProvider(
+      id = UUID.randomUUID().toString,
+      name = "lb",
+      provider = "loadbalancer",
+      connection = Json.obj(),
+      options = Json.obj("loadbalancing" -> "round_robin", "refs" -> JsArray(refs.toIndexedSeq)),
+    )
+    val providers = Seq(llmProvider1, llmProvider2, llmProvider3, llmProvider4)
+    providers.foreach(p => client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").upsertEntity(p).awaitf(10.seconds))
+    await(2.seconds)
+
+    def listModels(lb: AiProvider): Either[JsValue, List[String]] =
+      lb.getChatClient()(using otoroshi.env).get.listModels(false, TypedMap.empty)(using ec).awaitf(30.seconds)
+
+    val lb = balancer(
+      JsString(llmProvider1.id),
+      Json.obj("ref" -> llmProvider2.id, "weight" -> 2),
+      Json.obj("ref" -> llmProvider3.id, "model" -> "qux"),
+      Json.obj("ref" -> llmProvider3.id, "model" -> "qux"),
+    )
+    assertEquals(listModels(lb), Right(List("foo", "baz", "qux")), "the models of every target, each one once")
+    assertEquals(listModels(balancer(JsString(llmProvider4.id))).isLeft, true, "nothing to list when no target can")
+    assertEquals(listModels(balancer(JsString(llmProvider4.id), JsString(llmProvider3.id))), Right(List("bar")), "a target that cannot list does not hide the others")
+
+    providers.foreach(p => client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").deleteEntity(p).awaitf(10.seconds))
     await(2.seconds)
   }
 }

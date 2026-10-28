@@ -100,7 +100,7 @@ object LoadBalancerChatClient {
 // several times with different models.
 case class LoadBalancingTarget(ref: String, weight: Int, selector: Option[String], model: Option[String] = None)
 
-class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
+class LoadBalancerChatClient(provider: AiProvider, clientEnv: Env) extends KindBasedChatClient {
 
   override def computeModel(payload: JsValue): Option[String] = None
 
@@ -108,20 +108,47 @@ class LoadBalancerChatClient(provider: AiProvider) extends KindBasedChatClient {
   override def isOpenAi: Boolean = true
   override def isAnthropic: Boolean = false
 
-  def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: (AiProvider, ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
-    // targets are provider ids or { ref, weight, selector_expected, model } objects, possibly mixed
-    val refs: Seq[LoadBalancingTarget] = provider.options.select("refs").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
-      case JsString(id) => Some(LoadBalancingTarget(id, 1, None))
-      case obj: JsObject => obj.select("ref").asOptString.map { ref =>
-        LoadBalancingTarget(
-          ref,
-          obj.select("weight").asOpt[Int].getOrElse(1),
-          obj.select("selector_expected").asOptString,
-          obj.select("model").asOptString.map(_.trim).filter(_.nonEmpty),
-        )
-      }
-      case _ => None
+  // targets are provider ids or { ref, weight, selector_expected, model } objects, possibly mixed
+  private lazy val refs: Seq[LoadBalancingTarget] = provider.options.select("refs").asOpt[Seq[JsValue]].getOrElse(Seq.empty).flatMap {
+    case JsString(id) => Some(LoadBalancingTarget(id, 1, None))
+    case obj: JsObject => obj.select("ref").asOptString.map { ref =>
+      LoadBalancingTarget(
+        ref,
+        obj.select("weight").asOpt[Int].getOrElse(1),
+        obj.select("selector_expected").asOptString,
+        obj.select("model").asOptString.map(_.trim).filter(_.nonEmpty),
+      )
     }
+    case _ => None
+  }
+
+  // the models of the targets, each one listed once: a target with a model of its own in the load balancer serves
+  // that one, the others list theirs, or their default one when they cannot. A model only some of the targets serve
+  // is listed all the same, and fails when another target is picked
+  override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = {
+    given env: Env = clientEnv
+    val targets = refs.map(r => (r.ref, r.model)).distinct.flatMap { case (ref, model) =>
+      env.adminExtensions.extension[AiExtension].flatMap(_.states.provider(ref)).filterNot(_.id == provider.id).map(p => (p, model))
+    }
+    Future.sequence(targets.map {
+      case (_, Some(model)) => Right(List(model)).vfuture
+      case (target, None) =>
+        val default = target.options.select("model").asOptString.toList
+        def orDefault(err: JsValue): Either[JsValue, List[String]] = if (default.nonEmpty) Right(default) else Left(err)
+        target.getChatClient() match {
+          case None => orDefault(Json.obj("error" -> s"no client for the target '${target.name}'")).vfuture
+          case Some(client) => client.listModels(raw, attrs).map {
+            case Left(err) => orDefault(err)
+            case right => right
+          }.recover { case e: Throwable => orDefault(Json.obj("error" -> e.getMessage)) }
+        }
+    }).map { results =>
+      val models = results.collect { case Right(list) => list }.flatten.distinct.toList
+      results.collectFirst { case Left(err) if models.isEmpty => err }.toLeft(models)
+    }
+  }
+
+  def execute[T](prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(f: (AiProvider, ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
     val loadBalancing: LoadBalancing = provider.options.select("loadbalancing").asOpt[String].map(_.toLowerCase()).getOrElse("round_robin") match {
       case "random" => Random
       case "best_response_time" => BestResponseTime
