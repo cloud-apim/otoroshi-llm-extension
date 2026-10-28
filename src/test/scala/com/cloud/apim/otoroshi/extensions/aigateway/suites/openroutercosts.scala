@@ -41,10 +41,15 @@ class OpenRouterCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   val realModel = "upstage/solar-pro4"
   // a model no price table can know
   val modelMissingFromPriceTable = "made-up-vendor/made-up-model"
-  // a model the static price table knows. The variant suffix is made up on purpose: a real one would also be
-  // in the synced catalog, and the test would no longer exercise the fallback.
-  val staticModel = "mistralai/mistral-7b-instruct"
+  // a model priced by the sources bundled with the extension: the LiteLLM table no longer lists OpenRouter, the
+  // models.dev catalog does. The variant suffix is made up on purpose: a real one would also be in the synced
+  // catalog, and the test would no longer exercise the fallback.
+  val staticModel = "openai/gpt-4o-mini"
   val modelVariant = s"${staticModel}:made-up-variant"
+  // a price an operator gives the model (`custom-prices`), which no catalog sync may override
+  val curatedPrices = Json.obj(s"openrouter/${staticModel}" -> Json.obj(
+    "litellm_provider" -> "openrouter", "mode" -> "chat", "input_cost_per_token" -> 0.0000002, "output_cost_per_token" -> 0.0000008,
+  ))
 
   lazy val apiKey: Option[String] = sys.env.get("OPENROUTER_API_KEY").filter(_.trim.nonEmpty)
 
@@ -80,7 +85,7 @@ class OpenRouterCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
   test("openrouter model variants and aliases fall back to the price of their base model") {
     val base = ext.costsTracking.lookupModel("openrouter", staticModel)
-    assert(base.isDefined, s"${staticModel} should be in the price table")
+    assert(base.isDefined, s"${staticModel} should be priced by the bundled sources")
     assertEquals(ext.costsTracking.lookupModel("openrouter", modelVariant).map(_.name), base.map(_.name))
     assertEquals(ext.costsTracking.lookupModel("openrouter", s"~${staticModel}").map(_.name), base.map(_.name))
     assert(ext.costsTracking.canHandle("openrouter", modelVariant), "a variant should be priceable")
@@ -91,7 +96,10 @@ class OpenRouterCostsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   }
 
   test("the openrouter catalog sync prices models the static table is missing") {
-    val settings = CostsTrackingSettings(Configuration("openrouter-catalog.url" -> s"http://localhost:${catalogPort}/api/v1/models"))
+    val settings = CostsTrackingSettings(Configuration(
+      "openrouter-catalog.url" -> s"http://localhost:${catalogPort}/api/v1/models",
+      "custom-prices" -> curatedPrices.stringify,
+    ))
     val tracking = new CostsTracking(settings, otoroshi.env, ext.modelsCatalog)
     assertEquals(tracking.lookupModel("openrouter", modelMissingFromPriceTable), None, "precondition: nothing prices the model before the sync")
     val count = tracking.refreshOpenRouterCatalog()(using ec).awaitf(30.seconds)
