@@ -203,7 +203,24 @@ object ModelsCatalogIndex {
   // recent one wins, then the shortest id, which is the alias the others are snapshots of
   private def preferred(current: CatalogModel, candidate: CatalogModel): Boolean = {
     val (c, n) = (current.lastUpdated.getOrElse(""), candidate.lastUpdated.getOrElse(""))
-    n > c || (n == c && candidate.id.length < current.id.length)
+    n > c || (n == c && (candidate.id.length < current.id.length || (candidate.id.length == current.id.length && candidate.id < current.id)))
+  }
+
+  private def traits(model: CatalogModel): Seq[Any] = Seq(
+    model.inputModalities.toSet, model.outputModalities.toSet, model.reasoning, model.toolCall, model.attachment, model.structuredOutput,
+  )
+
+  // the same model described by providers of equal standing: the description the others agree with the most wins,
+  // then the most recent one, then the first provider by id, never the place of a provider in the file
+  private def consensus(candidates: Seq[CatalogModel]): CatalogModel = {
+    val all = candidates.map(traits)
+    def agreement(model: CatalogModel): Int = {
+      val own = traits(model)
+      all.map(other => own.zip(other).count(_ == _)).sum
+    }
+    candidates
+      .sortBy(m => (m.provider.getOrElse(""), m.id))
+      .maxBy(m => (agreement(m), m.lastUpdated.getOrElse("")))
   }
 
   private def keyed(models: Iterable[CatalogModel], key: String => String): Map[String, CatalogModel] = {
@@ -273,15 +290,17 @@ object ModelsCatalogIndex {
     }
     val canonical = json.select("models").asOpt[JsObject].map(_.value.values.toSeq).getOrElse(Seq.empty).flatMap(m => parseModel(None, m, interner))
     val byProvider = providers.toMap
-    // the provider agnostic descriptions first, then the vendors describing their own models, then the rest
-    val ordered = Seq(canonical) ++
-      ModelsCatalog.referenceProviders.flatMap(byProvider.get) ++
-      providers.filterNot(p => ModelsCatalog.referenceProviders.contains(p._1)).map(_._2)
-    val global = mutable.LinkedHashMap.empty[String, CatalogModel]
-    val globalApproximate = mutable.LinkedHashMap.empty[String, CatalogModel]
-    ordered.foreach { models =>
-      keyed(models, ModelIds.name).foreach { case (k, m) => if (!global.contains(k)) global.put(k, m) }
-      keyed(models, ModelIds.approximate).foreach { case (k, m) => if (!globalApproximate.contains(k)) globalApproximate.put(k, m) }
+    // the provider agnostic descriptions first, then the vendors describing their own models, then what the rest
+    // agree on
+    val references = Seq(canonical) ++ ModelsCatalog.referenceProviders.flatMap(byProvider.get)
+    val others = providers.filterNot(p => ModelsCatalog.referenceProviders.contains(p._1)).map(_._2)
+    def across(key: String => String): Map[String, CatalogModel] = {
+      val result = mutable.HashMap.empty[String, CatalogModel]
+      references.foreach(models => keyed(models, key).foreach { case (k, m) => if (!result.contains(k)) result.put(k, m) })
+      others.flatMap(models => keyed(models, key)).groupBy(_._1).foreach {
+        case (k, candidates) => if (!result.contains(k)) result.put(k, consensus(candidates.map(_._2)))
+      }
+      result.toMap
     }
     val infos = json.select("providers").asOpt[JsObject].map(_.value.toSeq).getOrElse(Seq.empty).map {
       case (providerId, provider) => (providerId, CatalogProvider(
@@ -295,8 +314,8 @@ object ModelsCatalogIndex {
       exact = providers.map { case (id, models) => (id, models.map(m => (ModelIds.base(m.id), m)).toMap) }.toMap,
       normalized = providers.map { case (id, models) => (id, keyed(models, ModelIds.normalized)) }.toMap,
       approximate = providers.map { case (id, models) => (id, keyed(models, ModelIds.approximate)) }.toMap,
-      global = global.toMap,
-      globalApproximate = globalApproximate.toMap,
+      global = across(ModelIds.name),
+      globalApproximate = across(ModelIds.approximate),
     )
   }
 }

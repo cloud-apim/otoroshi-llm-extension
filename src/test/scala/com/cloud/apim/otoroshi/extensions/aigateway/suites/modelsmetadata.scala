@@ -119,6 +119,36 @@ class ModelsMetadataSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(cost.output_cost_per_token, BigDecimal("0.0000025"))
   }
 
+  test("providers of equal standing agree on a model, whatever their place in the catalog") {
+    def voice(id: String, output: Seq[String], extra: JsObject = Json.obj()): (String, JsValue) =
+      model(id, Json.obj("modalities" -> Json.obj("input" -> Json.arr("text", "audio"), "output" -> output)) ++ extra)
+    val providers = Seq(
+      "gateway" -> modelsOf(voice("acme/voice-model", Seq("text"))),
+      "router" -> modelsOf(voice("acme/voice-model", Seq("text", "audio"))),
+      "reseller" -> modelsOf(voice("voice-model", Seq("audio", "text"), Json.obj("reasoning" -> true))),
+      "zeta" -> modelsOf(
+        model("lone-model", Json.obj("last_updated" -> "2025-01-01", "tool_call" -> false)),
+        model("fresh-model", Json.obj("last_updated" -> "2026-01-01", "tool_call" -> false)),
+      ),
+      "alpha" -> modelsOf(
+        model("lone-model", Json.obj("last_updated" -> "2025-01-01")),
+        model("fresh-model", Json.obj("last_updated" -> "2025-01-01")),
+      ),
+    )
+    Seq(providers, providers.reverse).foreach { ordered =>
+      val index = ModelsCatalogIndex.parse(Json.obj("providers" -> JsObject(ordered.map { case (id, models) => id -> Json.obj("models" -> models) })))
+      def described(id: String): Option[String] = index.find(Seq.empty, id).flatMap(_.model.provider)
+      // two of three say it speaks, and the closest to the others is told
+      val voiceModel = index.find(Seq.empty, "acme/voice-model").get
+      assertEquals(voiceModel.kind, CatalogMatch.Global)
+      assertEquals(voiceModel.model.provider, Some("router"))
+      assertEquals(voiceModel.model.outputModalities.toSet, Set("text", "audio"))
+      // one against one: the most recent description, then the first provider by id
+      assertEquals(described("fresh-model"), Some("zeta"))
+      assertEquals(described("lone-model"), Some("alpha"))
+    }
+  }
+
   test("the catalog prices what the price table misses, for the serving provider only") {
     ext.modelsCatalog.load().awaitf(30.seconds)
     // known by the price table: it wins
