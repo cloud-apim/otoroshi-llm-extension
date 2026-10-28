@@ -37,7 +37,8 @@ object AiMetrics {
     if (promptT > 0) env.metrics.counterIncOf("ai.tokens.prompt", promptT.toLong)
     if (genT > 0) env.metrics.counterIncOf("ai.tokens.generation", genT.toLong)
     if (reasoningT > 0) env.metrics.counterIncOf("ai.tokens.reasoning", reasoningT.toLong)
-    val total = promptT.toLong + genT.toLong + reasoningT.toLong
+    // the generation includes the reasoning
+    val total = promptT.toLong + genT.toLong
     if (total > 0) env.metrics.counterIncOf("ai.tokens.total", total)
   }
 

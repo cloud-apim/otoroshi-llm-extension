@@ -336,6 +336,12 @@ class AnalyticsProjectionsSuite extends munit.FunSuite {
     }
   }
 
+  test("the reasoning is counted in the output, not on top of it") {
+    val thinking = chat ++ Json.obj("@id" -> "llm_thinking", "usage" -> Json.obj("prompt_tokens" -> 345, "generation_tokens" -> 92, "reasoning_tokens" -> 88))
+    val r = row(LlmUsageProjection, thinking)
+    assertEquals((r("input_tokens"), r("output_tokens"), r("reasoning_tokens"), r("total_tokens")), (345L, 92L, 88L, 437L))
+  }
+
   test("calls re-reported by a load balancer, a router or a fallback are flagged") {
     assertEquals(row(LlmUsageProjection, chat)("delegated"), false)
     assertEquals(row(LlmUsageProjection, streaming)("delegated"), false)

@@ -289,7 +289,7 @@ class LlmDecisionModelClient(
                 model = resp.raw.select("model").asOptString.filter(_.nonEmpty).orElse(client.computeModel(body)).orElse(model).getOrElse("--"),
                 answers = answers,
                 metadata = DecisionResponseMetadata(
-                  usage = DecisionResponseMetadataUsage(resp.metadata.usage.promptTokens.max(0L), (resp.metadata.usage.generationTokens + resp.metadata.usage.reasoningTokens).max(0L)),
+                  usage = DecisionResponseMetadataUsage(resp.metadata.usage.promptTokens.max(0L), resp.metadata.usage.generationTokens.max(0L)),
                   // what the chat call cost, for a caller asking to see it: it was billed by the text provider
                   costs = if (TokenBasedCosts.embedInResponse(attrs)) inner.get(ChatClientWithCostsTracking.key) else None,
                   delegated = true,

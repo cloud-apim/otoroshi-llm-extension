@@ -34,7 +34,8 @@ function StatusBadge({ call }) {
   return <Badge kind="positive">ok</Badge>;
 }
 
-const generated = (call) => Number(call.output_tokens || 0) + Number(call.reasoning_tokens || 0);
+// the output includes the reasoning
+const generated = (call) => Number(call.output_tokens || 0);
 
 // generated tokens per second of generation, the wait for the first token excluded when it is known
 function speedOf(call) {

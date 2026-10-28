@@ -295,9 +295,9 @@ object LlmUsageProjection extends AnalyticsProjection {
     val output     = long(event, top("usage.generation_tokens") ++ Seq("output.metadata.usage.generation_tokens",
       "output.usage.output_tokens", "output.usage.usage.output_tokens")*).getOrElse(0L)
     val reasoning  = long(event, top("usage.reasoning_tokens") ++ Seq("output.metadata.usage.reasoning_tokens")*).getOrElse(0L)
-    // a provider-reported total can include tokens not broken down above (images); a wrong one (audio
-    // reports the input count as the total) is never larger than the sum
-    val total      = math.max(input + output + reasoning, long(event, "output.usage.usage.total_tokens", "output.usage.total_tokens").getOrElse(0L))
+    // the output includes the reasoning. A provider-reported total can include tokens not broken down above
+    // (images); a wrong one (audio reports the input count as the total) is never larger than the sum
+    val total      = math.max(input + output, long(event, "output.usage.usage.total_tokens", "output.usage.total_tokens").getOrElse(0L))
     val impact     = (name: String) => double(event, s"impacts.$name.value.avg", s"impacts.$name.value")
 
     val values: Seq[AnyRef] = commonValues(event) ++ Seq(

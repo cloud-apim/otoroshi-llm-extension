@@ -346,7 +346,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
           ChatResponseMetadataUsage(
             promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
             generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
-            reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
+            reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(0L),
           ),
           None
         )
@@ -400,7 +400,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
                 ChatResponseMetadataUsage(
                   promptTokens = chunk.usage.flatMap(_.prompt_tokens).getOrElse(-1L),
                   generationTokens = chunk.usage.flatMap(_.completion_tokens).getOrElse(-1L),
-                  reasoningTokens = chunk.usage.flatMap(_.reasoningTokens).getOrElse(-1L),
+                  reasoningTokens = chunk.usage.flatMap(_.reasoningTokens).getOrElse(0L),
                 ),
                 None
               )
@@ -467,7 +467,7 @@ class OVHAiEndpointsChatClient(api: OVHAiEndpointsApi, options: OVHAiEndpointsCh
           ChatResponseMetadataUsage(
             promptTokens = resp.body.select("usage").select("prompt_tokens").asOpt[Long].getOrElse(-1L),
             generationTokens = resp.body.select("usage").select("completion_tokens").asOpt[Long].getOrElse(-1L),
-            reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(-1L),
+            reasoningTokens = resp.body.at("usage.completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(0L),
           ),
           None
         )

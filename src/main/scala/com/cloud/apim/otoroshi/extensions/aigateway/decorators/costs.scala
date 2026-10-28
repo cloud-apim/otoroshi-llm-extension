@@ -389,10 +389,13 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
         if (extension.logger.isWarnEnabled) extension.logger.warn(s"unable to find costs for model: '${provider}-${modelName}'")
         Left("model not found")
       case Some(model) => {
+        // the output includes the reasoning: its part is priced on its own (at the output price when the model has
+        // no reasoning price), the rest as output
+        val reasoning = reasoningTokens.max(0L).min(outputTokens.max(0L))
         Right(CostsOutput(
           inputCost = inputTokens * model.input_cost_per_token,
-          outputCost = outputTokens * model.output_cost_per_token,
-          reasoningCost = reasoningTokens * model.effectiveReasoningTokenCost,
+          outputCost = (outputTokens - reasoning) * model.output_cost_per_token,
+          reasoningCost = reasoning * model.effectiveReasoningTokenCost,
         ))
       }
     }

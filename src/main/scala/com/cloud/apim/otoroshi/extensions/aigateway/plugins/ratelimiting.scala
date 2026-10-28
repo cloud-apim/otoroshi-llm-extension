@@ -164,7 +164,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     val expr  = computeExprAfter(defaultExpr, ctx, env)
     val windowMillis = computeExprAfter(qconf.windowMillis, ctx, env).trim.toLongOrElse(10000)
     ctx.attrs.get(ChatClient.ApiUsageKey).map { usage =>
-      val increment = usage.usage.promptTokens + usage.usage.generationTokens + usage.usage.reasoningTokens
+      val increment = usage.usage.totalTokens
       //println(s"incrementing '${env.storageRoot}:plugins:custom-throttling:${group}:second:$expr' of ${increment} in ${windowMillis} ms")
       ctx.attrs.update(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey) { map =>
         val max = map.flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLongOrElse(0L)
@@ -190,7 +190,7 @@ class LlmTokensRateLimitingValidator extends NgAccessValidator with NgRequestTra
     val expr  = computeExprAfter(defaultExpr, ctx, env)
     val windowMillis = computeExprAfter(qconf.windowMillis, ctx, env).trim.toLongOrElse(10000L)
     ctx.attrs.get(ChatClient.ApiUsageKey).map { usage =>
-      val increment = usage.usage.promptTokens + usage.usage.generationTokens + usage.usage.reasoningTokens
+      val increment = usage.usage.totalTokens
       //println(s"incrementing '${env.storageRoot}:plugins:custom-throttling:${group}:second:$expr' of ${increment} in ${windowMillis} ms")
       ctx.attrs.update(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey) { map =>
         val max = map.flatMap(_.get("X-Llm-Ratelimit-Max-Tokens")).getOrElse("0").toLongOrElse(0L)

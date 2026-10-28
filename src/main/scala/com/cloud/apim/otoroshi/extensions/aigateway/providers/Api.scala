@@ -180,11 +180,21 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
     reasoningTokensCounter.addAndGet(reasoningTokens)
   }
 
+  // an OpenAI shaped usage: the completion includes the reasoning, unless the total says it does not
+  private def updateOpenaiLike(prompt: Long, completion: Long, reasoning: Long, total: Option[Long]): Unit = {
+    promptTokensCounter.addAndGet(prompt)
+    generationTokensCounter.addAndGet(ChatResponseMetadataUsage.outputWithReasoning(prompt, completion, reasoning, total))
+    reasoningTokensCounter.addAndGet(reasoning)
+  }
+
   def updateOpenai(usageOpt: Option[JsValue]): Unit = {
     usageOpt.foreach { usage =>
-      promptTokensCounter.addAndGet(usage.select("prompt_tokens").asOpt[Long].getOrElse(0L))
-      generationTokensCounter.addAndGet(usage.select("completion_tokens").asOpt[Long].getOrElse(0L))
-      reasoningTokensCounter.addAndGet(usage.at("completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(0L))
+      updateOpenaiLike(
+        usage.select("prompt_tokens").asOpt[Long].getOrElse(0L),
+        usage.select("completion_tokens").asOpt[Long].getOrElse(0L),
+        usage.at("completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(0L),
+        usage.select("total_tokens").asOpt[Long],
+      )
     }
     updateProviderReportedCosts(usageOpt)
   }
@@ -215,18 +225,14 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
 
   def updateOpenaiChunk(usageOpt: Option[OpenAiChatResponseChunkUsage]): Unit = {
     usageOpt.foreach { usage =>
-      promptTokensCounter.addAndGet(usage.prompt_tokens.getOrElse(0L))
-      generationTokensCounter.addAndGet(usage.completion_tokens.getOrElse(0L))
-      reasoningTokensCounter.addAndGet(usage.reasoningTokens.getOrElse(0L))
+      updateOpenaiLike(usage.prompt_tokens.getOrElse(0L), usage.completion_tokens.getOrElse(0L), usage.reasoningTokens.getOrElse(0L), usage.total_tokens)
     }
     updateProviderReportedCosts(usageOpt.map(_.raw))
   }
 
   def updateAzureOpenaiChunk(usageOpt: Option[AzureOpenAiChatResponseChunkUsage]): Unit = {
     usageOpt.foreach { usage =>
-      promptTokensCounter.addAndGet(usage.prompt_tokens.getOrElse(0L))
-      generationTokensCounter.addAndGet(usage.completion_tokens.getOrElse(0L))
-      reasoningTokensCounter.addAndGet(usage.reasoning_tokens.getOrElse(0L))
+      updateOpenaiLike(usage.prompt_tokens.getOrElse(0L), usage.completion_tokens.getOrElse(0L), usage.reasoning_tokens.getOrElse(0L), usage.total_tokens)
     }
   }
 

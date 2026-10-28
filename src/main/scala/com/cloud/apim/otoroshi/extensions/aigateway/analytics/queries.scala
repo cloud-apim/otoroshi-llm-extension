@@ -218,10 +218,10 @@ object AiGatewayQueries {
     val TokensByUser      = top("tokens_by_user", "Tokens by user", "Users by tokens consumed.", UserKey, value = "SUM(total_tokens)")
     val TokensByRoute     = top("tokens_by_route", "Tokens by route", "Routes by tokens consumed.", "route_id", Some("route_name"), "SUM(total_tokens)")
     val TokensByModality  = pieOf("tokens_by_modality", "Tokens by modality", "Tokens consumed per modality.", "modality", "SUM(total_tokens)")
-    val PromptRatio       = metric("prompt_completion_ratio", "Prompt / completion ratio", "Prompt tokens sent for each token generated: how much context each answer carries.", "COALESCE(SUM(input_tokens)::float / NULLIF(SUM(output_tokens + reasoning_tokens), 0), 0)", asDouble = true)
+    val PromptRatio       = metric("prompt_completion_ratio", "Prompt / completion ratio", "Prompt tokens sent for each token generated: how much context each answer carries.", "COALESCE(SUM(input_tokens)::float / NULLIF(SUM(output_tokens), 0), 0)", asDouble = true)
     val TokensByModelTs   = tsByKey("tokens_by_model_over_time", "Tokens by model over time", "One series per model, for the models consuming the most tokens.", "model", "SUM(total_tokens)")
     val TokensPerCallByModel = top("tokens_per_request_by_model", "Tokens per call by model", "Average tokens per call — where prompts or answers are heaviest.", "model", value = "AVG(total_tokens)", asDouble = true)
-    val OutputRatioByModel   = top("output_ratio_by_model", "Output / input ratio by model", "Generated tokens per prompt token: chatty models, or prompts carrying too much context.", "model", value = "SUM(output_tokens + reasoning_tokens)::float / NULLIF(SUM(input_tokens), 0)", asDouble = true, having = "SUM(input_tokens) > 0")
+    val OutputRatioByModel   = top("output_ratio_by_model", "Output / input ratio by model", "Generated tokens per prompt token: chatty models, or prompts carrying too much context.", "model", value = "SUM(output_tokens)::float / NULLIF(SUM(input_tokens), 0)", asDouble = true, having = "SUM(input_tokens) > 0")
 
     // ---- costs ------------------------------------------------------------------------------------
 
@@ -315,7 +315,7 @@ object AiGatewayQueries {
     val GwpByProvider = pieOf("gwp_by_provider", "Emissions by provider (gCO2eq)", "Emissions per provider entity.", Provider, "SUM(gwp_kgco2eq) * 1000", HasImpact, asDouble = true)
     val GwpByApikey   = top("gwp_by_apikey", "Emissions by API key (gCO2eq)", "API keys by emissions.", "apikey_id", Some("apikey_name"), "SUM(gwp_kgco2eq) * 1000", HasImpact, asDouble = true)
     val EnergyByModel = top("energy_by_model", "Energy by model (Wh)", "Models by estimated electricity drawn.", "model", value = "SUM(energy_kwh) * 1000", extra = HasImpact, asDouble = true)
-    val GwpPer1kTokens = top("gwp_per_1k_output_tokens_by_model", "Emissions per 1k generated tokens by model (gCO2eq)", "The carbon efficiency of each model: the same answer, a very different footprint.", "model", value = "SUM(gwp_kgco2eq) * 1000000.0 / NULLIF(SUM(output_tokens + reasoning_tokens), 0)", extra = HasImpact, asDouble = true, having = "SUM(output_tokens + reasoning_tokens) > 0")
+    val GwpPer1kTokens = top("gwp_per_1k_output_tokens_by_model", "Emissions per 1k generated tokens by model (gCO2eq)", "The carbon efficiency of each model: the same answer, a very different footprint.", "model", value = "SUM(gwp_kgco2eq) * 1000000.0 / NULLIF(SUM(output_tokens), 0)", extra = HasImpact, asDouble = true, having = "SUM(output_tokens) > 0")
     val GwpByModelTs  = tsByKey("gwp_by_model_over_time", "Emissions by model over time (gCO2eq)", "One series per model, for the most emitting models.", "model", "SUM(gwp_kgco2eq) * 1000", HasImpact, asDouble = true)
 
     // ---- performance ------------------------------------------------------------------------------
@@ -324,7 +324,7 @@ object AiGatewayQueries {
     val LatencyP95     = metric("latency_p95", "p95 latency", "95th percentile of the call duration.", "COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)", HasTime, asDouble = true)
     val LatencyP50     = metric("latency_p50", "Median latency", "Median call duration.", "COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms), 0)", HasTime, asDouble = true)
     val LatencyP99     = metric("latency_p99", "p99 latency", "99th percentile of the call duration.", "COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)", HasTime, asDouble = true)
-    private val Speed  = "COALESCE(SUM(output_tokens + reasoning_tokens) * 1000.0 / NULLIF(SUM(duration_ms), 0), 0)"
+    private val Speed  = "COALESCE(SUM(output_tokens) * 1000.0 / NULLIF(SUM(duration_ms), 0), 0)"
     val TokensPerSecondTotal = metric("output_tokens_per_second", "Generation speed (tokens/s)", "Generated tokens per second of call duration, all models together.", Speed, "duration_ms > 0", asDouble = true)
     val TokensPerSecondTs    = ts("output_tokens_per_second_over_time", "Generation speed over time (tokens/s)", "Generated tokens per second of call duration, per bucket.", Seq("tokens_per_second" -> Speed), "duration_ms > 0", asDouble = true, widget = "line")
     val LatencyDistribution  = lq("cloudapim_llm_latency_distribution", "LLM latency distribution", "Calls by duration band.", AnalyticsShape.TopN, "bar") { ctx =>
@@ -348,7 +348,7 @@ object AiGatewayQueries {
     val LatencyByModel    = top("latency_by_model", "Slowest models (avg ms)", "Models by average call duration.", "model", value = "AVG(duration_ms)", extra = HasTime, asDouble = true)
     val LatencyByProvider = top("latency_by_provider", "Slowest providers (avg ms)", "Provider entities by average call duration.", "provider_id", Some("provider_name"), "AVG(duration_ms)", HasTime, asDouble = true)
     val P95ByModel        = top("latency_p95_by_model", "p95 latency by model (ms)", "The tail each model makes callers wait for.", "model", value = "percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)", extra = HasTime, asDouble = true)
-    val TokensPerSecond   = top("output_tokens_per_second_by_model", "Generation speed by model (tokens/s)", "Generated tokens per second of call duration — the throughput a user feels.", "model", value = "SUM(output_tokens + reasoning_tokens) * 1000.0 / NULLIF(SUM(duration_ms), 0)", extra = "duration_ms > 0 AND output_tokens > 0", asDouble = true)
+    val TokensPerSecond   = top("output_tokens_per_second_by_model", "Generation speed by model (tokens/s)", "Generated tokens per second of call duration — the throughput a user feels.", "model", value = "SUM(output_tokens) * 1000.0 / NULLIF(SUM(duration_ms), 0)", extra = "duration_ms > 0 AND output_tokens > 0", asDouble = true)
     private val HasTtft   = "ttft_ms IS NOT NULL"
     val TtftP50           = metric("ttft_p50", "Median time to first token", "Median delay before the first token of a streamed answer.", "COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY ttft_ms), 0)", HasTtft, asDouble = true)
     val TtftP95           = metric("ttft_p95", "p95 time to first token", "95th percentile of the delay before the first token of a streamed answer.", "COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttft_ms), 0)", HasTtft, asDouble = true)
@@ -499,7 +499,7 @@ object AiGatewayQueries {
       val keys          = if (byModel) "provider_id, model" else "provider_id"
       val attempted     = s"cache_status IS DISTINCT FROM 'hit' AND NOT $GatewayRefusal"
       val timed         = "cache_status IS DISTINCT FROM 'hit' AND NOT err AND duration_ms IS NOT NULL"
-      val generating    = s"$timed AND output_tokens + reasoning_tokens > 0 AND duration_ms > COALESCE(ttft_ms, 0)"
+      val generating    = s"$timed AND output_tokens > 0 AND duration_ms > COALESCE(ttft_ms, 0)"
       val limit         = (ctx.params \ "top_n").asOpt[Int].getOrElse(200).max(1).min(1000)
       val (where, vals) = FilterSql.whereClause(ctx.filters)
       val sql           =
@@ -512,7 +512,7 @@ object AiGatewayQueries {
            |  percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE $timed) AS p50_ms,
            |  percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms) FILTER (WHERE $timed) AS p95_ms,
            |  percentile_cont(0.5) WITHIN GROUP (ORDER BY ttft_ms) FILTER (WHERE $timed AND ttft_ms IS NOT NULL) AS p50_ttft_ms,
-           |  (SUM(output_tokens + reasoning_tokens) FILTER (WHERE $generating))::float * 1000.0 / NULLIF(SUM(duration_ms - COALESCE(ttft_ms, 0)) FILTER (WHERE $generating), 0) AS tokens_per_second,
+           |  (SUM(output_tokens) FILTER (WHERE $generating))::float * 1000.0 / NULLIF(SUM(duration_ms - COALESCE(ttft_ms, 0)) FILTER (WHERE $generating), 0) AS tokens_per_second,
            |  MAX(ts) AS last_call,
            |  MAX(ts) FILTER (WHERE $ProviderFailure) AS last_failure,
            |  (array_agg(error_message ORDER BY ts DESC) FILTER (WHERE $ProviderFailure))[1] AS last_failure_message
@@ -605,7 +605,7 @@ object AiGatewayQueries {
       "avg_ttft"          -> ExploreMetric("COALESCE(AVG(ttft_ms), 0)", asDouble = true, additive = false),
       "p50_ttft"          -> ExploreMetric("COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY ttft_ms), 0)", asDouble = true, additive = false),
       "p95_ttft"          -> ExploreMetric("COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY ttft_ms), 0)", asDouble = true, additive = false),
-      "speed"             -> ExploreMetric("COALESCE(SUM(output_tokens + reasoning_tokens) * 1000.0 / NULLIF(SUM(CASE WHEN duration_ms > COALESCE(ttft_ms, 0) THEN duration_ms - COALESCE(ttft_ms, 0) END), 0), 0)", asDouble = true, additive = false),
+      "speed"             -> ExploreMetric("COALESCE(SUM(output_tokens) * 1000.0 / NULLIF(SUM(CASE WHEN duration_ms > COALESCE(ttft_ms, 0) THEN duration_ms - COALESCE(ttft_ms, 0) END), 0), 0)", asDouble = true, additive = false),
       "cache_hits"        -> ExploreMetric("COUNT(*) FILTER (WHERE cache_status = 'hit')", asDouble = false, additive = true),
       "cache_hit_rate"    -> ExploreMetric("COALESCE(AVG(CASE WHEN cache_status = 'hit' THEN 1.0 ELSE 0.0 END) FILTER (WHERE cache_status IS NOT NULL), 0)", asDouble = true, additive = false),
       "errors"            -> ExploreMetric("COUNT(*) FILTER (WHERE err)", asDouble = false, additive = true),

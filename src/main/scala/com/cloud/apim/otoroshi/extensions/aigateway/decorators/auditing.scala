@@ -110,9 +110,9 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
   def consumerRateLimit(attrs: TypedMap, usageSlug: JsObject): JsValue = {
     attrs.get(LlmTokensRateLimitingValidatorConfig.LlmTokensRateLimitingValidatorKey).map { rlt =>
       val prompt_tokens = usageSlug.select("usage").select("prompt_tokens").asOpt[Int].getOrElse(0)
+      // the generation includes the reasoning
       val generation_tokens = usageSlug.select("usage").select("generation_tokens").asOpt[Int].getOrElse(0)
-      val reasoning_tokens = usageSlug.select("usage").select("reasoning_tokens").asOpt[Int].getOrElse(0)
-      val consumed = prompt_tokens + generation_tokens + reasoning_tokens
+      val consumed = prompt_tokens + generation_tokens
       Json.obj(
         "max_tokens" -> rlt.get("X-Llm-Ratelimit-Max-Tokens").map(_.toInt).getOrElse(-1).json,
         "window_millis" -> rlt.get("X-Llm-Ratelimit-Window-Millis").map(_.toInt).getOrElse(-1).json,

@@ -897,13 +897,13 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
                 }
               }.alsoTo(Sink.onComplete { _ =>
                 val usageSlug: JsObject = attrs.get(otoroshi.plugins.Keys.ExtraAnalyticsDataKey).flatMap(_.select("ai").asOpt[Seq[JsObject]]).flatMap(_.headOption).flatMap(_.asOpt[JsObject]).getOrElse(Json.obj())
+                // the generation includes the reasoning
                 val generationTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L)
-                val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
                 val ext = env.adminExtensions.extension[AiExtension].get
                 ext.llmImpacts.llmImpacts(
                   provider = finalProvider,
                   modelName = modelName,
-                  outputTokenCount = (generationTokens + reasoningTokens).toInt,
+                  outputTokenCount = generationTokens.toInt,
                   requestLatency = (System.currentTimeMillis() - start).toDouble,
                   electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
                 ) match {
@@ -947,7 +947,7 @@ class ChatClientWithEcoImpact(originalProvider: AiProvider, val chatClient: Chat
             ext.llmImpacts.llmImpacts(
               provider = originalProvider.metadata.getOrElse("eco-impacts-provider", provider),
               modelName = originalProvider.metadata.getOrElse("eco-impacts-model", getModel(originalBody)),
-              outputTokenCount = (usage.generationTokens + usage.reasoningTokens).toInt,
+              outputTokenCount = usage.generationTokens.toInt,
               requestLatency = (System.currentTimeMillis() - start).toDouble,
               electricityMixZoneOpt = originalProvider.metadata.get("eco-impacts-electricity-mix-zone"),
             ) match {
