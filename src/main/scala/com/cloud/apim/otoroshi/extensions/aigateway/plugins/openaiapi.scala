@@ -275,7 +275,7 @@ class OpenAiCompatApi extends NgBackendCall {
       // its tools to MCP clients with the keys that already call its models. Every method goes through it:
       // it answers 405 with `Allow: POST` itself, which is what a client probing for a GET stream expects.
       mcpServerConfig(config) match {
-        case Some(mcpConfig) => McpStreamableHttpServer.handle(ctx, McpProxyEndpointBackend(mcpConfig))
+        case Some(mcpConfig) => McpStreamableHttpServer.handle(ctx, McpProxyEndpointBackend(mcpConfig.copy(protocolVersion = mcpConfig.protocolVersion.orElse("2026-07-28".some))))
         case None            => Left(NgProxyEngineError.NgResultProxyEngineError(Results.NotFound(Json.obj(
           "error" -> "not_found",
           "error_details" -> "no MCP virtual server is exposed on this route"
