@@ -292,13 +292,23 @@ object LlmToolFunctionBackendOptions {
         }
       }
 
-      val params: Map[String, String] = Try(Json.parse(arguments).as[Map[String, String]]) match {
-        case Failure(_) => Map("arguments" -> arguments)
-        case Success(map) => map
+      // the placeholders are filled in each string of the options, so a value holding a quote does not break their json
+      def fill(value: JsValue, params: Map[String, String]): JsValue = value match {
+        case JsString(str) => JsString(replace(str, params))
+        case JsArray(items) => JsArray(items.map(item => fill(item, params)))
+        case obj: JsObject => JsObject(obj.fields.map { case (key, item) => replace(key, params) -> fill(item, params) })
+        case other => other
       }
-      val origStr = options.stringify
-      val finalStr = replace(origStr, params)
-      val finalOptions = Json.parse(finalStr).asObject
+
+      // an argument that is not a string (a number, a boolean, an array...) is written as its json
+      val params: Map[String, String] = Try(Json.parse(arguments)) match {
+        case Success(obj: JsObject) => obj.value.map {
+          case (key, JsString(str)) => key -> str
+          case (key, other) => key -> other.stringify
+        }.toMap
+        case _ => Map("arguments" -> arguments)
+      }
+      val finalOptions = fill(options, params).asObject
 
       val url = finalOptions.select("url").asString
       val method = finalOptions.select("method").asOpt[String].getOrElse("POST")
