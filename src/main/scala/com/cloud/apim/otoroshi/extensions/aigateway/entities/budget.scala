@@ -232,11 +232,11 @@ sealed trait AiBudgetUsageKind {
 object AiBudgetUsageKind {
   case object Inference extends AiBudgetUsageKind {
     def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
-      cost.foreach { c => 
+      cost.foreach { c =>
         budget.incrTotalUsd(c, partition)
         budget.incrInferenceUsd(c, partition)
       }
-      tokens.foreach { c => 
+      tokens.foreach { c =>
         budget.incrTotalTokens(c, partition)
         budget.incrInferenceTokens(c, partition)
       }
@@ -244,11 +244,11 @@ object AiBudgetUsageKind {
   }
   case object Image extends AiBudgetUsageKind {
     def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
-      cost.foreach { c => 
+      cost.foreach { c =>
         budget.incrTotalUsd(c, partition)
         budget.incrImageUsd(c, partition)
       }
-      tokens.foreach { c => 
+      tokens.foreach { c =>
         budget.incrTotalTokens(c, partition)
         budget.incrImageTokens(c, partition)
       }
@@ -256,11 +256,11 @@ object AiBudgetUsageKind {
   }
   case object Audio extends AiBudgetUsageKind {
     def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
-      cost.foreach { c => 
+      cost.foreach { c =>
         budget.incrTotalUsd(c, partition)
         budget.incrAudioUsd(c, partition)
       }
-      tokens.foreach { c => 
+      tokens.foreach { c =>
         budget.incrTotalTokens(c, partition)
         budget.incrAudioTokens(c, partition)
       }
@@ -268,11 +268,11 @@ object AiBudgetUsageKind {
   }
   case object Video extends AiBudgetUsageKind {
     def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
-      cost.foreach { c => 
+      cost.foreach { c =>
         budget.incrTotalUsd(c, partition)
         budget.incrVideoUsd(c, partition)
       }
-      tokens.foreach { c => 
+      tokens.foreach { c =>
         budget.incrTotalTokens(c, partition)
         budget.incrVideoTokens(c, partition)
       }
@@ -280,11 +280,11 @@ object AiBudgetUsageKind {
   }
   case object Embedding extends AiBudgetUsageKind {
     def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
-      cost.foreach { c => 
+      cost.foreach { c =>
         budget.incrTotalUsd(c, partition)
         budget.incrEmbeddingUsd(c, partition)
       }
-      tokens.foreach { c => 
+      tokens.foreach { c =>
         budget.incrTotalTokens(c, partition)
         budget.incrEmbeddingTokens(c, partition)
       }
@@ -292,11 +292,11 @@ object AiBudgetUsageKind {
   }
   case object Moderation extends AiBudgetUsageKind {
     def updateUsage(budget: AiBudget, cost: Option[BigDecimal], tokens: Option[Long], attrs: TypedMap, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Unit = {
-      cost.foreach { c => 
+      cost.foreach { c =>
         budget.incrTotalUsd(c, partition)
         budget.incrModerationUsd(c, partition)
       }
-      tokens.foreach { c => 
+      tokens.foreach { c =>
         budget.incrTotalTokens(c, partition)
         budget.incrModerationTokens(c, partition)
       }
@@ -386,7 +386,7 @@ object AiBudgetDuration {
 }
 
 case class AiBudgetLimits(
-  total_tokens: Option[Long], 
+  total_tokens: Option[Long],
   total_usd: Option[BigDecimal],
 
   inference_tokens: Option[Long],
@@ -498,14 +498,14 @@ object AiBudgetLimits {
       case Failure(ex) => JsError(ex.getMessage)
       case Success(value) => JsSuccess(value)
     }
-  } 
+  }
 }
 
 sealed trait AiBudgetScopeMode {
   def json: JsValue = AiBudgetScopeMode.format.writes(this)
 }
 object AiBudgetScopeMode {
-  
+
   case object All extends AiBudgetScopeMode
   case object Any extends AiBudgetScopeMode
 
@@ -928,12 +928,23 @@ case class AiBudget(
   def incrDecisionUsd(by: BigDecimal, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUsd("decision-usd", AiBudgetClusterAgent.decisionUsdCounters, by, partition)
   def incrDecisionTokens(by: Long, partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[Long] = incrUnits("decision-tokens", AiBudgetClusterAgent.decisionTokensCounters, by, partition)
 
-  def resetCurrentCycle()(using ec: ExecutionContext, env: Env): Future[Unit] = {
-    env.datastores.rawDataStore.keys(s"${AiBudget.countersPrefix}:$id:$cycleId:*").flatMap { keys =>
-      env.datastores.rawDataStore.del(keys).map { _ =>
-        ()
-      }
+  // The resets keep the index of the partitions: every node remembers the ones it added (`AiBudget.indexedPartitions`)
+  // and would not add them again, so a partition consuming after a reset would not be listed. A partition without
+  // counters is neither listed nor extended
+  private def isPartitionsIndex(key: String)(using env: Env): Boolean = {
+    val rest = key.drop(s"${AiBudget.countersPrefix}:$id:".length)
+    rest.indexOf(':') > 0 && rest.drop(rest.indexOf(':') + 1) == "partitions"
+  }
+
+  private def deleteCounters(pattern: String)(using ec: ExecutionContext, env: Env): Future[Unit] = {
+    env.datastores.rawDataStore.keys(pattern).map(_.filterNot(isPartitionsIndex)).flatMap {
+      case keys if keys.isEmpty => ().vfuture
+      case keys                 => env.datastores.rawDataStore.del(keys).map(_ => ())
     }
+  }
+
+  def resetCurrentCycle()(using ec: ExecutionContext, env: Env): Future[Unit] = {
+    deleteCounters(s"${AiBudget.countersPrefix}:$id:$cycleId:*")
   }
 
   // the counters of one partition in the current cycle; the partition stays in the index, without counters
@@ -945,15 +956,12 @@ case class AiBudget(
   }
 
   def resetAll()(using ec: ExecutionContext, env: Env): Future[Unit] = {
-    env.datastores.rawDataStore.keys(s"${AiBudget.countersPrefix}:$id:*").flatMap { keys =>
-      env.datastores.rawDataStore.del(keys).map { _ =>
-        ()
-      }
-    }
+    deleteCounters(s"${AiBudget.countersPrefix}:$id:*")
   }
 
-  def getConsumptions(partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[AiBudgetConsumptions] =
+  def getConsumptions(partition: Option[String] = None)(using ec: ExecutionContext, env: Env): Future[AiBudgetConsumptions] = {
     readConsumptions(partition).map(_._2)
+  }
 
   // the consumption of the current cycle, and whether anything was counted in it at all
   private def readConsumptions(partition: Option[String])(using ec: ExecutionContext, env: Env): Future[(Boolean, AiBudgetConsumptions)] = {
@@ -995,8 +1003,9 @@ case class AiBudget(
   }
 
   // what one extension adds to the limits, when the budget allows any: only the limits it has
-  def extensionAmounts: Option[Map[String, BigDecimal]] =
+  def extensionAmounts: Option[Map[String, BigDecimal]] = {
     extensions.filter(_.enabled).map(_.limits.filter { case (name, _) => limits.get(name).isDefined }).filter(_.nonEmpty)
+  }
 
   // the extensions a consumption can still take, with what one adds
   def extensionsJson: JsObject = (extensions, extensionAmounts) match {
@@ -1020,8 +1029,9 @@ case class AiBudget(
       case (_, None) if partitioned => refused(400, "partition_required", "this budget counts its consumers apart: name one with the 'partition' query param")
       case (_, Some(_)) if !partitioned => refused(400, "partition_not_allowed", "this budget does not count its consumers apart")
       case (Some(amounts), _) =>
+        // the counters, not the index of the partitions, which keeps the ones a reset started over
         val consumed = partition match {
-          case Some(p) => env.datastores.rawDataStore.sismember(partitionsKey(cycle), ByteString(p))
+          case Some(_) => readConsumptions(partition).map(_._1)
           case None    => true.vfuture
         }
         consumed.flatMap {
@@ -1328,7 +1338,7 @@ object AiBudget {
             //renewals = Some(11),
             duration = AiBudgetDuration(30, AiBudgetDurationUnit.Day),
             limits = AiBudgetLimits(
-              total_tokens = 10000000L.some, 
+              total_tokens = 10000000L.some,
               total_usd = BigDecimal(200.0).some,
               inference_tokens = None,
               inference_usd = None,
@@ -1349,15 +1359,15 @@ object AiBudget {
               extractFromApikeyMeta = true,
               extractFromUserMeta = true,
               extractFromUserAuthModuleMeta = true,
-              extractFromApikeyGroupMeta = true, 
-              extractFromProviderMeta = true, 
-              apikeys = Seq.empty, 
-              users = Seq.empty, 
-              groups = Seq.empty, 
-              providers = Seq.empty, 
+              extractFromApikeyGroupMeta = true,
+              extractFromProviderMeta = true,
+              apikeys = Seq.empty,
+              users = Seq.empty,
+              groups = Seq.empty,
+              providers = Seq.empty,
               models = Seq.empty,
               alwaysApplyRules = false,
-              rules = Seq.empty, 
+              rules = Seq.empty,
               rulesMatchMode = AiBudgetScopeMode.All
             ),
             actionOnExceed = AiBudgetActionOnExceed(

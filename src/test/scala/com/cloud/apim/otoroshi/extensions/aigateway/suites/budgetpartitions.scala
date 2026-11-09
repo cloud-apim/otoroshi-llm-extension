@@ -237,6 +237,25 @@ class BudgetPartitionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals(admin("GET", budgetsApi(s"$partitionedId/partitions")).json.select("total").as[Int], 0)
   }
 
+  test("the consumers that consume after a reset are listed again") {
+    def listed(): Seq[(String, Long)] = admin("GET", budgetsApi(s"$partitionedId/partitions")).json.select("items").as[Seq[JsObject]]
+      .map(i => (i.select("partition").asString, i.select("consumption").select("consumed_total_tokens").as[Long]))
+    count(attrsOf(caller = Some(alice)), 10L)
+    count(attrsOf(caller = Some(bob)), 20L)
+    assertEquals(listed(), Seq(("bob@acme.io", 20L), ("alice@acme.io", 10L)))
+    assertEquals(admin("POST", budgetsApi(s"$partitionedId/consumption/_reset")).status, 200)
+    assertEquals(listed(), Seq.empty, "nobody consumed since the reset")
+    // the node that counted them before the reset counts them again
+    count(attrsOf(caller = Some(alice)), 5L)
+    count(attrsOf(caller = Some(bob)), 15L)
+    assertEquals(listed(), Seq(("bob@acme.io", 15L), ("alice@acme.io", 5L)), "after the reset of the cycle")
+    assertEquals(admin("POST", budgetsApi(s"$partitionedId/consumption/_reset?all=true")).status, 200)
+    assertEquals(listed(), Seq.empty)
+    count(attrsOf(caller = Some(alice)), 7L)
+    assertEquals(listed(), Seq(("alice@acme.io", 7L)), "after the reset of every cycle")
+    admin("POST", budgetsApi(s"$partitionedId/consumption/_reset"))
+  }
+
   test("the alerts of a budget counted by consumer name the consumer") {
     count(attrsOf(caller = Some(alice)), 90L)
     assertEquals(check(attrsOf(caller = Some(alice))), Right(()))

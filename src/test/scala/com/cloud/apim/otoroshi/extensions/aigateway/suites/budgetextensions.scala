@@ -69,6 +69,7 @@ class BudgetExtensionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   val wholeBudget: JsObject = budget(s"budget_whole_${UUID.randomUUID()}", "ext-whole", 100L, partitioned = false, Some(allowing(1, Json.obj("total_tokens" -> 10, "total_usd" -> 5))))
   val disabledBudget: JsObject = budget(s"budget_disabled_${UUID.randomUUID()}", "ext-disabled", 100L, partitioned = true, Some(Json.obj("enabled" -> false, "limits" -> Json.obj("total_tokens" -> 10))))
   val noneBudget: JsObject = budget(s"budget_none_${UUID.randomUUID()}", "ext-none", 100L, partitioned = true, None)
+  val resetBudget: JsObject = budget(s"budget_reset_${UUID.randomUUID()}", "ext-reset", 100L, partitioned = true, Some(allowing(1, Json.obj("total_tokens" -> 10))))
 
   def idOf(budget: JsObject): String = budget.select("id").asString
 
@@ -77,7 +78,7 @@ class BudgetExtensionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
   override def beforeAll(): Unit = {
     super.beforeAll()
     client.forLlmEntity("providers").upsertEntity(provider).awaitf(10.seconds)
-    Seq(michelBudget, twiceBudget, wholeBudget, disabledBudget, noneBudget).foreach(b => client.forLlmEntity("ai-budgets").createRaw(b).awaitf(10.seconds))
+    Seq(michelBudget, twiceBudget, wholeBudget, disabledBudget, noneBudget, resetBudget).foreach(b => client.forLlmEntity("ai-budgets").createRaw(b).awaitf(10.seconds))
     client.forEntity("events.otoroshi.io", "v1", "data-exporters").upsertEntity(DataExporterConfig(
       enabled = true,
       typ = DataExporterConfigTypeFile,
@@ -202,6 +203,21 @@ class BudgetExtensionsSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assertEquals((tokens(reset), reset.select("extensions_taken").asOpt[Long]), ((0L, 200L, 200L), None), "the reset starts over, the extensions taken included")
     count("ext-michel", Some("michel@acme.io"), 5L)
     assertEquals(extend(id, Some("michel@acme.io")).status, 200)
+  }
+
+  test("after a reset of the cycle, a person takes an extension once they consumed again") {
+    val id = idOf(resetBudget)
+    count("ext-reset", Some("ines@acme.io"), 100L)
+    assertEquals(admin("POST", s"$id/consumption/_reset").status, 200)
+    val before = extend(id, Some("ines@acme.io"))
+    assertEquals((before.status, before.json.select("error").asOpt[String]), (409, Some("no_consumption")), "nothing consumed since the reset")
+    count("ext-reset", Some("ines@acme.io"), 100L)
+    val after = extend(id, Some("ines@acme.io"))
+    assertEquals(after.status, 200, after.body)
+    assertEquals(tokens(after.json.select("consumption").as[JsValue]), (100L, 110L, 10L))
+    assertEquals(admin("POST", s"$id/consumption/_reset?all=true").status, 200)
+    count("ext-reset", Some("ines@acme.io"), 100L)
+    assertEquals(extend(id, Some("ines@acme.io")).status, 200, "after the reset of every cycle too")
   }
 
   test("a budget counted as a whole is extended by its administrators, on the limits it has") {
