@@ -10,7 +10,7 @@ import otoroshi.next.models.*
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AnthropicCompatProxy, AnthropicStreamWriter, OpenAiCompatProxy, OpenAiResponsesProxy, OpenResponseCompatProxy}
 import play.api.libs.json.*
-import reactor.core.publisher.Mono
+import reactor.core.publisher.{Flux, Mono}
 
 import java.util.UUID
 import scala.concurrent.duration.DurationInt
@@ -42,6 +42,34 @@ class FinishReasonSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     })
   )
 
+  // a provider answering natively on `/responses`: an answer cut by `max_output_tokens` is `incomplete`
+  val cutResponse: JsObject = Json.obj(
+    "id" -> "resp_1", "object" -> "response", "created_at" -> 1700000000L, "model" -> "a-model",
+    "status" -> "incomplete", "incomplete_details" -> Json.obj("reason" -> "max_output_tokens"),
+    "output" -> Json.arr(Json.obj("type" -> "message", "id" -> "msg_1", "status" -> "incomplete", "role" -> "assistant",
+      "content" -> Json.arr(Json.obj("type" -> "output_text", "text" -> "an answer cut sh", "annotations" -> Json.arr())))),
+    "usage" -> Json.obj("input_tokens" -> 1, "output_tokens" -> 20, "total_tokens" -> 21),
+  )
+  private def responsesEvent(data: JsObject): String = s"event: ${data.select("type").asString}\ndata: ${data.stringify}\n\n"
+  val (nativePort, _) = createTestServerWithRoutes("finish-reason-native", routes => routes
+    .post("/v1/responses", (req, response) => req.receive().aggregate().asString().flatMap { body =>
+      if (Json.parse(body).select("stream").asOpt[Boolean].contains(true)) {
+        response.status(200).addHeader("Content-Type", "text/event-stream").sendString(Flux.just(
+          responsesEvent(Json.obj("type" -> "response.created", "response" -> (cutResponse ++ Json.obj("status" -> "in_progress", "output" -> Json.arr(), "usage" -> JsNull)))),
+          responsesEvent(Json.obj("type" -> "response.output_text.delta", "item_id" -> "msg_1", "output_index" -> 0, "content_index" -> 0, "delta" -> "an answer cut sh")),
+          responsesEvent(Json.obj("type" -> "response.incomplete", "response" -> cutResponse)),
+        )).`then`()
+      } else response.status(200).addHeader("Content-Type", "application/json").sendString(Mono.just(cutResponse.stringify)).`then`()
+    })
+  )
+  lazy val nativeProvider: AiProvider = AiProvider(
+    id = s"provider_${UUID.randomUUID()}",
+    name = "finish reason native responses",
+    provider = "openai",
+    connection = Json.obj("base_url" -> s"http://localhost:${nativePort}/v1", "token" -> "sk-test", "timeout" -> 10000),
+    options = Json.obj("model" -> "a-model", "responses" -> true),
+  )
+
   // a self hosted OpenAI compatible server, as the `openai` provider with a base url of its own
   lazy val provider: AiProvider = AiProvider(
     id = s"provider_${UUID.randomUUID()}",
@@ -51,7 +79,7 @@ class FinishReasonSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     options = Json.obj("model" -> "a-model"),
   )
 
-  def route(name: String, plugin: Class[?]): NgRoute = NgRoute(
+  def route(name: String, plugin: Class[?], target: AiProvider = provider): NgRoute = NgRoute(
     location = EntityLocation.default,
     id = UUID.randomUUID().toString,
     name = s"finish reason ${name}",
@@ -66,12 +94,15 @@ class FinishReasonSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     backend = NgBackend.empty.copy(targets = Seq(NgTarget.default)),
     plugins = NgPlugins(Seq(NgPluginInstance(
       plugin = s"cp:${plugin.getName}",
-      config = NgPluginInstanceConfig(Json.obj("refs" -> Json.arr(provider.id)))
+      config = NgPluginInstanceConfig(Json.obj("refs" -> Json.arr(target.id)))
     )))
   )
 
   lazy val setup: Unit = {
-    assert(client.forLlmEntity("providers").upsertEntity(provider).awaitf(10.seconds).createdOrUpdated, "the provider should be saved")
+    Seq(provider, nativeProvider).foreach { p =>
+      assert(client.forLlmEntity("providers").upsertEntity(p).awaitf(10.seconds).createdOrUpdated, s"${p.name} should be saved")
+    }
+    client.forEntity("proxy.otoroshi.io", "v1", "routes").upsertEntity(route("native", classOf[OpenAiResponsesProxy], nativeProvider)).awaitf(10.seconds)
     Seq(
       "chat" -> classOf[OpenAiCompatProxy],
       "messages" -> classOf[AnthropicCompatProxy],
@@ -239,5 +270,36 @@ class FinishReasonSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     val tools = chat("tools").select("choices").as[Seq[JsValue]].head
     assertEquals(tools.select("finish_reason").asString, "tool_calls", s"/chat/completions: ${tools}")
     assertEquals(chat("stop").select("choices").as[Seq[JsValue]].head.select("finish_reason").asString, "stop", "/chat/completions")
+  }
+
+  test("an answer a native /responses provider cut is audited as cut") {
+    // the generations of the answer are made of its output, its payload is the raw of the answer
+    val generations = OpenAiResponsesBodyConverter.outputToChatMessages(cutResponse).map(obj => ChatGeneration(ChatMessage.output("assistant", "an answer cut sh", None, obj)))
+    assertEquals(generations.head.message.raw.select("finish_reason").asOpt[String], Some("length"))
+    val cut = ChatResponse(generations, ChatResponseMetadata.empty, cutResponse)
+    assertEquals(cut.openaiJson("a-model", otoroshi.env).select("choices").as[Seq[JsValue]].head.select("finish_reason").asString, "length")
+    assertEquals(cut.anthropicJson("a-model", otoroshi.env).select("stop_reason").asString, "max_tokens")
+    assertEquals(LlmCallTelemetry.finishReasonOf(cut), Some("length"), "what is audited")
+    val filtered = cutResponse ++ Json.obj("incomplete_details" -> Json.obj("reason" -> "content_filter"))
+    assertEquals(OpenAiResponsesBodyConverter.outputToChatMessages(filtered).head.select("finish_reason").asOpt[String], Some("content_filter"))
+    val done = cutResponse ++ Json.obj("status" -> "completed", "incomplete_details" -> JsNull)
+    assertEquals(OpenAiResponsesBodyConverter.outputToChatMessages(done).head.select("finish_reason").asOpt[String], Some("stop"))
+    val calling = done ++ Json.obj("output" -> Json.arr(Json.obj("type" -> "function_call", "id" -> "fc_1", "call_id" -> "call_1", "name" -> "get_weather", "arguments" -> "{}")))
+    assertEquals(OpenAiResponsesBodyConverter.outputToChatMessages(calling).head.select("finish_reason").asOpt[String], Some("tool_calls"))
+  }
+
+  test("a native /responses provider that cuts its answer ends it incomplete, streamed or not") {
+    setup
+    val body = Json.obj("model" -> "a-model", "max_output_tokens" -> 20, "input" -> "hello")
+    val passed = post("native", body)
+    assertEquals(passed.select("status").asString, "incomplete", s"${passed}")
+    // streamed, `response.incomplete` ends the answer instead of failing it
+    val streamed = client.call("POST", s"http://native.finishreason.oto.tools:${port}/", Map.empty, Some(body ++ Json.obj("stream" -> true))).awaitf(30.seconds)
+    assertEquals(streamed.status, 200)
+    val events = streamed.body.split("\n").toSeq.filter(_.startsWith("data: {")).map(l => Json.parse(l.stripPrefix("data: ")))
+    assert(events.exists(e => e.select("type").asOpt[String].contains("response.output_text.delta") && e.select("delta").asOpt[String].contains("an answer cut sh")), s"the text is streamed: ${streamed.body}")
+    val last = events.last
+    assertEquals(last.select("type").asOpt[String], Some("response.incomplete"), streamed.body)
+    assertEquals(last.at("response.incomplete_details.reason").asOpt[String], Some("max_output_tokens"), streamed.body)
   }
 }

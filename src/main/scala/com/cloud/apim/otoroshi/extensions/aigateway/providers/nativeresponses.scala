@@ -286,7 +286,8 @@ trait NativeResponsesSupport extends ChatClient {
           typ = "function".some,
           function = ChatResponseChunkChoiceDeltaToolCallFunction(None, event.select("delta").asOptString.getOrElse("")),
         )))))
-      case "response.completed" => {
+      // an answer cut by `max_output_tokens`, or filtered, is `incomplete`: it ends all the same, on the reason it gives
+      case "response.completed" | "response.incomplete" => {
         // usage is only read here: `response.created` / `response.in_progress` carry "usage": null
         acc.updateOpenaiResponses(event.at("response.usage").asOpt[JsObject])
         val usage = metadataFrom(resp.headers.view.mapValues(_.last).toMap, acc.usage())
@@ -294,13 +295,12 @@ trait NativeResponsesSupport extends ChatClient {
         val hadToolCalls = event.at("response.output").asOpt[Seq[JsObject]].getOrElse(Seq.empty).exists(_.select("type").asOptString.contains("function_call"))
         Source.single(chunk(
           ChatResponseChunkChoiceDelta(None),
-          finishReason = (if (hadToolCalls) "tool_calls" else "stop").some,
+          finishReason = FinishReasons.openai(FinishReasons.ofResponse(event.select("response").asOpt[JsValue].getOrElse(Json.obj()), 0), hadToolCalls).some,
           usage = usage.usage.some,
         ))
       }
-      case "response.failed" | "response.incomplete" =>
+      case "response.failed" =>
         val message = event.at("response.error.message").asOptString
-          .orElse(event.at("response.incomplete_details.reason").asOptString)
           .getOrElse(s"the provider ended the response with '${typ}'")
         Source.failed(new Throwable(message))
       case "error" =>

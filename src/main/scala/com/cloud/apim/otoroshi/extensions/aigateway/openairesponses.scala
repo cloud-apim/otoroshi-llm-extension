@@ -407,7 +407,8 @@ object OpenAiResponsesBodyConverter {
       .applyOnIf(reasoning.nonEmpty) { obj => obj ++ Json.obj("reasoning_details" -> JsArray(reasoning)) }
     Seq(Json.obj(
       "index" -> 0,
-      "finish_reason" -> (if (toolCalls.nonEmpty) "tool_calls" else "stop"),
+      // a cut or filtered answer is `incomplete`, and says why in its `incomplete_details`
+      "finish_reason" -> FinishReasons.openai(FinishReasons.ofResponse(responsePayload, 0), toolCalls.nonEmpty),
       "message" -> message,
     ))
   }
