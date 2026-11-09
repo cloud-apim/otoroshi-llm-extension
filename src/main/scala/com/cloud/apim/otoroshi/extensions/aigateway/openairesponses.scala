@@ -417,7 +417,7 @@ object OpenAiResponsesBodyConverter {
     "input_tokens" -> usage.promptTokens,
     "output_tokens" -> usage.generationTokens,
     "total_tokens" -> usage.totalTokens,
-    "input_tokens_details" -> Json.obj("cached_tokens" -> 0),
+    "input_tokens_details" -> Json.obj("cached_tokens" -> usage.cachedTokens),
     "output_tokens_details" -> Json.obj("reasoning_tokens" -> usage.reasoningTokens),
   )
 
@@ -430,6 +430,7 @@ object OpenAiResponsesBodyConverter {
         promptTokens = usage.select("input_tokens").asOptLong.getOrElse(0L),
         generationTokens = usage.select("output_tokens").asOptLong.getOrElse(0L),
         reasoningTokens = usage.at("output_tokens_details.reasoning_tokens").asOptLong.getOrElse(0L),
+        cachedTokens = usage.at("input_tokens_details.cached_tokens").asOptLong.getOrElse(0L),
       )
     }
   }

@@ -164,6 +164,8 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
   private val promptTokensCounter: AtomicLong = new AtomicLong(initialPromptTokens)
   private val generationTokensCounter: AtomicLong = new AtomicLong(initialGenerationTokens)
   private val reasoningTokensCounter: AtomicLong = new AtomicLong(initialReasoningTokens)
+  private val cachedTokensCounter: AtomicLong = new AtomicLong(0L)
+  private val cacheWriteTokensCounter: AtomicLong = new AtomicLong(0L)
   // cost the provider reported for the call, when it reports one at all (OpenRouter does). Accumulated like the
   // token counters: a single logical call can span several round-trips when tool calls are involved.
   private val providerCostsRef: AtomicReference[Option[CostsOutput]] = new AtomicReference[Option[CostsOutput]](None)
@@ -180,11 +182,19 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
     reasoningTokensCounter.addAndGet(reasoningTokens)
   }
 
-  // an OpenAI shaped usage: the completion includes the reasoning, unless the total says it does not
-  private def updateOpenaiLike(prompt: Long, completion: Long, reasoning: Long, total: Option[Long]): Unit = {
+  // the prompt tokens the provider read from its cache and wrote to it, a part of the prompt tokens counted
+  private def updateCache(cached: Long, written: Long): Unit = {
+    cachedTokensCounter.addAndGet(cached.max(0L))
+    cacheWriteTokensCounter.addAndGet(written.max(0L))
+  }
+
+  // an OpenAI shaped usage: the completion includes the reasoning, unless the total says it does not. The prompt
+  // includes the tokens read from the cache of the provider
+  private def updateOpenaiLike(prompt: Long, completion: Long, reasoning: Long, total: Option[Long], raw: JsValue): Unit = {
     promptTokensCounter.addAndGet(prompt)
     generationTokensCounter.addAndGet(ChatResponseMetadataUsage.outputWithReasoning(prompt, completion, reasoning, total))
     reasoningTokensCounter.addAndGet(reasoning)
+    updateCache(ChatResponseMetadataUsage.openaiCachedTokens(raw), ChatResponseMetadataUsage.openaiCacheWriteTokens(raw))
   }
 
   def updateOpenai(usageOpt: Option[JsValue]): Unit = {
@@ -194,6 +204,7 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
         usage.select("completion_tokens").asOpt[Long].getOrElse(0L),
         usage.at("completion_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(0L),
         usage.select("total_tokens").asOpt[Long],
+        usage,
       )
     }
     updateProviderReportedCosts(usageOpt)
@@ -225,32 +236,31 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
 
   def updateOpenaiChunk(usageOpt: Option[OpenAiChatResponseChunkUsage]): Unit = {
     usageOpt.foreach { usage =>
-      updateOpenaiLike(usage.prompt_tokens.getOrElse(0L), usage.completion_tokens.getOrElse(0L), usage.reasoningTokens.getOrElse(0L), usage.total_tokens)
+      updateOpenaiLike(usage.prompt_tokens.getOrElse(0L), usage.completion_tokens.getOrElse(0L), usage.reasoningTokens.getOrElse(0L), usage.total_tokens, usage.raw)
     }
     updateProviderReportedCosts(usageOpt.map(_.raw))
   }
 
   def updateAzureOpenaiChunk(usageOpt: Option[AzureOpenAiChatResponseChunkUsage]): Unit = {
     usageOpt.foreach { usage =>
-      updateOpenaiLike(usage.prompt_tokens.getOrElse(0L), usage.completion_tokens.getOrElse(0L), usage.reasoning_tokens.getOrElse(0L), usage.total_tokens)
+      updateOpenaiLike(usage.prompt_tokens.getOrElse(0L), usage.completion_tokens.getOrElse(0L), usage.reasoning_tokens.getOrElse(0L), usage.total_tokens, usage.raw)
     }
   }
 
-  def updateAnthropic(usageOpt: Option[JsValue]): Unit = {
-    usageOpt.foreach { usage =>
-      promptTokensCounter.addAndGet(usage.select("input_tokens").asOpt[Long].getOrElse(0L))
-      generationTokensCounter.addAndGet(usage.select("output_tokens").asOpt[Long].getOrElse(0L))
-      reasoningTokensCounter.addAndGet(usage.select("reasoning_tokens").asOpt[Long].getOrElse(0L))
-    }
+  // Anthropic counts the tokens read from its cache and the ones written to it apart from `input_tokens`: they are
+  // prompt tokens all the same
+  private def updateAnthropicLike(usage: JsValue): Unit = {
+    val cached = usage.select("cache_read_input_tokens").asOpt[Long].getOrElse(0L).max(0L)
+    val written = usage.select("cache_creation_input_tokens").asOpt[Long].getOrElse(0L).max(0L)
+    promptTokensCounter.addAndGet(usage.select("input_tokens").asOpt[Long].getOrElse(0L) + cached + written)
+    generationTokensCounter.addAndGet(usage.select("output_tokens").asOpt[Long].getOrElse(0L))
+    reasoningTokensCounter.addAndGet(usage.select("reasoning_tokens").asOpt[Long].getOrElse(0L))
+    updateCache(cached, written)
   }
 
-  def updateAnthropicChunk(usageOpt: Option[AnthropicChatResponseChunkUsage]): Unit = {
-    usageOpt.foreach { usage =>
-      promptTokensCounter.addAndGet(usage.input_tokens)
-      generationTokensCounter.addAndGet(usage.output_tokens)
-      reasoningTokensCounter.addAndGet(usage.reasoningTokens)
-    }
-  }
+  def updateAnthropic(usageOpt: Option[JsValue]): Unit = usageOpt.foreach(updateAnthropicLike)
+
+  def updateAnthropicChunk(usageOpt: Option[AnthropicChatResponseChunkUsage]): Unit = usageOpt.foreach(usage => updateAnthropicLike(usage.raw))
 
   // usage of the OpenAI Responses API: `input_tokens` / `output_tokens` instead of prompt/completion
   def updateOpenaiResponses(usageOpt: Option[JsValue]): Unit = {
@@ -258,6 +268,7 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
       promptTokensCounter.addAndGet(usage.select("input_tokens").asOpt[Long].getOrElse(0L))
       generationTokensCounter.addAndGet(usage.select("output_tokens").asOpt[Long].getOrElse(0L))
       reasoningTokensCounter.addAndGet(usage.at("output_tokens_details.reasoning_tokens").asOpt[Long].getOrElse(0L))
+      updateCache(usage.at("input_tokens_details.cached_tokens").asOpt[Long].getOrElse(0L), 0L)
     }
   }
 
@@ -267,6 +278,8 @@ class UsageAccumulator(initialPromptTokens: Long = 0L, initialGenerationTokens: 
       generationTokens = generationTokensCounter.get(),
       reasoningTokens = reasoningTokensCounter.get(),
       providerCosts = providerCostsRef.get(),
+      cachedTokens = cachedTokensCounter.get(),
+      cacheWriteTokens = cacheWriteTokensCounter.get(),
     )
   }
 }

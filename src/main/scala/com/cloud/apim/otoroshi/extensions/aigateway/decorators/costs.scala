@@ -146,6 +146,14 @@ case class CostModel(name: String, raw: JsValue) {
   lazy val output_cost_per_video_per_second = raw.select("output_cost_per_video_per_second").asOpt[BigDecimal].getOrElse(BigDecimal(0))
   lazy val effectiveReasoningTokenCost: BigDecimal =
     if (output_cost_per_reasoning_token > 0) output_cost_per_reasoning_token else output_cost_per_token
+  // a prompt token the provider read from its cache, or wrote to it, is an input token for a model without a price
+  // of its own for it: never free
+  lazy val effectiveCacheReadTokenCost: BigDecimal =
+    if (cache_read_input_token_cost > 0) cache_read_input_token_cost
+    else if (input_cost_per_token_cache_hit > 0) input_cost_per_token_cache_hit
+    else input_cost_per_token
+  lazy val effectiveCacheWriteTokenCost: BigDecimal =
+    if (cache_creation_input_token_cost > 0) cache_creation_input_token_cost else input_cost_per_token
   lazy val effectiveInputImageTokenCost: BigDecimal =
     if (input_cost_per_image_token > 0) input_cost_per_image_token else input_cost_per_token
   lazy val effectiveOutputImageTokenCost: BigDecimal =
@@ -394,6 +402,8 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
     outputTokens: Long,
     reasoningTokens: Long,
     api: Option[String] = None,
+    cachedTokens: Long = 0L,
+    cacheWriteTokens: Long = 0L,
   ): Either[String, CostsOutput] = {
     lookupModel(provider, modelName).map(model => api.map(model.pricedFor).getOrElse(model)) match {
       case None =>
@@ -403,8 +413,13 @@ class CostsTracking(settings: CostsTrackingSettings, env: Env, catalog: ModelsCa
         // the output includes the reasoning: its part is priced on its own (at the output price when the model has
         // no reasoning price), the rest as output
         val reasoning = reasoningTokens.max(0L).min(outputTokens.max(0L))
+        // the input includes the prompt tokens the provider read from its cache and the ones it wrote there, each
+        // priced on its own: the cost of the input is the one of all of them
+        val input = inputTokens.max(0L)
+        val cached = cachedTokens.max(0L).min(input)
+        val written = cacheWriteTokens.max(0L).min(input - cached)
         Right(CostsOutput(
-          inputCost = inputTokens * model.input_cost_per_token,
+          inputCost = (input - cached - written) * model.input_cost_per_token + cached * model.effectiveCacheReadTokenCost + written * model.effectiveCacheWriteTokenCost,
           outputCost = (outputTokens - reasoning) * model.output_cost_per_token,
           reasoningCost = reasoning * model.effectiveReasoningTokenCost,
         ))
@@ -1170,6 +1185,8 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
     inputTokens: Long,
     outputTokens: Long,
     reasoningTokens: Long,
+    cachedTokens: Long,
+    cacheWriteTokens: Long,
   ): Option[CostsOutput] = {
     providerCosts.orElse {
       ext.costsTracking.computeCosts(
@@ -1178,6 +1195,8 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
         inputTokens = inputTokens,
         outputTokens = outputTokens,
         reasoningTokens = reasoningTokens,
+        cachedTokens = cachedTokens,
+        cacheWriteTokens = cacheWriteTokens,
       ).toOption
     }
   }
@@ -1220,8 +1239,10 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
                 val inputTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L)
                 val outputTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L)
                 val reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L)
+                val cachedTokens = usageSlug.select("usage").select("cached_tokens").asOptLong.getOrElse(0L)
+                val cacheWriteTokens = usageSlug.select("usage").select("cache_write_tokens").asOptLong.getOrElse(0L)
                 val providerCosts = CostsOutput.fromJson(usageSlug.select("usage").select("provider_costs").asOpt[JsObject].getOrElse(JsObject.empty))
-                val costsOpt = resolveCosts(ext, providerCosts, finalProvider, model, inputTokens, outputTokens, reasoningTokens)
+                val costsOpt = resolveCosts(ext, providerCosts, finalProvider, model, inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheWriteTokens)
                 ChatClientWithCostsTracking.keep(attrs, costsOpt)
                 if (!addCostsInResp) {
                   promise.trySuccess(None)
@@ -1282,6 +1303,8 @@ class ChatClientWithCostsTracking(originalProvider: AiProvider, val chatClient: 
               inputTokens = usage.promptTokens,
               outputTokens = usage.generationTokens,
               reasoningTokens = usage.reasoningTokens,
+              cachedTokens = usage.cachedTokens,
+              cacheWriteTokens = usage.cacheWriteTokens,
             ) match {
               case None =>
                 ChatClientWithCostsTracking.keep(attrs, None)

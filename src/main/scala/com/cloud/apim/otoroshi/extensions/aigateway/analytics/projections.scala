@@ -151,6 +151,8 @@ object LlmUsageProjection extends AnalyticsProjection {
        |  input_tokens          BIGINT           NOT NULL DEFAULT 0,
        |  output_tokens         BIGINT           NOT NULL DEFAULT 0,
        |  reasoning_tokens      BIGINT           NOT NULL DEFAULT 0,
+       |  cached_tokens         BIGINT           NOT NULL DEFAULT 0,
+       |  cache_write_tokens    BIGINT           NOT NULL DEFAULT 0,
        |  total_tokens          BIGINT           NOT NULL DEFAULT 0,
        |  ocr_pages             BIGINT           NOT NULL DEFAULT 0,
        |  cache_status          TEXT,
@@ -172,8 +174,13 @@ object LlmUsageProjection extends AnalyticsProjection {
        |  raw                   JSONB            NOT NULL DEFAULT '{}'::jsonb
        |);""".stripMargin
 
+  // run after the table is created, in order: the columns added since the first version of the table come first,
+  // the tables of earlier versions have none of them
   override def indexStatements(s: UserAnalyticsExporterSettings): Seq[String] =
-    AnalyticsProjection.commonIndexes(table(s), indexPrefix(s)) ++ Seq(
+    Seq(
+      s"ALTER TABLE ${table(s)} ADD COLUMN IF NOT EXISTS cached_tokens BIGINT NOT NULL DEFAULT 0;",
+      s"ALTER TABLE ${table(s)} ADD COLUMN IF NOT EXISTS cache_write_tokens BIGINT NOT NULL DEFAULT 0;",
+    ) ++ AnalyticsProjection.commonIndexes(table(s), indexPrefix(s)) ++ Seq(
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_model_ts    ON ${table(s)} (model, ts DESC);",
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_provider_ts ON ${table(s)} (provider_id, ts DESC);",
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_err_ts      ON ${table(s)} (ts DESC) WHERE err = true;",
@@ -185,7 +192,7 @@ object LlmUsageProjection extends AnalyticsProjection {
   private val columns = Seq(
     "request_id", "consumed_using", "modality", "streaming", "delegated", "provider_kind", "provider_id",
     "provider_name", "model", "apikey_name", "apikey_owner", "err", "error_kind", "error_message", "duration_ms", "ttft_ms", "finish_reason", "session_id", "end_user", "input_tokens",
-    "output_tokens", "reasoning_tokens", "total_tokens", "ocr_pages", "cache_status", "input_cost", "output_cost",
+    "output_tokens", "reasoning_tokens", "cached_tokens", "cache_write_tokens", "total_tokens", "ocr_pages", "cache_status", "input_cost", "output_cost",
     "reasoning_cost", "total_cost", "cost_source", "energy_kwh", "gwp_kgco2eq", "gwp_usage_kgco2eq",
     "gwp_embodied_kgco2eq", "adpe_kgsbeq", "pe_mj", "wcf_l", "budget_ids", "ratelimit_tokens_remaining",
     "ratelimit_requests_remaining", "raw"
@@ -295,6 +302,9 @@ object LlmUsageProjection extends AnalyticsProjection {
     val output     = long(event, top("usage.generation_tokens") ++ Seq("output.metadata.usage.generation_tokens",
       "output.usage.output_tokens", "output.usage.usage.output_tokens")*).getOrElse(0L)
     val reasoning  = long(event, top("usage.reasoning_tokens") ++ Seq("output.metadata.usage.reasoning_tokens")*).getOrElse(0L)
+    // a part of the input: the prompt tokens the provider read from its cache, and the ones it wrote there
+    val cached     = long(event, top("usage.cached_tokens") ++ Seq("output.metadata.usage.cached_tokens")*).getOrElse(0L)
+    val cacheWrite = long(event, top("usage.cache_write_tokens") ++ Seq("output.metadata.usage.cache_write_tokens")*).getOrElse(0L)
     // the output includes the reasoning. A provider-reported total can include tokens not broken down above
     // (images); a wrong one (audio reports the input count as the total) is never larger than the sum
     val total      = math.max(input + output, long(event, "output.usage.usage.total_tokens", "output.usage.total_tokens").getOrElse(0L))
@@ -324,6 +334,8 @@ object LlmUsageProjection extends AnalyticsProjection {
       java.lang.Long.valueOf(input),
       java.lang.Long.valueOf(output),
       java.lang.Long.valueOf(reasoning),
+      java.lang.Long.valueOf(cached),
+      java.lang.Long.valueOf(cacheWrite),
       java.lang.Long.valueOf(total),
       java.lang.Long.valueOf(long(event, "output.usage_info.pages_processed").getOrElse(0L)),
       cacheStatus.orNull,

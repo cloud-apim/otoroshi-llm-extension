@@ -1044,18 +1044,39 @@ object ChatResponseMetadataUsage {
   // from the output (xAI, the OpenAI api of Gemini) says so with a total adding it on top: the output gets it back
   def outputWithReasoning(prompt: Long, completion: Long, reasoning: Long, total: Option[Long]): Long =
     if (reasoning > 0L && total.contains(prompt + completion + reasoning)) completion + reasoning else completion
+
+  // the prompt tokens an OpenAI shaped usage says the provider read from its cache: `prompt_tokens_details` for
+  // OpenAI and the compatible apis, `prompt_cache_hit_tokens` for DeepSeek
+  def openaiCachedTokens(usage: JsValue): Long =
+    usage.at("prompt_tokens_details.cached_tokens").asOpt[Long].orElse(usage.select("prompt_cache_hit_tokens").asOpt[Long]).getOrElse(0L)
+
+  // the prompt tokens it wrote to its cache, which OpenRouter reports for the providers that charge for it
+  def openaiCacheWriteTokens(usage: JsValue): Long = usage.at("prompt_tokens_details.cache_write_tokens").asOpt[Long].getOrElse(0L)
 }
 
 // `providerCosts` holds the cost the provider itself reported for the call (OpenRouter sends it in
 // `usage.cost` when `usage.include` is set). It is authoritative: it beats anything we could derive
 // from the static price table, and it is the only source available for models missing from it.
-// `generationTokens` includes `reasoningTokens`, which only says how many of them were spent thinking
-case class ChatResponseMetadataUsage(promptTokens: Long, generationTokens: Long, reasoningTokens: Long, providerCosts: Option[CostsOutput] = None) {
+// `generationTokens` includes `reasoningTokens`, which only says how many of them were spent thinking.
+// `promptTokens` includes `cachedTokens` and `cacheWriteTokens`, the way OpenAI counts them: the prompt tokens the
+// provider read from its cache (prompt caching, cheaper), and the ones it wrote there (dearer, at Anthropic)
+case class ChatResponseMetadataUsage(
+  promptTokens: Long,
+  generationTokens: Long,
+  reasoningTokens: Long,
+  providerCosts: Option[CostsOutput] = None,
+  cachedTokens: Long = 0L,
+  cacheWriteTokens: Long = 0L,
+) {
   def totalTokens: Long = promptTokens + generationTokens
+  /** the prompt tokens the provider neither read from its cache nor wrote to it */
+  def uncachedPromptTokens: Long = (promptTokens - cachedTokens - cacheWriteTokens).max(0L)
   def json: JsValue = Json.obj(
     "prompt_tokens" -> promptTokens,
     "generation_tokens" -> generationTokens,
     "reasoning_tokens" -> reasoningTokens,
+    "cached_tokens" -> cachedTokens,
+    "cache_write_tokens" -> cacheWriteTokens,
   ).applyOnWithOpt(providerCosts) {
     case (obj, costs) => obj ++ Json.obj("provider_costs" -> costs.json)
   }
@@ -1063,16 +1084,21 @@ case class ChatResponseMetadataUsage(promptTokens: Long, generationTokens: Long,
     "prompt_tokens" -> promptTokens,
     "completion_tokens" -> generationTokens,
     "total_tokens" -> (promptTokens + generationTokens),
+    "prompt_tokens_details" -> Json.obj("cached_tokens" -> cachedTokens).applyOnIf(cacheWriteTokens > 0L)(_ ++ Json.obj("cache_write_tokens" -> cacheWriteTokens)),
     "completion_tokens_details" -> Json.obj(
       "reasoning_tokens" -> reasoningTokens
     )
   )
+  // Anthropic counts the tokens read from the cache and the ones written to it apart from the input
   def anthropicJson: JsValue = Json.obj(
-    "input_tokens" -> promptTokens,
+    "input_tokens" -> uncachedPromptTokens,
+    "cache_creation_input_tokens" -> cacheWriteTokens,
+    "cache_read_input_tokens" -> cachedTokens,
     "output_tokens" -> generationTokens,
   )
   def openaiResponsesJson: JsValue = Json.obj(
     "input_tokens" -> promptTokens,
+    "input_tokens_details" -> Json.obj("cached_tokens" -> cachedTokens),
     "output_tokens" -> generationTokens,
     "total_tokens" -> (promptTokens + generationTokens),
     "output_tokens_details" -> Json.obj(

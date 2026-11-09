@@ -84,7 +84,7 @@ Every modality is priced, each in the unit its providers invoice:
 
 | Modality | Billed on |
 |---|---|
-| Text (chat, completion, responses) | input, output and reasoning tokens |
+| Text (chat, completion, responses) | input, output and reasoning tokens, the input tokens read from the cache of the provider or written to it at their own price |
 | Embeddings | input tokens |
 | Moderation | input tokens (free on most providers, so the cost is a legitimate zero) |
 | Decisions | input tokens, or the cost the provider reports for the call when it does (OpenRouter) |
@@ -102,6 +102,29 @@ it as **Billed** or **Not billed**.
 
 Whatever the modality, tokens and pages always count against your budgets; the dollar amount follows the
 table above.
+
+### Prompt caching
+
+Most providers cache prompts: OpenAI, Anthropic, Gemini, DeepSeek, Mistral, xAI, and self-hosted servers like vLLM
+or llama.cpp. When a prompt starts the way a recent one did (a long system prompt, a document, the history of a
+conversation), the provider reads that part from its cache and bills it a fraction of the input price. Anthropic
+also bills the tokens it writes to its cache, for a bit more than the input price.
+
+The gateway reads how many tokens of each call the provider read from its cache and wrote to it, and bills each at
+its own price from the price table (`cache_read_input_token_cost` and `cache_creation_input_token_cost`), so your
+costs and budgets follow what the provider actually invoices. A model with no cache price bills them as input
+tokens. They are input tokens all the same: they count in the prompt tokens of your token budgets.
+
+Your callers see them in the usage their API speaks:
+
+| API | Tokens read from the cache | Tokens written to it |
+|---|---|---|
+| `/chat/completions` | `usage.prompt_tokens_details.cached_tokens` | `usage.prompt_tokens_details.cache_write_tokens` |
+| `/responses` | `usage.input_tokens_details.cached_tokens` | |
+| `/messages` | `usage.cache_read_input_tokens` | `usage.cache_creation_input_tokens` |
+
+The `LLMUsageAudit` events and the analytics carry them as `cached_tokens` and `cache_write_tokens`, both a part of
+`prompt_tokens`.
 
 ### Supported providers
 
@@ -192,6 +215,8 @@ Available pricing fields:
 | `input_cost_per_token` | Cost per input token |
 | `output_cost_per_token` | Cost per output token |
 | `output_cost_per_reasoning_token` | Cost per reasoning token (falls back to `output_cost_per_token` if not set) |
+| `cache_read_input_token_cost` | Cost per input token read from the cache of the provider (falls back to `input_cost_per_token` if not set) |
+| `cache_creation_input_token_cost` | Cost per input token written to the cache of the provider (falls back to `input_cost_per_token` if not set) |
 | `input_cost_per_image` | Cost per input image |
 | `output_cost_per_image` | Cost per output image |
 | `input_cost_per_image_token` / `output_cost_per_image_token` | Cost per image token, for the models that count them |
@@ -261,6 +286,9 @@ Response from the LLM :
     "prompt_tokens": 11,
     "completion_tokens": 18,
     "total_tokens": 29,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    },
     "completion_tokens_details": {
       "reasoning_tokens": 0
     }
@@ -300,7 +328,9 @@ Response from the LLM :
   "usage" : {
     "prompt_tokens" : 11,
     "generation_tokens" : 18,
-    "reasoning_tokens" : 0
+    "reasoning_tokens" : 0,
+    "cached_tokens" : 0,
+    "cache_write_tokens" : 0
   },
   "error" : null,
   "consumed_using" : "chat/completion/blocking",
@@ -431,7 +461,9 @@ Response from the LLM :
       "usage" : {
         "prompt_tokens" : 11,
         "generation_tokens" : 18,
-        "reasoning_tokens" : 0
+        "reasoning_tokens" : 0,
+        "cached_tokens" : 0,
+        "cache_write_tokens" : 0
       },
       "costs" : {
         "input_cost" : 0.00000165,

@@ -155,7 +155,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
       "output_tokens" -> response.metadata.usage.generationTokens,
       "total_tokens" -> response.metadata.usage.totalTokens,
       "input_tokens_details" -> Json.obj(
-        "cached_tokens" -> 0
+        "cached_tokens" -> response.metadata.usage.cachedTokens
       ),
       "output_tokens_details" -> Json.obj(
         "reasoning_tokens" -> response.metadata.usage.reasoningTokens

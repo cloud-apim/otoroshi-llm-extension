@@ -90,6 +90,8 @@ object SimpleCacheSerialization {
         promptTokens = u.select("prompt_tokens").asOpt[Long].getOrElse(0L),
         generationTokens = u.select("generation_tokens").asOpt[Long].getOrElse(0L),
         reasoningTokens = u.select("reasoning_tokens").asOpt[Long].getOrElse(0L),
+        cachedTokens = u.select("cached_tokens").asOpt[Long].getOrElse(0L),
+        cacheWriteTokens = u.select("cache_write_tokens").asOpt[Long].getOrElse(0L),
       )
     }.getOrElse(ChatResponseMetadataUsage.empty)
     val raw = json.select("raw").asOpt[JsValue].getOrElse(Json.obj())

@@ -6,7 +6,7 @@ import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.AzureOpenAiApi
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponseChunk, FinishReasons, InputChatMessage, Reasoning, ReasoningAccumulator}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponseChunk, ChatResponseMetadataUsage, FinishReasons, InputChatMessage, Reasoning, ReasoningAccumulator}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
@@ -35,7 +35,8 @@ class AnthropicStreamWriter {
   private var thinkingSigned = false
   private var toolIndex: Long = -1L
   private var stopReason: String = "end_turn"
-  private var outputTokens: Long = 0L
+  // the usage of the answer, which the last chunk carries: the counts of `message_delta` are the ones of the whole message
+  private var usage: ChatResponseMetadataUsage = ChatResponseMetadataUsage.empty
 
   private def event(typ: String, data: JsObject): ByteString = s"event: ${typ}\ndata: ${(Json.obj("type" -> typ) ++ data).stringify}\n\n".byteString
 
@@ -85,7 +86,7 @@ class AnthropicStreamWriter {
   }
 
   def events(chunk: ChatResponseChunk): Seq[ByteString] = {
-    chunk.usage.foreach(u => outputTokens = u.generationTokens)
+    chunk.usage.foreach(u => usage = u)
     chunk.choices.headOption.toSeq.flatMap { choice =>
       // a plain stop keeps what the stream already said: a tool call ends the message on it
       choice.finishReason.map(FinishReasons.normalize).foreach {
@@ -118,7 +119,7 @@ class AnthropicStreamWriter {
     // a message has at least one block
     val empty = if (index < 0) start(Json.obj("type" -> "text", "text" -> "")) else Seq.empty
     empty ++ close() ++ Seq(
-      event("message_delta", Json.obj("delta" -> Json.obj("stop_reason" -> stopReason, "stop_sequence" -> JsNull), "usage" -> Json.obj("output_tokens" -> outputTokens))),
+      event("message_delta", Json.obj("delta" -> Json.obj("stop_reason" -> stopReason, "stop_sequence" -> JsNull), "usage" -> usage.anthropicJson)),
       event("message_stop", Json.obj()),
     )
   }

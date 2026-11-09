@@ -221,6 +221,8 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
                     promptTokens = usageSlug.select("usage").select("prompt_tokens").asOptLong.getOrElse(-1L),
                     generationTokens = usageSlug.select("usage").select("generation_tokens").asOptLong.getOrElse(-1L),
                     reasoningTokens = usageSlug.select("usage").select("reasoning_tokens").asOptLong.getOrElse(-1L),
+                    cachedTokens = usageSlug.select("usage").select("cached_tokens").asOptLong.getOrElse(0L),
+                    cacheWriteTokens = usageSlug.select("usage").select("cache_write_tokens").asOptLong.getOrElse(0L),
                   ),
                   cache = None
                 )

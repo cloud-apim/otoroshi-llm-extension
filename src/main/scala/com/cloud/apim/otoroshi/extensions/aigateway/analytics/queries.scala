@@ -408,7 +408,7 @@ object AiGatewayQueries {
     private val LogColumns = Seq(
       "id", "ts", "request_id", "route_id", "route_name", "apikey_id", "apikey_name", "apikey_owner", "user_email", "from_ip",
       "consumed_using", "modality", "streaming", "provider_kind", "provider_id", "provider_name", "model", "err",
-      "error_kind", "error_message", "duration_ms", "ttft_ms", "finish_reason", "session_id", "end_user", "input_tokens", "output_tokens", "reasoning_tokens", "total_tokens",
+      "error_kind", "error_message", "duration_ms", "ttft_ms", "finish_reason", "session_id", "end_user", "input_tokens", "output_tokens", "reasoning_tokens", "cached_tokens", "cache_write_tokens", "total_tokens",
       "cache_status", "input_cost", "output_cost", "reasoning_cost", "total_cost", "cost_source", "energy_kwh",
       "gwp_kgco2eq", "budget_ids"
     )
