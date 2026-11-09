@@ -508,4 +508,63 @@ class ProviderContextSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     await(2.seconds)
   }
 
+  // an api that refuses a field it does not know, the way OpenAI does
+  val strictReceived = new TrieMap[String, JsValue]()
+  val (strictPort, _) = createTestServerWithRoutes("strict-openai", routes => routes.post("/v1/chat/completions", (req, response) =>
+    req.receive().aggregate().asString().flatMap { body =>
+      val json = body.parseJson
+      strictReceived.put("latest", json)
+      if (json.select("context").isDefined) {
+        response.status(400).addHeader("Content-Type", "application/json").sendString(Mono.just(Json.obj("error" -> Json.obj(
+          "message" -> "Unknown parameter: 'context'.", "type" -> "invalid_request_error", "param" -> "context"
+        )).stringify)).`then`()
+      } else {
+        response.status(200).addHeader("Content-Type", "application/json").sendString(Mono.just(Json.obj(
+          "id" -> "chatcmpl-1", "object" -> "chat.completion", "created" -> 1700000000, "model" -> "a-model",
+          "choices" -> Json.arr(Json.obj("index" -> 0, "finish_reason" -> "stop", "message" -> Json.obj("role" -> "assistant", "content" -> "hello"))),
+          "usage" -> Json.obj("prompt_tokens" -> 1, "completion_tokens" -> 1, "total_tokens" -> 2),
+        ).stringify)).`then`()
+      }
+    }
+  ))
+
+  test("the context a caller names never reaches the provider, whether it applies or not") {
+    given env: _root_.otoroshi.env.Env = otoroshi.env
+    val ext = env.adminExtensions.extension[otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension].get
+    val pirate = PromptContext(EntityLocation.default, UUID.randomUUID().toString, "pirate", "pirate", Seq.empty, Map.empty,
+      preMessages = Seq(Json.obj("role" -> "system", "content" -> "You are a pirate")), postMessages = Seq.empty)
+    val butler = PromptContext(EntityLocation.default, UUID.randomUUID().toString, "butler", "butler", Seq.empty, Map.empty,
+      preMessages = Seq(Json.obj("role" -> "system", "content" -> "You are a butler")), postMessages = Seq.empty)
+    def strict(name: String, contexts: Seq[String]) = AiProvider(
+      id = UUID.randomUUID().toString, name = name, provider = "openai",
+      connection = Json.obj("base_url" -> s"http://localhost:${strictPort}/v1", "token" -> "sk-test", "timeout" -> 10000),
+      options = Json.obj("model" -> "a-model"), context = ContextSettings(None, contexts),
+    )
+    // no context at all, another context than the one asked for, and the one asked for
+    val bare = strict("strict bare", Seq.empty)
+    val other = strict("strict other", Seq(butler.id))
+    val offering = strict("strict offering", Seq(pirate.id))
+    Seq(pirate, butler).foreach(c => client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").upsertEntity(c).awaitf(10.seconds))
+    Seq(bare, other, offering).foreach(p => client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").upsertEntity(p).awaitf(10.seconds))
+    await(2.seconds)
+
+    def call(provider: AiProvider): Seq[JsObject] = {
+      strictReceived.clear()
+      val resp = ext.states.provider(provider.id).flatMap(_.getChatClient()).get
+        .call(com.cloud.apim.otoroshi.extensions.aigateway.ChatPrompt(Seq(com.cloud.apim.otoroshi.extensions.aigateway.ChatMessage.userStrInput("hello"))),
+          _root_.otoroshi.utils.TypedMap.empty, Json.obj("context" -> "pirate"))(using otoroshi.env.otoroshiExecutionContext, env)
+        .awaitf(30.seconds)
+      assert(resp.isRight, s"the call on ${provider.name} should succeed, got ${resp}")
+      assertEquals(strictReceived("latest").select("context").asOpt[JsValue], None, s"${provider.name} received the context")
+      strictReceived("latest").select("messages").as[Seq[JsObject]]
+    }
+    assertEquals(call(bare).size, 1, "a provider without contexts applies none")
+    assertEquals(call(other).size, 1, "a context the provider does not offer is ignored")
+    val applied = call(offering)
+    assertEquals(applied.size, 2, "the context the provider offers is applied")
+    assert(applied.head.stringify.contains("pirate"), applied.head.stringify)
+
+    Seq(bare, other, offering).foreach(p => client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "providers").deleteEntity(p).awaitf(10.seconds))
+    Seq(pirate, butler).foreach(c => client.forEntity("ai-gateway.extensions.cloud-apim.com", "v1", "prompt-contexts").deleteEntity(c).awaitf(10.seconds))
+  }
 }

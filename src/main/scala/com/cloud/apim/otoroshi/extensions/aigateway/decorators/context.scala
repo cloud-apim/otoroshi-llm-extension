@@ -11,14 +11,11 @@ import play.api.libs.json.{JsObject, JsValue}
 
 import scala.concurrent.{ExecutionContext, Future}
 
+// The `context` a caller names in its body is the gateway's: on every provider, the ones without contexts included, it
+// never reaches the provider, whose api refuses a field it does not know (OpenAI answers a 400). A context the
+// provider does not offer is ignored, the way its own contexts are its choice
 object ChatClientWithContext {
-  def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = {
-    if (tuple._1.context.isDefined) {
-      new ChatClientWithContext(tuple._1, tuple._2)
-    } else {
-      tuple._2
-    }
-  }
+  def applyIfPossible(tuple: (AiProvider, ChatClient, Env)): ChatClient = new ChatClientWithContext(tuple._1, tuple._2)
 }
 
 class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
@@ -42,7 +39,14 @@ class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatCl
     ctx.preMessages.map(contextMessage) ++ prompt.messages ++ ctx.postMessages.map(contextMessage)
   }
 
+  // the body the provider is called with: without the `context` of the caller
+  private def withoutContext(originalBody: JsValue): JsValue = originalBody match {
+    case obj: JsObject if obj.keys.contains("context") => obj - "context"
+    case other => other
+  }
+
   private def getNewPrompt(prompt: ChatPrompt, originalBody: JsValue)(using env: Env): ChatPrompt = {
+    if (!originalProvider.context.isDefined) return prompt
     val ext = env.adminExtensions.extension[AiExtension].get
     val possibleContextList = originalProvider.context.contexts.flatMap(ref => ext.states.context(ref))
     lazy val possibleContextById = possibleContextList.map(c => (c.id, c)).toMap
@@ -64,11 +68,11 @@ class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatCl
 
   override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val newPrompt = getNewPrompt(prompt, originalBody)
-    chatClient.invoke(kind, newPrompt, attrs, originalBody.asObject - "context")
+    chatClient.invoke(kind, newPrompt, attrs, withoutContext(originalBody))
   }
 
   override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = {
     val newPrompt = getNewPrompt(prompt, originalBody)
-    chatClient.invokeStream(kind, newPrompt, attrs, originalBody.asObject - "context")
+    chatClient.invokeStream(kind, newPrompt, attrs, withoutContext(originalBody))
   }
 }

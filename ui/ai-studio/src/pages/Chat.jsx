@@ -454,6 +454,10 @@ export function ChatPage() {
     setSettings({ tools: next.length === availableTools.length ? null : next });
   };
   const offeredTools = availableTools.filter((t) => toolIsOn(t.id));
+  // the presets of the providers of these models, the only ones that apply: another one is kept for when a model
+  // that has it comes back, and not sent meanwhile
+  const availablePresets = (presets.data || []).filter((p) => (p.providers || []).some((id) => providerIds.includes(id)));
+  const preset = availablePresets.some((p) => p.name === settings.preset) ? settings.preset : '';
   const kinds = targeted.some(imageGenerator) ? [] : acceptedKinds(targeted);
   const carried = conversationBytes(messages) + attachmentsBytes(attachments);
   const unreadable = ['image', 'pdf'].filter((k) => !kinds.includes(k));
@@ -611,7 +615,7 @@ export function ChatPage() {
     model: requested,
     messages: settings.system ? [{ role: 'system', content: settings.system }, ...history] : history,
     ...samplingOf(settings),
-    ...(settings.preset ? { context: settings.preset } : {}),
+    ...(preset ? { context: preset } : {}),
     // the gateway narrows the tools of the provider to these ones; nothing is sent when they are all offered
     ...(settings.tools === null ? {} : { allowed_tools: offeredTools.map((t) => t.id) }),
   });
@@ -1024,7 +1028,7 @@ export function ChatPage() {
                       {settings.stream ? 'Streaming' : 'Blocking'}
                       {sampling.temperature !== undefined ? ` · temp ${sampling.temperature}` : ''}
                       {sampling.max_tokens !== undefined ? ` · max ${sampling.max_tokens} tokens` : ''}
-                      {settings.preset ? ` · preset ${settings.preset}` : ''}
+                      {preset ? ` · preset ${preset}` : ''}
                       {availableTools.length > 0 && settings.tools !== null ? ` · ${offeredTools.length}/${availableTools.length} tools` : ''}
                       {carried > 0 ? ` · ${fmtBytes(carried)} of files` : ''}
                     </span>
@@ -1046,9 +1050,11 @@ export function ChatPage() {
           {prefs.showSettings && (
             <div className="chat-settings">
               <h3>Request settings</h3>
-              <Field label="Preset" hint="Adds the preset's messages around the conversation.">
-                <Select value={settings.preset} onChange={(v) => setSettings({ preset: v })} placeholder="None" options={(presets.data || []).map((p) => ({ value: p.name, label: p.name }))} />
-              </Field>
+              {availablePresets.length > 0 && (
+                <Field label="Preset" hint="Adds the preset's messages around the conversation. Only the presets of the providers of this model are offered.">
+                  <Select value={preset} onChange={(v) => setSettings({ preset: v })} placeholder="None" options={availablePresets.map((p) => ({ value: p.name, label: p.name }))} />
+                </Field>
+              )}
               <Field label="System prompt">
                 <textarea value={settings.system} placeholder="You are a helpful assistant." onChange={(e) => setSettings({ system: e.target.value })} />
               </Field>
