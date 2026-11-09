@@ -48,3 +48,12 @@ export function currentTenant() {
     return 'default';
   }
 }
+
+// works in another tenant from now on, the backoffice too (it reads the same entry)
+export function switchTenant(tenant) {
+  try {
+    window.localStorage.setItem('Otoroshi-Tenant', tenant);
+  } catch (e) {
+    // the studio keeps working in its tenant
+  }
+}

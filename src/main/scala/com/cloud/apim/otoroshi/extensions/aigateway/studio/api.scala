@@ -53,6 +53,8 @@ final case class AiStudioApiRequest(ctx: AdminExtensionRouterContext[AdminExtens
   override def request: RequestHeader = req
   def param(name: String): String = ctx.named(name).getOrElse("--")
   def flag(name: String): Boolean = req.getQueryString(name).contains("true")
+  // the same call, made by a caller who works in another tenant
+  def inTenant(tenant: String): AiStudioApiRequest = copy(req = req.withHeaders(req.headers.replace("Otoroshi-Tenant" -> tenant)))
   def form: JsObject = body match {
     case o: JsObject => o
     case JsNull      => Json.obj()
@@ -375,6 +377,20 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     Json.obj("tenant" -> tenant, "teams" -> (teamIdOf(wsId) +: teams).distinct)
   }
 
+  // Whether the caller can create a workspace in a tenant: write there the team of a new workspace, with the rights
+  // its creation is checked with, as if it worked in that tenant
+  private def canCreateWorkspaceIn(tenant: String)(using call: AiStudioApiRequest): Boolean = {
+    val there = call.inTenant(tenant)
+    val probe = "probe"
+    Teams.canWrite(Json.obj("id" -> teamIdOf(probe), "tenant" -> tenant, "_loc" -> locationOf(probe, tenant)(using there)))(using there)
+  }
+
+  // the organizations (tenants) the caller can create a workspace in, by name
+  private def organizations()(using call: AiStudioApiRequest): Future[Seq[JsObject]] =
+    env.datastores.tenantDataStore.findAll().map { tenants =>
+      tenants.filter(t => canCreateWorkspaceIn(t.id.value)).sortBy(_.name.toLowerCase).map(t => Json.obj("id" -> t.id.value, "name" -> t.name))
+    }
+
   private def pluginsOf(route: JsObject): Seq[JsObject] = route.select("plugins").asOpt[Seq[JsObject]].getOrElse(Seq.empty)
 
   private def findPlugin(route: JsObject, plugin: String): Option[JsObject] = pluginsOf(route).find(_.select("plugin").asOptString.contains(plugin))
@@ -479,7 +495,20 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     )
   }
 
-  private def createWorkspace(form: JsObject)(using call: AiStudioApiRequest): Future[JsObject] = {
+  // A new workspace goes in the organization (tenant) named by `organization`, the caller being able to write there.
+  // A studio that names none creates it in the tenant it works in (`Otoroshi-Tenant`), as it always did
+  private def createWorkspace(form: JsObject)(using call: AiStudioApiRequest): Future[JsObject] =
+    string(form, "organization").map(_.trim).filter(_.nonEmpty) match {
+      case None => createWorkspaceInCurrentTenant(form)
+      case Some(organization) =>
+        env.datastores.tenantDataStore.findById(organization).flatMap {
+          case None => Future.failed(badRequest(s"the organization '$organization' does not exist"))
+          case Some(_) if !canCreateWorkspaceIn(organization) => Future.failed(forbidden(s"you cannot create a workspace in the organization '$organization'"))
+          case Some(_) => createWorkspaceInCurrentTenant(form)(using call.inTenant(organization))
+        }
+    }
+
+  private def createWorkspaceInCurrentTenant(form: JsObject)(using call: AiStudioApiRequest): Future[JsObject] = {
     val config = AiStudioConfig.current(env)
     val name = string(form, "name").map(_.trim).filter(_.nonEmpty).getOrElse(throw badRequest("'name' is required"))
     val description = string(form, "description").getOrElse("")
@@ -2488,6 +2517,9 @@ class AiStudioApi(env: Env, ext: AiExtension) {
     },
     route("POST", "/workspaces", wantsBody = true) {
       createWorkspace(call.form).map(ws => Results.Created(ws))
+    },
+    route("GET", "/organizations") {
+      organizations().map(all => ok(JsArray(all)))
     },
     route("GET", "/workspaces/:id") {
       withWorkspace(ws => ok(workspaceJson(ws.route, AiStudioConfig.current(env))).vfuture)

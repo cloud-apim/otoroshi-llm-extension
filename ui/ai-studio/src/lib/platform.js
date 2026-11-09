@@ -18,6 +18,9 @@ export const platform = {
   topbar: [],
   // shown next to the logo
   experimental: false,
+  // the organizations a new workspace can be created in, a promise of [{ id, name }]; without it, the ones the
+  // backend gives (`backend.workspaces.organizations`), the Otoroshi tenants the user can write in for the OSS studio
+  organizations: null,
   // the Otoroshi admin console (routes, data exporters), none when the studio is served on its own
   links: { admin: null, logout: null },
 };

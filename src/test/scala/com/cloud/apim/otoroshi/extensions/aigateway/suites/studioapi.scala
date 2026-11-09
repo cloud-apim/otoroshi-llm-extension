@@ -617,6 +617,43 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
     assert(entity("organize.otoroshi.io", "teams", s"team_ai_studio_$wsId").isEmpty)
   }
 
+  test("a new workspace goes in the organization it is given, among the ones its creator can write in") {
+    val tenants = s"http://otoroshi-api.oto.tools:$port/apis/organize.otoroshi.io/v1/tenants"
+    Seq("studio-org-acme" -> "Acme", "studio-org-globex" -> "Globex").foreach { case (id, name) =>
+      val created = client.call("POST", tenants, Map("Authorization" -> s"Basic $basic"), Some(Json.obj("id" -> id, "name" -> name, "description" -> "", "metadata" -> Json.obj()))).awaitf(30.seconds)
+      assert(created.status == 200 || created.status == 201, created.body)
+    }
+    // writes in its default team and administers acme, only reads globex
+    val member = adminApikey("studio-org-member", Json.arr(
+      Json.obj("tenant" -> "default:rw", "teams" -> Json.arr("default:rw")),
+      Json.obj("tenant" -> "studio-org-acme:rw", "teams" -> Json.arr("*:rw")),
+      Json.obj("tenant" -> "studio-org-globex:r", "teams" -> Json.arr("*:r")),
+    ))
+    await(3.seconds)
+
+    assertEquals(expect(studioAs(member, "GET", "/organizations"), 200).as[Seq[JsObject]].map(o => (o.select("id").asString, o.select("name").asString)),
+      Seq(("studio-org-acme", "Acme"), ("default", "Default organization")), "the ones it can write in, by name")
+    val everything = expect(studio("GET", "/organizations"), 200).as[Seq[JsObject]].map(_.select("id").asString)
+    assert(Seq("default", "studio-org-acme", "studio-org-globex").forall(everything.contains), everything.toString)
+
+    // from the tenant it works in, it creates one in another
+    val acme = expect(studioAs(member, "POST", "/workspaces", Json.obj("name" -> "Acme workspace", "organization" -> "studio-org-acme")), 201)
+    assertEquals(acme.select("tenant").asString, "studio-org-acme")
+    val acmeId = acme.select("id").asString
+    assertEquals(route(acmeId).select("_loc").select("tenant").asString, "studio-org-acme")
+    assertEquals(entity("organize.otoroshi.io", "teams", s"team_ai_studio_$acmeId").map(_.select("tenant").asString), Some("studio-org-acme"))
+    expect(studioAs(member, "GET", s"/workspaces/$acmeId", null, Map("Otoroshi-Tenant" -> "studio-org-acme")), 200)
+
+    expect(studioAs(member, "POST", "/workspaces", Json.obj("name" -> "Globex workspace", "organization" -> "studio-org-globex")), 403)
+    expect(studio("POST", "/workspaces", Json.obj("name" -> "Nowhere", "organization" -> "studio-org-nowhere")), 400)
+    // a studio that names none creates it in the tenant it works in, as it always did
+    val here = expect(studioAs(member, "POST", "/workspaces", Json.obj("name" -> "Default workspace")), 201)
+    assertEquals(here.select("tenant").asString, "default")
+
+    expect(studioAs(member, "DELETE", s"/workspaces/$acmeId", null, Map("Otoroshi-Tenant" -> "studio-org-acme")), 204)
+    expect(studioAs(member, "DELETE", s"/workspaces/${here.select("id").asString}"), 204)
+  }
+
   test("the studio api serves what the studio front needs, and calls a workspace on behalf of a user") {
     val info = expect(studio("GET", "/_info"), 200)
     assert(info.select("features").as[Seq[String]].contains("proxy-on-behalf-of"))

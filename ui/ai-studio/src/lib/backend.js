@@ -1,5 +1,6 @@
 import { routeOf, STUDIO_ADMIN_PATH } from '../core/ops';
 import { api, request, STUDIO_API } from './api';
+import { currentTenant, switchTenant } from './bootstrap';
 
 // What the pages call: the operations of a workspace (core/ops.js), the workspaces themselves, the provider
 // catalog, and the urls the chat streams from. The edition decides how (main.jsx): the OSS studio installs the
@@ -22,7 +23,13 @@ export function localBackend() {
     },
     workspaces: {
       list: () => api.get(`${ADMIN_API}/workspaces`),
-      create: (form) => api.post(`${ADMIN_API}/workspaces`, form),
+      // a workspace created in another organization is only seen from there: the studio goes there with it
+      create: (form) =>
+        api.post(`${ADMIN_API}/workspaces`, form).then((ws) => {
+          if (form.organization && form.organization !== currentTenant()) switchTenant(form.organization);
+          return ws;
+        }),
+      organizations: () => api.get(`${ADMIN_API}/organizations`),
     },
     catalog: () => api.get(`${ADMIN_API}/catalog`),
     // the preferences of the backoffice user (the theme)

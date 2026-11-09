@@ -1,12 +1,23 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useStudio } from '../App';
-import { Badge, Empty, ErrorAlert, Field, Loading, Modal, PageHeader, TextInput, useToast } from '../components/ui';
+import { Badge, Empty, ErrorAlert, Field, Loading, Modal, PageHeader, Select, TextInput, useToast } from '../components/ui';
 import { slugify } from '../lib/ids';
 import { useRouter } from '../lib/router';
 import { exposureFor } from '../lib/workspaces';
 import { backend } from '../lib/backend';
-import { hasPermission } from '../lib/platform';
-import { bootstrap } from '../lib/bootstrap';
+import { hasPermission, platform } from '../lib/platform';
+import { bootstrap, currentTenant } from '../lib/bootstrap';
+
+// The organizations a new workspace can be created in: the ones of the integration, else the ones of the backend.
+// None when neither gives any (an older backend, an edition without them): the workspace goes where it always did
+function loadOrganizations() {
+  const load = platform.organizations || (backend.workspaces && backend.workspaces.organizations);
+  if (!load) return Promise.resolve([]);
+  return Promise.resolve()
+    .then(load)
+    .then((list) => (Array.isArray(list) ? list.filter((o) => o && o.id) : []))
+    .catch(() => []);
+}
 
 export function NewWorkspaceModal({ open, onClose }) {
   const studio = useStudio();
@@ -16,14 +27,28 @@ export function NewWorkspaceModal({ open, onClose }) {
   const [description, setDescription] = useState('');
   const [slug, setSlug] = useState('');
   const [saving, setSaving] = useState(false);
+  const [organizations, setOrganizations] = useState([]);
+  const [organization, setOrganization] = useState('');
   const finalSlug = slugify(slug || name);
   const { host, path } = exposureFor(finalSlug || 'my-workspace');
   const c = bootstrap.config;
 
+  useEffect(() => {
+    let alive = true;
+    loadOrganizations().then((list) => {
+      if (!alive) return;
+      setOrganizations(list);
+      setOrganization((list.find((o) => o.id === currentTenant()) || list[0] || {}).id || '');
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const create = () => {
     setSaving(true);
     backend.workspaces
-      .create({ name, description, slug: finalSlug })
+      .create({ name, description, slug: finalSlug, ...(organization ? { organization } : {}) })
       .then((ws) => {
         toast.success('Workspace created');
         studio.reloadWorkspaces();
@@ -50,6 +75,11 @@ export function NewWorkspaceModal({ open, onClose }) {
         </>
       }
     >
+      {organizations.length > 1 && (
+        <Field label="Organization">
+          <Select value={organization} onChange={setOrganization} options={organizations.map((o) => ({ value: o.id, label: o.name || o.id }))} />
+        </Field>
+      )}
       <Field label="Name">
         <TextInput value={name} onChange={setName} placeholder="My product" autoFocus />
       </Field>
@@ -73,6 +103,8 @@ export function WorkspacesPage({ loading, error }) {
   const { navigate } = useRouter();
   const [creating, setCreating] = useState(false);
   const workspaces = studio.workspaces;
+  // the organization of each workspace, once they are in more than one
+  const organizations = new Set(workspaces.map((ws) => ws.tenant)).size > 1;
 
   return (
     <div className="content">
@@ -118,6 +150,11 @@ export function WorkspacesPage({ loading, error }) {
               {ws.description || 'No description'}
             </div>
             <div className="mono truncate">{ws.base_url}</div>
+            {organizations && (
+              <div className="muted truncate" style={{ marginTop: 6 }}>
+                {ws.tenant}
+              </div>
+            )}
           </div>
         ))}
       </div>

@@ -187,7 +187,8 @@ paths:
       summary: Creates a workspace
       description: |
         Creates the team of the workspace (`team_ai_studio_<id>`), then its route (`route_ai_studio_<id>`) in the tenant
-        of the caller. A caller who is not an admin of the tenant also puts it in the teams it can write, so it still
+        named by `organization`, one of the ones `listOrganizations` gives, or in the tenant of the caller without it.
+        A caller who is not an admin of the tenant also puts it in the teams it can write, so it still
         sees what it creates. Two workspaces never share a slug, whoever can see them: they would answer on the same
         domain.
       x-ai-studio-backend: workspaces.create
@@ -212,6 +213,31 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+
+  /api/extensions/cloud-apim/extensions/ai-extension/studio/organizations:
+    get:
+      tags: [Workspaces]
+      operationId: listOrganizations
+      summary: The organizations the caller can create a workspace in
+      description: The Otoroshi tenants where the caller can write the team of a new workspace, with the rights its creation is checked with.
+      x-ai-studio-backend: workspaces.organizations
+      responses:
+        '200':
+          description: The organizations, sorted by name
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, name]
+                  properties:
+                    id:
+                      type: string
+                    name:
+                      type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /api/extensions/cloud-apim/extensions/ai-extension/studio/workspaces/{id}:
     parameters:
@@ -3285,6 +3311,9 @@ components:
         slug:
           type: string
           description: Made of the name when absent, lower case letters, digits and dashes, 48 characters at most
+        organization:
+          type: string
+          description: The tenant of the workspace, the tenant of the caller (`Otoroshi-Tenant`) when absent. A 400 when it does not exist, a 403 when the caller cannot write there
 
     WorkspaceUpdate:
       type: object
