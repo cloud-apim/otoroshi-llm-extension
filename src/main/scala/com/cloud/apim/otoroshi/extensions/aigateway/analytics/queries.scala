@@ -291,6 +291,18 @@ object AiGatewayQueries {
     ), "cache_status IS NOT NULL")
     val CacheByStatus = pieOf("cache_by_status", "Cache outcomes", "Hit, miss, refresh, bypass.", "cache_status", extra = "cache_status IS NOT NULL")
 
+    // the cache of the providers (prompt caching): the prompt tokens they read from it, billed for less, and the ones
+    // they wrote there, billed for more by some (Anthropic)
+    private val PromptCacheRateExpr = "COALESCE(SUM(cached_tokens)::double precision / NULLIF(SUM(input_tokens), 0), 0)"
+    val PromptCachedTokens  = metric("prompt_cached_tokens_total", "Cached prompt tokens", "Prompt tokens the providers read from their cache, billed for less.", "COALESCE(SUM(cached_tokens), 0)")
+    val PromptCacheWrites   = metric("prompt_cache_writes_total", "Prompt cache writes", "Prompt tokens the providers wrote to their cache.", "COALESCE(SUM(cache_write_tokens), 0)")
+    val PromptCacheRate     = metric("prompt_cache_rate", "Prompt cache rate", "Share of the prompt tokens the providers read from their cache.", PromptCacheRateExpr, asDouble = true)
+    val PromptCacheRateTs   = ts("prompt_cache_rate_over_time", "Prompt cache rate over time", "Share of the prompt tokens the providers read from their cache, per bucket.", Seq("rate" -> PromptCacheRateExpr), asDouble = true, widget = "line")
+    val PromptCacheOverTime = ts("prompt_cache_over_time", "Prompt cache over time", "Prompt tokens the providers read from their cache, and wrote to it, per bucket.", Seq(
+      "read"    -> "COALESCE(SUM(cached_tokens), 0)",
+      "written" -> "COALESCE(SUM(cache_write_tokens), 0)"
+    ))
+
     // ---- ecological impact ------------------------------------------------------------------------
 
     val EnergyTotal   = metric("energy_total", "Energy (Wh)", "Electricity drawn by inference, as estimated by EcoLogits.", "COALESCE(SUM(energy_kwh), 0) * 1000", HasImpact, asDouble = true)
@@ -596,6 +608,9 @@ object AiGatewayQueries {
       "input_tokens"      -> ExploreMetric("COALESCE(SUM(input_tokens), 0)", asDouble = false, additive = true),
       "output_tokens"     -> ExploreMetric("COALESCE(SUM(output_tokens), 0)", asDouble = false, additive = true),
       "reasoning_tokens"  -> ExploreMetric("COALESCE(SUM(reasoning_tokens), 0)", asDouble = false, additive = true),
+      "cached_tokens"     -> ExploreMetric("COALESCE(SUM(cached_tokens), 0)", asDouble = false, additive = true),
+      "cache_write_tokens" -> ExploreMetric("COALESCE(SUM(cache_write_tokens), 0)", asDouble = false, additive = true),
+      "prompt_cache_rate" -> ExploreMetric("COALESCE(SUM(cached_tokens)::double precision / NULLIF(SUM(input_tokens), 0), 0)", asDouble = true, additive = false),
       "blended_cost"      -> ExploreMetric("COALESCE(SUM(total_cost) * 1000000.0 / NULLIF(SUM(total_tokens), 0), 0)", asDouble = true, additive = false),
       "avg_latency"       -> ExploreMetric("COALESCE(AVG(duration_ms), 0)", asDouble = true, additive = false),
       "p50_latency"       -> ExploreMetric("COALESCE(percentile_cont(0.5) WITHIN GROUP (ORDER BY duration_ms), 0)", asDouble = true, additive = false),
@@ -782,6 +797,7 @@ object AiGatewayQueries {
       CostByModelTs, CostPerMillion, CostBySource, UnpricedCalls, ModelsTable,
       CallsByBudget, CostByBudget, TokensByBudget, CostByBudgetTs,
       CacheHitRate, CacheHits, CacheOverTime, CacheByStatus,
+      PromptCachedTokens, PromptCacheWrites, PromptCacheRate, PromptCacheRateTs, PromptCacheOverTime,
       EnergyTotal, GwpTotal, GwpUsageTotal, GwpEmbodiedTotal, GwpPer1kTokensTotal, CumulativeGwp, PeOverTime, AdpeTotal,
       PeTotal, WcfTotal, GwpPerCall, GwpOverTime, EnergyOverTime, GwpByModel, GwpByProvider, GwpByApikey, EnergyByModel,
       GwpPer1kTokens, GwpByModelTs,

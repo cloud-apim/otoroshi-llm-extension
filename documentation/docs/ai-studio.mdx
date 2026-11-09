@@ -453,7 +453,8 @@ than you allowed.
 
 ### Follow the activity
 
-**Activity** shows spend, requests, tokens, cache hit rate and latency, compared to the previous
+**Activity** shows spend, requests, tokens, the hit rate of the gateway cache, the share of the prompts
+the providers read from their own cache (prompt caching, billed for less) and latency, compared to the previous
 period, with the usage broken down by model, by API key and by user. Filter the whole page on one API
 key or one user from the selectors, or by clicking a row of the usage tables. The filters are part of
 the page URL, so a filtered view can be bookmarked and shared. The overview also estimates the
@@ -465,7 +466,8 @@ or hour by hour and day by day, for the period and the filters of the page.
 - **Trends** puts side by side, for models, users, API keys and end users, how the spend, tokens or
   requests evolve and the biggest moves against the previous period, new comers included.
 - **Explore** answers the questions the dashboards don't: pick a metric (spend, tokens, latency and time to
-  first token percentiles, throughput, cache hit rate, error rate, truncated answers, emissions…), a
+  first token percentiles, throughput, cache hit rate, cached prompt tokens and prompt cache rate, error
+  rate, truncated answers, emissions…), a
   dimension to break it down by (model, provider, API key, user, end user, session, finish reason, status…),
   optionally a second one, and see it as a ranking with its share of the total and its change against the
   previous period, or hour by hour, day by day, week by week or month by month.
@@ -504,8 +506,8 @@ from your name in the top bar.
 
 *Everything one person consumes, their own chats and the applications running with their keys.*
 
-**Logs** lists every call, newest first, with its model, user, API key, tokens, cost, speed, latency, finish
-reason and status. Pick the columns you care about, filter by model, key, user, status or finish reason, and
+**Logs** lists every call, newest first, with its model, user, API key, tokens (and the share of the prompt
+the provider read from its cache), cost, speed, latency, finish reason and status. Pick the columns you care about, filter by model, key, user, status or finish reason, and
 share a filtered view or a single call with its link. **Export CSV** downloads the calls matching the
 filters, up to the 10,000 most recent, with every recorded field. Only metadata is recorded: prompts and answers are
 never stored.

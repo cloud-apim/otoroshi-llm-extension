@@ -70,6 +70,9 @@ const TIME_COLUMNS = [
   { label: 'input_tokens', value: num('input_tokens') },
   { label: 'output_tokens', value: num('output_tokens') },
   { label: 'reasoning_tokens', value: num('reasoning_tokens') },
+  // a part of the input tokens: the ones the providers read from their cache, and wrote to it
+  { label: 'cached_tokens', value: num('cache_read_tokens') },
+  { label: 'cache_write_tokens', value: num('cache_written_tokens') },
   { label: 'input_cost_usd', value: (r) => usd(r.input_cost) },
   { label: 'output_cost_usd', value: (r) => usd(r.output_cost) },
   { label: 'reasoning_cost_usd', value: (r) => usd(r.reasoning_cost) },
@@ -91,7 +94,7 @@ function mergeSeries(results) {
       })
     )
   );
-  const fields = ['success', 'error', 'input_tokens', 'output_tokens', 'reasoning_tokens', 'input_cost', 'output_cost', 'reasoning_cost'];
+  const fields = ['success', 'error', 'input_tokens', 'output_tokens', 'reasoning_tokens', 'cache_read_tokens', 'cache_written_tokens', 'input_cost', 'output_cost', 'reasoning_cost'];
   return [...rows.values()].sort((a, b) => a.ts - b.ts).map((row) => Object.fromEntries([['ts', row.ts], ...fields.map((f) => [f, row[f] || 0])]));
 }
 
@@ -253,7 +256,7 @@ export function ActivityPage() {
 
   const kpis = useAsync(async () => {
     if (tab !== 'overview') return null;
-    const [spend, spendTs, requests, requestsTs, tokens, tokensTs, cache, cacheTs, per1k, latency] = await Promise.all([
+    const [spend, spendTs, requests, requestsTs, tokens, tokensTs, cache, cacheTs, promptCache, promptCacheTs, per1k, latency] = await Promise.all([
       q('cloudapim_llm_cost_total', { compare: true }),
       q('cloudapim_llm_cost_over_time'),
       q('cloudapim_llm_requests_total', { compare: true }),
@@ -262,10 +265,12 @@ export function ActivityPage() {
       q('cloudapim_llm_tokens_over_time'),
       q('cloudapim_llm_cache_hit_rate', { compare: true }),
       q('cloudapim_llm_cache_over_time'),
+      q('cloudapim_llm_prompt_cache_rate', { compare: true }),
+      q('cloudapim_llm_prompt_cache_rate_over_time'),
       q('cloudapim_llm_cost_per_1k_tokens', { compare: true }),
       q('cloudapim_llm_latency_p95', { compare: true }),
     ]);
-    return { spend, spendTs, requests, requestsTs, tokens, tokensTs, cache, cacheTs, per1k, latency };
+    return { spend, spendTs, requests, requestsTs, tokens, tokensTs, cache, cacheTs, promptCache, promptCacheTs, per1k, latency };
   }, [workspace.id, period, apikey, user, refresh, tab]);
 
   const charts = useAsync(async () => {
@@ -292,12 +297,13 @@ export function ActivityPage() {
     try {
       if (kind === 'time') {
         const bucket = exportBucket(period);
-        const [calls, tokens, cost] = await Promise.all([
+        const [calls, tokens, cost, promptCache] = await Promise.all([
           q('cloudapim_llm_requests_over_time', { bucket }),
           q('cloudapim_llm_tokens_over_time', { bucket }),
           q('cloudapim_llm_cost_over_time', { bucket }),
+          q('cloudapim_llm_prompt_cache_over_time', { bucket }),
         ]);
-        downloadCsv(name(`per-${bucket}`), TIME_COLUMNS, mergeSeries([['', '', calls], ['', '_tokens', tokens], ['', '_cost', cost]]));
+        downloadCsv(name(`per-${bucket}`), TIME_COLUMNS, mergeSeries([['', '', calls], ['', '_tokens', tokens], ['', '_cost', cost], ['cache_', '_tokens', promptCache]]));
       } else {
         const exp = USAGE_EXPORTS.find((e) => e.id === kind);
         const rows = itemsOf(await q(exp.query, { params: { top_n: 1000 } }));
@@ -404,17 +410,19 @@ export function ActivityPage() {
           <ErrorAlert error={kpis.error || charts.error} />
           {kpis.loading && !k && <Loading />}
           {k && (
-            <div className="grid cols-5">
+            <div className="grid cols-6">
               <Kpi label="Total spend" value={scalarOf(k.spend)} previous={compareOf(k.spend)} format={fmtCost} points={totalPoints(k.spendTs)} inverse />
               <Kpi label="Requests" value={scalarOf(k.requests)} previous={compareOf(k.requests)} format={fmtNumber} points={totalPoints(k.requestsTs)} />
               <Kpi label="Token volume" value={scalarOf(k.tokens)} previous={compareOf(k.tokens)} format={fmtNumber} points={totalPoints(k.tokensTs)} />
               <Kpi
-                label="Cache hit rate"
+                label="Gateway cache hit rate"
                 value={scalarOf(k.cache)}
                 previous={compareOf(k.cache)}
                 format={(v) => fmtPercent(v)}
                 points={(seriesOf(k.cacheTs).find((s) => s.name === 'hit') || {}).points}
               />
+              {/* the share of the prompt tokens the providers read from their own cache, billed for less */}
+              <Kpi label="Prompt cache rate" value={scalarOf(k.promptCache)} previous={compareOf(k.promptCache)} format={(v) => fmtPercent(v)} points={totalPoints(k.promptCacheTs)} />
               <Kpi label="p95 latency" value={scalarOf(k.latency)} previous={compareOf(k.latency)} format={fmtMs} points={[]} inverse />
             </div>
           )}

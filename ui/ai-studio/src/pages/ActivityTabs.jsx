@@ -16,6 +16,10 @@ export const EXPLORE_METRICS = [
   { value: 'input_tokens', label: 'Tokens (prompt)', format: fmtNumber, group: 'Volume' },
   { value: 'output_tokens', label: 'Tokens (completion)', format: fmtNumber, group: 'Volume' },
   { value: 'reasoning_tokens', label: 'Reasoning tokens', format: fmtNumber, group: 'Volume' },
+  // the prompt tokens the providers read from their cache (billed for less), and wrote to it
+  { value: 'cached_tokens', label: 'Cached prompt tokens', format: fmtNumber, group: 'Volume' },
+  { value: 'cache_write_tokens', label: 'Prompt cache writes', format: fmtNumber, group: 'Volume' },
+  { value: 'prompt_cache_rate', label: 'Prompt cache rate', format: fmtRate, group: 'Volume' },
   { value: 'users', label: 'Distinct users', format: fmtNumber, group: 'Volume' },
   { value: 'sessions', label: 'Distinct sessions', format: fmtNumber, group: 'Volume' },
   { value: 'spend', label: 'Spend ($)', format: fmtCost, group: 'Cost' },

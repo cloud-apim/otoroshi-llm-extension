@@ -64,12 +64,12 @@ object AnalyticsSamples {
   private def providerDetails(id: String, kind: String) =
     Json.obj("id" -> id, "name" -> s"$id-name", "provider" -> kind, "connection" -> Json.obj("token" -> "********"), "options" -> Json.obj("model" -> "gpt-4.1-mini"))
 
-  private def slug(provider: String, model: String, prompt: Long, gen: Long, duration: Long = 400L) = Json.obj(
+  private def slug(provider: String, model: String, prompt: Long, gen: Long, duration: Long = 400L, cached: Long = 0L, written: Long = 0L) = Json.obj(
     "provider"   -> provider,
     "duration"   -> duration,
     "model"      -> model,
     "rate_limit" -> Json.obj("requests_limit" -> 100, "requests_remaining" -> 99, "tokens_limit" -> 10000, "tokens_remaining" -> 9000),
-    "usage"      -> Json.obj("prompt_tokens" -> prompt, "generation_tokens" -> gen, "reasoning_tokens" -> 0)
+    "usage"      -> Json.obj("prompt_tokens" -> prompt, "generation_tokens" -> gen, "reasoning_tokens" -> 0, "cached_tokens" -> cached, "cache_write_tokens" -> written)
   )
 
   private def output(content: String, cache: Option[String] = None) = Json.obj(
@@ -99,8 +99,9 @@ object AnalyticsSamples {
     "budgets"          -> Json.arr(Json.obj("budget_id" -> "budget_1", "consumption" -> JsNull))
   )
 
-  // a streaming call on another model: 200 + 100 tokens, $0.01, truncated, in the same session
-  val streaming: JsObject = envelope("llm_stream", "LLMUsageAudit") ++ slug("provider_2", "claude-sonnet-5", 200, 100, 1200) ++ Json.obj(
+  // a streaming call on another model: 200 + 100 tokens, 150 of the 200 read from the cache of the provider and 20
+  // written to it, $0.01, truncated, in the same session
+  val streaming: JsObject = envelope("llm_stream", "LLMUsageAudit") ++ slug("provider_2", "claude-sonnet-5", 200, 100, 1200, cached = 150, written = 20) ++ Json.obj(
     "time_to_first_token" -> 150,
     "finish_reason"       -> "length",
     "session_id"          -> "sess_1",
@@ -340,6 +341,12 @@ class AnalyticsProjectionsSuite extends munit.FunSuite {
     val thinking = chat ++ Json.obj("@id" -> "llm_thinking", "usage" -> Json.obj("prompt_tokens" -> 345, "generation_tokens" -> 92, "reasoning_tokens" -> 88))
     val r = row(LlmUsageProjection, thinking)
     assertEquals((r("input_tokens"), r("output_tokens"), r("reasoning_tokens"), r("total_tokens")), (345L, 92L, 88L, 437L))
+  }
+
+  test("the prompt tokens read from the cache of the provider, and written to it, are a part of the input") {
+    val r = row(LlmUsageProjection, streaming)
+    assertEquals((r("input_tokens"), r("cached_tokens"), r("cache_write_tokens")), (200L, 150L, 20L))
+    assertEquals((row(LlmUsageProjection, chat)("cached_tokens"), row(LlmUsageProjection, chat)("cache_write_tokens")), (0L, 0L))
   }
 
   test("calls re-reported by a load balancer, a router or a fallback are flagged") {
@@ -721,6 +728,14 @@ class AnalyticsQueriesSuite extends munit.FunSuite {
     assertEquals(value(run("cloudapim_llm_guardrail_denials_total")), 1.0)
     assertEquals(value(run("cloudapim_llm_cache_hits_total")), 1.0)
     assertEquals(value(run("cloudapim_llm_errors_total", period.copy(err = Some(false)))), 0.0)
+  }
+
+  test("the prompt cache of the providers is counted, re-reports aside") {
+    assertEquals(value(run("cloudapim_llm_prompt_cached_tokens_total")), 150.0)
+    assertEquals(value(run("cloudapim_llm_prompt_cache_writes_total")), 20.0)
+    assertEquals(value(run("cloudapim_llm_prompt_cache_rate")), 150.0 / value(run("cloudapim_llm_input_tokens_total")))
+    val byModel = (run("cloudapim_llm_explore", params = Json.obj("metric" -> "cached_tokens", "group_by" -> "model")).data \ "items").as[Seq[JsObject]]
+    assertEquals(byModel.find(i => (i \ "key").as[String] == "claude-sonnet-5").map(i => (i \ "value").as[Double]), Some(150.0), byModel.mkString(", "))
   }
 
   test("rankings and series read the right keys") {

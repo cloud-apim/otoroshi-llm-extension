@@ -7,7 +7,7 @@ import { fetchAllPages, itemsOf, NoExporterError, periodSlug, runQuery, seriesOf
 import { backend } from '../lib/backend';
 import { adminLink } from '../lib/platform';
 import { exportName, downloadCsv, isoDate } from '../lib/files';
-import { fmtCost, fmtDate, fmtInt, fmtMs, fmtNumber } from '../lib/format';
+import { fmtCost, fmtDate, fmtInt, fmtMs, fmtNumber, fmtPercent } from '../lib/format';
 import { PeriodPicker, RefreshControl, useTimeView } from '../components/timeview';
 import { Link, useQueryState } from '../lib/router';
 
@@ -45,6 +45,26 @@ function speedOf(call) {
 
 const fmtSpeed = (v) => (v === null ? '—' : `${v.toFixed(1)} tok/s`);
 
+// the input tokens of a call, with the share the provider read from its cache (prompt caching, billed for less)
+function InputTokens({ call }) {
+  const input = Number(call.input_tokens) || 0;
+  const cached = Number(call.cached_tokens) || 0;
+  return (
+    <>
+      {fmtInt(input)} tok
+      {cached > 0 && input > 0 && <span className="faint" title={`${fmtInt(cached)} prompt tokens read from the cache of the provider`}> · {fmtPercent(cached / input, 0)} cached</span>}
+    </>
+  );
+}
+
+// how the input tokens of a call split: the ones the provider read from its cache, and the ones it wrote there
+function cacheParts(call) {
+  return [
+    Number(call.cached_tokens) ? `${fmtNumber(call.cached_tokens)} cached` : null,
+    Number(call.cache_write_tokens) ? `${fmtNumber(call.cache_write_tokens)} written to cache` : null,
+  ].filter(Boolean);
+}
+
 function FinishReason({ reason }) {
   if (!reason) return <span className="faint">—</span>;
   return reason === 'stop' ? <span className="muted">stop</span> : <Badge kind={reason === 'length' || reason === 'content_filter' ? 'warning' : 'info'}>{reason}</Badge>;
@@ -59,7 +79,7 @@ const COLUMNS = [
   { id: 'user', label: 'User', className: 'truncate', style: { maxWidth: 200 }, render: (c) => c.user_email || c.apikey_owner || <span className="faint">—</span> },
   { id: 'apikey', label: 'API key', className: 'truncate', style: { maxWidth: 180 }, render: (c) => c.apikey_name || c.apikey_id || <span className="faint">AI Studio chat</span> },
   { id: 'end_user', label: 'End user', className: 'truncate', style: { maxWidth: 160 }, render: (c) => c.end_user || <span className="faint">—</span>, hidden: true },
-  { id: 'input', label: 'Input', num: true, render: (c) => `${fmtInt(c.input_tokens)} tok` },
+  { id: 'input', label: 'Input', num: true, render: (c) => <InputTokens call={c} /> },
   { id: 'output', label: 'Output', num: true, render: (c) => `${fmtInt(generated(c))} tok` },
   { id: 'cost', label: 'Cost', num: true, render: (c) => (c.total_cost === null || c.total_cost === undefined ? '—' : fmtCost(c.total_cost)) },
   { id: 'speed', label: 'Speed', num: true, render: (c) => fmtSpeed(speedOf(c)) },
@@ -94,6 +114,8 @@ const CSV_COLUMNS = [
   { label: 'input_tokens', value: (c) => c.input_tokens },
   { label: 'output_tokens', value: (c) => c.output_tokens },
   { label: 'reasoning_tokens', value: (c) => c.reasoning_tokens },
+  { label: 'cached_tokens', value: (c) => c.cached_tokens },
+  { label: 'cache_write_tokens', value: (c) => c.cache_write_tokens },
   { label: 'total_tokens', value: (c) => c.total_tokens },
   { label: 'input_cost_usd', value: (c) => c.input_cost },
   { label: 'output_cost_usd', value: (c) => c.output_cost },
@@ -263,9 +285,13 @@ function CallDrawer({ workspace, id, initial, onClose, onOpen, onSession, prev, 
         <Stat label="Latency" value={fmtMs(d.duration_ms)} hint={d.ttft_ms ? `first token after ${fmtMs(d.ttft_ms)}` : d.streaming ? 'streamed' : 'blocking'} />
         <Stat label="Speed" value={fmtSpeed(speedOf(d))} />
         <Stat label="Cost" value={priced ? fmtCost(d.total_cost) : 'not priced'} hint={priced ? d.cost_source : null} />
-        <Stat label="Tokens" value={`${fmtNumber(d.input_tokens)} → ${fmtNumber(generated(d))}`} hint={Number(d.reasoning_tokens) ? `${fmtNumber(d.reasoning_tokens)} reasoning` : null} />
+        <Stat
+          label="Tokens"
+          value={`${fmtNumber(d.input_tokens)} → ${fmtNumber(generated(d))}`}
+          hint={[...cacheParts(d), Number(d.reasoning_tokens) ? `${fmtNumber(d.reasoning_tokens)} reasoning` : null].filter(Boolean).join(' · ') || null}
+        />
         <Stat label="Finish reason" value={d.finish_reason || '—'} />
-        <Stat label="Cache" value={d.cache_status || '—'} />
+        <Stat label="Gateway cache" value={d.cache_status || '—'} />
       </div>
       {section('Request', [
         ['Date', fmtDate(d.ts)],
