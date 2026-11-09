@@ -6,7 +6,7 @@ import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.AzureOpenAiApi
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponseChunk, InputChatMessage, Reasoning, ReasoningAccumulator}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatPrompt, ChatResponseChunk, FinishReasons, InputChatMessage, Reasoning, ReasoningAccumulator}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
@@ -87,9 +87,11 @@ class AnthropicStreamWriter {
   def events(chunk: ChatResponseChunk): Seq[ByteString] = {
     chunk.usage.foreach(u => outputTokens = u.generationTokens)
     chunk.choices.headOption.toSeq.flatMap { choice =>
-      choice.finishReason.foreach {
-        case "tool_calls" | "tool_use" => stopReason = "tool_use"
-        case "length" | "max_tokens" => stopReason = "max_tokens"
+      // a plain stop keeps what the stream already said: a tool call ends the message on it
+      choice.finishReason.map(FinishReasons.normalize).foreach {
+        case "tool_calls" => stopReason = "tool_use"
+        case "length" => stopReason = "max_tokens"
+        case "content_filter" => stopReason = "refusal"
         case _ =>
       }
       val reasoning = choice.delta.reasoningDetailsOrText.flatMap(reasoningEvents)

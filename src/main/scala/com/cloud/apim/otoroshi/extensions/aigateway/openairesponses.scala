@@ -449,9 +449,11 @@ class ResponsesStreamAccumulator {
   // index → (call id, function name, arguments so far)
   private val toolCalls = scala.collection.mutable.LinkedHashMap.empty[Long, (Option[String], Option[String], StringBuilder)]
   private var usageOpt: Option[ChatResponseMetadataUsage] = None
+  private val finishReasons = scala.collection.mutable.ArrayBuffer.empty[String]
 
   def accumulate(chunk: ChatResponseChunk): Unit = {
     chunk.choices.foreach { choice =>
+      choice.finishReason.foreach(finishReasons += _)
       choice.delta.content.foreach(text.append)
       choice.delta.reasoning.foreach(reasoning.append)
       reasoningDetails.add(choice.delta.reasoningDetailsOrText)
@@ -471,6 +473,12 @@ class ResponsesStreamAccumulator {
   def usage: ChatResponseMetadataUsage = usageOpt.getOrElse(ChatResponseMetadataUsage.empty)
   def usageJson: JsObject = OpenAiResponsesBodyConverter.usageJson(usage)
   def hasToolCalls: Boolean = toolCalls.nonEmpty
+  /** why the answer is incomplete, when the stream ended on a cut or a filter */
+  def incomplete: Option[String] = FinishReasons.incomplete(FinishReasons.meaningful(finishReasons.toSeq))
+  /** the status of the answer once the stream is over: `completed`, or `incomplete` */
+  def status: String = if (incomplete.isDefined) "incomplete" else "completed"
+  /** the `incomplete_details` of the answer once the stream is over */
+  def incompleteDetails: JsValue = incomplete.map(reason => Json.obj("reason" -> reason)).getOrElse(JsNull)
 
   /** the answer as a chat assistant message: its text, its tool calls and its reasoning */
   def chatMessage: JsObject = {
@@ -538,7 +546,8 @@ class ResponsesStreamWriter(sequenced: Boolean, logprobs: Boolean, nextSequence:
     "content" -> JsArray(text.map(t => textPart(t)).toSeq),
   )
 
-  private def close(): Seq[ByteString] = {
+  // the message the answer ends on is as complete as the answer
+  private def close(ending: Boolean = false): Seq[ByteString] = {
     val events = current.toSeq.flatMap {
       case ReasoningItem(id, index, details) =>
         val items = Reasoning.toResponsesItems(details.result, forResponsesApi = false, () => id)
@@ -547,7 +556,7 @@ class ResponsesStreamWriter(sequenced: Boolean, logprobs: Boolean, nextSequence:
         done ++= completed
         completed.map(item => sse("response.output_item.done", Json.obj("output_index" -> index, "item" -> item)))
       case MessageItem(id, index, text) =>
-        val item = messageItem(id, "completed", text.toString().some)
+        val item = messageItem(id, if (ending) acc.status else "completed", text.toString().some)
         done += item
         Seq(
           sse("response.output_text.done", withLogprobs(Json.obj("item_id" -> id, "output_index" -> index, "content_index" -> 0, "text" -> text.toString()))),
@@ -611,7 +620,7 @@ class ResponsesStreamWriter(sequenced: Boolean, logprobs: Boolean, nextSequence:
   def end(): Seq[ByteString] = {
     // an answer says something, or calls a tool
     val empty = if (nextIndex == 0 && !acc.hasToolCalls) openMessage() else Seq.empty
-    val closing = empty ++ close()
+    val closing = empty ++ close(ending = true)
     val calls = acc.functionCallItems(_ => newId("fc")).map { item =>
       val index = nextIndex
       nextIndex = nextIndex + 1

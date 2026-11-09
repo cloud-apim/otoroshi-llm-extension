@@ -645,6 +645,74 @@ case class OutputChatMessage(role: String, content: String, prefix: Option[Boole
     copy(content = f(content))
   }
 }
+/**
+ * Why an answer ended. A provider says it for each generation (the choice of an OpenAI compatible api, kept as the
+ * raw of its message, or the answer of Ollama) or once for the whole answer (Anthropic, a native `/responses` api,
+ * Cohere), each in its own words: inside the gateway it is the word of OpenAI (`stop`, `length`, `tool_calls`,
+ * `content_filter`), and each format a caller reads gets its own word for it. A message that calls tools ends on
+ * them when the provider says it stopped, or says nothing: a server may call that `stop`. A cut answer stays cut,
+ * tool calls or not, its arguments are likely incomplete.
+ */
+object FinishReasons {
+
+  /** Every provider says it its own way: `end_turn`, `MAX_TOKENS`, `done`… one vocabulary, openai's. */
+  def normalize(reason: String): String = reason.trim.toLowerCase match {
+    case "end_turn" | "stop_sequence" | "complete" | "completed" | "eos"     => "stop"
+    case "max_tokens" | "max_output_tokens" | "model_length" | "incomplete" => "length"
+    case "tool_use" | "tool_call" | "function_call"                         => "tool_calls"
+    case "safety" | "refusal" | "recitation"                                => "content_filter"
+    case other                                                              => other
+  }
+
+  private def first(values: Option[String]*): Option[String] = values.flatten.map(_.trim).find(_.nonEmpty)
+
+  /** what a generation says of its own end, in the words of the provider */
+  def ofGeneration(raw: JsValue): Option[String] = first(
+    raw.select("finish_reason").asOptString,
+    raw.select("done_reason").asOptString,
+  )
+
+  /** what an answer says of the end of its generation at `index`, or of its own end, in the words of the provider */
+  def ofResponse(raw: JsValue, index: Int): Option[String] = first(
+    raw.select("choices").asOpt[Seq[JsValue]].flatMap(_.lift(index)).flatMap(_.select("finish_reason").asOptString),
+    raw.select("stop_reason").asOptString,
+    raw.select("done_reason").asOptString,
+    raw.select("finish_reason").asOptString,
+    raw.select("incomplete_details").select("reason").asOptString,
+    raw.select("status").asOptString.filter(s => s == "completed" || s == "incomplete"),
+  )
+
+  /** the reason in the words of OpenAI, when the provider gave one or the message calls tools */
+  def of(reason: Option[String], hasToolCalls: Boolean): Option[String] = {
+    val normalized = reason.map(_.trim).filter(_.nonEmpty).map(normalize)
+    if (hasToolCalls && normalized.forall(_ == "stop")) Some("tool_calls") else normalized
+  }
+
+  /** the `finish_reason` of `/chat/completions` and `/completions` */
+  def openai(reason: Option[String], hasToolCalls: Boolean): String = of(reason, hasToolCalls).getOrElse("stop")
+
+  /** the `stop_reason` of the messages api of Anthropic */
+  def anthropic(reason: Option[String], hasToolCalls: Boolean): String = (reason.map(_.trim.toLowerCase), of(reason, hasToolCalls)) match {
+    case (_, Some("tool_calls")) if hasToolCalls      => "tool_use"
+    case (_, Some("length"))                          => "max_tokens"
+    case (_, Some("content_filter"))                  => "refusal"
+    case (Some(r @ ("stop_sequence" | "pause_turn")), _) => r
+    case _                                            => "end_turn"
+  }
+
+  /** why a `/responses` answer is incomplete, when it is: it was cut (`max_output_tokens`) or filtered (`content_filter`) */
+  def incomplete(reason: Option[String]): Option[String] = reason.map(_.trim).filter(_.nonEmpty).map(normalize).collect {
+    case "length"         => "max_output_tokens"
+    case "content_filter" => "content_filter"
+  }
+
+  /** the reason meaning something other than `stop` when several say different things, the last one otherwise */
+  def meaningful(reasons: Seq[String]): Option[String] = {
+    val normalized = reasons.map(_.trim).filter(_.nonEmpty)
+    normalized.filterNot(r => normalize(r) == "stop").lastOption.orElse(normalized.lastOption)
+  }
+}
+
 object ChatGeneration {
   val empty: ChatGeneration = ChatGeneration(OutputChatMessage("assistant", "", None, Json.obj("role" -> "assistant", "content" -> "")))
 }
@@ -653,22 +721,21 @@ case class ChatGeneration(message: OutputChatMessage) {
   def json: JsValue = Json.obj(
     "message" -> message.json
   )
-  def openaiJson(idx: Int): JsValue = {
-    val finish_reason = if (message.has_tool_calls) "tool_calls" else "stop"
+  // `reason` is what the provider said of the end of this generation, in its own words
+  def openaiJson(idx: Int, reason: Option[String] = FinishReasons.ofGeneration(message.raw)): JsValue = {
     Json.obj(
       "index" -> idx,
       "message" -> message.json,
       "logprobs" -> JsNull,
-      "finish_reason" -> finish_reason,
+      "finish_reason" -> FinishReasons.openai(reason, message.has_tool_calls),
     )
   }
-  def openaiCompletionJson(idx: Int): JsValue = {
-    val finish_reason = if (message.has_tool_calls) "tool_calls" else "stop"
+  def openaiCompletionJson(idx: Int, reason: Option[String] = FinishReasons.ofGeneration(message.raw)): JsValue = {
     Json.obj(
       "index" -> idx,
       "text" -> message.content,
       "logprobs" -> JsNull,
-      "finish_reason" -> finish_reason,
+      "finish_reason" -> FinishReasons.openai(reason, message.has_tool_calls),
     )
   }
 }
@@ -683,6 +750,13 @@ case class ChatResponse(
   raw: JsValue,
 ) {
   def headGeneration: ChatGeneration = generations.headOption.getOrElse(ChatGeneration.empty)
+  /** what the provider said of the end of the generation at `index`, in its own words: in the generation, or in the answer */
+  def finishReasonOf(index: Int): Option[String] =
+    generations.lift(index).flatMap(g => FinishReasons.ofGeneration(g.message.raw)).orElse(FinishReasons.ofResponse(raw, index))
+  /** what the provider said of the end of the answer, for the formats that have one reason for all the generations */
+  lazy val finishReason: Option[String] =
+    if (generations.isEmpty) FinishReasons.ofResponse(raw, 0) else FinishReasons.meaningful(generations.indices.flatMap(finishReasonOf))
+  lazy val hasToolCalls: Boolean = generations.exists(_.message.has_tool_calls)
   def json(env: Env): JsValue = Json.obj(
     "generations" -> JsArray(generations.map(_.json)),
     "metadata" -> metadata.json(env),
@@ -695,7 +769,7 @@ case class ChatResponse(
       "created" -> (System.currentTimeMillis() / 1000).toLong,
       "model" -> finalModel,
       "system_fingerprint" -> s"fp-${IdGenerator.token(32)}",
-      "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiJson(t._2))),
+      "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiJson(t._2, finishReasonOf(t._2)))),
       "usage" -> metadata.usage.openaiJson,
     ).applyOnWithOpt(metadata.impacts) {
       case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
@@ -713,7 +787,7 @@ case class ChatResponse(
       "created" -> (System.currentTimeMillis() / 1000).toLong,
       "model" -> finalModel,
       "system_fingerprint" -> s"fp_${IdGenerator.token(32)}",
-      "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiCompletionJson(t._2))),
+      "choices" -> JsArray(generations.zipWithIndex.map(t => t._1.openaiCompletionJson(t._2, finishReasonOf(t._2)))),
       "usage" -> metadata.usage.openaiJson,
     ).applyOnWithOpt(metadata.impacts) {
       case (o, impacts) => o ++ Json.obj("impacts" -> impacts.json(env.adminExtensions.extension[AiExtension].get.llmImpactsSettings.embedDescriptionInJson))
@@ -749,7 +823,7 @@ case class ChatResponse(
         Seq(Json.obj("type" -> "text", "text" -> gen.message.content))
       })
     }
-    val stopReason = if (generations.exists(_.message.has_tool_calls)) "tool_use" else "end_turn"
+    val stopReason = FinishReasons.anthropic(finishReason, hasToolCalls)
     Json.obj(
       "id" -> s"msg_${IdGenerator.token(32)}",
       "type" -> "message",
@@ -784,6 +858,9 @@ case class ChatResponse(
       }
     }
     val finalModel = raw.select("model").asOpt[String].getOrElse(model)
+    // a cut or filtered answer is `incomplete`, and so is its message
+    val incomplete = FinishReasons.incomplete(finishReason)
+    val status = if (incomplete.isDefined) "incomplete" else "completed"
     val outputItems = generations.flatMap { gen =>
       // the reasoning first, as reasoning items a caller sends back with the rest of the output
       var items: Seq[JsValue] = Reasoning.toResponsesItems(gen.message.reasoning, forResponsesApi = false, () => s"rs_${IdGenerator.token(32)}")
@@ -793,7 +870,7 @@ case class ChatResponse(
         items = items :+ Json.obj(
           "type" -> "message",
           "id" -> messageId,
-          "status" -> "completed",
+          "status" -> status,
           "role" -> gen.message.role,
           "content" -> JsArray(Seq(Json.obj(
             "type" -> "output_text",
@@ -838,7 +915,7 @@ case class ChatResponse(
         items = Seq(Json.obj(
           "type" -> "message",
           "id" -> messageId,
-          "status" -> "completed",
+          "status" -> status,
           "role" -> "assistant",
           "content" -> JsArray(Seq(Json.obj(
             "type" -> "output_text",
@@ -854,7 +931,8 @@ case class ChatResponse(
       "object" -> "response",
       "created_at" -> (System.currentTimeMillis() / 1000).toLong,
       "model" -> finalModel,
-      "status" -> "completed",
+      "status" -> status,
+      "incomplete_details" -> incomplete.map(reason => Json.obj("reason" -> reason)).getOrElse(JsNull).asValue,
       "output" -> JsArray(outputItems),
       "usage" -> metadata.usage.openaiResponsesJson,
     ).applyOnWithOpt(metadata.impacts) {
@@ -878,7 +956,9 @@ case class ChatResponse(
         ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, delta, None)))
       }
       .concat(Source.single(
-        ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(None, None), Some("stop"))))
+        // the stream ends the way the answer did; it carries no tool calls, so it never ends on them
+        ChatResponseChunk(id, System.currentTimeMillis() / 1000, finalModel, Seq(ChatResponseChunkChoice(0, ChatResponseChunkChoiceDelta(None, None),
+          FinishReasons.of(finishReason, hasToolCalls = false).filterNot(_ == "tool_calls").orElse(Some("stop")))))
       ))
   }
   def toResponseSource(model: String): Source[ChatResponseChunk, ?] = toSource(model)

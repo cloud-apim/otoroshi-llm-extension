@@ -5,7 +5,7 @@ import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
 import com.cloud.apim.otoroshi.extensions.aigateway.plugins.{AiPluginRefsConfig, AiPluginsKeys}
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessageContent, ChatPrompt, ChatResponse, InputChatMessage, OpenAiResponsesBodyConverter, Reasoning, ResponsesStreamWriter}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessageContent, ChatPrompt, ChatResponse, FinishReasons, InputChatMessage, OpenAiResponsesBodyConverter, Reasoning, ResponsesStreamWriter}
 import otoroshi.env.Env
 import otoroshi.next.plugins.api.*
 import otoroshi.next.proxy.NgProxyEngineError
@@ -67,12 +67,15 @@ class OpenResponseCompatProxy extends NgBackendCall {
       return response.openaiResponseJson(model, env)
     }
     val msgId = s"msg_${IdGenerator.token(32)}"
+    // a cut or filtered answer is `incomplete`, and so is its message
+    val incomplete = FinishReasons.incomplete(response.finishReason)
+    val status = if (incomplete.isDefined) "incomplete" else "completed"
 
     val textOutputs: Seq[JsObject] = response.generations.filter(!_.message.has_tool_calls).map { gen =>
       Json.obj(
         "type" -> "message",
         "id" -> msgId,
-        "status" -> "completed",
+        "status" -> status,
         "role" -> "assistant",
         "content" -> Json.arr(
           Json.obj(
@@ -131,7 +134,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
       val assistantMsg = Json.obj(
         "type" -> "message",
         "id" -> msgId,
-        "status" -> "completed",
+        "status" -> status,
         "role" -> "assistant",
         "content" -> Json.arr(
           Json.obj(
@@ -197,7 +200,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
       "presence_penalty" -> 0,
       "top_logprobs" -> requestTopLogprobs,
       "temperature" -> requestTemperature,
-      "status" -> "completed",
+      "status" -> status,
       "truncation" -> requestTruncation,
       "store" -> requestStore,
       "model" -> model,
@@ -213,7 +216,7 @@ class OpenResponseCompatProxy extends NgBackendCall {
       "safety_identifier" -> safety_identifier,
       "prompt_cache_key" -> prompt_cache_key,
       "error" -> JsNull,
-      "incomplete_details" -> JsNull,
+      "incomplete_details" -> incomplete.map(reason => Json.obj("reason" -> reason)).getOrElse(JsNull).asValue,
       "tools" -> tools,
       "tool_choice" -> tool_choice,
       "metadata" -> Json.obj(),
@@ -279,11 +282,15 @@ class OpenResponseCompatProxy extends NgBackendCall {
                 // makes the accumulated text, tool calls and usage available here
                 val footerEvents = Source.lazySource { () =>
                   val closing = writer.end()
+                  // a cut or filtered answer ends on `response.incomplete`
+                  val status = writer.acc.status
                   Source(closing.toList ++ List(
-                    sseEvent("response.completed", eventWithResponse("response.completed", counter.getAndIncrement()).deepMerge(
+                    sseEvent(s"response.${status}", eventWithResponse(s"response.${status}", counter.getAndIncrement()).deepMerge(
                       Json.obj(
-                        "status" -> "completed",
+                        "status" -> status,
                         "response" -> Json.obj(
+                          "status" -> status,
+                          "incomplete_details" -> writer.acc.incompleteDetails,
                           "output" -> JsArray(writer.output),
                           // reported by the final chunk of the stream, not by the provider payload
                           "usage" -> writer.acc.usageJson,

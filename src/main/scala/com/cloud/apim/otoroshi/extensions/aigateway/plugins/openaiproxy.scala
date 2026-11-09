@@ -306,18 +306,21 @@ object OpenAiResponsesProxy {
                 // makes the accumulated text, tool calls and usage available here
                 val footerEvents = Source.lazySource(() => {
                   val closing = writer.end()
+                  // a cut or filtered answer ends on `response.incomplete`
+                  val status = writer.acc.status
                   val completedResponse = Json.obj(
                     "id" -> responseId,
                     "object" -> "response",
                     "created_at" -> createdAt,
                     "model" -> modelStr,
-                    "status" -> "completed",
+                    "status" -> status,
+                    "incomplete_details" -> writer.acc.incompleteDetails,
                     "output" -> JsArray(writer.output),
                     "usage" -> writer.acc.usageJson,
                   )
                   Source(closing.toList ++ List(
-                    sseEvent("response.completed", Json.obj(
-                      "type" -> "response.completed",
+                    sseEvent(s"response.${status}", Json.obj(
+                      "type" -> s"response.${status}",
                       "response" -> completedResponse
                     )),
                   ))

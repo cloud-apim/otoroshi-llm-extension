@@ -5,7 +5,7 @@ import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.redactedJson
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions, AiBudgetUsageKind, AiBudgetsDataStore, AiProvider, AudioModel, DecisionModel, EmbeddingModel, ImageModel, ModerationModel, OcrModel, VideoModel, WithingBudgetConsumptions}
-import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, DecisionModelClient, DecisionModelClientInputOptions, DecisionResponse, EmbeddingClientInputOptions, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
+import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, DecisionModelClient, DecisionModelClientInputOptions, DecisionResponse, EmbeddingClientInputOptions, FinishReasons, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import io.azam.ulidj.ULID
 import otoroshi.env.Env
 import otoroshi.events.AuditEvent
@@ -46,30 +46,10 @@ object LlmCallTelemetry {
   private def bounded(value: Option[String]): Option[String] = value.map(_.trim).filter(_.nonEmpty).map(_.take(256))
 
   /** Every provider says it its own way: `end_turn`, `MAX_TOKENS`, `done`… one vocabulary, openai's. */
-  def normalizeFinishReason(reason: String): String = reason.trim.toLowerCase match {
-    case "end_turn" | "stop_sequence" | "complete" | "completed" | "eos" => "stop"
-    case "max_tokens" | "max_output_tokens" | "incomplete"               => "length"
-    case "tool_use" | "tool_call" | "function_call"                      => "tool_calls"
-    case "safety" | "refusal" | "recitation"                             => "content_filter"
-    case other                                                           => other
-  }
+  def normalizeFinishReason(reason: String): String = FinishReasons.normalize(reason)
 
-  /** A blocking response keeps the provider's own reason in its raw payload only. */
-  def finishReasonOf(response: ChatResponse): Option[String] = {
-    val raw = response.raw
-    val message = response.generations.headOption.map(_.message)
-    Seq(
-      message.flatMap(_.raw.select("finish_reason").asOptString),
-      raw.select("choices").asOpt[Seq[JsValue]].flatMap(_.headOption).flatMap(_.select("finish_reason").asOptString),
-      raw.select("stop_reason").asOptString,
-      message.flatMap(_.raw.select("done_reason").asOptString),
-      raw.select("done_reason").asOptString,
-      raw.select("finish_reason").asOptString,
-      raw.select("incomplete_details").select("reason").asOptString,
-      raw.select("status").asOptString.filter(s => s == "completed" || s == "incomplete"),
-    ).flatten.map(_.trim).find(_.nonEmpty).map(normalizeFinishReason)
-      .orElse(message.filter(_.has_tool_calls).map(_ => "tool_calls"))
-  }
+  /** A blocking response keeps the provider's own reason in its raw payload only: the one its caller is answered */
+  def finishReasonOf(response: ChatResponse): Option[String] = FinishReasons.of(response.finishReason, response.hasToolCalls)
 
   /** The last reason a stream sent, a meaningful one over a plain `stop` when chunks disagree. */
   def finishReasonOf(chunks: Seq[ChatResponseChunk]): Option[String] = {
