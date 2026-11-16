@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.FirstTokenSignal
 import org.apache.pekko.http.scaladsl.model.{ContentType, HttpEntity, Multipart}
 import org.apache.pekko.stream.scaladsl.{Framing, Source}
 import org.apache.pekko.util.ByteString
@@ -190,6 +191,8 @@ class GroqApi(baseUrl: String = GroqApi.baseUrl, token: String, timeout: FiniteD
             if (!isToolCall) chunk.choices.headOption.flatMap(_.delta).flatMap(_.reasoning).foreach(streamedReasoning.addText)
             if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
               isToolCall = true
+              // the provider answered: the tools about to run take time of their own
+              FirstTokenSignal.fire(attrs)
               toolCalls = chunk.choices.head.delta.head.tool_calls
               toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => "")*)
               Source.empty

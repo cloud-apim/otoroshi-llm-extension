@@ -69,6 +69,12 @@ object AiMetrics {
     env.metrics.counterInc("ai.fallback.calls")
   }
 
+  // a streamed call whose first token did not come in time (`connection.ttft_timeout`)
+  def markFirstTokenTimeout()(using env: Env): Unit = {
+    if (!env.metricsEnabled) return
+    env.metrics.counterInc("ai.first_token_timeouts")
+  }
+
   def markBudgetExceeded()(using env: Env): Unit = {
     if (!env.metricsEnabled) return
     env.metrics.counterInc("ai.budget.exceeded")

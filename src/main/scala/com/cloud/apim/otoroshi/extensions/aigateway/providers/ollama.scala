@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.FirstTokenSignal
 import org.apache.pekko.stream.scaladsl.{Framing, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.*
@@ -199,6 +200,8 @@ class OllamaAiApi(val baseUrl: String = OllamaAiApi.baseUrl, val token: Option[S
       call(method, path, body, acc ).flatMap {
         case Left(err) => err.leftf
         case Right(resp) if resp.finishBecauseOfToolCalls => {
+          // the provider answered: the tools about to run take time of their own
+          FirstTokenSignal.fire(attrs)
           body match {
             case None => resp.rightf
             case Some(body) => {

@@ -812,4 +812,35 @@ class StudioApiSuite extends LlmExtensionOneOtoroshiServerPerSuite {
 
     expect(studio("DELETE", s"/workspaces/$wsId"), 204)
   }
+
+  test("the targets and the first token timeout of a connection survive what the studio writes") {
+    val wsId = expect(studio("POST", "/workspaces", Json.obj("name" -> "Studio targets")), 201).select("id").asString
+    val conn = expect(studio("POST", s"/workspaces/$wsId/providers", Json.obj(
+      "kind" -> "ollama",
+      "base_url" -> s"http://localhost:$ollamaPort",
+      "modalities" -> Json.obj("text" -> Json.obj("model" -> "llama3.2")),
+    )), 201)
+    val entityId = conn.select("entities").select("text").asString
+    val url = s"http://otoroshi-api.oto.tools:$port/apis/ai-gateway.extensions.cloud-apim.com/v1/providers/$entityId"
+    val added = Json.obj(
+      "targets" -> Json.arr(
+        Json.obj("id" -> "gpu-1", "base_url" -> s"http://localhost:$ollamaPort", "weight" -> 1),
+        Json.obj("id" -> "gpu-2", "base_url" -> s"http://127.0.0.1:$ollamaPort", "weight" -> 2),
+      ),
+      "targets_options" -> Json.obj("strategy" -> "random", "max_attempts" -> 3, "when_none_available" -> "try_saturated"),
+      "ttft_timeout" -> 30000,
+    )
+    val current = aiEntity("providers", entityId).get
+    val updated = client.call("PUT", url, Map("Authorization" -> s"Basic $basic"), Some(current ++ Json.obj(
+      "connection" -> (current.select("connection").as[JsObject] ++ added),
+      "pushed_state" -> Json.obj("enabled" -> true, "stale_as" -> "available", "max_ttl" -> 600000),
+    ))).awaitf(30.seconds)
+    assert(updated.status == 200, updated.body)
+    expect(studio("PUT", s"/workspaces/$wsId/providers/${conn.select("id").asString}", Json.obj("require_known_costs" -> true, "base_url" -> s"http://localhost:$ollamaPort")), 200)
+    val kept = aiEntity("providers", entityId).get
+    assertEquals(kept.select("models").select("require_known_costs").asOpt[Boolean], Some(true))
+    assertEquals(JsObject(added.keys.toSeq.map(k => k -> kept.select("connection").select(k).as[JsValue])), added)
+    assertEquals(kept.select("pushed_state").select("enabled").asOpt[Boolean], Some(true))
+    expect(studio("DELETE", s"/workspaces/$wsId"), 204)
+  }
 }

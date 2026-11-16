@@ -71,6 +71,14 @@ object ProviderCircuitBreaker {
     if (openUntil > 0L) AiMetrics.markCircuit("open")
   }
 
+  // throttling ends when the provider said it would; running out of credit needs a human, so we only let a
+  // call through now and then to notice the top up. Never unbounded: the provider is always retried.
+  def quotaBackoffUntil(episode: com.cloud.apim.otoroshi.extensions.aigateway.providers.QuotaEpisode, settings: CircuitBreakerSettings, now: Long): Long = {
+    episode.retryAt.filter(_ > now).getOrElse {
+      if (episode.kind.transient) now + settings.cooldownMs else now + com.cloud.apim.otoroshi.extensions.aigateway.providers.ProviderQuotas.creditExhaustedBackoffMs
+    }
+  }
+
   // visible for tests / observability
   def reset(): Unit = states.synchronized { states.clear() }
   def openProviderIds(now: Long): Set[String] = states.toSeq.collect { case (id, s) if s.openUntil > now => id }.toSet

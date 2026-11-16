@@ -1,7 +1,7 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
-import com.cloud.apim.otoroshi.extensions.aigateway.{ChatMessage, ChatPrompt}
+import com.cloud.apim.otoroshi.extensions.aigateway.{ChatClient, ChatMessage, ChatPrompt}
 import org.apache.pekko.actor.Cancellable
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -60,24 +60,29 @@ object ProviderHealthchecks {
     }
   }
 
-  /** one minimal inference call. The result is ignored on purpose: what matters is the http status, which the
-    * provider api records into the quota state on its way back. */
+  /** one minimal inference call, one per target for a provider with targets: their quotas are per endpoint. The
+    * result is ignored on purpose: what matters is the http status, which the provider api records into the quota
+    * state on its way back. */
   def probe(provider: AiProvider)(using ec: ExecutionContext, env: Env): Future[Unit] = {
     provider.withModel(provider.healthcheck.model).getRawChatClient() match {
       case None =>
         AiExtension.logger.warn(s"unable to build a client to probe provider '${provider.name}'")
         ().vfuture
-      case Some(client) => {
-        val settings = provider.healthcheck
-        val body = Json.obj("max_tokens" -> settings.maxTokens, "max_completion_tokens" -> settings.maxTokens)
-        val prompt = ChatPrompt(Seq(ChatMessage.input("user", settings.prompt, None, Json.obj())))
-        client.call(prompt, TypedMap.empty, body).map {
-          case Left(err) => AiExtension.logger.debug(s"healthcheck probe for '${provider.name}' failed: ${err}")
-          case Right(_) => AiExtension.logger.debug(s"healthcheck probe for '${provider.name}' succeeded")
-        }.recover {
-          case err => AiExtension.logger.debug(s"healthcheck probe for '${provider.name}' threw: ${err.getMessage}")
-        }
-      }
+      case Some(targets: TargetsChatClient) =>
+        Future.sequence(targets.targetClients.map { case (target, client) => probeWith(client, provider, s"'${provider.name}' (target '${target.id}')") }).map(_ => ())
+      case Some(client) => probeWith(client, provider, s"'${provider.name}'")
+    }
+  }
+
+  private def probeWith(client: ChatClient, provider: AiProvider, name: String)(using ec: ExecutionContext, env: Env): Future[Unit] = {
+    val settings = provider.healthcheck
+    val body = Json.obj("max_tokens" -> settings.maxTokens, "max_completion_tokens" -> settings.maxTokens)
+    val prompt = ChatPrompt(Seq(ChatMessage.input("user", settings.prompt, None, Json.obj())))
+    client.call(prompt, TypedMap.empty, body).map {
+      case Left(err) => AiExtension.logger.debug(s"healthcheck probe for ${name} failed: ${err}")
+      case Right(_) => AiExtension.logger.debug(s"healthcheck probe for ${name} succeeded")
+    }.recover {
+      case err => AiExtension.logger.debug(s"healthcheck probe for ${name} threw: ${err.getMessage}")
     }
   }
 }

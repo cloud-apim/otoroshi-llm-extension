@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.FirstTokenSignal
 import org.apache.pekko.stream.scaladsl.{Framing, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.*
@@ -223,6 +224,8 @@ class CohereAiApi(baseUrl: String = CohereAiApi.baseUrl, token: String, timeout:
             Source.single(chunk)
             if (!isToolCall && chunk.tool_call_start) {
               isToolCall = true
+              // the provider answered: the tools about to run take time of their own
+              FirstTokenSignal.fire(attrs)
               toolCalls = toolCalls :+ chunk.choices.head.delta.get.message.tool_calls
               toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => "")*)
               Source.empty

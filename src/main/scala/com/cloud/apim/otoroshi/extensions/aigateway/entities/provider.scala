@@ -3,7 +3,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.entities
 import com.cloud.apim.otoroshi.extensions.aigateway.ChatClient
 import com.cloud.apim.otoroshi.extensions.aigateway.decorators.{ChatClientDecorators, Guardrails, LoadBalancerChatClient, OtoroshiRouterChatClient}
 import com.cloud.apim.otoroshi.extensions.aigateway.providers.*
-import otoroshi.api.{GenericResourceAccessApiWithState, Resource, ResourceVersion}
+import otoroshi.api.{GenericResourceAccessApiWithStateAndWriteValidation, Resource, ResourceVersion}
 import otoroshi.env.Env
 import otoroshi.models.*
 import otoroshi.next.extensions.AdminExtensionId
@@ -248,6 +248,8 @@ case class AiProvider(
                        models: ModelSettings = ModelSettings.empty,
                        memory: Option[String] = None,
                        healthcheck: ProviderHealthcheck = ProviderHealthcheck.disabled,
+                       // whether a monitoring tool may push the state of the provider and of its targets
+                       pushedState: Option[PushedStateSettings] = None,
                      ) extends EntityLocationSupport {
   override def internalId: String               = id
   override def json: JsValue                    = AiProvider.format.writes(this)
@@ -270,7 +272,6 @@ case class AiProvider(
   }
 
   def getChatClient()(using env: Env): Option[ChatClient] = {
-    val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val _token = connection.select("token").asOpt[String].getOrElse("xxx")
     val token = if (_token.contains(",")) {
       val parts = _token.split(",").map(_.trim)
@@ -279,11 +280,7 @@ case class AiProvider(
     } else {
       _token
     }
-    val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
-    val rawClient = AiProvider.chatClientBuilders
-      .get(provider.toLowerCase())
-      .flatMap(_.apply(AiProvider.ChatClientContext(this, baseUrl, token, timeout, options, connection, id, env)))
-    rawClient.map(c => ChatClientDecorators(this, c, env))
+    buildRawChatClient(token).map(c => ChatClientDecorators(this, c, env))
   }
 
   /**
@@ -292,13 +289,27 @@ case class AiProvider(
    * report a healthy provider while the account is empty.
    */
   def getRawChatClient()(using env: Env): Option[ChatClient] = {
-    val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
     val _token = connection.select("token").asOpt[String].getOrElse("xxx")
     val token = if (_token.contains(",")) _token.split(",").map(_.trim).head else _token
+    buildRawChatClient(token)
+  }
+
+  // With targets (`connection.targets`, or a `base_url` holding several urls), the raw client picks one of them for
+  // each call: the client of a target is the one of the provider, built on the url of the target
+  private def buildRawChatClient(token: String)(using env: Env): Option[ChatClient] = {
     val timeout = connection.select("timeout").asOpt[Long].map(FiniteDuration(_, TimeUnit.MILLISECONDS))
-    AiProvider.chatClientBuilders
-      .get(provider.toLowerCase())
-      .flatMap(_.apply(AiProvider.ChatClientContext(this, baseUrl, token, timeout, options, connection, id, env)))
+    val builder = AiProvider.chatClientBuilders.get(provider.toLowerCase())
+    ProviderTargets.of(this) match {
+      case targets if targets.isEmpty =>
+        val baseUrl = connection.select("base_url").orElse(connection.select("base_domain")).asOpt[String]
+        builder.flatMap(_.apply(AiProvider.ChatClientContext(this, baseUrl, token, timeout, options, connection, id, env)))
+      case targets => builder.map { build =>
+        new TargetsChatClient(this, targets, ProviderTargetsOptions.from(connection), { target =>
+          val targetConnection = connection - "targets" - "targets_options" ++ Json.obj("base_url" -> target.baseUrl)
+          build(AiProvider.ChatClientContext(copy(connection = targetConnection), target.baseUrl.some, token, timeout, options, targetConnection, id, env))
+        })
+      }
+    }
   }
 }
 
@@ -544,6 +555,7 @@ object AiProvider {
       "guardrails"        -> o.guardrails.json,
       "guardrails_fail_on_deny" -> o.guardrailsFailOnDeny,
       "healthcheck" -> o.healthcheck.json,
+    ) ++ o.pushedState.map(p => Json.obj("pushed_state" -> p.json)).getOrElse(Json.obj()) ++ Json.obj(
       "cache" -> Json.obj(
         "strategy"      -> o.cache.strategy,
         "ttl"           -> o.cache.ttl.toMillis,
@@ -570,6 +582,7 @@ object AiProvider {
         guardrails = json.select("guardrails").asOpt[JsArray].orElse(json.select("fences").asOpt[JsArray]).flatMap(seq => Guardrails.format.reads(seq).asOpt).getOrElse(Guardrails.empty),
         guardrailsFailOnDeny = json.select("guardrails_fail_on_deny").asOpt[Boolean].getOrElse(false),
         healthcheck = json.select("healthcheck").asOpt(using ProviderHealthcheck.format).getOrElse(ProviderHealthcheck.disabled),
+        pushedState = json.select("pushed_state").asOpt[JsObject].flatMap(o => PushedStateSettings.format.reads(o).asOpt),
         context = json.select("context").asOpt[JsObject].flatMap(o => ContextSettings.format.reads(o).asOpt).getOrElse(ContextSettings.empty),
         models = json.select("models").asOpt[JsObject].flatMap(o => ModelSettings.format.reads(o).asOpt).getOrElse(ModelSettings.empty),
         cache = CacheSettings(
@@ -593,7 +606,7 @@ object AiProvider {
       "provider",
       "ai-gateway.extensions.cloud-apim.com",
       ResourceVersion("v1", true, false, true),
-      GenericResourceAccessApiWithState[AiProvider](
+      GenericResourceAccessApiWithStateAndWriteValidation[AiProvider](
         format = AiProvider.format ,
         clazz = classOf[AiProvider],
         keyf = id => datastores.providersDatastore.key(id),
@@ -749,7 +762,18 @@ object AiProvider {
         canBulk = true,
         stateAll = () => states.allProviders(),
         stateOne = id => states.provider(id),
-        stateUpdate = values => states.updateProviders(values)
+        stateUpdate = values => states.updateProviders(values),
+        // what the call path reads leniently is refused here: a target without url, a kind that has no base url...
+        writeValidator = (entity, body, _, _, _, _, _) => {
+          (for {
+            _ <- ProviderTargets.validate(entity)
+            _ <- PushedStateSettings.validateJson(body)
+          } yield entity) match {
+            // the admin api answers with this status instead of a 500
+            case Left(error) => Json.obj("error" -> error, "http_status_code" -> 400).leftf
+            case Right(e) => e.rightf
+          }
+        },
       )
     )
   }

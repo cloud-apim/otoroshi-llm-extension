@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.FirstTokenSignal
 import org.apache.pekko.http.scaladsl.model.{ContentType, HttpEntity, MediaTypes, Multipart, Uri}
 import org.apache.pekko.stream.scaladsl.{Framing, Source}
 import org.apache.pekko.util.ByteString
@@ -394,6 +395,8 @@ class OpenAiApi(
             }
             if (!isToolCall && chunk.choices.exists(_.delta.exists(_.tool_calls.nonEmpty))) {
               isToolCall = true
+              // the provider answered: the tools about to run take time of their own
+              FirstTokenSignal.fire(attrs)
               toolCalls = chunk.choices.head.delta.head.tool_calls
               toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => "")*)
               Source.empty

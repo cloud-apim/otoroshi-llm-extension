@@ -15,6 +15,7 @@ object ChatClientDecorators {
   val possibleDecorators: Seq[Function[(AiProvider, ChatClient, Env), ChatClient]] = Seq(
     ChatClientWithMockResponse.applyIfPossible, // first: innermost decorator, stands in for the real provider call
     ChatClientWithModelConstraints.applyIfPossible,
+    ChatClientWithFirstTokenTimeout.applyIfPossible, // just under the fallback, which takes over when the first token is late
     ChatClientWithProviderFallback.applyIfPossible,
     ChatClientWithPersistentMemory.applyIfPossible,
     ChatClientWithSemanticCache.applyIfPossible,

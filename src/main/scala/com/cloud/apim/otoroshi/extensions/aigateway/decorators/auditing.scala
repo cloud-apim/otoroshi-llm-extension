@@ -4,6 +4,7 @@ import org.apache.pekko.http.scaladsl.util.FastFuture
 import org.apache.pekko.stream.scaladsl.{Sink, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.redactedJson
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.ProviderTargetAttempts
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudget, AiBudgetConsumptions, AiBudgetUsageKind, AiBudgetsDataStore, AiProvider, AudioModel, DecisionModel, EmbeddingModel, ImageModel, ModerationModel, OcrModel, VideoModel, WithingBudgetConsumptions}
 import com.cloud.apim.otoroshi.extensions.aigateway.{AudioModelClient, AudioModelClientSpeechToTextInputOptions, AudioModelClientTextToSpeechInputOptions, AudioModelClientTranslationInputOptions, AudioTranscriptionResponse, ChatCallKind, ChatClient, ChatGeneration, ChatPrompt, ChatResponse, ChatResponseChunk, ChatResponseChunkChoice, ChatResponseChunkChoiceDelta, ChatResponseMetadata, ChatResponseMetadataRateLimit, ChatResponseMetadataUsage, DecisionModelClient, DecisionModelClientInputOptions, DecisionResponse, EmbeddingClientInputOptions, FinishReasons, EmbeddingModelClient, EmbeddingResponse, ImageModelClient, ImageModelClientEditionInputOptions, ImageModelClientGenerationInputOptions, ImagesGenResponse, ModerationModelClient, ModerationModelClientInputOptions, ModerationResponse, OcrModelClient, OcrModelClientInputOptions, OcrModelClientResponse, OutputChatMessage, VideoModelClient, VideoModelClientTextToVideoInputOptions, VideosGenResponse}
 import io.azam.ulidj.ULID
@@ -112,6 +113,8 @@ class ChatClientWithAuditing(originalProvider: AiProvider, val chatClient: ChatC
     "route" -> attrs.get(otoroshi.next.plugins.Keys.RouteKey).map(_.json).getOrElse(JsNull).asValue,
     "input_prompt" -> prompt.json,
     "provider_details" -> originalProvider.redactedJson,
+    // the target that served the call (or the last one tried) and how many were, for a provider with targets
+    "provider_target" -> ProviderTargetAttempts.of(attrs, originalProvider.id).getOrElse(JsNull).asValue,
   )
 
   private def auditError(consumedUsing: String, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue, start: Long, error: JsValue)(using env: Env): Unit = {

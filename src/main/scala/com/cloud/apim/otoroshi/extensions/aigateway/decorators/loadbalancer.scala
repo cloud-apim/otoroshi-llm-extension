@@ -2,6 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.AiProvider
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.ProviderStates
 import com.cloud.apim.otoroshi.extensions.aigateway.{ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, KindBasedChatClient}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -193,11 +194,12 @@ class LoadBalancerChatClient(provider: AiProvider, clientEnv: Env) extends KindB
       }
       val settings = CircuitBreakerSettings.fromProvider(provider)
       val allTargets = providers.map(_._1)
-      val candidates = if (settings.enabled) {
-        val now = System.currentTimeMillis()
-        val healthy = allTargets.filterNot(p => ProviderCircuitBreaker.isOpen(p.id, now))
-        if (healthy.nonEmpty) healthy else allTargets // every target is cooling down → try anyway rather than fail
-      } else allTargets
+      val now = System.currentTimeMillis()
+      // the providers whose circuit is open, and those that take no more calls (pushed state, no usable target), are
+      // left out. When that leaves none, every one is tried anyway rather than failing
+      val healthy = (if (settings.enabled) allTargets.filterNot(p => ProviderCircuitBreaker.isOpen(p.id, now)) else allTargets)
+        .filter(p => ProviderStates.selectable(p, now))
+      val candidates = if (healthy.nonEmpty) healthy else allTargets
       val selectedProvider = loadBalancing.select(LoadBalancerChatClient.counter.incrementAndGet().toString, candidates)
       selectedProvider.getChatClient() match {
         case None => Json.obj("error" -> "no client found").leftf

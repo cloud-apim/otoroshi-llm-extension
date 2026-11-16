@@ -1,5 +1,6 @@
 package com.cloud.apim.otoroshi.extensions.aigateway.providers
 
+import com.cloud.apim.otoroshi.extensions.aigateway.decorators.FirstTokenSignal
 import org.apache.pekko.stream.scaladsl.{Framing, Source}
 import org.apache.pekko.util.ByteString
 import com.cloud.apim.otoroshi.extensions.aigateway.*
@@ -334,6 +335,8 @@ class AnthropicApi(baseUrl: String = AnthropicApi.baseUrl, token: String, anthro
             if (!isToolCall &&  chunk.choices.exists(_.tool_use)) {
               // println("start tool_user")
               isToolCall = true
+              // the provider answered: the tools about to run take time of their own
+              FirstTokenSignal.fire(attrs)
               toolCalls = toolCalls :+ AnthropicChatResponseChunkChoiceDeltaToolCall(chunk.choices.head.contentBlockObj)
               toolCallArgs = scala.collection.mutable.ArraySeq((0 to toolCallArgs.size).map(_ => "")*)
               Source.empty

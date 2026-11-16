@@ -11,6 +11,7 @@ Resilience ensures that LLM interactions remain highly available and fault-toler
 ## Key Features
 
 - **Load Balancing**: Distribute requests across multiple providers to optimize performance and availability. See [Load Balancing](/docs/llm-gateway/loadbalancing).
+- **Provider targets**: Spread one provider over several copies of its server, and let your monitoring tell the gateway which ones can take more work. See [Provider targets](/docs/llm-gateway/provider-targets).
 - **Smart Routing**: Let the gateway pick the model for each request, and cascade to the next best one on failure. See [Otoroshi Router](/docs/llm-gateway/otoroshi-router).
 - **Fallback Mechanism**: Automatically switch to alternative LLM providers in case of failures. See [Fallback](/docs/llm-gateway/fallback).
 - **Rate Limiting & Quotas**: Prevent overloading a single provider by distributing usage effectively. See [Quotas](/docs/cost-optimizations/quotas).
@@ -20,6 +21,62 @@ Resilience ensures that LLM interactions remain highly available and fault-toler
 The load balancer is a virtual provider that distributes requests across multiple providers using configurable strategies (round robin, random, best response time).
 
 [Read the full Load Balancing documentation](/docs/llm-gateway/loadbalancing)
+
+## Provider targets
+
+A provider can have several targets: copies of the same server, one picked for each call among those that can take
+it, another one answering when the first fails. Your monitoring tool pushes the state of each target (`available`,
+`saturated`, `draining`, `down`), and a full server stops getting new work before your users wait in its queue.
+
+[Read the full Provider targets documentation](/docs/llm-gateway/provider-targets)
+
+## Timeouts
+
+A provider has two timeouts, both in its `connection`:
+
+```js
+"connection": {
+  "base_url": "https://gpu-1.internal:8443/v1",
+  "timeout": 300000,
+  "ttft_timeout": 30000
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `timeout` | number | `180000` | Bounds the whole call, streamed answer included, in milliseconds |
+| `ttft_timeout` | number | — | For streamed calls: how long to wait for the first token, in milliseconds |
+
+Both run from the start of the call. Once the first token came, only `timeout` applies: with the values above, an
+answer can stream for five minutes, but a server that has not produced a single token after 30 seconds is given up.
+The call to it is cancelled and its connection closed, and since nothing was sent to the caller yet, the
+[fallback](/docs/llm-gateway/fallback) of the provider answers instead. A server that keeps missing the deadline
+opens its circuit, so the next calls go to the fallback without waiting.
+
+What counts as a first token is something the caller would see: content, reasoning or a tool call, not the empty
+`role: assistant` chunk some servers start with. When the gateway runs the tools of the call itself, the first tool
+call of the model is its first token: a slow tool is never taken for a slow provider.
+
+:::tip Keep it large
+The first token of a long prompt takes time to come, even on a healthy server: a tight `ttft_timeout` gives up calls
+that were about to be answered, and has them computed again elsewhere. It is a safety net against a server that
+hangs. To keep the calls away from servers that are full, push their state with [provider targets](/docs/llm-gateway/provider-targets).
+:::
+
+A call given up this way fails with:
+
+```json
+{
+  "error": {
+    "type": "first_token_timeout",
+    "code": "first_token_timeout",
+    "message": "no token from provider 'Mistral on premises' within 30000 ms"
+  },
+  "status": 504
+}
+```
+
+and is counted in the `ai.first_token_timeouts` metric.
 
 ## Smart routing
 

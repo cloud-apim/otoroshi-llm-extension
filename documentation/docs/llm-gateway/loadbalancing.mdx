@@ -18,6 +18,18 @@ A request counts against the [budgets](/docs/cost-optimizations/budgets) of the 
 
 ![lb](../../static/img/lb.png)
 
+:::tip Copies of the same server
+When the servers to balance between are copies of the same server (the same model, the same token, the same
+options), declare them as the [targets](/docs/llm-gateway/provider-targets) of a single provider instead: one
+provider to configure, a circuit per server, another server tried when one fails, and the state of each server
+pushed by your monitoring. The load balancer is for providers that differ: other vendors, other models, other
+accounts.
+:::
+
+A provider that is known to be unable to take a call is left out of the rotation: its circuit is open, its
+[pushed state](/docs/llm-gateway/provider-targets#pushed-state) says it is not available, or none of its targets
+can take the call. When every provider is left out, they are all tried anyway.
+
 ## Creating a load balancer provider
 
 Create a new LLM Provider entity with `provider` set to `loadbalancer`. The `connection` object is not used. All configuration goes into the `options` object.

@@ -2,7 +2,7 @@ package com.cloud.apim.otoroshi.extensions.aigateway.decorators
 
 import org.apache.pekko.stream.scaladsl.Source
 import com.cloud.apim.otoroshi.extensions.aigateway.entities.{AiBudgetUsageKind, AiProvider, DecisionModel}
-import com.cloud.apim.otoroshi.extensions.aigateway.providers.{ProviderQuotas, QuotaEpisode}
+import com.cloud.apim.otoroshi.extensions.aigateway.providers.{ProviderQuotas, ProviderStates, ProviderTargets, TargetsChatClient}
 import com.cloud.apim.otoroshi.extensions.aigateway.{AiMetrics, ChatCallKind, ChatClient, ChatPrompt, ChatResponse, ChatResponseChunk, DecisionErrors, DecisionModelClient, DecisionModelClientInputOptions, DecisionResponse}
 import otoroshi.env.Env
 import otoroshi.utils.TypedMap
@@ -35,14 +35,6 @@ object ChatClientWithProviderFallback {
 
 class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClient: ChatClient) extends DecoratorChatClient {
 
-  // throttling ends when the provider said it would; running out of credit needs a human, so we only let a
-  // call through now and then to notice the top up. Never unbounded: the provider is always retried.
-  private def quotaBackoffUntil(episode: QuotaEpisode, settings: CircuitBreakerSettings, now: Long): Long = {
-    episode.retryAt.filter(_ > now).getOrElse {
-      if (episode.kind.transient) now + settings.cooldownMs else now + ProviderQuotas.creditExhaustedBackoffMs
-    }
-  }
-
   private def fallbackClient()(using env: Env): Option[(AiProvider, ChatClient)] = {
     env.adminExtensions.extension[AiExtension]
       .flatMap(_.states.provider(originalProvider.providerFallback.get))
@@ -61,8 +53,16 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
   // the primary provider would have accepted, with the model restrictions of its consumers. When the per-provider circuit breaker is enabled and the primary's circuit
   // is open, the primary is skipped entirely and we go straight to the fallback (fail fast). Primary
   // outcomes feed the breaker (success closes the circuit, failures eventually open it).
+  //
+  // A provider with targets has a circuit per target, fed by its targets client: its own circuit is neither fed nor
+  // read here, and `no_target_available` plays the part of an open circuit without counting as a failure. A provider
+  // whose pushed state says it takes no more calls is skipped like a provider whose circuit is open.
   private def withFallback[T](originalBody: JsValue, attrs: TypedMap)(op: (ChatClient, JsValue) => Future[Either[JsValue, T]])(using ec: ExecutionContext, env: Env): Future[Either[JsValue, T]] = {
-    val settings = CircuitBreakerSettings.fromProvider(originalProvider)
+    val withTargets = ProviderTargets.has(originalProvider)
+    val settings = {
+      val s = CircuitBreakerSettings.fromProvider(originalProvider)
+      if (withTargets) s.copy(enabled = false, openOnQuota = false) else s
+    }
 
     def handOver(err: JsValue): Future[Either[JsValue, T]] = {
       fallbackClient() match {
@@ -100,18 +100,22 @@ class ChatClientWithProviderFallback(originalProvider: AiProvider, val chatClien
     def recordFailure(): Unit = {
       val now = System.currentTimeMillis()
       ProviderQuotas.episodeForProvider(originalProvider.id).filter(_ => settings.openOnQuota) match {
-        case Some(episode) => ProviderCircuitBreaker.openUntil(originalProvider.id, quotaBackoffUntil(episode, settings, now))
+        case Some(episode) => ProviderCircuitBreaker.openUntil(originalProvider.id, ProviderCircuitBreaker.quotaBackoffUntil(episode, settings, now))
         case None => if (settings.enabled) ProviderCircuitBreaker.recordFailure(originalProvider.id, now, settings)
       }
     }
 
-    if (settings.active && ProviderCircuitBreaker.isOpen(originalProvider.id, System.currentTimeMillis())) {
+    val now = System.currentTimeMillis()
+    if (settings.active && ProviderCircuitBreaker.isOpen(originalProvider.id, now)) {
       callFallback(Json.obj("error" -> "primary provider circuit is open"))
+    } else if (!ProviderStates.providerAccepts(originalProvider, now)) {
+      callFallback(Json.obj("error" -> "primary provider is not available"))
     } else {
       // only what the primary did decides: a fallback that fails is not asked again, and its failure is not
       // counted as one more of the primary
       op(chatClient, originalBody).transformWith {
         case Success(Left(err)) if ModelConstraints.isDenied(err) => err.leftf
+        case Success(Left(err)) if TargetsChatClient.isNoTargetAvailable(err) => callFallback(err)
         case Success(Left(err)) =>
           recordFailure()
           callFallback(err)

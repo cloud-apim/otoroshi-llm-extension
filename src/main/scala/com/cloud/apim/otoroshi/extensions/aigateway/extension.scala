@@ -24,7 +24,7 @@ import play.api.mvc.{RequestHeader, Result, Results}
 import play.api.{Configuration, Logger}
 
 import scala.concurrent.Future
-import scala.concurrent.duration.DurationInt
+import scala.concurrent.duration.{DurationInt, DurationLong, FiniteDuration}
 import scala.concurrent.ExecutionContext
 import org.apache.pekko.stream.Materializer
 
@@ -265,6 +265,11 @@ class AiExtension(val env: Env) extends AdminExtension {
     .map(_.toBytes.max(0L).min(Int.MaxValue.toLong).toInt)
     .getOrElse(ProviderHelpers.defaultMaxErrorBodySize)
 
+  // how often the table of the states pushed by the monitoring tools is refreshed (datastore on leaders, a leader on workers)
+  lazy val providerStatesRefreshEvery: FiniteDuration = configuration.getOptional[Long]("provider-states.refresh-every")
+    .map(_.max(500L).millis).getOrElse(2000.millis)
+  lazy val providerStatesApi = new ProviderStatesApi(env, this)
+
   override def id: AdminExtensionId = AiExtension.id
 
   override def name: String = "LLM Extension"
@@ -285,6 +290,7 @@ class AiExtension(val env: Env) extends AdminExtension {
     costsTracking.startOpenRouterCatalogSync()
     costsTracking.startModelsCatalog()
     ProviderHealthchecks.start(env, this)
+    ProviderStatesAgent.start(env, this)
     env.datastores.wasmPluginsDataStore.findById(LlmToolFunction.wasmPluginId).flatMap {
       case Some(_) => ().vfuture
       case None => {
@@ -300,6 +306,7 @@ class AiExtension(val env: Env) extends AdminExtension {
 
   override def stop(): Unit = {
     ProviderHealthchecks.stop()
+    ProviderStatesAgent.stop()
     costsTracking.stopOpenRouterCatalogSync()
     AiBudgetClusterAgent.stop()
     AiBudgetCountersCleaner.stop()
@@ -1000,7 +1007,7 @@ class AiExtension(val env: Env) extends AdminExtension {
       wantsBody = false,
       handle = handleModelCapabilities,
     )
-  ) ++ studioApi.routes
+  ) ++ providerStatesApi.routes ++ studioApi.routes
 
   override def backofficeAuthRoutes(): Seq[AdminExtensionBackofficeAuthRoute] = Seq(
     AdminExtensionBackofficeAuthRoute(

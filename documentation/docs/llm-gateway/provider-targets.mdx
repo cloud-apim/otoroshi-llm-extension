@@ -1,0 +1,305 @@
+---
+sidebar_position: 8.2
+title: Provider targets
+description: Spread the calls of one provider over several copies of its server, and let your monitoring tell the gateway which of them can take more work.
+---
+
+import Terminal from '@site/src/components/Terminal';
+
+# Provider targets
+
+Self-hosted inference is precious capacity: a few GPU servers running the same model behind the same API. Declare
+them as the **targets** of one provider, and the gateway spreads the calls over them, picks only the ones that can
+take a call, and has another one answer when the first fails.
+
+Your monitoring stack knows better than anyone which server is full, being drained or down. Let it **push the state
+of each target** to the gateway: a saturated server stops getting new work right away, before your users wait in its
+queue, and gets it again as soon as it has room.
+
+## Several targets for one provider
+
+```js
+{
+  "id": "provider_mistral_onprem",
+  "name": "Mistral on premises",
+  "provider": "openai-compatible",
+  "connection": {
+    "base_url": "https://gpu-1.internal:8443/v1",
+    "token": "${vault://env/MISTRAL_ONPREM_TOKEN}",
+    "timeout": 300000,
+    "targets": [
+      { "id": "gpu-1", "base_url": "https://gpu-1.internal:8443/v1", "weight": 1 },
+      { "id": "gpu-2", "base_url": "https://gpu-2.internal:8443/v1", "weight": 1 },
+      { "id": "gpu-3", "base_url": "https://gpu-3.internal:8443/v1", "weight": 2 }
+    ],
+    "targets_options": {
+      "strategy": "round_robin",
+      "max_attempts": 2,
+      "when_none_available": "reject"
+    }
+  },
+  "options": { "model": "mistral-medium-latest" },
+  "provider_fallback": "provider_mistral_cloud"
+}
+```
+
+The targets are copies of the same server: they share the kind, the token, the options and the timeouts of the
+provider. Everything else sees one provider: costs, budgets, guardrails, caches, metrics and audit.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `targets[].id` | string | — | Unique name of the target in the provider, what your monitoring tool calls it by. A short id (`gpu-1`) reads best |
+| `targets[].base_url` | string | — | Absolute `http` or `https` url of the server, used instead of `connection.base_url` for the calls it serves |
+| `targets[].weight` | integer | `1` | Share of the calls the target gets. `0` takes it out of the rotation without removing it |
+| `targets_options.strategy` | string | `round_robin` | `round_robin` and `random`, both weighted, or `least_loaded` |
+| `targets_options.max_attempts` | integer | `2` | How many targets are tried at most for one call. `1` never tries another one |
+| `targets_options.when_none_available` | string | `reject` | What to do when no target can take the call: `reject` or `try_saturated` (see below) |
+
+With a `targets` list, `connection.base_url` is not used for the calls. Keep it pointing at one of the targets: a
+node of your cluster running an earlier version of the extension calls that url.
+
+:::tip Rolling out
+Upgrade every node of your cluster before declaring targets: a node that does not know them keeps calling
+`connection.base_url` alone, and sends a `base_url` holding several urls as it is.
+:::
+
+### The short form
+
+Several urls separated by commas in `base_url` make as many targets, just like several tokens separated by commas
+make the gateway rotate its api keys:
+
+```js
+"connection": {
+  "base_url": "https://gpu-1.internal:8443/v1, https://gpu-2.internal:8443/v1",
+  "token": "..."
+}
+```
+
+Each url is a target of weight 1, named by its url: that is the name your monitoring tool pushes its state with
+(`"target": "https://gpu-1.internal:8443/v1"`). `targets_options` applies the same way.
+
+### Which providers can have targets
+
+Every provider whose client is built on a base url: OpenAI, OpenAI compatible providers, Mistral, Anthropic, Ollama,
+Groq, Cohere, X.AI, Deepseek, Scaleway, Cloud Temple, Gemini, Hugging Face... Providers built otherwise (Azure OpenAI
+by resource and deployment, Cloudflare by account, OVH AI Endpoints by base domain, local Jlama models) refuse a
+`targets` list when they are saved.
+
+## Which target serves a call
+
+A target can take a call when:
+
+1. its weight is above 0
+2. its state, as your monitoring tool pushed it, is `available` (see [pushed state](#pushed-state))
+3. the provider as a whole is not marked as unavailable
+4. its [circuit](#circuit-breaker-and-quotas-per-target) is closed
+5. it is not refusing calls on quota grounds
+
+Among those, the strategy picks one:
+
+- `round_robin` - weighted round robin: a target of weight 2 gets twice the calls of a target of weight 1
+- `random` - weighted random pick
+- `least_loaded` - the target with the lowest load: the `load` your monitoring tool pushed, or else the calls in
+  progress on this node divided by the weight
+
+Everything is decided in memory: picking a target adds nothing to the path of a call.
+
+### Another target when one fails
+
+When a target fails, another one that can take the call is tried, up to `max_attempts` targets: an error response,
+a timeout, a connection refused. A model the provider does not allow is refused right away and never tried
+elsewhere. A streamed call is taken over as long as nothing was sent to the caller yet.
+
+The last error goes to the provider, and its [fallback](/docs/llm-gateway/fallback) takes over if it has one.
+
+### When no target can take the call
+
+With `when_none_available: reject` (the default), the call fails at once, without waiting for a server that cannot
+answer, and the fallback of the provider answers it:
+
+```json
+{
+  "error": {
+    "type": "no_target_available",
+    "code": "no_target_available",
+    "message": "no target of provider 'Mistral on premises' is available"
+  },
+  "status": 503
+}
+```
+
+With `when_none_available: try_saturated`, the call goes to a target your monitoring tool marked as `saturated`
+instead: it answers slowly, but it answers. It suits a provider without fallback. Targets that are `draining` or
+`down` never get a call.
+
+### Circuit breaker and quotas per target
+
+The circuit breaker of the provider (`options.circuit_breaker`) applies to each target on its own: a server that
+keeps failing is left aside for the cooldown, the others keep serving.
+
+```js
+"options": {
+  "circuit_breaker": { "enabled": true, "consecutive_failures": 3, "cooldown": 30000 }
+}
+```
+
+A target that [refuses calls on quota grounds](/docs/reporting/provider-quota-alerts) is left aside until the moment
+it said to come back, and only that target.
+
+The [credit healthcheck](/docs/reporting/provider-quota-alerts) of the provider probes each of its targets.
+
+## Pushed state
+
+The gateway does not read the metrics of your inference platform: your monitoring tool does, and tells it the state
+of each target in four words. Translate whatever your platform exposes (vLLM, TGI, the Mistral stack, Kubernetes
+readiness...) into one of them:
+
+| Status | Gets new calls | With `try_saturated` | Meaning |
+|---|---|---|---|
+| `available` | yes | yes | the server accepts work |
+| `saturated` | no | as a last resort | it answers, slowly: its queue is full |
+| `draining` | no | no | maintenance announced: no new work, the calls in progress finish |
+| `down` | no | no | it does not answer |
+
+### Enabling it
+
+```js
+{
+  "connection": { "...": "..." },
+  "pushed_state": {
+    "enabled": true,
+    "stale_as": "available",
+    "max_ttl": 600000
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `enabled` | boolean | `false` | Accept the states pushed for this provider and its targets |
+| `stale_as` | string | `available` | The state of a target whose last state expired, or before any was pushed: `available` or `down` |
+| `max_ttl` | number | `600000` | The longest validity a pushed state can have, in milliseconds |
+
+A state is valid for its `ttl`, then expires: a tool that pushes every 10 seconds with a `ttl` of 30 seconds
+shrugs off two lost pushes. With `stale_as: available`, the traffic goes on as usual when your monitoring tool
+stops, so it never becomes a single point of failure.
+
+### Pushing states
+
+States are pushed through the admin api, under `/api/extensions/cloud-apim/extensions/ai-extension`:
+
+| Method | Path | Description |
+|---|---|---|
+| `PUT` | `/providers/:id/states` | Push states for one provider |
+| `PUT` | `/providers-states` | Push states for several providers at once, each element naming its `provider` |
+| `GET` | `/providers/:id/states` | Read the effective state of a provider and its targets |
+| `DELETE` | `/providers/:id/states` | Clear the pushed states of a provider, or of one target with `?target=gpu-1` |
+
+<Terminal
+  command={`curl -X PUT 'http://otoroshi-api.oto.tools:8080/api/extensions/cloud-apim/extensions/ai-extension/providers/provider_mistral_onprem/states' \\
+  -u "$CLIENT_ID:$CLIENT_SECRET" -H 'Content-Type: application/json' \\
+  -d '{"states":[
+    {"target":"gpu-1","status":"saturated","load":0.97,"ttl":30000,"reason":"kv cache 97%, 12 requests waiting"},
+    {"target":"gpu-2","status":"available","load":0.41,"ttl":30000}
+  ]}'`}
+  result={`{ "accepted": 2, "rejected": [] }`}
+/>
+
+| Field | Description |
+|---|---|
+| `provider` | The id of the provider, only in `/providers-states` |
+| `target` | The `id` of a declared target, or its url in the short form. Without it, the state is the one of the whole provider |
+| `status` | `available`, `saturated`, `draining` or `down` |
+| `load` | Optional, between 0 and 1, read by the `least_loaded` strategy |
+| `ttl` | Validity of the state in milliseconds, between 1000 and the `max_ttl` of the provider |
+| `reason` | Optional, 256 characters at most, shown in the effective state and the audit events |
+
+Each element is checked on its own: one refused element (an unknown target, a `ttl` out of bounds) does not prevent
+the others, and the response says which ones were refused and why.
+
+A push changes the state of the targets declared in the provider, and nothing else: it never adds a target nor
+changes a url, a weight or a token. Give your monitoring tool an admin api key that can only write the providers it
+watches: an element about a provider the key cannot write is refused.
+
+### The effective state
+
+`GET /providers/:id/states` shows what decides the choice of a target, on the node that answers:
+
+```json
+{
+  "provider": { "pushed": { "status": "available", "stale": true }, "circuit": "closed", "usable": true },
+  "targets": [
+    {
+      "id": "gpu-1", "base_url": "https://gpu-1.internal:8443/v1", "weight": 1,
+      "pushed": { "status": "saturated", "load": 0.97, "reason": "kv cache 97%", "expires_in": 18000 },
+      "circuit": "closed", "quota": null, "in_flight": 4, "usable": false
+    }
+  ],
+  "node": "otoroshi-leader-1"
+}
+```
+
+The same table is shown on the page of the provider in the Otoroshi admin UI, next to the `curl` command to push a
+state.
+
+### The state of a whole provider
+
+A state pushed without `target` is the state of the whole provider, with or without targets. It is read wherever a
+provider is picked:
+
+- a provider that is not `available` is skipped by its [fallback](/docs/llm-gateway/fallback), which answers right
+  away (a `saturated` provider is still called when its `when_none_available` is `try_saturated`)
+- the [load balancer](/docs/llm-gateway/loadbalancing) leaves it out, just like a provider with no target that can
+  take a call
+
+So a gateway that balances between several providers takes advantage of your monitoring without declaring a single
+target.
+
+### Example: a translator for vLLM
+
+A small job reads the `/metrics` endpoint of each vLLM server every 10 seconds and pushes what it sees:
+
+| What vLLM says | Pushed state |
+|---|---|
+| `/health` does not answer | `down` |
+| `vllm:num_requests_waiting` > 0 and `vllm:gpu_cache_usage_perc` > 0.95 | `saturated` |
+| anything else | `available` |
+| `load` | the highest of `gpu_cache_usage_perc` and `num_requests_running / max_num_seqs` |
+
+<Terminal
+  command={`curl -X PUT "https://otoroshi-api.oto.tools/api/extensions/cloud-apim/extensions/ai-extension/providers/$PROVIDER/states" \\
+  -u "$CLIENT_ID:$CLIENT_SECRET" -H 'Content-Type: application/json' \\
+  -d '{"states":[{"target":"gpu-1","status":"saturated","load":0.97,"ttl":30000,"reason":"12 requests waiting"}]}'`}
+/>
+
+### In a cluster
+
+Push to any leader: the states are kept in the datastore of the cluster, and each node keeps a copy in memory, so the
+choice of a target never waits for the datastore. Leaders read the states every two seconds, workers ask a leader for
+them as often: a state reaches every node of the cluster within a few seconds.
+
+```hocon
+otoroshi.admin-extensions.configurations.cloud-apim_extensions_llmextension {
+  provider-states {
+    refresh-every = 2000
+    refresh-every = ${?CLOUD_APIM_EXTENSIONS_LLM_EXTENSION_PROVIDER_STATES_REFRESH_EVERY}
+  }
+}
+```
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refresh-every` | number | `2000` | How often each node refreshes the states it knows, in milliseconds |
+
+Nothing runs at all while no provider accepts pushed states.
+
+## Observability
+
+- every `LLMUsageAudit` event of a provider with targets tells which target served the call, and how many were
+  tried: `"provider_target": { "id": "gpu-2", "base_url": "https://gpu-2.internal:8443/v1", "attempts": 2 }`. It is a
+  column of the [analytics](/docs/reporting/dashboards) of the LLM calls too
+- a `ProviderStateChanged` audit event is raised each time a pushed state changes the status of a target or a
+  provider, with the previous status, the new one, the reason and who pushed it
+- the `LLMProviderNoTargetAvailable` alert is raised when no target of a provider can take a call any more, and
+  `LLMProviderTargetsRecovered` when a call is served again, with how long it lasted. Like the
+  [quota alerts](/docs/reporting/provider-quota-alerts), two alerts per incident, never one per call

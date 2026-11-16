@@ -538,6 +538,168 @@ class ProviderRefWithDescription extends Component {
   }
 }
 
+// A target of a provider: a copy of its server at another url, sharing its kind, token and options
+class ProviderTargetItem extends Component {
+  render() {
+    const item = this.props.itemValue || {};
+    return (
+      React.createElement(Form, {
+        flow: ['id', 'base_url', 'weight'],
+        schema: {
+          id: { type: 'string', props: { label: 'Id', placeholder: 'gpu-1', help: 'what the monitoring tool names this target with when it pushes its state' } },
+          base_url: { type: 'string', props: { label: 'Base URL', placeholder: 'https://gpu-1.internal:8443/v1' } },
+          weight: { type: 'number', props: { label: 'Weight', help: '0 takes the target out of the rotation without removing it' } },
+        },
+        value: { id: item.id || '', base_url: item.base_url || '', weight: (item.weight === undefined || item.weight === null) ? 1 : item.weight },
+        onChange: (i) => {
+          const weight = (i.weight === '' || i.weight === undefined || i.weight === null) ? 1 : Number(i.weight);
+          this.props.value[this.props.idx] = { id: i.id, base_url: i.base_url, weight };
+          this.props.onChange(this.props.value);
+        }
+      }, null)
+    );
+  }
+}
+
+// What decides the choice of a target on the node that answers: the pushed states, the circuits, the quotas
+class ProviderStatesView extends Component {
+
+  state = { data: null, error: null, loading: false };
+
+  componentDidMount() {
+    this.load();
+  }
+
+  providerId = () => (this.props.rawValue || {}).id;
+
+  load = () => {
+    const id = this.providerId();
+    if (!id) return;
+    this.setState({ loading: true });
+    fetch(`/bo/api/proxy/api/extensions/cloud-apim/extensions/ai-extension/providers/${id}/states`, {
+      method: 'GET',
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    }).then(r => {
+      if (r.status === 200) {
+        return r.json().then(data => this.setState({ data, error: null, loading: false }));
+      } else {
+        this.setState({ data: null, error: r.status === 404 ? 'save the provider to see its state' : `error ${r.status}`, loading: false });
+      }
+    }).catch(e => this.setState({ data: null, error: e.message, loading: false }));
+  };
+
+  pushedLabel = (pushed) => {
+    if (!pushed) return 'not pushed';
+    const parts = [pushed.status + (pushed.stale ? ' (no state pushed)' : '')];
+    if (pushed.load !== undefined && pushed.load !== null) parts.push(`load ${Math.round(pushed.load * 100)}%`);
+    if (pushed.reason) parts.push(pushed.reason);
+    if (pushed.expires_in !== undefined) parts.push(`expires in ${Math.round(pushed.expires_in / 1000)}s`);
+    return parts.join(' - ');
+  };
+
+  render() {
+    const id = this.providerId() || '$PROVIDER_ID';
+    const curl = [
+      `curl -X PUT 'https://otoroshi-api.oto.tools/api/extensions/cloud-apim/extensions/ai-extension/providers/${id}/states' \\`,
+      `  -u "$CLIENT_ID:$CLIENT_SECRET" -H 'Content-Type: application/json' \\`,
+      `  -d '{"states":[{"target":"gpu-1","status":"saturated","load":0.97,"ttl":30000,"reason":"12 requests waiting"}]}'`,
+    ].join('\n');
+    const data = this.state.data;
+    const cell = { padding: '4px 8px', borderBottom: '1px solid #555' };
+    const usable = (u) => React.createElement('span', { style: { color: u ? '#2ecc71' : '#e74c3c', fontWeight: 'bold' } }, u ? 'yes' : 'no');
+    return React.createElement('div', { className: 'row mb-3' },
+      React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, 'Effective state'),
+      React.createElement('div', { className: 'col-sm-10' },
+        React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 } },
+          React.createElement('button', { type: 'button', className: 'btn btn-sm btn-success', onClick: this.load, disabled: this.state.loading },
+            React.createElement('i', { className: 'fas fa-sync' }), ' Refresh'),
+          data ? React.createElement('span', { style: { opacity: 0.7 } }, `as seen by node ${data.node}`) : null,
+          this.state.error ? React.createElement('span', { style: { color: '#e74c3c' } }, this.state.error) : null,
+        ),
+        data ? React.createElement('table', { style: { width: '100%', marginBottom: 10 } },
+          React.createElement('thead', null, React.createElement('tr', null,
+            ['', 'Base URL', 'Weight', 'Pushed state', 'Circuit', 'Quota', 'In flight', 'Usable'].map(h => React.createElement('th', { key: h, style: cell }, h)))),
+          React.createElement('tbody', null,
+            React.createElement('tr', { key: '@provider' },
+              React.createElement('td', { style: cell }, React.createElement('b', null, 'whole provider')),
+              React.createElement('td', { style: cell }, ''),
+              React.createElement('td', { style: cell }, ''),
+              React.createElement('td', { style: cell }, this.pushedLabel(data.provider.pushed)),
+              React.createElement('td', { style: cell }, data.provider.circuit),
+              React.createElement('td', { style: cell }, ''),
+              React.createElement('td', { style: cell }, ''),
+              React.createElement('td', { style: cell }, usable(data.provider.usable)),
+            ),
+            (data.targets || []).map(t => React.createElement('tr', { key: t.id },
+              React.createElement('td', { style: cell }, t.id),
+              React.createElement('td', { style: cell }, t.base_url),
+              React.createElement('td', { style: cell }, String(t.weight)),
+              React.createElement('td', { style: cell }, this.pushedLabel(t.pushed)),
+              React.createElement('td', { style: cell }, t.circuit),
+              React.createElement('td', { style: cell }, t.quota ? `${t.quota.kind} (HTTP ${t.quota.status})` : ''),
+              React.createElement('td', { style: cell }, String(t.in_flight)),
+              React.createElement('td', { style: cell }, usable(t.usable)),
+            )),
+          )
+        ) : null,
+        React.createElement('p', { style: { marginBottom: 4 } }, 'A monitoring tool pushes the state of the targets with the admin api, with an admin api key allowed to write this provider:'),
+        React.createElement('pre', { style: { whiteSpace: 'pre-wrap', backgroundColor: '#1e1e1e', color: '#ddd', padding: 10, borderRadius: 4 } }, curl),
+      )
+    );
+  }
+}
+
+class TtftTimeoutWarning extends Component {
+  render() {
+    return React.createElement('div', { className: 'row mb-3' },
+      React.createElement('label', { className: 'col-xs-12 col-sm-2 col-form-label' }, ''),
+      React.createElement('div', { className: 'col-sm-10', style: { color: '#f39c12' } },
+        React.createElement('i', { className: 'fas fa-exclamation-triangle' }),
+        ' the first token timeout is not shorter than the timeout: it has no effect'));
+  }
+}
+
+// the provider kinds that do not build their client on a base url, and cannot have targets
+const KindsWithoutTargets = ['azure-openai', 'cloudflare', 'jlama', 'ovh-ai-endpoints', 'loadbalancer', 'otoroshi'];
+
+// adds the first token timeout, the targets and the pushed state to the form of a provider kind
+function withTargetsFlow(flow, state) {
+  const items = flow.filter(i => !!i);
+  const out = [];
+  const supportsTargets = !!state.provider && KindsWithoutTargets.indexOf(state.provider) < 0 && items.indexOf('connection.base_url') > -1;
+  const hasTargets = (((state.connection || {}).targets) || []).length > 0 || String(((state.connection || {}).base_url) || '').indexOf(',') > -1;
+  items.forEach(item => {
+    if (supportsTargets && item === '>>>API Connection raw') {
+      out.push('>>>Targets');
+      out.push('connection.targets');
+      if (hasTargets) {
+        out.push('connection.targets_options.strategy');
+        out.push('connection.targets_options.max_attempts');
+        out.push('connection.targets_options.when_none_available');
+      }
+    }
+    if (item === '>>>Provider fallback' && state.provider !== 'loadbalancer' && state.provider !== 'otoroshi') {
+      out.push('>>>Pushed state');
+      out.push('pushed_state.enabled');
+      if ((state.pushed_state || {}).enabled) {
+        out.push('pushed_state.stale_as');
+        out.push('pushed_state.max_ttl');
+        out.push('provider_states');
+      }
+    }
+    out.push(item);
+    if (item === 'connection.timeout' && state.provider !== 'jlama') {
+      out.push('connection.ttft_timeout');
+      const connection = state.connection || {};
+      if ((connection.ttft_timeout || 0) > 0 && connection.ttft_timeout >= (connection.timeout || 180000)) {
+        out.push('ttft_timeout_warning');
+      }
+    }
+  });
+  return out;
+}
+
 class AiProvidersPage extends Component {
 
   state = {
@@ -791,7 +953,70 @@ class AiProvidersPage extends Component {
     },
     'connection.base_url': {
       type: 'string',
-      props: { label: 'Base URL' },
+      props: {
+        label: 'Base URL',
+        help: 'several urls separated by commas make as many targets of weight 1, named by their url. With a targets list, this url only serves the nodes of an older version of the extension',
+      },
+    },
+    'connection.targets': {
+      type: 'array',
+      props: {
+        label: 'Targets',
+        help: 'copies of the same server: each call goes to one of them, picked among those that can take it, and another one is tried when it fails. Only once every node of the cluster is up to date',
+        defaultValue: { id: '', base_url: '', weight: 1 },
+        component: ProviderTargetItem,
+      }
+    },
+    'connection.targets_options.strategy': {
+      type: 'select',
+      props: {
+        label: 'Targets strategy',
+        possibleValues: [
+          { label: 'Weighted round robin', value: 'round_robin' },
+          { label: 'Weighted random', value: 'random' },
+          { label: 'Least loaded', value: 'least_loaded' },
+        ]
+      },
+    },
+    'connection.targets_options.max_attempts': {
+      type: 'number',
+      props: { label: 'Max attempts', help: 'how many targets are tried at most for one call (2 by default), 1 never tries another one' },
+    },
+    'connection.targets_options.when_none_available': {
+      type: 'select',
+      props: {
+        label: 'When no target is available',
+        help: 'reject answers at once, so the provider fallback takes over. Try saturated still sends the call to a saturated target: slow, but answered',
+        possibleValues: [
+          { label: 'Reject (the fallback takes over)', value: 'reject' },
+          { label: 'Try a saturated target', value: 'try_saturated' },
+        ]
+      },
+    },
+    'pushed_state.enabled': {
+      type: 'bool',
+      props: {
+        label: 'Accept pushed states',
+        help: 'a monitoring tool pushes the state of the targets of this provider (or of the provider itself): available, saturated, draining or down. Only available targets get calls',
+      },
+    },
+    'pushed_state.stale_as': {
+      type: 'select',
+      props: {
+        label: 'Without a state',
+        help: 'what a target is when its last state expired, or before any state was pushed',
+        possibleValues: [
+          { label: 'Available (traffic goes on if the monitoring tool stops)', value: 'available' },
+          { label: 'Down', value: 'down' },
+        ]
+      },
+    },
+    'pushed_state.max_ttl': {
+      type: 'number',
+      props: { label: 'Max state ttl', suffix: 'ms.', help: 'the longest validity a pushed state can have (10 minutes by default)' },
+    },
+    provider_states: {
+      type: ProviderStatesView,
     },
     'connection.base_domain': {
       type: 'string',
@@ -803,7 +1028,18 @@ class AiProvidersPage extends Component {
     },
     'connection.timeout': {
       type: 'number',
-      props: { label: 'Timeout', suffix: 'ms.' },
+      props: { label: 'Timeout', suffix: 'ms.', help: 'bounds the whole call, streamed answer included' },
+    },
+    'connection.ttft_timeout': {
+      type: 'number',
+      props: {
+        label: 'First token timeout',
+        suffix: 'ms.',
+        help: 'streamed calls only: how long to wait for the first token. Past it the call is cancelled and the provider fallback takes over. Keep it large: a long prompt takes time before its first token',
+      },
+    },
+    ttft_timeout_warning: {
+      type: TtftTimeoutWarning,
     },
     'connection.models_path': {
       type: 'string',
@@ -1440,7 +1676,9 @@ class AiProvidersPage extends Component {
     aiStudioColumn,
   ];
 
-  formFlow = (state) => {
+  formFlow = (state) => withTargetsFlow(this.baseFormFlow(state), state);
+
+  baseFormFlow = (state) => {
     state.cache = state.cache || 'none'
     if (!state.provider) {
       return [

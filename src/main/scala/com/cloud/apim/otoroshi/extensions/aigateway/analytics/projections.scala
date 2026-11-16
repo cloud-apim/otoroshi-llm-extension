@@ -137,6 +137,7 @@ object LlmUsageProjection extends AnalyticsProjection {
        |  provider_kind         TEXT,
        |  provider_id           TEXT,
        |  provider_name         TEXT,
+       |  provider_target       TEXT,
        |  model                 TEXT,
        |  apikey_name           TEXT,
        |  apikey_owner          TEXT,
@@ -180,6 +181,7 @@ object LlmUsageProjection extends AnalyticsProjection {
     Seq(
       s"ALTER TABLE ${table(s)} ADD COLUMN IF NOT EXISTS cached_tokens BIGINT NOT NULL DEFAULT 0;",
       s"ALTER TABLE ${table(s)} ADD COLUMN IF NOT EXISTS cache_write_tokens BIGINT NOT NULL DEFAULT 0;",
+      s"ALTER TABLE ${table(s)} ADD COLUMN IF NOT EXISTS provider_target TEXT;",
     ) ++ AnalyticsProjection.commonIndexes(table(s), indexPrefix(s)) ++ Seq(
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_model_ts    ON ${table(s)} (model, ts DESC);",
       s"CREATE INDEX IF NOT EXISTS idx_${indexPrefix(s)}_provider_ts ON ${table(s)} (provider_id, ts DESC);",
@@ -191,7 +193,7 @@ object LlmUsageProjection extends AnalyticsProjection {
 
   private val columns = Seq(
     "request_id", "consumed_using", "modality", "streaming", "delegated", "provider_kind", "provider_id",
-    "provider_name", "model", "apikey_name", "apikey_owner", "err", "error_kind", "error_message", "duration_ms", "ttft_ms", "finish_reason", "session_id", "end_user", "input_tokens",
+    "provider_name", "provider_target", "model", "apikey_name", "apikey_owner", "err", "error_kind", "error_message", "duration_ms", "ttft_ms", "finish_reason", "session_id", "end_user", "input_tokens",
     "output_tokens", "reasoning_tokens", "cached_tokens", "cache_write_tokens", "total_tokens", "ocr_pages", "cache_status", "input_cost", "output_cost",
     "reasoning_cost", "total_cost", "cost_source", "energy_kwh", "gwp_kgco2eq", "gwp_usage_kgco2eq",
     "gwp_embodied_kgco2eq", "adpe_kgsbeq", "pe_mj", "wcf_l", "budget_ids", "ratelimit_tokens_remaining",
@@ -319,6 +321,8 @@ object LlmUsageProjection extends AnalyticsProjection {
       providerKind.orNull,
       entityId.orElse(servedBy).orNull,
       str(event, "provider_details.name").orNull,
+      // the target of the provider that served the call, for a provider with targets
+      str(event, "provider_target.id").orNull,
       str(event, top("model") ++ Seq("output.model", "input_body.model", "provider_details.options.model")*).orNull,
       str(event, "apikey.clientName").orNull,
       apikeyOwner(event).orNull,
