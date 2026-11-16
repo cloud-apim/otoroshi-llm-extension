@@ -198,7 +198,7 @@ object ProviderQuotas {
 
   // metadata endpoints: reachable and authenticated, but free, so their success proves nothing about credit.
   // A quota refusal on them is still meaningful and still opens an episode.
-  private val freeEndpointSuffixes = Seq("models", "tags")
+  private val freeEndpointSuffixes = Seq("models", "tags", "count_tokens", "tokenize")
 
   def billable(url: String): Boolean = {
     val path = scala.util.Try(Uri(url).path.toString()).getOrElse(url)

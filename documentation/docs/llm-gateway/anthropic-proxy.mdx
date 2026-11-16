@@ -61,7 +61,8 @@ The plugin is configured in the route's plugin section:
     "refs": [
       "provider_xxxxx"
     ],
-    "override_model": ""
+    "override_model": "",
+    "count_tokens_fallback": "none"
   }
 }
 ```
@@ -70,6 +71,7 @@ The plugin is configured in the route's plugin section:
 |-----------|------|-------------|
 | `refs` | array of strings | References to the LLM provider(s) to use. The first provider in the list is used by default |
 | `override_model` | string | Optional. Forces a specific model name regardless of what the client sends |
+| `count_tokens_fallback` | string | How [`count_tokens`](#counting-tokens) is answered when the provider cannot count the tokens itself: `none` (default), `measure` or `estimate` |
 
 ### Provider selection
 
@@ -171,6 +173,45 @@ The plugin translates Anthropic's `output_config` with `json_schema` format to O
 ### Max tokens
 
 The `max_tokens` field from the Anthropic request reaches the provider under the name its API knows: `max_tokens` for most providers, `max_completion_tokens` for OpenAI and for Azure OpenAI. Azure OpenAI knows that name from the API version `2024-09-01-preview` on: a provider set on an earlier version is sent `max_tokens`.
+
+### Counting tokens
+
+Claude Code and the Anthropic SDKs size their context with `POST /v1/messages/count_tokens` (`client.messages.count_tokens`)
+before sending it. The proxy answers it for whatever provider serves the route, with what the gateway would really
+send: the system prompt, the tools, the prompt template and the prompt contexts of the route, the context and the
+persistent memory of the provider.
+
+```sh
+curl https://anthropic-proxy.your-domain.com/v1/messages/count_tokens \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OTOROSHI_BEARER" \
+  -d '{
+    "model": "gpt-4o",
+    "system": "Answer briefly.",
+    "messages": [{ "role": "user", "content": "What is the weather like in Paris today?" }]
+  }'
+```
+
+```js
+{ "input_tokens": 27 }
+```
+
+The provider counts first, exactly and without generating anything, when it knows how:
+
+- an **Anthropic** provider, through its own `/v1/messages/count_tokens`
+- an **OpenAI compatible** server with a `tokenize_path` in its connection (`/tokenize` for vLLM), which applies the
+  chat template of the model to the messages and the tools before counting
+
+Otherwise, `count_tokens_fallback` decides:
+
+| Value | Answer |
+|---|---|
+| `none` (default) | A `501` error: a wrong figure would mislead a client that trims its context on it |
+| `measure` | The request is sent with `max_tokens: 1`, and the answer is the number of input tokens the provider reports. Exact for every provider, but it is a call: it costs the processing of the prompt and one token, and counts in budgets and audits like any other. Its answer is never cached, nor kept in a persistent memory |
+| `estimate` | A rough figure, from the length of the text |
+
+The `x-otoroshi-llm-tokens-count-method` header of the answer tells how the figure was obtained: `provider`, `measure`
+or `estimate`.
 
 ## Calling the API directly
 

@@ -162,6 +162,8 @@ class ChatClientWithSemanticCacheMemory(originalProvider: AiProvider, val chatCl
   }
 
   override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    // its one token answer is no answer to cache, and a cached answer would not count what is sent now
+    if (TokenCounting.is(attrs)) return chatClient.invoke(kind, originalPrompt, attrs, originalBody)
     val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
     val key = CacheKeys.forQuery(kind, query)
     ChatClientWithSemanticCacheMemory.cache.getIfPresent(key) match {
@@ -429,6 +431,8 @@ class ChatClientWithSemanticCacheRedis(originalProvider: AiProvider, val chatCli
   // --- main logic ---
 
   override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    // its one token answer is no answer to cache, and a cached answer would not count what is sent now
+    if (TokenCounting.is(attrs)) return chatClient.invoke(kind, originalPrompt, attrs, originalBody)
     val query = originalPrompt.messages.filter(_.role.toLowerCase().trim == "user").map(_.content).mkString(", ")
     val key = CacheKeys.forQuery(kind, query)
     // 1. exact key lookup

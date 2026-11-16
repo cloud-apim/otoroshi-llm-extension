@@ -10,6 +10,16 @@ import play.api.libs.json.{JsObject, JsValue}
 
 import scala.concurrent.{ExecutionContext, Future}
 
+/**
+ * A call made to count the input tokens of a request (`max_tokens: 1`, see `TokenCounter`): it is a call like any
+ * other for budgets and audit, but its one token answer must never be cached, nor kept in a persistent memory.
+ */
+object TokenCounting {
+  val Key: play.api.libs.typedmap.TypedKey[Boolean] = play.api.libs.typedmap.TypedKey[Boolean]("cloud-apim.ai-gateway.TokenCounting")
+  def mark(attrs: TypedMap): Unit = attrs.put(Key -> true)
+  def is(attrs: TypedMap): Boolean = attrs.get(Key).contains(true)
+}
+
 object ChatClientDecorators {
 
   val possibleDecorators: Seq[Function[(AiProvider, ChatClient, Env), ChatClient]] = Seq(
@@ -54,6 +64,7 @@ trait DecoratorChatClient extends KindBasedChatClient {
   override def supportsCompletion: Boolean = chatClient.supportsCompletion
   override def supportsResponses: Boolean = chatClient.supportsResponses
   override def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = chatClient.listModels(raw, attrs)
+  override def countTokens(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Option[Either[JsValue, Long]]] = chatClient.countTokens(prompt, attrs, originalBody)
   override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = chatClient.invoke(kind, prompt, attrs, originalBody)
   override def invokeStream(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, Source[ChatResponseChunk, ?]]] = chatClient.invokeStream(kind, prompt, attrs, originalBody)
 }

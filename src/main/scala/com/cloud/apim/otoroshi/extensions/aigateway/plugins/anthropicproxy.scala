@@ -298,7 +298,15 @@ object AnthropicCompatProxy {
     }
   }
 
-  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+  // a call of the messages api, ready to be sent: the provider and its client, the body the client is called with,
+  // and the messages, with the system prompt, the template and the prompt contexts of the route applied
+  final case class AnthropicCall(provider: Option[AiProvider], client: ChatClient, jsonBody: JsValue, body: JsObject, messages: Seq[InputChatMessage])
+
+  def anthropicError(status: Results.Status, typ: String, message: String): NgProxyEngineError = {
+    NgProxyEngineError.NgResultProxyEngineError(status(Json.obj("type" -> "error", "error" -> Json.obj("type" -> typ, "message" -> message))))
+  }
+
+  def prepare(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using ec: ExecutionContext, env: Env): Either[NgProxyEngineError, AnthropicCall] = {
     val reqId = System.currentTimeMillis
     val jsonBody: JsValue = AiPluginRefsConfig.extractProviderFromModelInBody(_jsonBody, config)
       .applyOnWithOpt(ctx.config.select("override_model").asOptString.filter(_.trim.nonEmpty)) {
@@ -312,15 +320,8 @@ object AnthropicCompatProxy {
       }
     )
     provider.flatMap(_.getChatClient()) match {
-      case None => Left(NgProxyEngineError.NgResultProxyEngineError(Results.InternalServerError(Json.obj(
-        "type" -> "error",
-        "error" -> Json.obj(
-          "type" -> "invalid_request_error",
-          "message" -> "provider not found"
-        )
-      )))).vfuture
+      case None => Left(anthropicError(Results.InternalServerError, "invalid_request_error", "provider not found"))
       case Some(client) => {
-        val stream = ctx.request.queryParam("stream").contains("true") || ctx.request.header("x-stream").contains("true") || jsonBody.select("stream").asOpt[Boolean].contains(true)
         val finalJsonBody = fixBody(jsonBody.asObject, client, provider, reqId)
 
         val systemMessage: Option[JsObject] = jsonBody.select("system").asOpt[String].map { sys =>
@@ -358,50 +359,54 @@ object AnthropicCompatProxy {
           val messages = (preContextMessages ++ requestMessages ++ postContextMessages).map { obj =>
             InputChatMessage.fromJson(obj)
           }
-          if (stream) {
-            val messageId = s"msg_${IdGenerator.token(32)}"
-            val model = client.computeModel(finalJsonBody).getOrElse("none")
-            client.tryStream(ChatPrompt(messages), ctx.attrs, finalJsonBody).map {
-              case Left(err) =>
-                Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj(
-                  "type" -> "error",
-                  "error" -> Json.obj(
-                    "type" -> "invalid_request_error",
-                    "message" -> err.stringify
-                  )
-                ))))
-              case Right(source) => {
-                val writer = new AnthropicStreamWriter()
-                val finalSource = Source.single(anthropicMessageStart(model, messageId))
-                  .concat(source.mapConcat(chunk => writer.events(chunk).toList))
-                  // materialized once the answer is over
-                  .concatLazy(Source.lazySource(() => Source(writer.end().toList)))
-                Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
-              }
-            }
-          } else {
-            client.call(ChatPrompt(messages), ctx.attrs, finalJsonBody).map {
-              case Left(err) =>
-                Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj(
-                  "type" -> "error",
-                  "error" -> Json.obj(
-                    "type" -> "invalid_request_error",
-                    "message" -> err.stringify
-                  )
-                ))))
-              case Right(response) =>
-                Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.anthropicJson(client.computeModel(jsonBody).getOrElse("none"), env))
-                  .withHeaders(response.metadata.cacheHeaders.toSeq*)), None))
+          Right(AnthropicCall(provider, client, jsonBody, finalJsonBody, messages))
+        } else {
+          Left(anthropicError(Results.BadRequest, "invalid_request_error", "invalid request"))
+        }
+      }
+    }
+  }
+
+  def call(_jsonBody: JsValue, config: AiPluginRefsConfig, ctx: NgbBackendCallContext)(using ec: ExecutionContext, env: Env): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
+    prepare(_jsonBody, config, ctx) match {
+      case Left(err) => Left(err).vfuture
+      case Right(AnthropicCall(_, client, jsonBody, finalJsonBody, messages)) => {
+        val stream = ctx.request.queryParam("stream").contains("true") || ctx.request.header("x-stream").contains("true") || jsonBody.select("stream").asOpt[Boolean].contains(true)
+        if (stream) {
+          val messageId = s"msg_${IdGenerator.token(32)}"
+          val model = client.computeModel(finalJsonBody).getOrElse("none")
+          client.tryStream(ChatPrompt(messages), ctx.attrs, finalJsonBody).map {
+            case Left(err) =>
+              Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj(
+                "type" -> "error",
+                "error" -> Json.obj(
+                  "type" -> "invalid_request_error",
+                  "message" -> err.stringify
+                )
+              ))))
+            case Right(source) => {
+              val writer = new AnthropicStreamWriter()
+              val finalSource = Source.single(anthropicMessageStart(model, messageId))
+                .concat(source.mapConcat(chunk => writer.events(chunk).toList))
+                // materialized once the answer is over
+                .concatLazy(Source.lazySource(() => Source(writer.end().toList)))
+              Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok.chunked(finalSource).as("text/event-stream")), None))
             }
           }
         } else {
-          Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj(
-            "type" -> "error",
-            "error" -> Json.obj(
-              "type" -> "invalid_request_error",
-              "message" -> "invalid request"
-            )
-          )))).vfuture
+          client.call(ChatPrompt(messages), ctx.attrs, finalJsonBody).map {
+            case Left(err) =>
+              Left(NgProxyEngineError.NgResultProxyEngineError(Results.BadRequest(Json.obj(
+                "type" -> "error",
+                "error" -> Json.obj(
+                  "type" -> "invalid_request_error",
+                  "message" -> err.stringify
+                )
+              ))))
+            case Right(response) =>
+              Right(BackendCallResponse(NgPluginHttpResponse.fromResult(Results.Ok(response.anthropicJson(client.computeModel(jsonBody).getOrElse("none"), env))
+                .withHeaders(response.metadata.cacheHeaders.toSeq*)), None))
+          }
         }
       }
     }
@@ -450,12 +455,13 @@ class AnthropicCompatProxy extends NgBackendCall {
   override def defaultConfigObject: Option[NgPluginConfig] = Some(AiPluginRefsConfig.default)
 
   override def noJsForm: Boolean = true
-  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow ++ Seq("override_model")
+  override def configFlow: Seq[String] = AiPluginRefsConfig.configFlow ++ Seq("override_model", "count_tokens_fallback")
   override def configSchema: Option[JsObject] = AiPluginRefsConfig.configSchema("LLM provider", "providers").map(o => o ++ Json.obj(
     "override_model" -> Json.obj(
       "type" -> "string",
       "label" -> s"Override model",
-    )
+    ),
+    "count_tokens_fallback" -> CountTokensFallback.configSchema,
   ))
 
   override def start(env: Env): Future[Unit] = {
@@ -467,6 +473,11 @@ class AnthropicCompatProxy extends NgBackendCall {
 
   override def callBackend(ctx: NgbBackendCallContext, delegates: () => Future[Either[NgProxyEngineError, BackendCallResponse]])(using env: Env, ec: ExecutionContext, mat: Materializer): Future[Either[NgProxyEngineError, BackendCallResponse]] = {
     val config = ctx.cachedConfig(internalName)(AiPluginRefsConfig.format).getOrElse(AiPluginRefsConfig.default)
-    AnthropicCompatProxy.handleRequest(config, ctx)
+    // whatever path the route serves the messages api on: a count of tokens is no call of the model
+    if (ctx.request.method == "POST" && ctx.request.path.endsWith("/count_tokens")) {
+      AnthropicTokenCounter.handleRequest(config, CountTokensFallback.of(ctx.config.select("count_tokens_fallback").asOptString), ctx)
+    } else {
+      AnthropicCompatProxy.handleRequest(config, ctx)
+    }
   }
 }

@@ -203,6 +203,19 @@ class OpenAiApi(
     }
   }
 
+  // a json call to an url of the server that is not under its base url (`/tokenize` of vLLM is at its root), with the
+  // headers of the provider but none of the parameters mapped for a chat call
+  def rawJsonCallTo(method: String, url: String, body: JsValue)(using ec: ExecutionContext): Future[WSResponse] = {
+    ProviderHelpers.logCall(providerName, method, url, Some(body))(using env)
+    env.Ws
+      .url(url)
+      .withHttpHeaders(resolvedHeaders ++ Seq("Accept" -> "application/json", "Content-Type" -> "application/json")*)
+      .withBody(body)
+      .withMethod(method)
+      .withRequestTimeout(timeout)
+      .execute()
+  }
+
   def rawCall(method: String, path: String, body: Option[JsValue])(using ec: ExecutionContext): Future[WSResponse] = {
     val url = s"${baseUrl}${path}"
     val uri = Uri(url)
@@ -577,7 +590,31 @@ case class OpenAiChatClientOptions(
   def jsonForCall: JsObject = optionsCleanup(json - "max_function_calls" - "wasm_tools" - "tool_functions" - "mcp_connectors" - "a2a_connectors" - "search_engines" - "allow_config_override" - "mcp_include_functions" - "mcp_exclude_functions" - "responses" - "reasoning_input")
 }
 
-class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String, modelsPath: String = "/models", completion: Boolean = true, accumulateStreamConsumptions: Boolean = false) extends ChatClient with NativeResponsesSupport {
+class OpenAiChatClient(val api: OpenAiApi, val options: OpenAiChatClientOptions, id: String, providerName: String, modelsPath: String = "/models", completion: Boolean = true, accumulateStreamConsumptions: Boolean = false, tokenizePath: Option[String] = None) extends ChatClient with NativeResponsesSupport {
+
+  // The `/tokenize` route of a vLLM server (`connection.tokenize_path`): it applies the chat template of the model to
+  // the messages and the tools, and counts. A path is taken from the root of the server, an url as it is
+  override def countTokens(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Option[Either[JsValue, Long]]] = tokenizePath match {
+    case None => Future.successful(None)
+    case Some(path) =>
+      val body = originalBody.asObject - "messages" - "provider"
+      val mergedOptions = if (options.allowConfigOverride) options.jsonForCall.deepMerge(body) else options.jsonForCall
+      val finalModel = mergedOptions.select("model").asOptString.orElse(computeModel(mergedOptions)).getOrElse("--")
+      val reasoning = reasoningInput(finalModel.some)
+      val tools = mergedOptions.select("tools").asOpt[JsArray].filter(_.value.nonEmpty).map(t => Json.obj("tools" -> t)).getOrElse {
+        if (api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty || options.searchEngines.nonEmpty)) {
+          LlmFunctions.toolsWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
+        } else Json.obj()
+      }
+      val payload = Json.obj("model" -> finalModel, "messages" -> prompt.jsonWithFlavor(ChatMessageContentFlavor.OpenAi, reasoning), "add_generation_prompt" -> true) ++ tools
+      val url = if (path.startsWith("http://") || path.startsWith("https://")) path else ProviderQuotas.endpointOf(api.baseUrl) + (if (path.startsWith("/")) path else s"/$path")
+      api.rawJsonCallTo("POST", url, payload).map { resp =>
+        if (resp.status == 200) {
+          val json = resp.json
+          Some(json.select("count").asOpt[Long].orElse(json.select("tokens").asOpt[JsArray].map(_.value.size.toLong)).toRight(Json.obj("error" -> "no count in the answer of the tokenize route")))
+        } else Some(Left(ProviderHelpers.errorBodyJson(resp.status, resp.body)))
+      }
+  }
 
   override def computeModel(payload: JsValue): Option[String] = payload.select("model").asOpt[String].orElse(options.model.some)
 

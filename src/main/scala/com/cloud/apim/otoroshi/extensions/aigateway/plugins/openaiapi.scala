@@ -30,15 +30,18 @@ case class OpenAiCompatApiConfig(
   mcpServerRef: Option[String] = None,
   // the decision models served on `/systemone` and `/decisions`
   decisionModelRefs: Seq[String] = Seq.empty,
+  // how `/messages/count_tokens` is answered for a provider that cannot count the tokens itself (`CountTokensFallback`)
+  countTokensFallback: String = "none",
 ) extends NgPluginConfig {
   def json: JsValue = OpenAiCompatApiConfig.format.writes(this)
 }
 
 object OpenAiCompatApiConfig {
 
-  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "ocr_model_refs", "embedding_model_refs", "moderation_model_refs", "decision_model_refs", "context_refs", "mcp_server_ref", "max_size_upload", "decode_images", "use_open_response_for_responses", "response_headers", "response_headers_include_costs")
+  val configFlow: Seq[String] = Seq("language_model_refs", "audio_model_refs", "image_model_refs", "ocr_model_refs", "embedding_model_refs", "moderation_model_refs", "decision_model_refs", "context_refs", "mcp_server_ref", "max_size_upload", "decode_images", "use_open_response_for_responses", "response_headers", "response_headers_include_costs", "count_tokens_fallback")
 
   def configSchema: Option[JsObject] = Some(Json.obj(
+    "count_tokens_fallback" -> CountTokensFallback.configSchema,
     "language_model_refs" -> Json.obj(
       "type" -> "select",
       "array" -> true,
@@ -208,6 +211,7 @@ object OpenAiCompatApiConfig {
       "response_headers" -> o.responseHeaders,
       "response_headers_include_costs" -> o.responseHeadersIncludeCosts,
       "mcp_server_ref" -> o.mcpServerRef.map(_.json).getOrElse(JsNull).asValue,
+      "count_tokens_fallback" -> o.countTokensFallback,
     )
     override def reads(json: JsValue): JsResult[OpenAiCompatApiConfig] = Try {
       OpenAiCompatApiConfig(
@@ -225,6 +229,7 @@ object OpenAiCompatApiConfig {
         responseHeadersIncludeCosts = json.select("response_headers_include_costs").asOpt[Boolean].getOrElse(true),
         mcpServerRef = json.select("mcp_server_ref").asOpt[String].map(_.trim).filter(_.nonEmpty),
         decisionModelRefs = json.select("decision_model_refs").asOpt[Seq[String]].getOrElse(Seq.empty),
+        countTokensFallback = CountTokensFallback.of(json.select("count_tokens_fallback").asOpt[String]),
       )
     } match {
       case Failure(exception) => JsError(exception.getMessage)
@@ -364,6 +369,10 @@ class OpenAiCompatApi extends NgBackendCall {
     } else if (method == "POST" && path.endsWith("/chat/completions")) {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
       OpenAiCompatProxy.handleRequest(providerConfig, ctx)
+
+    } else if (method == "POST" && path.endsWith("/messages/count_tokens")) {
+      val providerConfig = AiPluginRefsConfig(config.languageModelRefs)
+      AnthropicTokenCounter.handleRequest(providerConfig, config.countTokensFallback, ctx)
 
     } else if (method == "POST" && path.endsWith("/messages")) {
       val providerConfig = AiPluginRefsConfig(config.languageModelRefs)

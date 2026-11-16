@@ -358,6 +358,7 @@ object AiProvider {
           modelsPath = connection.select("models_path").asOptString.getOrElse("/models"),
           completion = supportsCompletion,
           accumulateStreamConsumptions = connection.select("acc_stream_consumptions").asOptBoolean.getOrElse(false),
+          tokenizePath = connection.select("tokenize_path").asOptString.map(_.trim).filter(_.nonEmpty),
         ).some
       },
       "cloud-temple" -> { (c: ChatClientContext) =>

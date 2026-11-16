@@ -66,6 +66,10 @@ class ChatClientWithContext(originalProvider: AiProvider, val chatClient: ChatCl
     }
   }
 
+  override def countTokens(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Option[Either[JsValue, Long]]] = {
+    chatClient.countTokens(getNewPrompt(prompt, originalBody), attrs, withoutContext(originalBody))
+  }
+
   override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val newPrompt = getNewPrompt(prompt, originalBody)
     chatClient.invoke(kind, newPrompt, attrs, withoutContext(originalBody))

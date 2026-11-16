@@ -149,6 +149,7 @@ With the `v1` API version, the limit of an answer reaches Azure OpenAI as `max_c
 | `headers` | object | Custom headers (default: `{"Authorization": "Bearer {api_key}"}`) |
 | `additional_body_params` | object | Extra parameters to include in every request body |
 | `acc_stream_consumptions` | boolean | Accumulate token usage across streaming chunks (default: `false`) |
+| `tokenize_path` | string | The route of the server that counts the tokens of a request, `/tokenize` for vLLM. A path is taken from the root of the server, an url as it is. It answers [`count_tokens`](/docs/llm-gateway/anthropic-proxy#counting-tokens) exactly, without calling the model |
 
 ```js
 {

@@ -164,6 +164,8 @@ class ChatClientWithSimpleCacheMemory(originalProvider: AiProvider, val chatClie
   private val ttl = originalProvider.cache.ttl
 
   override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    // its one token answer is no answer to cache, and a cached answer would not count what is sent now
+    if (TokenCounting.is(attrs)) return chatClient.invoke(kind, originalPrompt, attrs, originalBody)
     // the endpoint is part of the key: a /responses answer is not interchangeable with a chat one
     val key = CacheKeys.forPrompt(kind, originalPrompt)
     ChatClientWithSimpleCacheMemory.cache.getIfPresent(key) match {
@@ -234,6 +236,8 @@ class ChatClientWithSimpleCacheRedis(originalProvider: AiProvider, val chatClien
   }
 
   override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    // its one token answer is no answer to cache, and a cached answer would not count what is sent now
+    if (TokenCounting.is(attrs)) return chatClient.invoke(kind, originalPrompt, attrs, originalBody)
     val key = CacheKeys.forPrompt(kind, originalPrompt)
     redisGet(s"simple-cache:call:$key").flatMap {
       case Some(value) =>

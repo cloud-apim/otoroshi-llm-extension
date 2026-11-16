@@ -38,6 +38,7 @@ This makes it the ideal choice when you want to expose a single, coherent API su
 | `POST` | `/open-responses` | Open Responses API (always available) | `language_model_refs` |
 | `POST` | `/oai-responses` | OpenAI Responses API (always available) | `language_model_refs` |
 | `POST` | `/messages` | Anthropic Messages API | `language_model_refs` |
+| `POST` | `/messages/count_tokens` | Input tokens of an Anthropic Messages request (see [counting tokens](/docs/llm-gateway/anthropic-proxy#counting-tokens)) | `language_model_refs` |
 | `POST` | `/embeddings` | OpenAI Embeddings API | `embedding_model_refs` |
 | `POST` | `/images/generations` | OpenAI Image Generation API | `image_model_refs` |
 | `POST` | `/images/edits` | OpenAI Image Edit API | `image_model_refs` |
@@ -86,6 +87,7 @@ This makes it the ideal choice when you want to expose a single, coherent API su
 | `decode_images` | boolean | `false` | When enabled, decodes base64-encoded image results into binary responses |
 | `use_open_response_for_responses` | boolean | `false` | When enabled, the `/responses` endpoint uses the Open Responses proxy instead of the default OpenAI Responses proxy |
 | `mcp_server_ref` | string | `null` | Reference to the [MCP virtual server](/docs/mcp/mcp-virtual-servers) served on `/mcp`. Without it (or when the server is disabled), `/mcp` answers `404` |
+| `count_tokens_fallback` | string | `none` | How `/messages/count_tokens` is answered when the provider cannot count the tokens itself: `none`, `measure` or `estimate` (see [counting tokens](/docs/llm-gateway/anthropic-proxy#counting-tokens)) |
 
 ## Route configuration example
 

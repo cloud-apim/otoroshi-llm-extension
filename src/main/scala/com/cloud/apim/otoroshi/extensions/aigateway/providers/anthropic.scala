@@ -633,6 +633,25 @@ class AnthropicChatClient(api: AnthropicApi, options: AnthropicChatClientOptions
     result.toList
   }
 
+  // `/v1/messages/count_tokens` of Anthropic: the body of the call, without what only matters to an answer
+  override def countTokens(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Option[Either[JsValue, Long]]] = {
+    val obody = originalBody.asObject - "messages" - "provider"
+    val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody)
+    val (system, otherMessages) = prompt.messages.partition(_.isSystem)
+    val messages = JsArray(transformOpenAiMessagesToAnthropic(prompt.copy(messages = otherMessages).jsonWithFlavor(ChatMessageContentFlavor.Anthropic, ReasoningInput.AnthropicBlocks).as[Seq[JsObject]]))
+    val systemMessages = JsArray(system.map(_.json(ChatMessageContentFlavor.Anthropic)))
+    val hasToolsInRequest = obody.select("tools").asOpt[JsArray].exists(_.value.nonEmpty)
+    val gatewayTools = if (!hasToolsInRequest && api.supportsTools && (options.wasmTools.nonEmpty || options.mcpConnectors.nonEmpty || options.searchEngines.nonEmpty)) {
+      LlmFunctions.toolsAnthropicWithInline(options.wasmToolsNoInline, options.wasmToolsInline, options.mcpConnectors, options.mcpIncludeFunctions, options.mcpExcludeFunctions, attrs, options.searchEngines)
+    } else Json.obj()
+    val body = JsObject(mergedOptions.value.filter { case (key, _) => Set("model", "tools", "tool_choice", "thinking").contains(key) }) ++
+      gatewayTools ++ Json.obj("messages" -> messages) ++ (if (systemMessages.value.nonEmpty) Json.obj("system" -> systemMessages) else Json.obj())
+    api.rawCall("POST", "/v1/messages/count_tokens", Some(body)).map { resp =>
+      if (resp.status == 200) Some(resp.json.select("input_tokens").asOpt[Long].toRight(Json.obj("error" -> "no input_tokens in the answer of the provider")))
+      else Some(Left(ProviderHelpers.errorBodyJson(resp.status, resp.body)))
+    }
+  }
+
   override def call(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     val obody = originalBody.asObject - "messages" - "provider"
     val mergedOptions = (if (options.allowConfigOverride) options.jsonForCall.deepMerge(obody) else options.jsonForCall).applyOn(transformOpenAIInputBodyToProviderInputBody).applyOn(cleanupDeprecatedSamplingParams).applyOn(AnthropicModels.cleanupSamplingParamsWhenThinking)

@@ -1112,6 +1112,14 @@ class AiProvidersPage extends Component {
     ttft_timeout_warning: {
       type: TtftTimeoutWarning,
     },
+    'connection.tokenize_path': {
+      type: 'string',
+      props: {
+        label: 'Tokenize path',
+        placeholder: '/tokenize',
+        help: 'the route of the server that counts the tokens of a request (/tokenize for vLLM), taken from the root of the server. It answers /v1/messages/count_tokens exactly, without calling the model',
+      },
+    },
     'connection.models_path': {
       type: 'string',
       props: { label: 'Models endpoint path' },
@@ -2581,6 +2589,7 @@ class AiProvidersPage extends Component {
       'connection.token',
       'connection.timeout',
       'connection.models_path',
+      state.provider === "openai-compatible" ? 'connection.tokenize_path' : null,
       'connection.supports_completion',
       'connection.supports_tools',
       'connection.supports_streaming',

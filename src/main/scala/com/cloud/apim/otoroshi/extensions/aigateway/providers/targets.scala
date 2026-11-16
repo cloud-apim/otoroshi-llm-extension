@@ -341,6 +341,14 @@ class TargetsChatClient(
     }
   }
 
+  // counted by a target that can take a call: they serve the same model
+  override def countTokens(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Option[Either[JsValue, Long]]] = {
+    choose(Set.empty, System.currentTimeMillis()).orElse(targets.headOption).flatMap(clientOf) match {
+      case None => Future.successful(None)
+      case Some(client) => client.countTokens(prompt, attrs, originalBody)
+    }
+  }
+
   override def invoke(kind: ChatCallKind, prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
     attempt[ChatResponse](attrs, streaming = false) { (target, client) =>
       client.invoke(kind, prompt, attrs, originalBody).andThen { case _ => TargetSelection.ended(provider, target) }

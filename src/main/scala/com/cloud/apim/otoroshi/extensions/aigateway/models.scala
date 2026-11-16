@@ -2851,6 +2851,13 @@ trait ChatClient {
   def listModels(raw: Boolean, attrs: TypedMap)(using ec: ExecutionContext): Future[Either[JsValue, List[String]]] = Left(Json.obj("error" -> "models list not supported")).vfuture
 
   /**
+   * The input tokens of a chat call, counted by the provider itself (`/v1/messages/count_tokens` of Anthropic, the
+   * `/tokenize` route of a vLLM server...), without generating anything. `None` when the provider has no such route.
+   * Same contract as `invoke`: `prompt` holds the messages, `originalBody` the parameters (model, tools...).
+   */
+  def countTokens(prompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Option[Either[JsValue, Long]]] = Future.successful(None)
+
+  /**
    * Single blocking entry point. Implemented once by every decorator (see `DecoratorChatClient`) and
    * dispatched to the right endpoint by leaf provider clients.
    *

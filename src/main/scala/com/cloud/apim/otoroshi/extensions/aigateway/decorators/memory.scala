@@ -51,7 +51,31 @@ class ChatClientWithPersistentMemory(originalProvider: AiProvider, val chatClien
     }
   }
 
+  // the messages of the memory are part of what the provider reads: they count. Nothing is written
+  override def countTokens(originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Option[Either[JsValue, Long]]] = {
+    withMemory[Option[Either[JsValue, Long]]](attrs) { (memClient, sessionId) =>
+      memClient.getMessages(sessionId).flatMap {
+        case Left(error) => Right(Some(Left(error))).vfuture
+        case Right(memoryMessages) =>
+          val memoryMessagesForClient = memoryMessages.map(m => InputChatMessage.fromJson(m.raw))
+          chatClient.countTokens(originalPrompt.copy(messages = memoryMessagesForClient ++ originalPrompt.messages), attrs, originalBody).map(Right(_))
+      }
+    }.map {
+      case Left(error) => Some(Left(error))
+      case Right(count) => count
+    }
+  }
+
   override def invoke(kind: ChatCallKind, originalPrompt: ChatPrompt, attrs: TypedMap, originalBody: JsValue)(using ec: ExecutionContext, env: Env): Future[Either[JsValue, ChatResponse]] = {
+    // a call counting the tokens of a request reads the memory, and leaves it as it is
+    if (TokenCounting.is(attrs)) return withMemory[ChatResponse](attrs) { (memClient, sessionId) =>
+      memClient.getMessages(sessionId).flatMap {
+        case Left(error) => error.leftf
+        case Right(memoryMessages) =>
+          val memoryMessagesForClient = memoryMessages.map(m => InputChatMessage.fromJson(m.raw))
+          chatClient.invoke(kind, originalPrompt.copy(messages = memoryMessagesForClient ++ originalPrompt.messages), attrs, originalBody)
+      }
+    }
     withMemory[ChatResponse](attrs) { (memClient, sessionId) =>
       memClient.getMessages(sessionId).flatMap {
         case Left(error) => error.leftf
