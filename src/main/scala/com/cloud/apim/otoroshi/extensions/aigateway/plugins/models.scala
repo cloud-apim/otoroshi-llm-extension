@@ -13,7 +13,7 @@ import otoroshi.next.proxy.NgProxyEngineError
 import otoroshi.utils.TypedMap
 import otoroshi.utils.syntax.implicits.*
 import otoroshi_plugins.com.cloud.apim.extensions.aigateway.AiExtension
-import play.api.libs.json.{JsArray, JsLookupResult, JsObject, Json}
+import play.api.libs.json.{JsArray, JsLookupResult, JsObject, JsValue, Json}
 import play.api.mvc.Results
 
 import java.util.Locale
@@ -59,31 +59,67 @@ class OpenAiCompatModels extends NgBackendCall {
       .mapAsync(1) {
         case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true"), ctx.attrs).map(e => (provider, e))
       }
-      .collect {
-        case (provider, Right(list)) => list.flatMap { model =>
-          val res = if (config.refs.size == 1) {
-            model
-          } else {
-            if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"
+      .runWith(Sink.seq)
+      .map { answers =>
+        val list = answers.collect {
+          case (provider, Right(models)) => models.flatMap { model =>
+            val res = if (config.refs.size == 1) {
+              model
+            } else {
+              if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"
+            }
+            listing.entry(provider, model, Json.obj(
+              "id" -> res,
+              "object" -> "model",
+              "created" -> now,
+              "owned_by" -> provider.slugName,
+            ))
           }
-          listing.entry(provider, model, Json.obj(
-            "id" -> res,
-            "object" -> "model",
-            "created" -> now,
-            "owned_by" -> provider.slugName,
-          ))
+        }.flatten
+        ModelsListingFailures.failure(ext, ctx, answers, list.isEmpty).map(Left(_)).getOrElse {
+          Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
+            Results.Ok(Json.obj(
+              "object" -> "list",
+              "data" -> JsArray(list)
+            ))
+          ), None))
         }
       }
-      .flatMapConcat(list => Source(list))
-      .runWith(Sink.seq)
-      .map { list =>
-        Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
-          Results.Ok(Json.obj(
-            "object" -> "list",
-            "data" -> JsArray(list)
-          ))
-        ), None))
-      }
+  }
+}
+
+/**
+ * What a models listing answers when providers fail to list their models.
+ *
+ * A provider that cannot list its models (rejected credentials, provider down) used to be dropped from the listing
+ * without a word: the caller got a 200 with an empty list, which reads as "this gateway serves no model" rather than
+ * "the provider is failing". Each failure is now logged, and a listing for which every provider failed and nothing
+ * else is listed answers 502, in the error shape of the OpenAI api. A listing where some providers answered keeps
+ * listing their models.
+ */
+object ModelsListingFailures {
+
+  def failure(
+    ext: AiExtension,
+    ctx: NgbBackendCallContext,
+    answers: Seq[(AiProvider, Either[JsValue, List[String]])],
+    nothingListed: Boolean
+  ): Option[NgProxyEngineError] = {
+    val failures = answers.collect { case (provider, Left(error)) => (provider, error) }
+    failures.foreach { case (provider, error) =>
+      ext.logger.warn(s"models listing on route '${ctx.route.id}': provider '${provider.id}' could not list its models: ${error.stringify}")
+    }
+    if (failures.nonEmpty && failures.size == answers.size && nothingListed) {
+      Some(NgProxyEngineError.NgResultProxyEngineError(Results.BadGateway(Json.obj(
+        "error" -> Json.obj(
+          "message" -> "the provider could not list its models",
+          "type" -> "api_error",
+          "code" -> "provider_models_unavailable"
+        )
+      ))))
+    } else {
+      None
+    }
   }
 }
 
@@ -105,9 +141,10 @@ object OpenAiCompatProvidersWithModels {
       .mapAsync(1) {
         case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true"), ctx.attrs).map(e => (provider, e))
       }
-      .collect {
-        case (provider, Right(list)) => {
-          list.flatMap { model =>
+      .runWith(Sink.seq)
+      .flatMap { answers =>
+        val text = answers.collect {
+          case (provider, Right(list)) => list.flatMap { model =>
             val combined = if (config.refs.size == 1) {
               model
             } else {
@@ -124,23 +161,21 @@ object OpenAiCompatProvidersWithModels {
               "owned_by_with_model" -> s"${provider.computedName} / ${model}"
             ))
           }
-        }
-      }
-      .flatMapConcat(list => Source(list))
-      .runWith(Sink.seq)
-      .flatMap { text =>
-        others match {
+        }.flatten
+        val all = others match {
           case None => Future.successful(text)
           case Some(all) => OpenAiCompatModalityModels.entries(all, listing, ctx.attrs, now, text).map(more => OpenAiCompatModalityModels.merged(text ++ more))
         }
-      }
-      .map { list =>
-        Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
-          Results.Ok(Json.obj(
-            "object" -> "list",
-            "data" -> JsArray(list)
-          ))
-        ), None))
+        all.map { list =>
+          ModelsListingFailures.failure(ext, ctx, answers, list.isEmpty).map(Left(_)).getOrElse {
+            Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
+              Results.Ok(Json.obj(
+                "object" -> "list",
+                "data" -> JsArray(list)
+              ))
+            ), None))
+          }
+        }
       }
   }
 }
@@ -372,23 +407,24 @@ class LlmProviderModels extends NgBackendCall {
       .mapAsync(1) {
         case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true"), ctx.attrs).map(e => (provider, e))
       }
-      .collect {
-        case (provider, Right(list)) => list.map { model =>
-          if (config.refs.size == 1) {
-            model
-          } else {
-            if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"
-          }
-        }
-      }
-      .flatMapConcat(list => Source(list))
       .runWith(Sink.seq)
-      .map { list =>
-        Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
-          Results.Ok(Json.obj(
-            "models" -> JsArray(list.map(_.json)),
-          ))
-        ), None))
+      .map { answers =>
+        val list = answers.collect {
+          case (provider, Right(models)) => models.map { model =>
+            if (config.refs.size == 1) {
+              model
+            } else {
+              if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"
+            }
+          }
+        }.flatten
+        ModelsListingFailures.failure(ext, ctx, answers, list.isEmpty).map(Left(_)).getOrElse {
+          Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
+            Results.Ok(Json.obj(
+              "models" -> JsArray(list.map(_.json)),
+            ))
+          ), None))
+        }
       }
   }
 }
@@ -429,23 +465,24 @@ class LlmProvidersWithModels extends NgBackendCall {
       .mapAsync(1) {
         case (provider, client) => client.listModels(ctx.request.queryParam("raw").contains("true"), ctx.attrs).map(e => (provider, e))
       }
-      .collect {
-        case (provider, Right(list)) => list.map { model =>
-          if (config.refs.size == 1) {
-            model
-          } else {
-            if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"
-          }
-        }
-      }
-      .flatMapConcat(list => Source(list))
       .runWith(Sink.seq)
-      .map { list =>
-        Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
-          Results.Ok(Json.obj(
-            "models" -> JsArray(list.map(_.json)),
-          ))
-        ), None))
+      .map { answers =>
+        val list = answers.collect {
+          case (provider, Right(models)) => models.map { model =>
+            if (config.refs.size == 1) {
+              model
+            } else {
+              if (model.contains("/")) s"${provider.slugName}###${model}" else s"${provider.slugName}/${model}"
+            }
+          }
+        }.flatten
+        ModelsListingFailures.failure(ext, ctx, answers, list.isEmpty).map(Left(_)).getOrElse {
+          Right(BackendCallResponse(NgPluginHttpResponse.fromResult(
+            Results.Ok(Json.obj(
+              "models" -> JsArray(list.map(_.json)),
+            ))
+          ), None))
+        }
       }
   }
 }
